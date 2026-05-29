@@ -1,0 +1,2942 @@
+Title: DeepCrossAttention: Supercharging Transformer Residual Connections
+
+URL Source: https://openreview.net/pdf?id=j3JBfFnGYh
+
+Number of Pages: 23
+
+Markdown Content:
+# DeepCrossAttention: Supercharging Transformer Residual Connections 
+
+Mike Heddes 1 Adel Javanmard 2 3 Kyriakos Axiotis 3 Gang Fu 3 MohammadHossein Bateni 3
+
+Vahab Mirrokni 3
+
+## Abstract 
+
+Transformer networks have achieved remarkable success across diverse domains, leveraging a vari-ety of architectural innovations, including resid-ual connections. However, traditional residual connections, which simply sum the outputs of previous layers, can dilute crucial information. This work introduces DeepCrossAttention (DCA), an approach that enhances residual learning in transformers. DCA employs learnable, input-dependent weights to dynamically combine layer outputs, enabling the model to selectively focus on the most relevant information in any of the previous layers. Furthermore, DCA incorporates depth-wise cross-attention, allowing for richer in-teractions between layers at different depths. Our language modeling experiments show that DCA achieves improved perplexity for a given training time. Moreover, DCA obtains the same model quality up to 3x faster while adding a negligible number of parameters. Theoretical analysis con-firms that DCA provides an improved trade-off between accuracy and model size when the ratio of collective layer ranks to the ambient dimension falls below a critical threshold. 
+
+## 1. Introduction 
+
+Residual connections play an important role in modern neu-ral network architectures because they stabilize the training of deep neural networks and improve model convergence and quality. Since their usage in the ResNet architecture (He et al., 2016), residual connections have been widely adopted in both convolutional neural networks and transformer archi-tectures across various domains, including natural language        
+
+> 1Department of Computer Science, University of California, Irvine, USA 2Marshall School of Business, University of Southern California, Los Angeles, USA 3Google Research, New York, USA. Correspondence to: Mike Heddes <mheddes@uci.edu >, Gang Fu <thomasfu@google.com >.
+> Proceedings of the 42 nd International Conference on Machine Learning , Vancouver, Canada. PMLR 267, 2025. Copyright 2025 by the author(s).
+
+processing (Vaswani, 2017), audio recognition (Gong et al., 2021), and computer vision (Dosovitskiy et al., 2021). A residual neural network (ResNet) is constructed by stack-ing layers known as residual blocks. Each residual block is characterized by the recursive equation xt+1 = f (xt) + xt,which contains a residual function f along with an identity shortcut (also called an identity loop or skip connection). The residual functions typically used in these blocks include multi-layer perceptrons (MLPs), convolutional neural net-works (CNNs), and attention. By unrolling the recursion, we equivalently see that each layer’s input is the sum of all its previous layers’ outputs (including the model’s input). Figure 2 provides a schematic illustration of this concept. 
+
+Information dilution in residual networks. Residual con-nections increase the flow of information across the neural network. However, they also come with a potential lim-itation: Taking a straight sum of previous layer outputs implicitly treats all previous layers as equally important. This can dilute useful information present in a select few layers (including the model’s input) with potentially less useful information. We hypothesize that, because of this dilution, even though residual networks mitigate the prob-lem of neural network bottlenecks, they do not sufficiently resolve it. One way to resolve the issue of dilution would be to allow each layer to choose its inputs .In order to confirm the existence and significance of the di-lution phenomenon we ask a simple question: Can residual networks easily learn to recover the input? This should be a basic task expected of any generative model — otherwise there would be information loss. However, if our dilution hypothesis is true, the answer would be negative. To test this, we create a neural network consisting of a number of low-rank layers, and add residual connections in order to mitigate the bottlenecks introduced by the low ranks. The resulting model is full-rank. We compare this model with another model that employs learnable residual connec-tions, as in DenseFormer (Pagliardini et al., 2024), which we later also call GRN-v1 , since it is the starting point of our generalizations. In Figure 1 we see the results of the two models on two tasks: learning the identity transforma-tion and learning a random linear transformation. Perhaps surprisingly, we observe that the residual network is unable 1DeepCrossAttention: Supercharging Transformer Residual Connections 0.0 0.2 0.4 0.6 0.8 1.0         
+
+> Number of steps 1e3
+> 10 20
+> 10 17
+> 10 14
+> 10 11
+> 10 8
+> 10 5
+> 10 2
+> 10 1
+> MSE (log scale)
+> ResNet
+> GRN-v1
+
+(a) Learning the identity transformation by minimizing 
+
+‖f (x) − x‖22, where x is a 100 -dimensional i.i.d. normal input and f is a low-rank linear network. 0.0 0.2 0.4 0.6 0.8 1.0  
+
+> Number of steps 1e3
+> 10 2
+> 3 × 10 1
+> 4 × 10 1
+> 6 × 10 1
+> MSE (log scale)
+> ResNet
+> GRN-v1
+
+(b) Minimizing the loss ‖f (x) − y‖22, where x is a 100 -d i.i.d. normal input, f is a low-rank linear network, and y = Ax + b,where A, b have i.i.d. standard normal entries. 
+
+Figure 1. Training low-rank linear models to learn the identity and a random transformation. Each model consists of 10 linear layers, each of rank 3, and is trained using mini-batch SGD. 
+
+to fully reconstruct the input even after seeing 10 3 batches (10 5 examples), while the model with learnable residual weights is able to reach extremely small loss values, even with 100x fewer examples. This confirms that ResNet does not address neural network bottlenecks in a satisfactory way, even though it learns a full-rank transformation, and under-scores the importance of using learnable residual weights to increase model capacity. 
+
+Our contribution. In this work, we propose DeepCrossAt-tention (DCA) , a new transformer architecture that gen-eralizes residual networks by employing learnable, input-dependent weights to dynamically combine layer outputs, enabling the model to selectively focus on the most relevant information in any of the previous layers and thereby pre-vent dilution of information in the hidden representations. Furthermore, DCA incorporates depth-wise cross-attention by enabling the queries, keys, and values in each transformer block to independently combine layer outputs, allowing for richer interactions between layers at different depths. This is all achieved with a negligible number of additional pa-rameters, making DCA more effective than increasing the model size (for instance by increasing its width or depth). DCA can be viewed as a mechanism to adapt the model ar-chitecture dynamically for each input token. By optimizing the added parameters, DCA learns to effectively combine the outputs of earlier residual blocks. This allows the model to rearrange the residual blocks from purely sequential to fully parallel and any intermediate combination, without the need for explicit architectural design choices. We analyse our generalization of the residual network theo-retically by focusing on a linear low-rank model. We show that DCA achieves a better trade-off between accuracy and model size when the ratio of the collective ranks of the lay-ers to the ambient dimension is below a threshold, which depends on the complexity of the target task. In addition, the improvement in this trade-off can itself be characterized as a function of the collective ranks of the layers, ambient dimension and the complexity of the target task. We extend this insight to nonlinear models by working with the notion of bottleneck rank, proposed by Jacot (2023). We additionally provide empirical results to support the the-oretical findings and demonstrate the effectiveness of DCA. Experiments on language modeling and image classifica-tion tasks demonstrate that DCA consistently outperforms the standard transformer architectures in terms of perplex-ity, accuracy and training efficiency. DCA achieves lower perplexity for a given parameter budget and training time. Furthermore, DCA exhibits improved training stability, mit-igating the occurrence of loss spikes frequently observed while training large models. 
+
+## 2. Related Work 
+
+Highway networks enable each layer to interpolate dynami-cally between its output f (x) and its input x using a gating mechanism (Srivastava et al., 2015). Residual connections (He et al., 2016) popularized the direct flow of information from earlier to later layers using identity shortcuts. These in-novations proved crucial in stabilizing training and allowing for the construction of significantly deeper networks. Build-ing upon this concept, DenseNet (Huang et al., 2017) further enhanced information flow by concatenating the outputs of all preceding layers to each layer’s input. The following methods are the ones most similar to ours. They all build on the idea of DenseNet but apply an effi-cient aggregation of the previous layer outputs instead of 2DeepCrossAttention: Supercharging Transformer Residual Connections 
+
+concatenating them. DenseFormer (Pagliardini et al., 2024) performs the aggregation as a learned linear combination of the previous layer outputs. To reduce the computational load, they propose to apply their method only on a subset of the possible layer connections. Building on DenseFormer, LAuReL (Menghani et al., 2024) presents three aggrega-tion functions, the best performing one applies a learned low-rank transformation to the previous layer outputs before the learned linear combination. Zhu et al. (2024) take a different approach with Hyper-Connections, they consider a fixed-size stack where layer outputs are added into with a learned weight for every slot of the stack. Before each layer, the stack is mixed by a matrix multiplication with a learned weight matrix. The input to a layer is then obtained by a learned linear combination of the stack, instead of access-ing the previous layer outputs directly. They also present a dynamic version of their method where the weights are derived from the inputs. 
+
+## 3. Method 
+
+We start with a detailed exposition of our proposed gener-alizations to the residual network architecture. We present three distinct proposals, each incrementally augmenting the complexity of the network structure. Building upon these proposals, we subsequently introduce DeepCrossAttention (DCA), a novel approach to enhance residual learning capa-bilities of the transformer architecture. 
+
+Notation. We denote a residual function by ft : Rd → Rd,where t is the layer index and d the feature dimension. As an example, in a multi-layer perceptron residual network (MLP-ResNet), we have ft(x) = Vtσ(Wtx) with Wt ∈ Rk×d,
+
+Vt ∈ Rd×k and σ is a nonlinear function, such as sigmoid or ReLU, that is applied component-wise. Then, the t-th residual block outputs gt+1 (x), are defined recursively as 
+
+gt+1 (x) = ft(gt(x)) + gt(x) .
+
+Using this recursion, the output of the T -th residual block is given by 
+
+gT +1 (x) = 
+
+> T
+
+∑
+
+> t=0
+
+ft(gt(x)) ,
+
+with the conventions that g0(x) = 0 and f0(g0(x)) = x.We refer to Figure 2 for a schematic illustration. An alternative description, which we will use to introduce our generalizations, is the following. For every t, define the stack of layer outputs Gt ∈ Rd×t as 
+
+Gt := [ft−1(gt−1(x)) , . . . , f 0(g0(x)) ] ∈ Rd×t .
+
+We then have gt(x) = Gt1 and y = GT 1 in the standard residual network, where 1 denotes the all ones vector.   
+
+> Figure 2. Two alternative schematic representations of standard ResNet. The top represents the recursive form, the bottom repre-sents the explicit sum.
+> Figure 3. Computation diagram of GRN-v3.
+
+3.1. Generalized Residual Networks (GRN) 
+
+We propose three generalizations of ResNets by consider-ing weighted linear combinations of previous layer outputs. The parameters of the modules and the generalizations are all optimized during training using the AdamW optimizer (Loshchilov & Hutter, 2017). 
+
+Dimension-independent weights (GRN-v1) . We consider simple linear combinations as 
+
+gt(x) = Gtbt, y = GT +1 bT +1 
+
+with bt ∈ Rt×1 which is initialized as all ones and opti-mized with the rest of the model parameters during training. This setting has been previously explored in the Dense-Former paper (Pagliardini et al., 2024). 
+
+Dimension-dependent weights (GRN-v2). In this pro-posal, we allow bt ∈ Rd×t and consider 
+
+gt(x) = ( Gt bt)1, y = ( GT +1 bT +1 )1 ,
+
+where indicates the entry-wise (Hadamard) product. Note that in GRN-v1 the same weight vector bt is used for each of the d features. GRN-v2 generalizes this by using different weight vectors for different features, which are all stacked together in a matrix bt ∈ Rd×t.
+
+Input-dependent weights (GRN-v3). In the next general-ization, we allow the weights to be input dependent. Specifi-3DeepCrossAttention: Supercharging Transformer Residual Connections 
+
+cally, the weights are given by bt + ¯ wt with bt, ¯wt ∈ Rd×t.The first component acts similar to the weights in GRN-v2, it puts different weights on different dimensions of the input. The second component ¯wt is a nonlinear mapping of the input features vector x, but is the same for all the d
+
+dimensions. This combination gives us flexibility to have both dimension-dependent and input-dependent weights for a slight increase in the number of parameters. GRN-v3 is expressed as 
+
+gt(x) = ( Gt (bt + ¯ wt)) 1 , ¯wt = 1σ(wT 
+
+> t
+
+Gt) ,
+
+y = ( GT +1 (bT +1 + ¯ wT +1 )) 1
+
+where wt : Rd×1 is initialized as all zeros and optimized with the rest of the model parameters during training and 
+
+σ : R → R is a non-linearity which is applied entry-wise. In this proposal we consider σ to be the ReLU activation. The computation diagram of GRN-v3 is illustrated in Figure 3. 
+
+Reducing memory and computation. Since the stack of layer outputs Gt grows linearly with the depth of the model, this could lead to significant memory and computational overhead for deep models. Our experiments reveal that GRNs tend to weight inputs and the last few layer outputs the most. An example weight distribution is provided in Appendix H. Therefore, to increase efficiency, we propose to include only the first and last-k layers explicitly in Gt.On the intermediate layers we apply standard ResNet, only involving simple addition. For example, if we set k =2, then Gt contains at most 4 vectors: the model inputs, the sum of the intermediate layers’ outputs, and the last two layers’ outputs ft−1(gt−1(x)) and ft−2(gt−2(x)) . The GRNs then take this modified Gt as their input. 
+
+3.2. DeepCrossAttention 
+
+The generalizations introduced thus far are generally appli-cable to any ResNet. We now describe our main method which is specific to the transformer architecture. Deep-CrossAttention (DCA) generalizes self-attention by adding three independent instances of a GRN in each decoder block. In this proposal we consider the GRN to be GRN-v3. These three GRN instances are given the same stack of previous layer outputs as their input but return the queries, keys, and values for the attention module, respectively. This enables richer interactions between layers at different depths. Fig-ure 4 shows the computation diagram of a DCA decoder block inside a transformer, where the remaining skip con-nections ensure that the inputs are not added to the outputs of the decoder block, but are included in the inputs of both the attention and the feed forward module. Notably, DCA does not modify the underlying attention mechanism, but instead uses GRNs to dynamically compose attention inputs.  
+
+> Figure 4. Computation diagram of a DCA decoder block.
+
+## 4. Theoretical analysis 
+
+Motivated by language modeling tasks, we focus on the regime where the size of the training set (n) significantly exceeds the input dimension ( n  d). As we increase the number of model parameters, the representation capacity of the network improves, which helps with reducing the test error. We will be focusing on the the trade-off between the test error and the number of parameters, and argue that our proposed generalizations achieve a better trade-off than the standard ResNet. We will first study a “stylized” low-rank linear model for which we characterize the test error-model complexity trade-off and demonstrate the benefits of our proposed generaliza-tions. Our analysis elucidates the role of various factors on this trade-off, such as collective widths of layers, complexity of the target task, and input dimension. We then discuss how some of these results can be extended to non-linear models and empirically demonstrate that the insights gained from our analysis are applicable to more complex models. Due to space constraint, proof of theorems are deferred to the supplementary material. 
+
+4.1. Low-rank linear model 
+
+Consider the setting where for each sample the response 
+
+y ∈ Rd is given by 
+
+y = Ax + 
+
+with  ∈ Rd representing the noise. Here A ∈ Rd×d is a full rank matrix. We consider a network with T layers where ft(z) = Vt
+
+4DeepCrossAttention: Supercharging Transformer Residual Connections 
+
+(there is no activation). We let rt := rank( Vt) and define the collective rank r∗ := ∑Tt=1 rt. We assume r∗ < d ,i.e., the collective rank of all layers still is lower than the ambient dimension d.We next focus on four architectures: Baseline (where there is no residual connection), ResNet, GRN-v1 and GRN-v2 and characterize the class of models which can be expressed by each of these architectures. We assume each architecture to have T layers. 
+
+Baseline. In this architecture, there is no residual connec-tion and so the model is given by ̂ y = ∏Tt=1 Vtx. We de-note by Cbase the class of functions that can be represented by such architecture. 
+
+ResNets. In this case, we have ̂ y = ∏Tt=1 (I + Vt)x. De-note by Cres as the class of functions that can be represented by such architecture. 
+
+GRN-v1. In this case, we have ̂ y = GT +1 bT +1 , with 
+
+bT +1 a (T + 1) -dimensional vector as described in Sec-tion 3. Denote by CGRN −v1 the class of functions that can be represented by such architecture. 
+
+GRN-v2. In this case, we have ̂ y = ( GT +1 bT +1 )1,where bT +1 is d × (T + 1) matrix as described in Section 3. We denote by CGRN −v2 the class of functions that can be represented by such architecture. 
+
+GRN-v3. In this case, we have ̂ y = ( GT +1 (bT +1 +¯wT +1 )) 1, where bT +1 is d × (T + 1) matrix and ¯wT +1 is 
+
+d dimensional vector as described in Section 3. We denote by CGRN −v3 the class of functions that can be represented by such architecture. 
+
+Theorem 4.1. For the low rank linear model we have: 
+
+• Cbase = {x 7 → M x : rank( M ) ≤ min( rt)Tt=1 }.
+
+• Cres = {x 7 → (I + M )x : rank( M ) ≤ r∗}.
+
+• CGRN −v1 = {x 7 → (αI + M )x : rank( M ) ≤ r∗}.
+
+• CGRN −v2 = {x 7 → (D + M )x : rank( M ) ≤
+
+r∗, D is diagonal }.
+
+• CGRN −v3 ⊃ {x 7 → (D + M )x + σ(wTx)x :rank( M ) ≤ r∗, D is diagonal , w ∈ Rd×1}.
+
+4.2. Trade-off between test error and model complexity 
+
+In the previous section, we characterized the class of models that can be expressed by each architecture. Next, we study the trade-off between the optimal test error achievable by each model and the model complexity, defined as the number of its parameters. Note that all the classes of models characterized in Theo-rem 4.1 are linear functions. For a linear model x 7 →̂ Ax ,its test error (model risk) is given by 
+
+Risk (̂A) = E[( y − ˆy)2]= E
+
+[∥∥∥(A −̂ A)x
+
+∥∥∥2
+
+> `2
+
+]
+
++ σ2
+
+= E[trace {(A −̂ A)xx T(A −̂ A)T}] + σ2
+
+=
+
+∥∥∥A −̂ A
+
+∥∥∥2
+
+> F
+
++ σ2 ,
+
+where we assumes that E[xx T] = I (isotropic features). Since the term σ2 is constant (independent of model ̂ A) we will drop it in sequel without effecting our discussion and focus on the excess risk. For a class of models C we use the notation ER ∗(C) to indicate the minimum excess risk achievable over the class C:
+
+ER ∗(C) := min ̂
+
+> A∈C
+
+∥∥∥A −̂ A
+
+∥∥∥2
+
+> F
+
+.
+
+Note that ER ∗(Cbase (T )) is obtained by the best r-rank ap-proximation to A and ER ∗(Cres ) is obtained by the best 
+
+rT -rank approximation to A − I, both of which have sim-ple characterization in terms of the singular values of A
+
+and A − I, by using the celebrated Eckart–Young–Mirsky theorem. Deriving ER ∗(CGRN −v1 (T )) and ER ∗(CGenB(T) )
+
+are more complicated. In the next theorem, we establish upper bounds on them. 
+
+Theorem 4.2. Consider the singular value decomposition 
+
+A − I = U ΣV T. For a given m ∈ [d], let Um, Σm, Vm
+
+be the top m singular vectors and singular values and define 
+
+∆ := A − I − Ur∗Σr∗V T
+
+> r∗
+
+, where r∗ := ∑T`=1 r`. We then have 
+
+Err ∗(Cres ) = ‖∆‖2 
+
+> F
+
+,
+
+Err ∗(CGRN −v1 ) ≤ ‖ ∆‖2 
+
+> F
+
+− 1
+
+d − r∗
+
+trace( ∆)2 ,
+
+Err ∗(CGRN −v2 ) ≤ ‖ ∆‖2
+
+> F
+
+− max 
+
+{ d∑
+
+> i=1
+
+∆2
+
+> ii
+
+, 1
+
+d − r∗
+
+trace( ∆)2
+
+}
+
+,
+
+where {∆ii }di=1 are the diagonal entries of ∆. In addition, 
+
+Err ∗(CGRN −v3 ) ≤ ‖ ∆‖2 
+
+> F
+
+− max {T 1, T2} ,
+
+T1 := 1
+
+d − r∗
+
+trace( ∆)2 + ν2max 
+
+π(d + 1) ,
+
+T2 := 
+
+> d
+
+∑
+
+> i=1
+
+∆2 
+
+> ii
+
++ ˜ν2max 
+
+π(d + 1) .
+
+Here νmax denotes the maximum eigenvalue of ∆+∆T 
+
+> 2
+
+− 
+
+> 1
+> d−r∗
+
+trace( ∆)Ur∗,⊥U T 
+
+> r∗,⊥
+
+and ˜νmax denotes the maximum eigenvalue of ∆+∆T 
+
+> 2
+
+− diag (∆).
+
+5DeepCrossAttention: Supercharging Transformer Residual Connections 0 20 40 60 80 100      
+
+> r*
+> 6000
+> 4000
+> 2000
+> 0
+> 2000
+> 4000
+> 6000
+> 8000
+> Reduction in test error
+> 246810
+> min
+> 5000
+> 0
+> 5000
+> 10000
+> 15000
+> 20000
+> 25000
+> Reduction in test error
+> G1, d = 100
+> G2, d = 100
+> G1, d = 200
+> G2, d = 200
+> G1, d = 300
+> G2, d = 300
+
+Figure 5. Gain in the model performance achieved by GRN-v1 and GRN-v2 over ResNet. The plots represents the lower bounds for G1
+
+and G2 given in Theorem 4.3(ii). Observe that the gain at larger dimension d is higher. Left panel shows that the gain decreases as the collective rank r∗ of ResNet increases ( λmin = 5 , λmax = 10 ). Right panel shows that the gain increases as the complexity of the target task ( κ = λmin /λ max ) increases ( λmax = 10 and r∗ = 50 ). 
+
+We proceed by discussing the model complexity for each of the architectures, in terms of model size. The number of parameters for ResNet is given by 2dr ∗, for GRN-v1 is given by 2dr ∗ + T (T − 1) /2, and for GRN-v2 is given by 
+
+2dr ∗ + dT (T − 1) /2. Note that by Theorem 4.2, if GRN-v1 and GRN-v2 achieve better Excess risk-model size trade-off compared to ResNet, then we can make this improvement arbitrarily strong by scaling A − I (and so ∆). In the next theorem, we focus on GRN-v1 and GRN-v2 and provide sufficient conditions under which they achieve a better excess risk-model size trade-off. In the second part of the theorem, we also lower bound the improvement that GRN-v1 and GRN-v2 achieve in excess risk compared to ResNet, with using the same number of parameters. 
+
+Theorem 4.3. Assume that A − I  0 and let λmax and 
+
+λmin > 0 respectively denote the maximum and the min-imum eigenvalues of A − I. Define κ := λmin /λ max ≤
+
+1. Consider a ResNet model with collective rank r∗ := ∑Tt=1 rt.
+
+(i) If 
+
+r∗
+
+d ≤ (1 + κ(√κ2 + 1 − κ)) 2 − 1, (4.1) 
+
+then GRN-v1 achieves a better excess risk-model size trade-off compared to ResNet. In addition, if 
+
+r∗ ≤ (1 + κ(√κ2 + d − κ)) 2 − 1, (4.2) 
+
+then GRN-v2 achieves a better trade-off compared to ResNet. Also, GRN-v3 achieves a better trade-off compared to ResNet, if 
+
+r∗ ≤ (1 + η(√η2 + d − η)) 2 − 1.6 , (4.3) 
+
+where η =
+
+√ (κ(1+ ξ0)−ξ0)2+ξ0 
+
+> 1+ ξ0
+
+and ξ0 = 1 
+
+> π(d2−1)
+
+.
+
+(ii ) Consider CGRN −v1 and CGRN −v2 , the class of mod-els that can be expressed by the GRN-v1 and GRN-v2 architectures with the same number of parameters as a ResNet model with T layers and collective rank r∗. Define 
+
+G1 := ER ∗(Cres )−ER ∗(CGRN −v1 ) and G2 := ER ∗(Cres )−
+
+ER ∗(CGRN −v2 ) as the reduction in the optimal excess risk achievable by these classes compared to the optimal excess risk of ResNet. We have 
+
+G1 ≥ (d − r∗)λ2min − (√d + r∗ − √d)2(λ2max − λ2min ) ,G2 ≥ (d − r∗)λ2min − (√1 + r∗ − 1) 2(λ2max − λ2min ) ,G3 ≥
+
+(
+
+d − 1
+
+π(d + 1) − r∗
+
+)
+
+λ2min + 12π(d + 1) λ2max 
+
+− (√1.6 + r∗ − 1) 2(λ2max − λ2min ) .
+
+Our next result quantitatively shows the reduction in the collective rank one can achieve by GRNs, while maintaining the same test error as ResNet. 
+
+Proposition 4.4. Consider a ResNet with collective rank 
+
+r∗ = ∑Tt=1 rt < d. A GRN-v1 or GRN-v2 model can achieve a smaller test error with collective rank r′∗,where r′∗ := r∗−dκ 2 
+
+> 1−κ2
+
+< r ∗. Likewise, a GRN-v3 model achieve a smaller test error with collective rank ˜r∗, where 
+
+˜r′∗ := r∗−dη 2 
+
+> 1−η2
+
+< r ∗, with η =
+
+√ (κ(1+ ξ0)−ξ0)2+ξ0 
+
+> 1+ ξ0
+
+and 
+
+ξ0 = 1 
+
+> π(d2−1)
+
+.
+
+4.3. Insights from the analysis 
+
+Theorem 4.3 allows us to elucidate the role of different factors on the gain achieved by GRNs. 
+
+Role of target task complexity. Note that κ =
+
+λmin /λ max ∈ [0 , 1] is a measure of complexity of the target task. Specifically, as κ decreases, the matrix A becomes closer to a low rank matrix, and hence learning it with low rank models becomes easier. Observe that the thresholds 6DeepCrossAttention: Supercharging Transformer Residual Connections 
+
+given by the right hand side of (4.1) -(4.3) are increasing in 
+
+κ, i.e., for more complex tasks we see a wider range of col-lective rank where GRNs outperforms the trade-off achieved by ResNet. Another way to interpret Theorem 4.3(i) is that for a fixed target task (and so fixed κ), if the collective rank 
+
+r∗ is above this threshold, the ResNet is already rich enough that it is hard to improve upon its trade-off. 
+
+Role of collective rank. Observe that the lower bound on the gains G1, G2, G3 given by Theorem 4.3(ii) are decreas-ing in r∗. In other words, when the collective rank r∗ of ResNet becomes smaller, the level of information dilution occurring in ResNet increases, giving GRNs a better lever-age to improve model perplexity with the same number of parameters. 
+
+Role of input dimension. Note that the upper bounds on 
+
+r∗ given by (4.1) to (4.3) increase with the input dimension 
+
+d. Furthermore, the lower bounds on the gains G1, G2, G3
+
+given in Theorem 4.3(ii) also increase with d. Therefore, for larger input dimensions, we have both a wider range for r∗
+
+where GRNs outperforms the trade-off achieved by ResNet, and moreover, we obtain a larger gain in reducing model error. We refer to Figure 5 for an illustration of these trends. 
+
+4.4. Extension to nonlinear models 
+
+We recall the definition of Bottleneck rank from (Jacot, 2023). For a function f : Ω 7 → Rd, its Bottleneck rank, denoted by rank BN (f, Ω) is the smallest integer k such that f can be factorized as f = h ◦ g with inner di-mension k (i,e, g : Ω 7 → Rk and h : Rk 7 → Rd) It is also closely related to the Jacobian rank of a function de-fined as rank J (f ) = max x∈Ω rank[ Jf (x)] . In general, 
+
+rank J (f ) ≤ rank BN (f ), but for functions of the form 
+
+f = ψ ◦ A ◦ φ (for a linear map A and two bijections ψ and 
+
+φ), we have rank J (f ) = rank BN (f ) = rank( A). These two notions of rank satisfy the following properties (Jacot, 2023): 
+
+• rank( f ◦ g) ≤ min {rank( f ), rank( g)}• rank( f + g) ≤ rank( f ) + rank( g)
+
+Proposition 4.5. Consider an MLP with ft(z) =
+
+Vtϕ(Utz) with Ut ∈ Rrt×d, Vt ∈ Rd×rt . Denote by 
+
+r∗ := ∑Tt=1 rt the collective rank of the network. We have 
+
+• Cbase ⊆ {f : rank BN (f ) ≤ min( rt)Tt=1 
+
+}.
+
+• Cres ⊆ { id + f : rank BN (f ) ≤ r∗}.
+
+• CGRN −v1 ⊆ { α · id + f : rank BN (f ) ≤ r∗}.
+
+• CGRN −v2 ⊆ { g : g(x) = Dx +f (x) : rank BN (f ) ≤
+
+r∗, D is diagonal }.
+
+## 5. Experiments 
+
+We conduct experiments on language modeling and image classification tasks to evaluate the effectiveness of DCA and to validate our theoretical insights. For the language model-ing tasks, the performance of DCA is compared against the standard transformer (Vaswani, 2017) on the LM1B (Chelba et al., 2013) and C4 (Raffel et al., 2020a) datasets. Unless stated otherwise, each model has an embedding dimension of 512 and an MLP dimension of four times the embedding dimension. By default, DCA uses a stack of all the previous layer outputs as input to the GRNs. When DCA includes only the first and last-k layer outputs explicitly in the input stack (see Section 3.1), then this is denoted as k-DCA. Each model is trained with a sequence length of 128 and a batch size of 2048 over 64 TPUs for 500k steps, totaling 131B tokens. We use the AdamW optimizer (Loshchilov & Hutter, 2017) with β1 = 0 .9, β2 = 0 .98 , a weight decay of 
+
+0.1, and a learning rate of 0.0016 with 1000 warmup steps and an inverse square root schedule (Raffel et al., 2020b). 
+
+Model depth scaling. For the first experiment, we pre-train a transformer and DCA on LM1B. We increase the model depth from 6 to 42 layers and show the relation between perplexity (Jelinek et al., 1977) and model size in Figure 6. The figure shows that DCA obtains a lower perplexity for a given parameter budget. Notably, the 30-layer DCA model obtains a better perplexity than the 42-layer transformer, making DCA more parameter-efficient than adding layers. 0.6 0.8 1.0 1.2 1.4 1.6   
+
+> Number of parameters 1e8
+> 14
+> 15
+> 16
+> 17
+> 18
+> 19
+> Perplexity
+> Transformer
+> DCA
+> Figure 6. Perplexity on LM1B with 6, 12, 18, 24, 30, 36, and 42 layer transformer and DCA models.
+
+First and last-k. DCA can be made more efficient by in-cluding only the first and last-k layer outputs explicitly in the input stack to the GRNs (see Section 3.1). In this ex-periment, we study the effect of k on a 24-layer model’s efficiency and quality. Table 1 shows that reducing k speeds up training while only slightly increasing the perplexity. Either small or large k obtain good training efficiency, as DCA then obtains the final perplexity of the transformer in a third of the time. Setting k = 2 results in a model with 48% 7DeepCrossAttention: Supercharging Transformer Residual Connections 
+
+lower inference latency compared to k = 24 , thus setting k
+
+to be small results in efficient training and fast inference. 
+
+Table 1. Training speed in batches per second, normalized time for a method to reach the perplexity of the transformer, and the final perplexity (PPL) of the transformer and DCA with varying k.METHOD SPEED TIME PPL TRANSFORMER 8.14 ±0.18 1.00 15.14 ±0.06 1-DCA 5.62 ±0.04 0.33 14.48 ±0.05 2-DCA 5.39 ±0.06 0.33 14.41 ±0.04 4-DCA 5.01 ±0.12 0.37 14.50 ±0.03 8-DCA 4.35 ±0.14 0.47 14.49 ±0.02 16-DCA 3.86 ±0.08 0.40 14.35 ±0.07 24-DCA 3.72 ±0.08 0.39 14.35 ±0.00 
+
+Training time. The effectiveness of a model architecture heavily depends on its training efficiency. Figure 7 shows the training time-perplexity trade-off for 24, 36, and 42 layer transformer and 2-DCA models. The figure shows that 2-DCA achieves better perplexity for a given training time, highlighting the training efficiency of DCA. The training time versus perplexity results when DCA uses all previous layer outputs in the GRNs are provided in Appendix F. 0.00 0.25 0.50 0.75 1.00 1.25 1.50 1.75  
+
+> Training time (s) 1e5
+> 14
+> 15
+> 16
+> 17
+> Perplexity
+> Layers
+> 24
+> 36
+> 42
+> Model
+> Transformer
+> 2-DCA
+
+Figure 7. Perplexity on LM1B versus the training time with trans-former and 2-DCA models of various depths. 
+
+Model width scaling. Our theoretical results indicate that the benefit of GRN is inversely related to the rank of the model. With this experiment, we validate whether the theo-retical results carry over to the transformer architecture by varying the model width. Table 2 shows the final perplexity of a 12-layer model with an embedding dimension ranging from 64 till 1024, pre-trained on LM1B. The delta col-umn, with the difference between the transformer and DCA, shows that the benefit of DCA is reduced as the width of the model increases, which is consistent with our theoretical results. These results are in contrast with the depth scaling results, where the improvement of DCA is maintained for deeper models. 
+
+Model scaling. For this experiment, we train transformer 
+
+Table 2. Perplexity on LM1B for models of varying widths. WIDTH TRANSFORMER DCA DELTA 
+
+64 45.75 ±0.06 42.94 ±0.07 -2.82 192 25.49 ±0.15 23.92 ±0.04 -1.57 384 18.86 ±0.04 17.83 ±0.04 -1.03 768 14.70 ±0.04 14.11 ±0.07 -0.59 1024 13.61 ±0.01 13.22 ±0.06 -0.39 
+
+and 8-DCA models of increasing size on the C4 dataset. The results in Table 3 show that DCA consistently outperforms the standard transformer model. The absolute improvement in perplexity decreases for large models, which is consistent with the width scaling results. The perplexity throughout training is provided in Appendix G. 
+
+Table 3. Perplexity on C4 for models of varying depths and widths. D W PARAMS TRANSF . 8-DCA DELTA 
+
+9 771 75M 27.876 26.443 -1.443 18 771 124M 23.013 21.810 -1.203 13 1111 179M 21.570 20.461 -1.109 18 1111 234M 19.756 18.824 -0.932 18 1600 449M 17.166 16.764 -0.402 
+
+Retrofitting pre-trained models. Since our method is iden-tical to a standard residual network at initialization, adding DCA to a pre-trained model does not alter its function. In Table 4, we compare continuing training the pre-trained model with adding DCA to the pre-trained model. Incor-porating DCA results in a perplexity improvement of 0.19 after 60k extra training steps, compared to just 0.02 for the transformer. Thus, pre-trained models with a residual architecture can also benefit from incorporating DCA. 
+
+Table 4. Perplexity on LM1B for extended training of 6-layer mod-els. DCA is added to a 500k steps pre-trained transformer. STEPS TRANSFORMER DCA DELTA 
+
+500 K 18.98 ±0.01 18.98 ±0.01 0.00 500 K + 20 K 18.96 ±0.02 18.81 ±0.01 -0.15 500 K + 40 K 18.96 ±0.01 18.79 ±0.03 -0.17 500 K + 60 K 18.96 ±0.01 18.79 ±0.04 -0.17 
+
+Training stability. The occurrence of loss spikes is a prob-lem when training large models as they can disrupt an ex-pensive training run (Chowdhery et al., 2023). In Figures 7 and 8, we indeed observe clear loss spikes with the trans-former model. Interestingly, training DCA is more stable, showing no significant loss spikes even for large models. This constitutes an important benefit of DCA. 
+
+Comparison with related work. We compare the perplex-ity of DCA with those obtained by the recent related works LAuReL (Menghani et al., 2024), DenseFormer (Pagliardini 8DeepCrossAttention: Supercharging Transformer Residual Connections 
+
+et al., 2024), and Hyper-Connections (dynamic) (Zhu et al., 2024) in Table 5. DCA improves upon the prior best method, hyper-connections, with a difference in perplexity of 0.59, which is the biggest improvement among the methods. 
+
+Table 5. Perplexity (PPL) and parameter count on LM1B using a 6-layer model, comparing DCA with related work. METHOD PARAMS PPL TRANSFORMER 49.65M 18.98 ±0.01 LA UREL-PA 49.75M 18.99 ±0.05 1X1-D ENSE FORMER 49.65M 18.80 ±0.11 HYPER -C ONNECTIONS 49.68M 18.65 ±0.03 DCA ( OURS ) 49.73M 18.06 ±0.01 
+
+Table 6. Perplexity (PPL) on C4 using a 13-layer model and em-bedding dimension 1111, comparing DCA with related work. The baseline model has roughly 179M parameters. METHOD PPL TRANSFORMER 21.534 LA UREL-PA 20.951 1X1-D ENSE FORMER 21.168 HYPER -C ONNECTIONS (STACK SIZE =4) 21.077 HYPER -C ONNECTIONS (STACK SIZE =10) 20.718 
+
+8-DCA ( OURS ) 20.392 
+
+Ablation study. To determine the relative gain of each of the proposed generalizations, in Table 7 we show the per-plexity obtained by each method described in Section 3. The GRN versions use one GRN instance per decoder block. DCA, in contrast, uses three independent instances of GRN-v3 per decoder block. The biggest improvement in perplex-ity comes from GRN-v1, followed by DCA and GRN-v2. 
+
+Table 7. Ablation study of DCA, showing the parameter count and the perplexity (PPL) on LM1B with a 6-layer model. ABLATION PARAMS PPL TRANSFORMER 49.65M 18.98 ±0.02 GRN-V1 49.65M 18.80 ±0.11 GRN-V2 49.66M 18.43 ±0.04 GRN-V3 49.68M 18.41 ±0.10 DCA 49.73M 18.06 ±0.01 
+
+ImageNet classification. In addition to the language mod-elling experiments, we also experiment with image classifi-cation using the ImageNet dataset and the vision transformer (ViT) model (Dosovitskiy et al., 2021). Since the ViT model is transformer-based, DCA can be incorporate in the same way as for the language models presented earlier. In Ta-ble 8, we present the results on the ViT-S/16 model (22M parameters) and follow the experimental setup by Beyer et al. (2022). The results show a 0.7% improvement in classification accuracy, demonstrating that DCA effectively generalizes to the vision domain. 
+
+Table 8. Loss and Accuracy on ImageNet classification. METHOD LOSS ACCURACY 
+
+VIT 0.5698 76.4 VIT + DCA ( OURS ) 0.5284 77.1 
+
+## 6. Conclusion 
+
+This paper introduces DeepCrossAttention (DCA), a novel transformer architecture that enhances the flow of informa-tion across layers. It achieves lower perplexity for a given parameter budget and training time for a minimal increase in model parameters. DCA enables dynamic interactions between layer outputs by building on three generalizations of the standard residual network (GRN). We showed theoret-ically that GRN obtains a better test error-model complexity trade-off. In our DCA experiments we observe significant improvements in model stability, convergence, and quality. 
+
+## Acknowledgment 
+
+Adel Javanmard is supported in part by the NSF Award DMS-2311024, the Sloan fellowship in Mathematics, an Adobe Faculty Research Award, an Amazon Faculty Re-search Award, and an iORB grant from USC Marshall School of Business. The authors are grateful to anonymous reviewers for their feedback on improving this paper. 
+
+## Impact Statement 
+
+This paper presents work whose goal is to advance the field of Machine Learning. There are many potential societal consequences of our work, none which we feel must be specifically highlighted here. 
+
+## References 
+
+Beyer, L., Zhai, X., and Kolesnikov, A. Better plain vit base-lines for imagenet-1k. arXiv preprint arXiv:2205.01580 ,2022. Chelba, C., Mikolov, T., Schuster, M., Ge, Q., Brants, T., Koehn, P., and Robinson, T. One billion word benchmark for measuring progress in statistical language modeling. 
+
+arXiv preprint arXiv:1312.3005 , 2013. Chowdhery, A., Narang, S., Devlin, J., Bosma, M., Mishra, G., Roberts, A., Barham, P., Chung, H. W., Sutton, C., Gehrmann, S., et al. Palm: Scaling language modeling with pathways. Journal of Machine Learning Research ,24(240):1–113, 2023. 9DeepCrossAttention: Supercharging Transformer Residual Connections 
+
+Dosovitskiy, A., Beyer, L., Kolesnikov, A., Weissenborn, D., and Zhai, X. An image is worth 16x16 words: Trans-formers for image recognition at scale. International Conference on Learning Representations , 2021. Gong, Y., Chung, Y.-A., and Glass, J. Ast: Audio spec-trogram transformer. In Interspeech 2021 , pp. 571–575, 2021. He, K., Zhang, X., Ren, S., and Sun, J. Deep residual learn-ing for image recognition. In Proceedings of the IEEE conference on computer vision and pattern recognition ,pp. 770–778, 2016. Huang, G., Liu, Z., Van Der Maaten, L., and Weinberger, K. Q. Densely connected convolutional networks. In 
+
+Proceedings of the IEEE conference on computer vision and pattern recognition , pp. 4700–4708, 2017. Jacot, A. Implicit bias of large depth networks: a notion of rank for nonlinear functions. The Eleventh International Conference on Learning Representations , 2023. Jelinek, F., Mercer, R. L., Bahl, L. R., and Baker, J. K. Per-plexity—a measure of the difficulty of speech recognition tasks. The Journal of the Acoustical Society of America ,62(S1):S63–S63, 1977. Loshchilov, I. and Hutter, F. Decoupled weight decay regu-larization. arXiv preprint arXiv:1711.05101 , 2017. Menghani, G., Kumar, R., and Kumar, S. Laurel: Learned augmented residual layer. In Workshop on Efficient Sys-tems for Foundation Models II , 2024. Pagliardini, M., Mohtashami, A., Fleuret, F., and Jaggi, M. Denseformer: Enhancing information flow in trans-formers via depth weighted averaging. arXiv preprint arXiv:2402.02622 , 2024. Raffel, C., Shazeer, N., Roberts, A., Lee, K., Narang, S., Matena, M., Zhou, Y., Li, W., and Liu, P. J. Exploring the limits of transfer learning with a unified text-to-text transformer. Journal of Machine Learning Research , 21 (140):1–67, 2020a. Raffel, C., Shazeer, N., Roberts, A., Lee, K., Narang, S., Matena, M., Zhou, Y., Li, W., and Liu, P. J. Exploring the limits of transfer learning with a unified text-to-text transformer. Journal of machine learning research , 21 (140):1–67, 2020b. Srivastava, R. K., Greff, K., and Schmidhuber, J. Training very deep networks. Advances in neural information processing systems , 28, 2015. Vaswani, A. Attention is all you need. Advances in Neural Information Processing Systems , 2017. Zhu, D., Huang, H., Huang, Z., Zeng, Y., Mao, Y., Wu, B., Min, Q., and Zhou, X. Hyper-connections. arXiv preprint arXiv:2409.19606 , 2024. 10 DeepCrossAttention: Supercharging Transformer Residual Connections 
+
+## A. Proof of Theorem 4.1 
+
+We restate each of the claims in the theorem statement, followed by its proof. 
+
+• Cbase = {x 7 → M x : rank( M ) ≤ min( rt)Tt=1 }.Note that by the inequality rank( AB ) ≤ min {rank( A), rank( B)}, if M is of the form ∏Tt=1 Vt then rank( M ) ≤
+
+min( rt)Tt=1 . For the other direction consider any matrix M with rank( M ) = r0 ≤ min( rt)Tt=1 , and its SVD as M =
+
+P SQ T with P , Q ∈ Rd×r0 with full column ranks. By setting, V1 = P SQ T and V2 = . . . = VT = QQ T we have 
+
+M = ∏Tt=1 Vt, because QTQ = I and also rank( Vt) = r0 ≤ min( rt)Tt=1 ≤ rt.
+
+• Cres = {x 7 → (I + M )x : rank( M ) ≤ r∗}
+
+We have 
+
+> T
+
+∏
+
+> t=1
+
+(I + Vt) = V1
+
+> T
+
+∏
+
+> t=2
+
+(I + Vt) + 
+
+> T
+
+∏
+
+> t=2
+
+(I + Vt)= V1
+
+> T
+
+∏
+
+> t=2
+
+(I + Vt) + V2
+
+> T
+
+∏
+
+> t=3
+
+(I + Vt) + 
+
+> T
+
+∏
+
+> t=3
+
+(I + Vt)= . . . 
+
+= I + VT + 
+
+> T−1
+
+∑
+
+> t=1
+
+VtT∏ 
+
+> τ=t+1
+
+(I + Vτ )
+
+Note that each of the summand is of rank at most rt, so it can be written as I + M with rank( M ) ≤ ∑Tt=1 rt. Hence 
+
+∏Tt=1 (I + Vt)x ∈ C res .We next show that any I + M with rank( M ) := r ≤ ∑Tt=1 rt can be written as ∏Tt=1 (I + Vt) with rank( Vt) ≤ rt for 
+
+t ∈ [T ]. We show this claim by induction. For the basis ( T = 1 ), we can take V1 = M . To complete the induction step, we need to find V ∈ Rd×d such that rank( V ) = rT and (I + V )−1(I + M ) − I is of rank at most ∑T −1 
+
+> t=1
+
+rt. Then by the induction hypothesis, we can write 
+
+(I + V )−1(I + M ) =  
+
+> T−1
+
+∏
+
+> t=1
+
+(I + Vt) ,
+
+with rank( Vt) ≤ rt, which completes the proof. Without loss of generality, we assume rT ≤ r; otherwise we can take 
+
+VT = M and Vt = 0 for t ≤ T − 1.To find such V we write M = P Q T with P , Q ∈ Rd×r having full column rank. Define P1, Q1 ∈ Rd×rT obtaining by considering the first rT columns of P and Q. Additionally, define 
+
+B := P1(I + QT 
+
+> 1
+
+P1)−1, C = Q1(I + P T 
+
+> 1
+
+Q1) . (A.1) We next construct V by setting V := BC T. Clearly, rank( V ) = rT . We also have 
+
+(I + V )−1(I + M ) − I = ( I + BC T)−1M + ( I + BC T)−1 − I
+
+= ( I + BC T)−1M + I − B(I + CTB)−1CT − I
+
+= ( I + BC T)−1(P1QT 
+
+> 1
+
++ P∼1QT
+
+> ∼1
+
+) − B(I + CTB)−1CT .
+
+Here we consider the notation P = [ P1|P∼1] and Q = [ Q1|Q∼1]. The second step above follows from the Woodbury matrix identity. Rearranging the terms we have 
+
+(I + V )−1(I + M ) − I = ( I + BC T)−1P∼1QT 
+
+> ∼1
+
++ ( I + BC T)−1P1QT 
+
+> 1
+
+− B(I + CTB)−1CT . (A.2) The first term above is of rank at most rank( P∼1) = r − rT ≤ ∑T −1 
+
+> t=1
+
+rt. We next show that the second and the third term cancel each other. Equivalently, we show that 
+
+P1QT 
+
+> 1
+
+= ( I + BC T)B(I + CTB)−1CT . (A.3) 11 DeepCrossAttention: Supercharging Transformer Residual Connections 
+
+To do this, we next show that 
+
+P1 = ( I + BC T)B, QT 
+
+> 1
+
+= ( I + CTB)−1CT . (A.4) Recalling (A.1) we have P1 = B(I + QT 
+
+> 1
+
+P1). Also 
+
+CTB = ( I + QT 
+
+> 1
+
+P1)QT 
+
+> 1
+
+P1(I + QT 
+
+> 1
+
+P1)−1
+
+= ( I + QT 
+
+> 1
+
+P1)( I + QT 
+
+> 1
+
+P1 − I)( I + QT 
+
+> 1
+
+P1)−1
+
+= ( I + QT 
+
+> 1
+
+P1)( I − (I + QT 
+
+> 1
+
+P1)−1) (A.5) 
+
+= I + QT 
+
+> 1
+
+P1 − I
+
+= QT 
+
+> 1
+
+P1 (A.6) Therefore, P1 = B(I + CTB) = ( I + BC T)B. Likewise, recalling (A.1) we have Q1 = C(I + P T 
+
+> 1
+
+Q1)−1. Hence, 
+
+QT 
+
+> 1
+
+= ( I + QT 
+
+> 1
+
+P1)−1CT = ( I + CTB)−1CT,
+
+using (A.6). This completes the proof of (A.4) and so (A.3). Invoking (A.2) we get 
+
+(I + V )−1(I + M ) − I = ( I + BC T)−1P∼1QT 
+
+> ∼1
+
+,
+
+which is of rank at most r − rT ≤ ∑T −1 
+
+> t=1
+
+rt, which completes the proof of the induction step. 
+
+• CGRN −v1 = {x 7 → (αI + M )x : rank( M ) ≤ r∗}.We prove this claim by induction. The induction basis ( T = 0 ) follows readily since G1b1 = b1x. Assume the induction hypothesis for t. We have ft(gt(x)) = VtGtbt and so Gt+1 = [ VtGtbt | Gt]. Writing bt+1 =
+
+[ b1
+
+b∼1
+
+]
+
+we obtain 
+
+Gt+1 bt+1 = VtGtbtb1 + Gtb∼1 .
+
+By induction hypothesis, Gtb∼1 is the set of functions of the form (αI + M )x with rank( M ) ≤ ∑t−1 
+
+> `=1
+
+r`.Since rank( Vt) ≤ rt the set of functions that can be represented as Gt+1 bt+1 is a subset of (αI + M )x with rank( M ) ≤
+
+∑t`=1 r`. Conversely, any given M of rank ∑t`=1 r` can be written as M = M1 + V with rank( M1) = ∑t−1 
+
+> `=1
+
+r` and 
+
+rank( V ) = rt. By induction hypothesis, (αI + M1)x can be expressed by the term Gtb∼1. In addition, V x can also be expressed by the term VtGtbtb1, by taking Vt = V , bt = (0 , 0, . . . , 1) T, b1 = 1 , which is possible since they are free from the choice of b∼1.Hence, Gt+1 bt+1 the set of functions of the form (αI + M )x with rank( M ) ≤ ∑t`=1 r`, completing the induction step. 
+
+• CGRN −v2 = {x 7 → (D + M )x : rank( M ) ≤ r∗, D is diagonal }.The proof follows similar to that of GRN-v1. For the induction basis ( T = 0 ), we have (G1 b1)1 = ( x b1)1 = diag (b1)x.Assume the induction hypothesis for t. We have ft(gt(x)) = Vt(Gt bt)1 and so Gt+1 = [ Vt(Gt bt)1 | Gt]. Writing 
+
+bt+1 =
+
+[
+
+b(1) 
+
+> t+1
+
+|b(∼1) 
+
+> t+1
+
+]
+
+we obtain 
+
+Gt+1 bt+1 = diag (b(1) 
+
+> t+1
+
+)Vt(Gt bt)1 + Gt b(∼1)  
+
+> t+1
+
+,
+
+and hence 
+
+(Gt+1 bt+1 )1 = diag (b(1) 
+
+> t+1
+
+)Vt(Gt bt)1 + ( Gt b(∼1)  
+
+> t+1
+
+)1 .
+
+By induction hypothesis, (Gt b(∼1)  
+
+> t+1
+
+)1 is the set of functions of the form (D + M )x with rank( M ) ≤ ∑t−1 
+
+> `=1
+
+r`. By varying Vt, bt and b(1)  
+
+> t
+
+, the term diag (b(1) 
+
+> t+1
+
+)Vt(Gt bt)1 covers all functions of the form V x with V a d × d matrices of rank rt (for given V of rank rt, take Vt = V , bt = [ 0|0| . . . |1], b(1)  
+
+> t+1
+
+= 1, which is possible since they are free from 12 DeepCrossAttention: Supercharging Transformer Residual Connections 
+
+the choice of b(∼1)  
+
+> t+1
+
+). Hence, (Gt+1 bt+1 )1 is the set of functions of the form (D + M )x with rank( M ) ≤ ∑t`=1 r`,completing the induction step. 
+
+• CGRN −v3 ⊃ { x 7 → (D + M )x + σ(wTx)x : rank( M ) ≤ r∗, D is diagonal , w ∈ Rd×1}.We prove that 
+
+CGRN −v3 ⊃
+
+{
+
+x 7 →
+
+> T
+
+∑
+
+> t=1
+
+Vtx + σ(wTx)x + Dx , rank( Vt) = rt, D is diagonal 
+
+}
+
+.
+
+we show the claim by induction on the number of layers. For the basis T = 0 , we have 
+
+(G1 (b1 + ¯w1)) 1 = diag (b1 + ¯w1)x = diag (b1)x + σ(wT 
+
+> 1
+
+x)x .
+
+Assume the induction hypothesis for t. We have ft(gt(x)) = Vt(Gt ct)1 with ct := bt + 1σ(wT 
+
+> t
+
+Gt) and so Gt+1 =[Vt(Gt ct)1 | Gt]. Writing ct+1 =
+
+[
+
+c(1) 
+
+> t+1
+
+|c(∼1) 
+
+> t+1
+
+]
+
+we obtain 
+
+Gt+1 ct+1 = diag (c(1) 
+
+> t+1
+
+)Vt(Gt ct)1 + Gt c(∼1)  
+
+> t+1
+
+,
+
+and hence 
+
+(Gt+1 ct+1 )1 = diag (c(1) 
+
+> t+1
+
+)Vt(Gt ct)1 + ( Gt c(∼1)  
+
+> t+1
+
+)1 .
+
+We take bt = [ 0|0| . . . |1] and wt = 0, and so ct = [ 0|0| . . . |1]. We also take c(1)  
+
+> t+1
+
+= 1. So, 
+
+(Gt+1 ct+1 )1 = Vtx + ( Gt c(∼1)  
+
+> t+1
+
+)1 .
+
+By induction hypothesis, (Gt c(∼1)  
+
+> t+1
+
+)1 covers all the functions of the form x 7 → ∑t−1 
+
+> `=1
+
+V`x + σ(wTx)x + Dx , which along with the above equation completes the induction step. Finally, note that any matrix M ∈ Rd×d of rank r∗ = ∑Tt=1 rt can be written as ∑Tt=1 Vt, for some choices of matrices 
+
+Vt ∈ Rd×d of rank rt.
+
+## B. Proof of Theorem 4.2 
+
+By Eckart–Young–Mirsky theorem, Ur∗Σr∗V T 
+
+> r∗
+
+is the best rank r∗ approximation to A−I, by which we obtain ER ∗(Cres ) = 
+
+‖∆‖2 
+
+> F
+
+.We also have by definition, 
+
+ER ∗(CGRN −v1 ) = min 
+
+> α, rank( ˜A)= r∗
+
+∥∥∥A − αI − ˜A
+
+∥∥∥2
+
+> F
+
+. (B.1) Recall the SVD of A − I = U ΣV T and consider the following decompositions: 
+
+U = [ Ur∗ | Ur∗,⊥], V = [ Vr∗ | Vr∗,⊥], Σ =
+
+[Σr∗ 00 Σr∗,⊥
+
+]
+
+,
+
+with Ur∗,⊥, Vr∗,⊥ ∈ Rd×(d−r∗), and Σr∗,⊥ a diagonal matrix of size d − r∗. Since U is unitary matrix, we have 
+
+Ur∗ U T 
+
+> r∗
+
++ Ur∗,⊥U T 
+
+> r∗,⊥
+
+= I.We then note that for any choice of α, ˜A, we have 
+
+A − αI − ˜A = A − I + (1 − α)I − ˜A
+
+= ∆ + Ur∗Σr∗V T 
+
+> r∗
+
++ (1 − α)I − ˜A
+
+= ∆ + Ur∗Σr∗V T 
+
+> r∗
+
++ (1 − α)Ur∗ U T 
+
+> r∗
+
++ (1 − α)Ur∗,⊥U T 
+
+> r∗,⊥
+
+− ˜A .
+
+13 DeepCrossAttention: Supercharging Transformer Residual Connections 
+
+Next, by taking ˜A = Ur∗Σr∗V T 
+
+> r∗
+
++ (1 − α)Ur∗ U T 
+
+> r∗
+
+= Ur∗[Σr∗V T 
+
+> r∗
+
++ (1 − α)U T 
+
+> r∗
+
+] as the rank-r∗ matrix, we obtain 
+
+A − αI − ˜A = ∆ + (1 − α)Ur∗,⊥U T 
+
+> r∗,⊥
+
+.
+
+Invoking the characterization (B.1), we arrive at 
+
+ER ∗(CGRN −v1 ) ≤ min 
+
+> α
+
+∥∥∆ + (1 − α)Ur∗,⊥U T
+
+> r∗,⊥
+
+∥∥2
+
+> F
+
+= min  
+
+> ˜α
+
+‖∆‖2 
+
+> F
+
++ ˜ α2 ∥∥Ur∗,⊥U T
+
+> r∗,⊥
+
+∥∥2 
+
+> F
+
+− 2˜ αtrace( ∆TUr∗,⊥U T
+
+> r∗,⊥
+
+)= min  
+
+> ˜α
+
+‖∆‖2 
+
+> F
+
++ ( d − r∗)˜ α2 − 2˜ αtrace( ∆)= ‖∆‖2 
+
+> F
+
+− 1
+
+d − r∗
+
+trace( ∆)2 ,
+
+where in the second equality, we used the fact that Ur∗,⊥ is unitary and so 
+
+∥∥∥Ur∗,⊥U T
+
+> r∗,⊥
+
+∥∥∥2
+
+> F
+
+= d − r∗. In addition, observed that 
+
+∆ = A − I − Ur∗ Σr∗ V T 
+
+> r∗
+
+= U ΣV T − Ur∗ Σr∗ V T 
+
+> r∗
+
+= Ur∗,⊥Σr∗,⊥V T 
+
+> r∗,⊥
+
+.
+
+Therefore, 
+
+∆TUr∗,⊥U T 
+
+> r∗,⊥
+
+= Vr∗,⊥Σr∗,⊥U T
+
+> r∗,⊥
+
+Ur∗,⊥U T 
+
+> r∗,⊥
+
+= Vr∗,⊥Σr∗,⊥U T 
+
+> r∗,⊥
+
+= ∆T ,
+
+and so trace( ∆TUr∗,⊥U T
+
+> r∗,⊥
+
+) = trace( ∆T) = trace( ∆). This completes the proof of the upper bound on ER ∗(CGRN −v1 ).For ER ∗(CGRN −v2 ) we have 
+
+ER ∗(CGRN −v2 ) ≤ min  
+
+> Ddiagonal
+
+∥∥A − D − Ur∗Σr∗V T
+
+> r∗
+
+∥∥F
+
+= min   
+
+> Ddiagonal
+
+‖∆ + I − D‖2
+
+> F
+
+= min  
+
+> ˜Ddiagonal
+
+∥∥∥∆ − ˜D
+
+∥∥∥2
+
+> F
+
+= ‖∆‖2 
+
+> F
+
+−
+
+> d
+
+∑
+
+> i=1
+
+∆2 
+
+> ii
+
+. (B.2) In addition, since GRN-v2 optimizes over a larger class of models (using diagonals instead of scale of identity), we have 
+
+ER ∗(CGRN −v2 ) ≤ ER ∗(CGRN −v1 ) ≤ ‖ ∆‖2 
+
+> F
+
+− 1
+
+d − r∗
+
+trace( ∆)2 (B.3) Combining (B.2) and (B.3) we obtain the claimed upper bound on ER ∗(CGRN −v2 ).We next proceed to bound ER ∗(CGRN −v3 ). By Theorem 4.1, this quantity is at most the optimal objective value of the following optimization problem: 
+
+min   
+
+> D,M,w
+
+E
+
+[∥∥Ax − Dx − M x − σ(wTx)x∥∥2
+
+> `2
+
+]
+
+(B.4) subject to rank( M ) ≤ r∗, D is diagonal , w ∈ Rd .
+
+We calculate the expectation in the objective over the gaussian vector x ∼ N(0 , I). Define the shorthand B := A − D − M .We write 
+
+E
+
+[∥∥Bx − σ(wTx)x∥∥2
+
+> `2
+
+]
+
+= ‖B‖2 
+
+> F
+
++ E[σ(wTx)2 ‖x‖2 
+
+> `2
+
+− 2σ(wTx)xTBx ]= ‖B‖2 
+
+> F
+
++ E[σ(wTx)2 ‖x‖2 
+
+> `2
+
+] − 2trace (B E[σ(wTx)xx T]) (B.5) These two expectations are characterized by our next lemma. 14 DeepCrossAttention: Supercharging Transformer Residual Connections 
+
+Lemma B.1. Suppose that x ∼ N(0 , I) and let σ(z) = z1(z ≥ 0) be the ReLu function. Then, 
+
+E[σ(wTx)2 ‖x‖2 
+
+> `2
+
+] = ‖w‖2
+
+> `2
+
+d + 1 2 , (B.6) 
+
+E[σ(wTx)xx T] = 1
+
+√2π
+
+(
+
+‖w‖`2 I + ww T
+
+‖w‖`2
+
+)
+
+. (B.7) Using the result of Lemma B.1 in (B.5) we obtain 
+
+E
+
+[∥∥Bx − σ(wTx)x∥∥2
+
+> `2
+
+]
+
+= ‖B‖2 
+
+> F
+
++ ‖w‖2
+
+> `2
+
+d + 1 2 −
+
+√ 2
+
+π
+
+(
+
+‖w‖`2 trace( B) + wTBw 
+
+‖w‖`2
+
+)
+
+. (B.8) With this characterization, we next proceed to calculate the optimal objective value of (B.4) . We start by minimizing over w. To do this, we first fix ‖w‖`2 = α, and optimize over the direction of w, and then optimize over α. Note that 
+
+wTBw = wT(B + BT)/2w. Since (B + BT)/2 is symmetric, the maximum is achieved when w s in the direction of its maximum eigenvalue. Define λB 
+
+> max
+
+as the maximum eigenvalue of (B + BT)/2. We then have 
+
+min  
+
+> w
+
+E
+
+[∥∥Bx − σ(wTx)x∥∥2
+
+> `2
+
+]
+
+= min  
+
+> α≥0
+
+‖B‖2 
+
+> F
+
++ α2 d + 1 2 −
+
+√ 2
+
+π α (trace( B) + λB
+
+> max
+
+)
+
+= ‖B‖2 
+
+> F
+
+− (trace( B) + λB
+
+> max
+
+)2
+
+π(d + 1) . (B.9) We next continue with minimization over M , D. Since we want to derive upper bound on the minimum objective value, we consider two choices of (M , D) motivated by the analysis of GRN-v1 and GRN-v2. 
+
+• Choice 1: Similar to the analysis of GRN-v1, we set M = Ur∗[Σr∗V T 
+
+> r∗
+
++ (1 − α)U T 
+
+> r∗
+
+] and D = αI with 
+
+α = 1 + 1 
+
+> d−r∗
+
+trace( ∆). With these choices we have 
+
+B = A − M − D
+
+= A − I − M + (1 − α)I
+
+= ∆ − (1 − α)Ur∗U T 
+
+> r∗
+
++ (1 − α)I
+
+= ∆ + (1 − α)Ur∗,⊥U T
+
+> r∗,⊥
+
+= ∆ − 1
+
+d − r∗
+
+trace( ∆)Ur∗,⊥U T 
+
+> r∗,⊥
+
+.
+
+In addition, 
+
+∥∥∥Ur∗,⊥U T
+
+> r∗,⊥
+
+∥∥∥2
+
+> F
+
+= d − r∗ and trace( ∆TUr∗,⊥U T
+
+> r∗,⊥
+
+) = trace( ∆). Hence, 
+
+‖B‖2 
+
+> F
+
+= ‖∆‖2 
+
+> F
+
+− 1
+
+d − r∗
+
+trace( ∆)2 .
+
+Furthermore, trace( B) = 0 . Using these identities in (B.9) we obtain that the optimum objective value of (B.4) satisfies the following: 
+
+OP T ≤ ‖ ∆‖2 
+
+> F
+
+− 1
+
+d − r∗
+
+trace( ∆)2 − ν2max 
+
+π(d + 1) , (B.10) with νmax denoting the maximum eigenvalue of ∆+∆T 
+
+> 2
+
+− 1 
+
+> d−r∗
+
+trace( ∆)Ur∗,⊥U T
+
+> r∗,⊥
+
+.
+
+• Choice 2: Similar to the analysis of GRN-v2, we set Ur∗Σr∗V T 
+
+> r∗
+
+and D = diag (I + ∆). This way we have 
+
+B = A − M − D
+
+= A − I − M + I − D
+
+= ∆ + I − D
+
+= ∆ − diag (∆) .
+
+15 DeepCrossAttention: Supercharging Transformer Residual Connections 
+
+Hence, ‖B‖2 
+
+> F
+
+= ‖∆‖2 
+
+> F
+
+− ∑di=1 ∆2 
+
+> ii
+
+and trace( B) = 0 . Using these identities in (B.11) we obtain that the optimum objective value of (B.4) satisfies the following: 
+
+OP T ≤ ‖ ∆‖2 
+
+> F
+
+−
+
+> d
+
+∑
+
+> i=1
+
+∆2 
+
+> ii
+
+− ˜ν2max 
+
+π(d + 1) ,
+
+with ˜ν denoting the maximum eigenvalue of ∆+∆T 
+
+> 2
+
+− diag (∆).Combining the bound from the two cases, we get 
+
+Err ∗(CGRN −v3 ) ≤ OP T ≤ ‖ ∆‖2 
+
+> F
+
+− max 
+
+{
+
+1
+
+d − r∗
+
+trace( ∆)2 + ν2max 
+
+π(d + 1) ,
+
+> d
+
+∑
+
+> i=1
+
+∆2 
+
+> ii
+
++ ˜ν2max 
+
+π(d + 1) 
+
+}
+
+,
+
+which completes the proof of theorem. 
+
+Proof. (Lemma B.1) Since the distribution of x is rotation invariant, without loss of generality we assume w = ‖w‖`2 e1.We then have 
+
+E[σ(wTx)2 ‖x‖2 
+
+> `2
+
+] = ‖w‖2 
+
+> `2
+
+E[σ(x1)2(x21 + ‖x∼1‖2 
+
+> `2
+
+)] (B.11) where x∼1 = ( x2, . . . , x d). We have 
+
+E[σ(x1)2x21] = E[x411(x1 ≥ 0)] = 12 E[x41] = 32 .
+
+Also, since x∼1 is independent of x1 we have 
+
+E[σ(x1)2 ‖x∼1‖2 
+
+> `2
+
+] = E[σ(x1)2] E[‖x∼1‖2 
+
+> `2
+
+] = d − 12 .
+
+Combining the last three equations, we get 
+
+E[σ(wTx)2 ‖x‖2 
+
+> `2
+
+] = ‖w‖2
+
+> `2
+
+d + 1 2 .
+
+To show the other claim, we note that 
+
+E[σ(x1)xixj ] = 
+
+
+
+0 if i 6 = j
+
+= 12 E[|x1|] E[x2 
+
+> i
+
+] = 1√2π , if i = j 6 = 1 ,
+
+= 12 E[|x1|3] = 
+
+√ 2 
+
+> π
+
+if i = j = 1 .
+
+(B.12) Therefore in matrix form we have E[σ(x1)xx T] = 1√2π (I + e1eT 
+
+> 1
+
+). This completes the proof of (B.7) as by rotation invariance of distribution of x we can assume w = ‖w‖`2 e1.
+
+## C. Proof of Theorem 4.3 
+
+Let p := 2 dr ∗ where we recall that r∗ = ∑T`=1 r`. Note that p is the number of parameters for ResNet with T layers and ranks rt for each layer t. We will compare the test error of GRN-v1 and ResNet with p number of parameters. This corresponds to a model in GRN-v1 with T ′ layers such that 2d ∑T ′ 
+
+> `=1
+
+r` + T ′(T ′ − 1) /2 = p. We set the shorthand 
+
+r′∗ := ∑T ′ 
+
+> `=1
+
+r` and let σ1 ≥ . . . ≥ σd be the singular values of A − I. By Theorem 4.2 we have 
+
+ER ∗(Cres ) = 
+
+> d
+
+∑
+
+> i=r∗+1
+
+σ2 
+
+> i
+
+, ER ∗(CGRN −v1 ) ≤
+
+> d
+
+∑
+
+> i=r′∗+1
+
+σ2 
+
+> i
+
+− 1
+
+d − r′∗
+
+( d∑
+
+> i=r′∗+1
+
+σi
+
+)2
+
+16 DeepCrossAttention: Supercharging Transformer Residual Connections 
+
+Therefore, ER ∗(CGRN −v1 ) < ER ∗(Cres ) if the following holds: 
+
+> r∗
+
+∑
+
+> i=r′∗+1
+
+σ2 
+
+> i
+
+≤ 1
+
+d − r′∗
+
+( d∑
+
+> i=r′∗+1
+
+σi
+
+)2
+
+(C.1) (Note that r′∗ < r ∗ since T ′ < T ). However note that the left hand side of this condition is upper bounded by 
+
+> r∗
+
+∑
+
+> i=r′∗+1
+
+σ2 
+
+> i
+
+≤ (r∗ − r′∗)λ2max 
+
+Additionally, the right-hand side of the condition is lower bounded by 
+
+1
+
+d − r′∗
+
+( d∑
+
+> i=r′∗+1
+
+σi
+
+)2
+
+≥ (d − r′∗)λ2min .
+
+So a sufficient condition for (C.1) is that 
+
+(r∗ − r′∗)λ2max ≤ (d − r′∗)λ2min .
+
+Writing it in terms of κ, we need 
+
+r∗ ≤ dκ 2 + r′∗(1 − κ2). (C.2) Our next lemma gives alower bound on r′∗.
+
+Lemma C.1. Consider a standard Resnet model with collective rank r∗, and also a GRN-v1 model with collective rank r′,a GRN-v2 model with collective rank r′′ , and a GRN-v3 model with collective rank r′′′ , which have the same number of parameters as in the standard Resent model. We then have 
+
+r∗ − (√d + r∗ − √d)2 ≤ r′∗ ≤ r∗ , (C.3) 
+
+r∗ − (√1 + r∗ − 1) 2 ≤ r′′ ∗ ≤ r∗ , (C.4) 
+
+r∗ − (√1.6 + r∗ − 1) 2 ≤ r′′′ ∗ ≤ r∗ . (C.5) Using Lemma C.1, condition C.2 is satisfied provided that 
+
+r∗ ≤ dκ 2 + (1 − κ2)
+
+[
+
+r∗ − (√d + r∗ − √d)2]
+
+.
+
+Solving the above inequality for r∗/d and after some algebraic calculation, we simplify the above inequality as follows: 
+
+r∗
+
+d ≤ (1 + κ(√κ2 + 1 − κ)) 2 − 1 .
+
+For GRN-v2, the argument goes along the same lines. Fixing number of parameters to p, this corresponds to a model in GRN-v2 with T ′′ layers such that 2d ∑T ′′  
+
+> `=1
+
+r` + dT ′′ (T ′′ − 1) /2 = p. We use the shorthand r′′ ∗ := ∑T ′′  
+
+> `=1
+
+r`. By Theorem 4.2, 
+
+ER ∗(CGRN −v2 ) = ‖∆‖2 
+
+> F
+
+− 1
+
+d − r′′ ∗
+
+trace( ∆)2
+
+=
+
+> d
+
+∑ 
+
+> i=r′′ ∗+1
+
+σ2 
+
+> i
+
+− 1
+
+d − r′′ ∗
+
+( d∑ 
+
+> i=r′′ ∗+1
+
+σi
+
+)2
+
+.
+
+Following the same argument as the one for GRN-v1 (replacing r′∗ with r′′ ∗ ) we derive that GRN-v2 achieves a better trade-off than standard ResNet, if 
+
+r∗ ≤ dκ 2 + r′′ ∗ (1 − κ2). (C.6) 17 DeepCrossAttention: Supercharging Transformer Residual Connections 
+
+(Note that this is analogous to (C.2) where r′∗ is replaced by r′′ ∗ .) Using Lemma C.1, condition C.6 is satisfied provided that 
+
+r∗ ≤ dκ 2 + (1 − κ2)
+
+[
+
+r∗ − (√1 + r∗ − 1) 2]
+
+.
+
+By some algebraic calculation, this inequality can be simplified to 
+
+r∗ ≤ (1 + κ(√κ2 + d − κ)) 2 − 1 .
+
+We next proceed with the case of GRN-v3. By Theorem 4.2 we have 
+
+ER ∗(CGRN −v3 ) ≤ ‖ ∆‖2 
+
+> F
+
+− 1
+
+d − r∗
+
+trace( ∆)2 − ν2max 
+
+π(d + 1) 
+
+with νmax denoting the maximum eigenvalue of ∆+∆T 
+
+> 2
+
+− 1 
+
+> d−r∗
+
+trace( ∆)Ur′′′ ∗ ,⊥U T 
+
+> r′′′ ∗,⊥
+
+. Rewriting this bound in terms of eigenvalues we get 
+
+ER ∗(CGRN −v3 ) ≤
+
+> d
+
+∑ 
+
+> i=r′′′ ∗+1
+
+σ2 
+
+> i
+
+− 1
+
+d − r′′′ ∗
+
+
+
+> d
+
+∑ 
+
+> i=r′′′ ∗+1
+
+σi
+
+
+
+> 2
+
+− 1
+
+π(d + 1) 
+
+σr′′′ ∗ +1 − 1
+
+d − r′′′ ∗
+
+> d
+
+∑ 
+
+> i=r′′′ ∗+1
+
+σi
+
+
+
+> 2
+
+.
+
+Here we used the fact that the Ur′′′ ∗ ,⊥ is the eigenspace of ∆ and its eigenvalues are σr′′′ ∗ +1 ≥ . . . ≥ σd. To lighten the notation, we use the shorthand σ := σr′′′ ∗ +1 and A := ∑di=r′′′ ∗ +1 σi. Then in order to have ER ∗(CGRN −v3 ) < ER ∗(Cres ), it suffices to have r∗∑ 
+
+> i=r′′′ ∗+1
+
+σ2 
+
+> i
+
+≤ 1
+
+d − r′′′ ∗
+
+A2 − 1
+
+π(d + 1) (σ − 1
+
+d − r′′′ ∗
+
+A)2 .
+
+Note that the left-hand side is upper bounded by (r∗ − r′′′ ∗ )σ. In addition, this is quadratic inequality in A. Solving this inequality for A this corresponds to the following: 
+
+Aσ ≥  
+
+> 1
+> π(d+1)( d−r′′′ ∗)
+
++
+
+√ r∗−r′′′ ∗
+
+> d−r′′′ ∗
+
++ r∗−r′′′ ∗  
+
+> π(d+1)( d−r′′′ ∗)2
+
+− 1 
+
+> π(d+1)( d−r′′′ ∗)1
+> d−r′′′ ∗
+
++ 1 
+
+> π(d+1)( d−r′′′ ∗)2
+
+.
+
+Define the shorthand ξ := 1  
+
+> π(d+1)( d−r′′′ ∗)
+
+. Then the above can be written as 
+
+Aσ ≥
+
+ξ +
+
+√ r∗−r′′′ ∗
+
+> d−r′′′ ∗
+
+(1 + ξ) − ξ 
+
+> 1
+> d−r∗
+
+(1 + ξ) . (C.7) We also have A ≥ (d − r′′′ ∗ )λmin and σ ≤ λmax , so A/σ ≥ (d − r′′′ ∗ )κ. Hence, the above condition holds if 
+
+κ ≥
+
+ξ +
+
+√ r∗−r′′′ ∗
+
+> d−r′′′ ∗
+
+(1 + ξ) − ξ
+
+1 + ξ . (C.8) It is easy to verify that the right-hand side is decreasing in ξ. In addition, by definition of ξ and since r′′′ ∗ < r ∗ ≤ d, we have 
+
+ξ ≥ ξ0 := 1 
+
+> π(d2−1)
+
+. So a sufficient condition for (C.8) is 
+
+κ ≥
+
+ξ0 +
+
+√ r∗−r′′′ ∗
+
+> d−r′′′ ∗
+
+(1 + ξ0) − ξ0
+
+1 + ξ0
+
+(C.9) or equivalently, 
+
+(κ(1 + ξ0) − ξ0)2 + ξ0
+
+1 + ξ0
+
+≥ r∗ − r′′′ ∗
+
+d − r′′′ ∗
+
+.
+
+18 DeepCrossAttention: Supercharging Transformer Residual Connections 
+
+Define η := 
+
+√ (κ(1+ ξ0)−ξ0)2+ξ0 
+
+> 1+ ξ0
+
+. Rewriting the above inequality we need 
+
+r′′′ ∗ (1 − η2) + dη 2 ≥ r∗ . (C.10) Next, by Lemma C.1, we have r∗ − r′′′ ∗ ≤ (√1.6 + r∗ − 1) 2, by which a sufficient condition for (C.10) is as follows: 
+
+[r∗ − (√1.6 + r∗ − 1) 2] (1 − η2) + dη 2 ≥ r∗ .
+
+By some algebraic calculation, this inequality can be simplified to 
+
+r∗ ≤ (1 + η(√η2 + d − η)) 2 − 1.6
+
+This completes the proof of the first item in the theorem statement. To prove the second item in the theorem statement, we write 
+
+G1 := ER ∗(Cres ) − ER ∗(CGRN −v1 ) ≥ 1
+
+d − r′∗
+
+( d∑
+
+> i=r′∗+1
+
+σi
+
+)2
+
+−
+
+> r∗
+
+∑
+
+> i=r′∗+1
+
+σ2
+
+> i
+
+≥ (d − r′∗)λ2min − (r∗ − r′∗)λ2max 
+
+= dλ 2min − r∗λ2max + r′∗(λ2max − λ2min )
+
+≥ dλ 2min − r∗λ2max + ( r∗ − (√d + r∗ − √d)2)( λ2max − λ2min )= ( d − r∗)λ2min − (√d + r∗ − √d)2(λ2max − λ2min ) ,
+
+where in the last inequality we used Lemma C.1. A similar bound can be derived for GRN-v2, replacing r′∗ with r′′ ∗ in the argument. Specifically, we have 
+
+G2 := ER ∗(Cres ) − ER ∗(CGRN −v2 ) ≥ dλ 2min − r∗λ2max + r′′ ∗ (λ2max − λ2min )
+
+≥ dλ 2min − r∗λ2max + ( r∗ − (√1 + r∗ − 1) 2)( λ2max − λ2min )= ( d − r∗)λ2min − (√1 + r∗ − 1) 2)( λ2max − λ2min ) ,
+
+where in the last inequality we used the lower bound given for r′′ in Lemma C.1. For GRN-v3, we have 
+
+G3 := ER ∗(Cres ) − ER ∗(CGRN −v3 ) ≥ 1
+
+d − r′′′ ∗
+
+( d∑ 
+
+> i=r′′′ ∗+1
+
+σi
+
+)2
+
++ λ2max 
+
+π(d + 1) −
+
+> r∗
+
+∑ 
+
+> i=r′′′ ∗+1
+
+σ2
+
+> i
+
+= 1
+
+d − r′′′ ∗
+
+A2 + 1
+
+π(d + 1) (σ − 1
+
+d − r′′′ ∗
+
+A)2 −
+
+> r∗
+
+∑ 
+
+> i=r′′′ ∗+1
+
+σ2
+
+> i
+
+≥ 1
+
+d − r′′′ ∗
+
+A2 + 1
+
+π(d + 1) 
+
+( σ2
+
+2 − 1(d − r′′′ ∗ )2 A2
+
+)
+
+− (r∗ − r′′′ ∗ )σ2
+
+≥ 1
+
+d − r′′′ ∗
+
+(
+
+1 − 1
+
+π(d + 1)( d − r′′′ ∗ )
+
+)
+
+A2 −
+
+(
+
+r∗ − r′′′ ∗ − 12π(d + 1) 
+
+)
+
+σ2 ,
+
+where we recall the shorthand A := ∑di=r′′′ ∗ +1 σi and σ := σr′′′ ∗ +1 . In the second inequality above, we used the fact that 
+
+σr′′′ ∗ +1 , . . . , σ r∗ ≤ σr′′′ ∗ +1 = σ, along with the inequality (a − b)2 ≥ a2/2 − b2.19 DeepCrossAttention: Supercharging Transformer Residual Connections 
+
+Noting that A ≥ (d − r′′′ ∗ )λmin and σ ≤ λmax , we continue from the above chain of inequalities, as follows: 
+
+G3 =
+
+(
+
+d − r′′′ ∗ − 1
+
+π(d + 1) 
+
+)
+
+λ2min −
+
+(
+
+r∗ − r′′′ ∗ − 12π(d + 1) 
+
+)
+
+λ2max 
+
+≥
+
+(
+
+d − 1
+
+π(d + 1) 
+
+)
+
+λ2min −
+
+(
+
+r∗ − 12π(d + 1) 
+
+)
+
+λ2max + r′′′ ∗ (λ2max − λ2min )
+
+> (a)
+
+≥
+
+(
+
+d − 1
+
+π(d + 1) 
+
+)
+
+λ2min −
+
+(
+
+r∗ − 12π(d + 1) 
+
+)
+
+λ2max + ( r∗ − (√1.6 + r∗ − 1) 2)( λ2max − λ2min )=
+
+(
+
+d − 1
+
+π(d + 1) − r∗
+
+)
+
+λ2min + 12π(d + 1) λ2max − (√1.6 + r∗ − 1) 2(λ2max − λ2min ) ,
+
+where we used Lemma C.1 in step (a).
+
+C.1. Proof of Lemma C.1 
+
+A standard Resnet model with collective rank r∗ has 2dr ∗ number of parameters. A model in GRN-v1 with collective rank 
+
+r′∗ has 2dr ′∗ + T ′(T ′ − 1) /2 parameters. Therefore, by assumption 
+
+2dr ′∗ + T ′(T ′ − 1) /2 = 2 dr ∗ . (C.11) Since each layer has rank at least one, we also have r′∗ ≥ T ′. We define the shorthand ξ = √T ′(T ′ − 1) (so r′ ≥ ξ). Combining these two inequalities and writing them in terms of ξ, we get 
+
+2dξ + ξ2/2 ≤ 2dr ∗ .
+
+Solving this inequality for ξ we get ξ ≤ 2√d2 + dr ∗ − 2d. Using this bound in (C.11) we get 
+
+2dr ∗ ≤ 2dr ′∗ + 2( √d2 + dr ∗ − d)2 .
+
+Simplifying this inequality, we arrive at 
+
+r∗ − (√d + r∗ − √d)2 ≤ r′∗ .
+
+The upper bound r′∗ ≤ r∗ also follows simply from (C.11). For GRN-v2 model we follow the same argument. A model in GRN-v2 with collective rank r′′ has 2dr ′′ ∗ + dT ′′ (T ′′ − 1) /2
+
+parameters and so 
+
+2r′′ ∗ + T ′′ (T ′′ − 1) /2 = 2 r∗ . (C.12) Since each layer has rank at least one, we also have r′′ ∗ ≥ T ′′ . Define the shorthand ξ′ := √T ′′ (T ′′ − 1) . Combining the previous two equation, we get 
+
+2ξ′ + ξ′2/2 ≤ 2r∗ .
+
+Solving this inequality for ξ′ we get ξ′ ≤ 2√1 + r∗ − 2. Using this bound back in (C.12) we obtain 
+
+2r∗ ≤ 2r′′ ∗ + 2( √1 + r∗ − 1) 2 .
+
+This simplifies to r∗ − (√1 + r∗ − 1) 2 ≤ r′′ ∗ .We follow the same argument for GRN-v3. A model in GRN-v3 with collective rank r′′′ has 2dr ′′′ ∗ +dT ′′′ (T ′′′ −1) /2+ dT ′′′ 
+
+parameters and so 
+
+2r′′′ ∗ + T ′′′ (T ′′′ + 1) /2 = 2 r∗ . (C.13) Since each layer has rank at least one, we also have r′′′ ∗ ≥ T ′′′ . Hence, 
+
+T ′′′ 2 + 5 T ′′′ = 4 r∗ ≤ 0 .
+
+20 DeepCrossAttention: Supercharging Transformer Residual Connections 
+
+Solving for T ′′′ we get T ′′′ ≤ 1/2( √25 + 16 r∗ − 5) . Using this bound in (C.13), we have 
+
+r′′′ ∗ ≥ r∗ − 116 (√25 + 16 r∗ − 5)( √25 + 16 r∗ − 3) = r∗ − 116 (40 + 16 r∗ − 8√25 + 16 r∗)
+
+≥ r∗ − 116 
+
+(√25 + 16 r∗ − 4)2
+
+≥ r∗ − (√1.6 + r∗ − 1)2 .
+
+The upper bound r′′′ ∗ < r ∗ follows easily from (C.13). 
+
+## D. Proof of Proposition 4.4 
+
+The result follows from conditions (C.2) , (C.6) and (C.10) which respectively provide sufficient conditions for GRN-v1, GRN-v2 and GRN-v3 to achieve smaller test error than a ResNet model, with the same number of parameters. 
+
+## E. Proof of Proposition 4.5 
+
+The proof is similar to the linear case by induction on T . Note that for showing this direction ( Cbase , Cres , CGRN −v1 , CGRN −v2 
+
+being a subset of the rank constrained functions) we only used the following two properties of the rank function which holds also for the Bottleneck rank: rank( f ◦ g) ≤ min {rank( f ), rank( g)} and rank( f + g) ≤ rank( f ) + rank( g).21 DeepCrossAttention: Supercharging Transformer Residual Connections 
+
+## F. Training time versus perplexity on the LM1B dataset 
+
+This appendix provides additional results on training time versus perplexity for DCA models. Figure 8 shows the training time-perplexity trade-off for 12, 24, and 36 layer transformer and DCA models trained on the LM1B dataset. The figure shows that DCA achieves a better perplexity for a given training time (except for the first few training steps of the 36-layer model). Thus, highlighting the training efficiency of DCA. 0.0 0.5 1.0 1.5 2.0 2.5  
+
+> Training time (s) 1e5
+> 14
+> 15
+> 16
+> 17
+> Perplexity
+> Layers
+> 12
+> 24
+> 36
+> Model
+> Transformer
+> DCA
+
+Figure 8. Perplexity on LM1B pre-training versus the training time with transformer and DCA models of various depths. 
+
+## G. Steps versus perplexity on the C4 dataset 
+
+This appendix provides additional results on training steps versus perplexity for 8-DCA models. Figure 9 shows the training steps-perplexity trade-off for 75M, 179M, and 449M parameter transformer and 8-DCA models trained on the C4 dataset. The results show the improved model convergence and quality of DCA. 0 1 2 3 4 5 
+
+> Training step 1e5
+> 15.0
+> 17.5
+> 20.0
+> 22.5
+> 25.0
+> 27.5
+> 30.0
+> 32.5
+> 35.0
+> Perplexity
+> Params
+> 75M
+> 179M
+> 449M
+> Model
+> Transformer
+> DCA
+
+Figure 9. Perplexity on C4 pre-training versus the number of steps with transformer and 8-DCA models of various sizes. 
+
+Table 9. Perplexity (PPL) on LM1B with and without the model inputs for 6-layer GRN-v3. METHOD PPL TRANSFORMER 20.878 GRN-V3 ( LAST 4 LAYERS ) 20.301 GRN-V3 ( MODEL INPUTS + LAST 3 LAYERS ) 20.227 
+
+22 DeepCrossAttention: Supercharging Transformer Residual Connections 
+
+## H. Distribution of learned weights 
+
+Figure 10 shows the distribution of the learned bias values for each GRN-v3 instance of a 30-layer model. The layers tend to weight the inputs and the last few layers the most and frequently assign a negative bias for the intermediate layers, indicating that the layers are filtered out as a result of the ReLU activation. In Table 9, we show that indeed the GRN-v3 model perplexity improves as the model inputs are included in addition to the last few layer outputs. 0.00 0.25 0.50 0.75 1.00 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+> Bias value
+
+Layer 2 
+
+0.0 0.5 1.0 1.5 2.0 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+Layer 3 
+
+0 1 2 3
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+Layer 4 
+
+0 1 2 3 4
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+Layer 5 
+
+0 2 4
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+Layer 6 
+
+0 2 4 6
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+> Bias value
+
+Layer 7 
+
+0 2 4 6
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+Layer 8 
+
+0 2 4 6 8
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+Layer 9 
+
+0 2 4 6 8
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+Layer 10 
+
+0.0 2.5 5.0 7.5 10.0 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+Layer 11 
+
+0.0 2.5 5.0 7.5 10.0 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+> Bias value
+
+Layer 12 
+
+0 5 10 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+Layer 13 
+
+0 5 10 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+Layer 14 
+
+0 5 10 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+Layer 15 
+
+0 5 10 15 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+Layer 16 
+
+0 5 10 15 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+> Bias value
+
+Layer 17 
+
+0 5 10 15 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+Layer 18 
+
+0 5 10 15 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+Layer 19 
+
+0 5 10 15 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+Layer 20 
+
+0 5 10 15 20 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+Layer 21 
+
+0 5 10 15 20 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+> Bias value
+
+Layer 22 
+
+0 5 10 15 20 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+Layer 23 
+
+0 10 20 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+Layer 24 
+
+0 10 20 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+Layer 25 
+
+0 10 20 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+Layer 26 
+
+0 10 20 
+
+Layer 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+> Bias value
+
+Layer 27 
+
+0 10 20 
+
+Layer 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+Layer 28 
+
+0 10 20 
+
+Layer 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+Layer 29 
+
+0 10 20 30 
+
+Layer 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+Layer 30 
+
+0 10 20 30 
+
+Layer 
+
+0.2 
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+Outputs 
+
+Figure 10. Distribution of learned bias values on LM1B pre-training with a 30 layer GRN-v3 transformer model. The solid line indicates the median value and the shaded area represents the 90th percentile. 
+
+23
