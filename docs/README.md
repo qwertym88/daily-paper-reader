@@ -6,156 +6,84 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-05-17 ~ 2026-06-15
-- 运行时间：2026-06-15 04:24:34 UTC
+- 最新运行日期：2026-06-15
+- 运行时间：2026-06-15 22:26:33 UTC
 - 运行状态：成功
-- 本次总论文数：45
-- 精读区：0
-- 速读区：45
+- 本次总论文数：20
+- 精读区：8
+- 速读区：12
 
 ### 今日简报（AI）
-本日报速读了45篇人形机器人相关论文，涵盖运动控制、操作学习等前沿方向。最值得关注的方向是基于对抗运动先验的统一行走/跑步/恢复控制，以及双vs统一评论家架构对全身操作的影响。建议优先阅读《Unified Walking, Running, and Recovery》和《Critic Architecture Matters》两篇满分论文，深入理解人形机器人动态运动与操作的设计思路。
-- 详情：[/20260517-20260615/README](/20260517-20260615/README)
+今日精读8篇、速读12篇，聚焦物理神经网络鲁棒协同设计与多地形机器人跌倒恢复两项突破。
+
+最值得关注：用LLM引导架构搜索实现物理神经网络鲁棒性（10分），以及单段人体视频即可完成灵巧技能迁移的全栈方案（8分）。
+
+建议普通读者后续关注“大模型+具身智能”的交叉应用，以及视频到仿真的低门槛机器人训练范式。
+- 详情：[/202606/15/README](/202606/15/README)
 
 ### 精读区论文标签
-- 本次无精读推荐。
+1. [LLM-Guided Neural Architecture Search for Robust Co-Design of Physical Neural Networks](/202606/15/2606.10294v1-llm-guided-neural-architecture-search-for-robust-co-design-of-physical-neural-networks)  
+   标签：评分：10.0/10、query:neural-arch
+   evidence：大语言模型引导的神经架构搜索以提升性能
+2. [PTDL:Multi-Terrain Fall Recovery via Phase-Terrain Decoupled Learning](/202606/15/2606.08922v1-ptdlmulti-terrain-fall-recovery-via-phase-terrain-decoupled-learning)  
+   标签：评分：9.0/10、query:hum-ctrl
+   evidence：用于多地形人形摔倒恢复和运动的强化学习
+3. [VAIC: Vision-Guided Humanoid Agile Object Interaction Control via Decoupled Commands](/202606/15/2606.09286v1-vaic-vision-guided-humanoid-agile-object-interaction-control-via-decoupled-commands)  
+   标签：评分：9.0/10、query:hum-ctrl
+   evidence：视觉引导的类人机器人敏捷交互控制
+4. [RoVE: Rotary Value Embeddings Attention for Relative Position-dependent Value Pathways](/202606/15/2606.11275v1-rove-rotary-value-embeddings-attention-for-relative-position-dependent-value-pathways)  
+   标签：评分：9.0/10、query:neural-arch
+   evidence：新型旋转值嵌入注意力机制提升模型准确性
+5. [Connections Between Pairs of Filters Improve the Accuracy of Convolutional Neural Networks](/202606/15/2606.13736v1-connections-between-pairs-of-filters-improve-the-accuracy-of-convolutional-neural-networks)  
+   标签：评分：9.0/10、query:neural-arch
+   evidence：滤波器间可学习配对连接提升CNN精度
+6. [GAIT: Legged Robot Proprioceptive State Estimation with Attention over Inertial-Leg Tokens](/202606/15/2606.14160v1-gait-legged-robot-proprioceptive-state-estimation-with-attention-over-inertial-leg-tokens)  
+   标签：评分：9.0/10、query:hum-ctrl
+   evidence：基于惯性-腿部标记注意力的腿式机器人状态估计，直接适用于人形机器人
+7. [Robust Fall Recovery for Armless Bipedal-Wheeled Robots Via Force-Guided Learning](/202606/15/2606.14270v1-robust-fall-recovery-for-armless-bipedal-wheeled-robots-via-force-guided-learning)  
+   标签：评分：9.0/10、query:hum-ctrl
+   evidence：力引导学习用于双足轮式机器人的跌倒恢复，属于运动控制的强化学习方法
+8. [Whole-Body Impedance Model Predictive Control for Safe Physical Human--Robot Interaction on Floating-Base Platforms](/202606/15/2606.14617v1-whole-body-impedance-model-predictive-control-for-safe-physical-human--robot-interaction-on-floating-base-platforms)  
+   标签：评分：9.0/10、query:hum-ctrl
+   evidence：浮动机器人的全身阻抗MPC，直接采用传统控制理论实现运动控制
 
 ### 速读区论文标签
-1. [Unified Walking, Running, and Recovery for Humanoids via State-Dependent Adversarial Motion Priors](/20260517-20260615/2605.18611v1-unified-walking-running-and-recovery-for-humanoids-via-state-dependent-adversarial-motion-priors)  
-   标签：评分：10.0/10、query:hum-ctrl
-   evidence：用于人形机器人行走、跑步和恢复的统一强化学习框架并在真实硬件上验证
-2. [Critic Architecture Matters: Dual vs. Unified Critics for Humanoid Loco-Manipulation](/20260517-20260615/2606.11891v1-critic-architecture-matters-dual-vs-unified-critics-for-humanoid-loco-manipulation)  
-   标签：评分：10.0/10、query:hum-ctrl
-   evidence：使用双评论家与统一评论家对比的人形机器人强化学习运动方法
-3. [SUGAR: A Scalable Human-Video-Driven Generalizable Humanoid Loco-Manipulation Learning Framework](/20260517-20260615/2605.20373v1-sugar-a-scalable-human-video-driven-generalizable-humanoid-loco-manipulation-learning-framework)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：人体视频驱动的人形操控学习
-4. [SCRIPT: Scalable Diffusion Policy with Multi-stage Training for Language-driven Physics-based Humanoid Control](/20260517-20260615/2605.22894v2-script-scalable-diffusion-policy-with-multi-stage-training-for-language-driven-physics-based-humanoid-control)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：语言驱动人形控制的大型扩散策略
-5. [MuGen: Multi-Skill Generative Locomotion Controller for Humanoid Robots](/20260517-20260615/2605.24592v1-mugen-multi-skill-generative-locomotion-controller-for-humanoid-robots)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：使用VQ-VAE和基于模型强化学习的生成式运动控制器
-6. [Bridging the Gap: Enabling Soft Actor Critic for High Performance Legged Locomotion](/20260517-20260615/2605.24975v1-bridging-the-gap-enabling-soft-actor-critic-for-high-performance-legged-locomotion)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：使SAC算法在腿部机器人运动上实现高性能
-7. [Safety-Critical Whole-Body Control for Humanoid Robots via Input-to-State Safe Control Barrier Functions](/20260517-20260615/2605.25546v1-safety-critical-whole-body-control-for-humanoid-robots-via-input-to-state-safe-control-barrier-functions)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：基于输入-状态安全控制障碍函数的仿人机器人安全关键全身控制
-8. [ParkourFormer: Integrating Predictive Supervision and Sequence Modeling into Parkour Locomotion](/20260517-20260615/2605.25782v1-parkourformer-integrating-predictive-supervision-and-sequence-modeling-into-parkour-locomotion)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：人形机器人跑酷的强化学习预测序列建模
-9. [ParkourFormer: Integrating Predictive Supervision and Sequence Modeling into Parkour Locomotion](/20260517-20260615/2605.25782v2-parkourformer-integrating-predictive-supervision-and-sequence-modeling-into-parkour-locomotion)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：人形机器人强化学习运动控制，使用预测序列建模
-10. [Batched Differentiable Rigid Body Dynamics in PyTorch for GPU-Accelerated Robot Learning](/20260517-20260615/2605.31481v1-batched-differentiable-rigid-body-dynamics-in-pytorch-for-gpu-accelerated-robot-learning)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：用于机器人学习的GPU加速批量化刚体动力学
-11. [Constrained Whole-Body Tracking for Humanoid Robots](/20260517-20260615/2606.00374v1-constrained-whole-body-tracking-for-humanoid-robots)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：结合操作空间控制、控制屏障函数与强化学习的人形机器人全身跟踪
-12. [Global-Local Attention Decomposition for Terrain Encoding in Humanoid Perceptive Locomotion](/20260517-20260615/2606.00637v1-global-local-attention-decomposition-for-terrain-encoding-in-humanoid-perceptive-locomotion)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：用于人形机器人感知步态地形的全局-局部注意力分解
-13. [GPU-Parallel Multi-Task Reinforcement Learning with Demonstration Guided Policy Optimization](/20260517-20260615/2606.03335v1-gpu-parallel-multi-task-reinforcement-learning-with-demonstration-guided-policy-optimization)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：GPU并行多任务强化学习基准和方法，用于机器人仿真
-14. [CoRe-MoE: Contrastive Reweighted Mixture of Experts for Multi-Terrain Humanoid Locomotion with Gait Adaptation](/20260517-20260615/2606.04718v2-core-moe-contrastive-reweighted-mixture-of-experts-for-multi-terrain-humanoid-locomotion-with-gait-adaptation)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：使用混合专家的强化学习方法实现人形机器人步态适应
-15. [Accelerating and Scaling MPC-Guided Reinforcement Learning for Humanoid Locomotion and Manipulation](/20260517-20260615/2606.05687v1-accelerating-and-scaling-mpc-guided-reinforcement-learning-for-humanoid-locomotion-and-manipulation)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：大规模并行RL，并行化时间域MPC用于人形机器人
-16. [LadderMan: Learning Humanoid Perceptive Ladder Climbing](/20260517-20260615/2606.05873v1-ladderman-learning-humanoid-perceptive-ladder-climbing)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：强化学习用于人形机器人攀梯
-17. [HANDOFF: Humanoid Agentic Task-Space Whole-Body Control via Distilled Complementary Teachers](/20260517-20260615/2606.06493v1-handoff-humanoid-agentic-task-space-whole-body-control-via-distilled-complementary-teachers)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：使用蒸馏教师的人形机器人全身控制
-18. [T-GMP: Terrain-conditioned Generative Motion Priors for Versatile and Natural Humanoid Locomotion](/20260517-20260615/2606.06944v1-t-gmp-terrain-conditioned-generative-motion-priors-for-versatile-and-natural-humanoid-locomotion)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：地形条件生成运动先验用于人形机器人步态
-19. [Predictive Style Matching: Natural and Robust Humanoid Locomotion](/20260517-20260615/2606.07083v1-predictive-style-matching-natural-and-robust-humanoid-locomotion)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：用于人形机器人运动的强化学习
-20. [Shield-Loco: Shielding Locomotion Policies with Predictive Safety Filtering](/20260517-20260615/2606.07193v1-shield-loco-shielding-locomotion-policies-with-predictive-safety-filtering)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：使用全物理模型的RL运动策略预测安全过滤
-21. [Perceptive Behavior Foundation Model: Adapting Human Motion Priors to Robot-Centric Terrain](/20260517-20260615/2606.08059v1-perceptive-behavior-foundation-model-adapting-human-motion-priors-to-robot-centric-terrain)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：利用人类运动先验的大型人形运动生成模型
-22. [Mind Your Steps: A General Learning Framework for Accurate Humanoid Foothold Tracking](/20260517-20260615/2606.08253v1-mind-your-steps-a-general-learning-framework-for-accurate-humanoid-foothold-tracking)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：强化学习用于人形机器人步态落脚点追踪
-23. [SIMPLE: Simulation-Based Policy Learning and Evaluation for Humanoid Loco-manipulation](/20260517-20260615/2606.08278v1-simple-simulation-based-policy-learning-and-evaluation-for-humanoid-loco-manipulation)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：集成MuJoCo和IsaacSim的人形机器人仿真测试平台
-24. [EgoPriMo: Egocentric Motion Generation for Interactive Humanoid Control](/20260517-20260615/2606.08495v1-egoprimo-egocentric-motion-generation-for-interactive-humanoid-control)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：以自我为中心的运动生成用于人形机器人控制
-25. [OASIS: From Simulation Data Collection to Real-World Humanoid Loco-Manipulation](/20260517-20260615/2606.08548v1-oasis-from-simulation-data-collection-to-real-world-humanoid-loco-manipulation)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：面向仿人机器人全身操作的仿真数据收集框架
-26. [MotionWAM: Towards Foundation World Action Models for Real-Time Humanoid Loco-Manipulation](/20260517-20260615/2606.09215v1-motionwam-towards-foundation-world-action-models-for-real-time-humanoid-loco-manipulation)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：用于实时人形运动-操作的大型世界动作模型
-27. [MARCH: Model-Assisted Reinforcement Learning for the Perceptive Control of Humanoids over Sparse Footholds](/20260517-20260615/2606.10288v1-march-model-assisted-reinforcement-learning-for-the-perceptive-control-of-humanoids-over-sparse-footholds)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：仿人机器人稀疏落脚点感知行走的强化学习
-28. [OMG: Omni-Modal Motion Generation for Generalist Humanoid Control](/20260517-20260615/2606.10340v1-omg-omni-modal-motion-generation-for-generalist-humanoid-control)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：全模态运动生成用于通用人形机器人控制
-29. [GuideWalk: Learning Unified Autonomous Navigation and Locomotion for Humanoid Robots across Versatile Terrains](/20260517-20260615/2606.10449v1-guidewalk-learning-unified-autonomous-navigation-and-locomotion-for-humanoid-robots-across-versatile-terrains)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：使用强化学习的统一导航与步态框架
-30. [Stubborn: A Streamlined and Unified Reinforcement Learning Framework for Robust Motion Tracking and Fall Recovery for Humanoids](/20260517-20260615/2606.12814v1-stubborn-a-streamlined-and-unified-reinforcement-learning-framework-for-robust-motion-tracking-and-fall-recovery-for-humanoids)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：统一的强化学习框架实现人形运动跟踪与跌倒恢复
-31. [CEER: Compliant End-Effector and Root Control as a Unified Interface for Hierarchical Humanoid Loco-Manipulation](/20260517-20260615/2605.19981v1-ceer-compliant-end-effector-and-root-control-as-a-unified-interface-for-hierarchical-humanoid-loco-manipulation)  
-   标签：评分：8.0/10、query:hum-ctrl
-   evidence：仿人机器人全身操作中的柔顺控制
-32. [SCRIPT: Scalable Diffusion Policy with Multi-stage Training for Language-driven Physics-Based Humanoid Control](/20260517-20260615/2605.22894v1-script-scalable-diffusion-policy-with-multi-stage-training-for-language-driven-physics-based-humanoid-control)  
-   标签：评分：8.0/10、query:hum-ctrl
-   evidence：可扩展扩散策略用于语言驱动的基于物理的人形机器人控制
-33. [L-Learning : A Lyapunov-Based Approach Leveraging Lagrangian Mechanics for Efficient and Stable Robot Tracking](/20260517-20260615/2605.26648v1-l-learning--a-lyapunov-based-approach-leveraging-lagrangian-mechanics-for-efficient-and-stable-robot-tracking)  
-   标签：评分：8.0/10、query:hum-ctrl
-   evidence：基于李雅普诺夫和拉格朗日力学的机器人跟踪控制
-34. [ElegantVLA: Learning When to Think for Efficient Vision-Language-Action Models](/20260517-20260615/2605.29438v1-elegantvla-learning-when-to-think-for-efficient-vision-language-action-models)  
+1. [STAR: Rethinking MoE Routing as Structure-Aware Subspace Learning](/202606/15/2606.08814v1-star-rethinking-moe-routing-as-structure-aware-subspace-learning)  
    标签：评分：8.0/10、query:neural-arch
-   evidence：通过学习何时思考来优化VLA模型的神经网络结构效率
-35. [A Heterogeneous Architecture for Robot RL Beyond GPU-Dominant Paradigms](/20260517-20260615/2605.30313v1-a-heterogeneous-architecture-for-robot-rl-beyond-gpu-dominant-paradigms)  
+   evidence：MoE路由的结构感知子空间学习实现高效优化
+2. [Video2Sim2Real: Full-Stack Autonomous Dexterous Skill Acquisition from a Single Human Video](/202606/15/2606.08828v1-video2sim2real-full-stack-autonomous-dexterous-skill-acquisition-from-a-single-human-video)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：CPU仿真与GPU学习异构架构用于机器人强化学习并行化
-36. [HOIST: Humanoid Optimization with Imitation and Sample-efficient Tuning for Manipulating Suspended Loads](/20260517-20260615/2606.00252v1-hoist-humanoid-optimization-with-imitation-and-sample-efficient-tuning-for-manipulating-suspended-loads)  
+   evidence：利用仿真器重建数字孪生获取技能，与人形机器人仿真器相关
+3. [$ω$-EVA: Envision, Verify, and Act with Latent Interactive World Models](/202606/15/2606.09457v1--eva-envision-verify-and-act-with-latent-interactive-world-models)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：人形机器人，强化学习，仿真用于悬挂负载操纵
-37. [LEGS: Fine-Tuning Teleop-Free VLAs for Humanoid Loco-manipulation in an Embodied Gaussian Splatting World](/20260517-20260615/2606.01458v1-legs-fine-tuning-teleop-free-vlas-for-humanoid-loco-manipulation-in-an-embodied-gaussian-splatting-world)  
+   evidence：潜交互世界模型用于具身动作生成，可应用于人形机器人运动规划
+4. [Physics-Aware Sparse Learning and Selective Online Adaptation for Euler-Lagrange Robot Dynamics](/202606/15/2606.09640v1-physics-aware-sparse-learning-and-selective-online-adaptation-for-euler-lagrange-robot-dynamics)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：用于人形机器人操作的混合仿真器
-38. [PHASOR: Phase-Anchored Universal Action Representations for Humanoid Embodiments](/20260517-20260615/2606.01851v2-phasor-phase-anchored-universal-action-representations-for-humanoid-embodiments)  
-   标签：评分：8.0/10、query:hum-ctrl
-   evidence：利用周期性的通用动作表示用于人形机器人运动
-39. [CoRe-MoE: Contrastive Reweighted Mixture of Experts for Multi-Terrain Humanoid Locomotion with Gait Adaptation](/20260517-20260615/2606.04718v1-core-moe-contrastive-reweighted-mixture-of-experts-for-multi-terrain-humanoid-locomotion-with-gait-adaptation)  
-   标签：评分：8.0/10、query:hum-ctrl
-   evidence：面向多地形仿人机器人行走的强化学习与步态自适应
-40. [M3imic: Learning a Versatile Whole-Body Controller for Multimodal Motion Mimicking](/20260517-20260615/2606.04829v1-m3imic-learning-a-versatile-whole-body-controller-for-multimodal-motion-mimicking)  
-   标签：评分：8.0/10、query:hum-ctrl
-   evidence：面向人形机器人的多模态运动模仿全身控制器
-41. [TAGA: Terrain-aware Active Gaze Learning for Generalizable Agile Humanoid Locomotion](/20260517-20260615/2606.05880v1-taga-terrain-aware-active-gaze-learning-for-generalizable-agile-humanoid-locomotion)  
-   标签：评分：8.0/10、query:hum-ctrl
-   evidence：主动注视的强化学习用于人形机器人运动
-42. [HANDOFF: Humanoid Agentic Task-Space Whole-Body Control via Distilled Complementary Teachers](/20260517-20260615/2606.06493v2-handoff-humanoid-agentic-task-space-whole-body-control-via-distilled-complementary-teachers)  
-   标签：评分：8.0/10、query:hum-ctrl
-   evidence：通过蒸馏互补教师的任务空间人形机器人全身控制
-43. [HANDOFF: Humanoid Agentic Task-Space Whole-Body Control via Distilled Complementary Teachers](/20260517-20260615/2606.06493v3-handoff-humanoid-agentic-task-space-whole-body-control-via-distilled-complementary-teachers)  
-   标签：评分：8.0/10、query:hum-ctrl
-   evidence：通过多教师蒸馏实现人形机器人全身控制
-44. [Cooperative Long Rope Skipping via Multi-Agent Reinforcement Learning](/20260517-20260615/2606.08064v1-cooperative-long-rope-skipping-via-multi-agent-reinforcement-learning)  
-   标签：评分：8.0/10、query:hum-ctrl
-   evidence：多智能体强化学习用于人形机器人协作跳绳
-45. [A Spiking Neural Architecture for Coordinating Arm and Locomotor Control](/20260517-20260615/2606.11034v1-a-spiking-neural-architecture-for-coordinating-arm-and-locomotor-control)  
-   标签：评分：8.0/10、query:hum-ctrl
-   evidence：脉冲神经架构协调模拟人形机器人的手臂和运动控制
+   evidence：保留结构的学习方法用于欧拉-拉格朗日动力学
+5. [Reinforcement Learning for Flow-Matching Policies with Density Transport](/202606/15/2606.08602v1-reinforcement-learning-for-flow-matching-policies-with-density-transport)  
+   标签：评分：7.0/10、query:hum-ctrl
+   evidence：面向连续控制的强化学习，RLDT通过密度传输微调流匹配策略
+6. [HARBOR: A Harness Framework for Agentic Robot Reinforcement Learning](/202606/15/2606.08610v1-harbor-a-harness-framework-for-agentic-robot-reinforcement-learning)  
+   标签：评分：7.0/10、query:hum-ctrl
+   evidence：自动化RL工作流的框架，使用模拟器，直接支持将RL应用于机器人控制
+7. [IR-SIM: A Lightweight Skill-Native Simulator for Navigation, Learning, and Benchmarking](/202606/15/2606.08729v1-ir-sim-a-lightweight-skill-native-simulator-for-navigation-learning-and-benchmarking)  
+   标签：评分：7.0/10、query:hum-ctrl
+   evidence：轻量级技能原生模拟器用于机器人导航和学习
+8. [Classifying galaxies in the Galaxy10 DECals dataset using Inception and Residual CNNs](/202606/15/2606.08826v1-classifying-galaxies-in-the-galaxy10-decals-dataset-using-inception-and-residual-cnns)  
+   标签：评分：7.0/10、query:neural-arch
+   evidence：残差网络变体用于图像分类，使用ResNet101和InceptionV4
+9. [Two Bridges, One Pathway: From VLMs to Generalizable VLAs with Embodied Trajectory-Coupled Data](/202606/15/2606.08520v1-two-bridges-one-pathway-from-vlms-to-generalizable-vlas-with-embodied-trajectory-coupled-data)  
+   标签：评分：6.0/10、query:hum-ctrl
+   evidence：通过具身轨迹耦合数据将VLM桥接到机器人策略
+10. [How Much Capacity Does EEG Denoising Need? Ultra-Compact Networks reveal Benchmark Saturation and Metric-Utility Gap](/202606/15/2606.08594v1-how-much-capacity-does-eeg-denoising-need-ultra-compact-networks-reveal-benchmark-saturation-and-metric-utility-gap)  
+   标签：评分：6.0/10、query:neural-arch
+   evidence：深度可分离卷积U-Net用于高效网络结构
+11. [Guided Discovery of New Behaviors using Diffusion Policies](/202606/15/2606.08743v1-guided-discovery-of-new-behaviors-using-diffusion-policies)  
+   标签：评分：6.0/10、query:hum-ctrl
+   evidence：使用扩散策略发现多样化机器人行为；可应用于人形运动生成
+12. [Learning Dynamics Reveal a Hierarchy of Weight-Induced Layerwise Gram Metrics](/202606/15/2606.09744v3-learning-dynamics-reveal-a-hierarchy-of-weight-induced-layerwise-gram-metrics)  
+   标签：评分：6.0/10、query:neural-arch
+   evidence：学习动力学研究揭示了深层网络中的权重诱导Gram度量
 
 
 <div class="dpr-home-promo-card">
