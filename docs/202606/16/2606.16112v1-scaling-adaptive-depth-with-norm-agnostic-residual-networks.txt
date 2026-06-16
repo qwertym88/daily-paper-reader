@@ -1,0 +1,936 @@
+Title: Scaling Adaptive Depth with Norm-Agnostic Residual Networks
+
+URL Source: https://arxiv.org/pdf/2606.16112v1
+
+Published Time: Tue, 16 Jun 2026 01:59:46 GMT
+
+Number of Pages: 23
+
+Markdown Content:
+# Scaling Adaptive Depth with Norm-Agnostic Residual Networks 
+
+Tomas Figliolia *, Beren Millidge 
+
+Zyphra 
+
+San Francisco, CA 
+
+> *
+
+Corresponding authors: tom@zyphra.com 
+
+Abstract —Residual architectures are ubiquitous in deep learning, but they suffer from a subtle structural limitation: the norm of the residual stream can grow rapidly with depth. As a result, updates from later layers become small relative to the accumulated residual state. This reduces their impact on the representation and limits the benefits of scaling models in depth. To address this, we introduce NAG, a norm-agnostic residual architecture that separates magnitude from directional information in the residual stream, preserving meaningful layer contributions throughout depth and preventing later updates from being systematically suppressed by residual-norm growth. Im-portantly, NAG introduces only a negligible number of additional parameters and relies on simple operations that are easily kernel-fusible, preserving training efficiency in practice. We show that this architecture outperforms baseline Transformers, with gains that increase substantially as depth grows, enabling effective training of much deeper models. The norm-agnostic formulation also leads to an interpretable Mixture-of-Depths (MoD) mechanism that adaptively skips both attention and MLP layers. Beyond serving as a post-training accuracy-compute tradeoff, this mechanism can be used as a pretraining-time scaling strategy: under iso-FLOP training, compute saved by reducing per-token forward-pass cost can be reinvested into training on more tokens while keeping the total parameter count and KV-cache budget fixed. In our experiments, moderate Mixture-of-Depths rates of approximately 20% –25% match full-depth baseline performance under equal training compute while substantially re-ducing the number of executed layer parameters and forward-pass FLOPs. These results identify sparsity in depth as a new scaling axis for fixed-compute training, enabling very deep yet FLOP-efficient models. 
+
+I. I NTRODUCTION 
+
+The residual stream is one of the core innovations enabling the massive scale of deep-learning models (He et al., 2016; Vaswani et al., 2017; Brown et al., 2020), in part because residual architectures largely solve the vanishing and explod-ing gradients problem of early models (He et al., 2016). By making each layer add an incremental update to a persistent hidden state, rather than directly feeding its output as the input of another layer, the residual stream creates a direct gradient path from input to output through which gradients can flow without vanishing or exploding (Elhage et al., 2021). This enables stable training of deep models which ultimately underpins the massively increasing scale of modern AI systems (Brown et al., 2020; Hoffmann et al., 2022; Achiam et al., 2023; Liu et al., 2024). However, while deep residual networks can be trained sta-bly, recent lines of work have uncovered underlying problems with depth utilization. The outputs from deep layers often appear to have less impact on residual stream representations than early layers, tending to converge to near-identity maps (De & Smith, 2020; Sun et al., 2025; Csordás et al., 2025) and resulting in increasingly correlated residual streams with depth (Gromov et al., 2025; Jiang et al., 2025; Men et al., 2025). This may reflect a useful refinement process, in which the model moves from token embeddings toward final outputs by iteratively refining intermediate predictions (Geva et al., 2022; Belrose et al., 2023; Jastrz˛ ebski et al., 2017; Greff et al., 2016), as seen in many classical numerical optimization algorithms. However, we argue that this process may also be due to funda-mental architectural limitations, resulting in a deadweight loss of model capacity in deeper layers. One key line of evidence supporting this is that these deep layers can often be skipped entirely with minimal performance degradation (Veit et al., 2016; Sajjad et al., 2023; Fan et al., 2020; Csordás et al., 2025), and the positions to skip can be predicted accurately using the cosine similarity to the residual stream (Gromov et al., 2025). The decreasing impact of later layers is also used heavily in the model pruning literature (Kim et al., 2024; Yang et al., 2024; Men et al., 2025) to often substantially shrink the depth, and hence inference cost of models with only a minor impact on overall quality. These facts point to a fundamental inefficiency of current architectures. Deep layers incur roughly the same FLOP and memory costs as early layers during training and inference; therefore, their poor utilization in trained models represents a substantial amount of wasted capacity. While pruning methods recover some of that cost, they are often fragile and do not address the root cause of the poor utilization of deeper layers. Moreover, the inefficient use of deeper layers implicitly weakens scaling in depth relative to scaling in width, leading to larger models tending to adopt wider aspect ratios. This is unfortunate since depth and width offer different expressive potentials, with greater model depth enabling the computation of a substantially larger class of serial algorithms within a single forward pass, potentially reducing reliance on long chain-of-thought traces and improving token efficiency. Prior work has addressed related depth-utilization failures through normalization placement, residual scaling, and initial-ization. Pre-norm improves stability relative to post-norm, but can exhibit depth-dependent hidden-state norm growth, rep-resentation collapse, and weakened deep-layer contributions 
+
+> arXiv:2606.16112v1 [cs.LG] 15 Jun 2026
+
+(Xiong et al., 2020b; Xie et al., 2023; Sun et al., 2026). Meth-ods such as depth-scaled initialization, DeepNorm, ReZero, LayerScale, and LayerNorm Scaling improve trainability by adjusting residual-branch scale or initialization, but they do not directly control a layer’s relative effect on the current residual stream (Zhang et al., 2019; Wang et al., 2022; Bachlechner et al., 2021; Touvron et al., 2021; Sun et al., 2026). Post-norm variants revisit residual-stream normalization, but typically require modified residual pathways to avoid deep gradient pathologies (Srivastava et al., 2015; Chen & Wei, 2026). In this paper, we argue that poor depth utilization is a structural consequence of residual-stream norm growth with depth, which itself follows from the additive nature of the residual stream. Since each layer adds an update to the existing representation, the residual norm will tend to grow whenever layer updates are positively correlated with, or even orthogonal to the current residual stream. As this norm grows, later layers must produce increasingly large updates in order to meaningfully rotate or modify the representation, biasing the model toward weak late-layer contributions. The precise mechanism depends on the normalization structure. In pre-norm architectures, weight decay on the layer weights discourages later layers from producing the large output norms required to substantially influence an already high-norm resid-ual stream. In post-norm residual branches, the situation is subtler: normalization does not impose a truly fixed contri-bution norm once learnable scale and shift parameters are applied. In principle, these parameters can grow and allow later layers to increase their influence. However, this is a limited and inefficient solution. Because the scaling induced by the normalization parameters is comparatively less expressive than an unconstrained residual update, increasing layer influence tends to require injecting a large amount of energy into the residual stream. This accelerates residual norm growth and exacerbates gradient attenuation, producing a different route to poor depth utilization rather than eliminating the problem. More subtly, in pre-norm architectures, each sublayer re-ceives a normalized version of the residual stream, making the residual branch largely insensitive to the residual-stream norm itself (Ba et al., 2016; Brody et al., 2023). Two residual states with similar normalized direction but different magnitudes can therefore induce similar residual-branch outputs. After the update is added back to the residual stream, however, its relative effect depends strongly on the residual norm. The same update has little effect on a large-norm residual stream, but can substantially rotate a smaller-norm one. In this sense, token-wise input normalization removes crucial information about per-token residual-stream norms, which is required to properly calibrate a layer’s output. Pre-norm thus can act as an implicit inhibitor: a layer may produce a nonzero update that is nevertheless functionally weak. We address this issue with our Norm-AGnostic (NAG) residual stream architecture in which each layer’s contribution is independent of the current residual norm. The key idea is to separate scale from direction: each layer output is rescaled so that it primarily induces a controlled rotation of the residual direction, rather than an unconstrained change in magnitude. The norm is then maintained in a separate stream that controls the effective ‘temperature’ of decoding. This makes layer contributions consistent across depth, mitigates the norm-dependent inhibition described above, and reduces the architectural bias toward attenuated gradients in earlier layers. Empirically, this improves training loss across our ablations, with the largest gains observed in the deepest models. We also empirically study the properties of our norm-agnostic model. We demonstrate that, as expected, the contri-bution of each layer to the residual stream is equalized across depth. More intriguingly, we show that our norm-agnostic ap-proach ameliorates other pathologies found in existing LLMs such as attention sink (Xiao et al., 2024; Gu et al., 2025a), and heavy-tailed weight distributions leading to outliers in the residual stream (Bondarenko et al., 2023; Sun et al., 2024a) which are detrimental to low-precision quantization. Moreover, we show that our formulation naturally extends to an interpretable Mixture-of-Depths (MoD) mechanism, which uses the residual-stream geometry to enable adaptive computation (Graves, 2016; Dehghani et al., 2019; Elbayad et al., 2020; Raposo et al., 2024b). Since each layer’s output norm is precisely controlled, a simple geometric argument lets us estimate the ratio between a layer’s expected residual contribution and its maximum possible contribution before actually computing the layer . This yields a skipping rule based solely on residual-stream geometry, without requiring a separate learned router as in standard router-based MoD. We demonstrate that this mechanism substantially outperforms classical MoD, with the advantage increasing dramatically at higher skipping rates. Rather than treating MoD only as a post-training compute– accuracy tradeoff, we show that NAG makes MoD feasible as a pretraining-time scaling strategy. To our knowledge, this provides the first justification for using MoD during pretraining. Our iso-FLOP ablations show that forward-pass compute saved by skipping layers can be reinvested into training on more tokens under the same total compute budget. This produces similarly capable models while reducing the per-token forward-pass cost and the number of executed layer parameters, which can also accelerate inference. Our MoD mechanism therefore exposes depth sparsity as a new scaling axis for fixed-compute training, analogous to how Mixture-of-Experts enabled sparse scaling in width. Our results are thus a key step toward adaptive, compute-efficient, extremely deep models. II. B ACKGROUND 
+
+The core innovation of a residual network is that rather than layers composing their inputs and outputs directly as 
+
+x1 = f (x0), we instead write the action of all layers as adding onto a persistent hidden state: x1 = x0 + f (x0).Following Elhage et al. (2021), we interpret residual networks as containing a ‘residual stream’, which is this persistent hidden state, to which every layer contributes additively. 2The residual mechanism is fundamental because it preserves an identity path directly from the input to the output, since at initialization, when layer contributions are effectively noise, the direct path from input to output dominates. This prevents vanishing or exploding gradients at initialization, enabling stable training of very deep models compared to what is possible in non-residual networks. Another way to see this intuitively is through deep linear models. Consider a three-layer linear model without a residual stream, 
+
+x3 = W3W2W1x0 (1) The output and gradients depend on the product of three independent weight matrices. If the leading singular values of these matrices are consistently greater than one, activations and gradients can grow rapidly with depth; if they are con-sistently less than one, activations and gradients can shrink rapidly toward zero. Stable training, therefore, requires careful control of these scales. Conversely, consider the equivalent residual network, which can be expressed as a polynomial of combinations of layer products, 
+
+x3 = x0 + W1x0 + W2x0 + W3x0+
+
+W2W1x0 + W3W1x0 + W3W2x0 + W3W2W1x0 (2) In this case, activation and gradient shrinkage is far less severe, since the identity and first-order paths exist and can carry information and gradients. Shrinkage mainly affects the higher-order terms in this sum, reducing complex inter-layer interactions but leaving the network as a whole trainable. However, residual networks still have a subtle flaw. Be-cause the residual stream is updated by successively adding each layer’s contribution, its norm tends to grow with depth whenever these updates have a non-negligible component aligned with the current residual stream. Even orthogonal updates increase the squared norm, and in high-dimensional spaces it is unlikely that successive updates consistently have the negative projection required to offset this growth. Thus, unless layer updates are systematically anti-correlated with the current residual stream, addition alone creates a geo-metric bias toward increasing residual norm. This effect can be especially pronounced when layer outputs are positively correlated with the residual stream, as is natural since each layer takes the residual stream itself as input. In early training, when the outputs of these layers point in approximately the same direction as the original embedding, the residual-stream norm can grow approximately linearly with the number of layers. Later, we will compare norm profiles with and without our proposed norm-agnostic architecture, showing that in our ablations, standard residual-stream models can reach norms up to 120 × larger than their norm-agnostic counterparts. This increase in norm makes it harder for later layers to produce large updates to the residual stream representation, in effect reducing their impact on the model and, ultimately, the efficiency of the FLOPs and parameters used to compute their outputs. To understand this, we consider three scenarios. First, consider the post-normalization scheme used in earlier Transformer architectures (Vaswani et al., 2017; Xiong et al., 2020a; Devlin et al., 2019). The channel-wise parameters applied after normalization are typically exempt from weight decay and other forms of regularization. As a result, they can allow later layers to amplify their influence, but without pro-viding precise control over how much information is injected into the residual stream. Consequently, each token-level update to the residual stream can produce a substantial increase in the residual stream norm. This rapid increase in norm also creates difficulties for gradient propagation: it imposes a strong implicit prior that causes gradients to decay quickly in earlier layers, thereby reducing the trainability of deeper models. Secondly, let us consider the more common pre-normalization architecture, where normalization is applied to the input of the layer and the output is free to vary. Here, unlike in post-norm, each layer can theoretically increase the norm of its output to keep up with the growing residual stream norm. However, it faces two practical challenges. First, since the input is normalized, increasing the output norm requires increasing the weight norm. This is directly penalized by weight decay, which is ubiquitous in LLM training. Second, and more subtly, while the residual stream norm can differ across tokens, this information is discarded by token-wise input normalization, which reduces all inputs to the layer to normalized embeddings. The layer therefore has no way of knowing or adapting to the input residual norm of each token, or to the likely output residual norm it must match. The layer can only match the norm on average across tokens, so a layer will undershoot or overshoot the norm when the residual stream norm for a particular token is unusually small or large. Finally, in the case of sandwich norm (Ding et al., 2021; Team et al., 2024), which uses both pre-norm and post-norm, we observe similar pathologies as post-norm. While these issues do not prevent deep models from training stably empirically, since even deep layers receive gradients albeit under a strong decay prior, we argue that this reduces the expressivity and ultimate efficiency of the model. Each layer incurs comparable compute and memory cost, yet the structure of the residual stream means that layers do not have an equal opportunity to influence the representation. Our intuition is that an optimal architecture would place every parameter on an equal footing, so that each unit of compute has a comparable ability to modify the residual stream. III. A RCHITECTURE 
+
+A. The Norm-Agnostic Residual Stream Network 
+
+To address residual-stream norm growth and the resulting depth-dependent imbalance in layer influence, we introduce the Norm-AGnostic residual network (NAG). NAG decouples the magnitude of the residual stream from its representational content by keeping the high-dimensional residual direction on a fixed-radius hypersphere. Let Rl ∈ Rd denote the residual stream at layer l, where d
+
+is the hidden size. We write the normalized residual stream as 
+
+¯Rl = Nin (Rl) (3) 3In the setting considered here, Nin is a scale-only normaliza-tion that preserves direction, so that the residual stream can be decomposed as 
+
+Rl = ρl ¯Rl (4) where ρl represents the scalar norm and ¯Rl represents the angular direction of the normalized residual stream vector. For example, if Nin normalizes vectors to have ℓ2-norm √d, then 
+
+ρl = ∥Rl∥2
+
+√d (5) The standard residual update is 
+
+Rl+1 = Rl + fl(Nin (Rl)) = Rl + fl( ¯Rl) (6) A natural first attempt at making the layer norm-agnostic is to scale the layer output by the current residual scale 
+
+Rl+1 = Rl + ρlfl( ¯Rl) = ρl
+
+  ¯Rl + fl( ¯Rl) (7) Under this update, the direction of Rl+1 depends only on 
+
+¯Rl, not on the magnitude ρl. Thus, the layer computation is theoretically invariant to the norm of the residual stream, while the residual scale is transported multiplicatively through depth. Despite its intuitive appeal, this update proved highly un-stable in practice. Layer outputs are often strongly correlated with their inputs, especially early in training. Consequently, 
+
+fl( ¯Rl) can contain a large component in the direction of ¯Rl,causing the update 
+
+¯Rl+1 = ¯Rl + fl( ¯Rl) (8) to behave locally like a multiplicative gain on the residual stream 
+
+¯Rl+1 ≈ gl ¯Rl (9) with gl usually larger than one at the beginning of training. Since each subsequent layer can impose its own gain, these effects compound multiplicatively across depth, leading to ex-ponential growth of the residual-stream norm, creating massive differences in the scale of gradient norms across the model. In practice, this can make gradients in later layers many orders of magnitude larger than those in earlier layers, producing an effective vanishing-gradient problem for the early layers and recreating the low depth utilization problem. To address the problem of norm growth by correlated writes to the residual stream, we orthogonalize the output of each layer with respect to its input. In addition, we center each residual-branch output by subtracting its feature-wise mean, which we found improved numerical stability and downstream performance. This centering is implemented as the final op-eration inside fl, so throughout the following notation fl( ¯Rl)
+
+denotes the centered layer output. The embedding-table rows are also centered at zero. If Rl is centered and the update added at layer l is centered, then Rl+1 remains centered as well. Let 
+
+f ⊥ 
+
+> l
+
+( ¯Rl) = fl( ¯Rl) − fl( ¯Rl), ¯Rl
+
+∥ ¯Rl∥22
+
+¯Rl (10) denote the component of the layer output orthogonal to the normalized residual stream. The residual update then becomes 
+
+Rl+1 = ρl
+
+  ¯Rl + f ⊥ 
+
+> l
+
+( ¯Rl) (11) This orthogonalization is motivated by ideas similar to those in Zhai (2026), where values in the KV cache are orthogonalized with respect to the current value. Intuitively, if layers are no longer making decisions based on the residual norm, then adding a component parallel to the residual stream does not rotate the residual direction; it primarily increases the transported norm. This is undesirable because parallel writes cause the residual norm to grow faster than orthogonal writes, strengthening the norm-induced decay prior on gradients to earlier layers. Since the norm is already tracked separately, there is little reason to inject a forward-pass update aligned with the residual stream itself. We therefore remove this component through orthogonalization, forcing each layer con-tribution to act primarily as a controlled rotation of the residual representation. However, because the residual-branch output is often highly correlated with the residual direction early in training, the orthogonal component f ⊥ 
+
+> l
+
+( ¯Rl) can initially be very small. This reduces the effective size of the layer update and can hurt sample efficiency. To avoid this, we define the normalization function such that its output has norm √d:
+
+Nout (x) = √d x
+
+∥x∥2
+
+(12) To provide finer control over the norm of the residual-stream update, we introduce two additional mechanisms: a trainable scalar αl and an input-dependent norm modulator 
+
+ml. Prior work on latent MoEs (Elango et al., 2026) and CCA (Figliolia et al., 2025) suggests that model computations can often be carried out in spaces that are substantially more rank-constrained than the full residual-stream dimensionality. Motivated by this observation, we hypothesize that each layer is associated with a set of preferred directions in representation space. When the residual stream aligns with these directions, the layer should be allowed to inject a larger update; other-wise, its contribution should be suppressed. Accordingly, we constrain the norm modulator to output values in [0 , 1] , while the trainable scalar αl determines the maximum contribution that ml can provide. We parametrize the norm modulator as 
+
+ml =
+
+> C−1
+
+X
+
+> i=0
+
+pli σ( ¯R⊤ 
+
+> l
+
+wli + bli )
+
+!βl
+
+(13) Here, C is a hyperparameter specifying the number of pre-ferred directions, σ denotes the sigmoid function, βl > 0
+
+controls the sharpness of the modulation, and wli are learned preferred directions with their biases bli . The coefficients pli 
+
+are obtained by applying a softmax over learnable parameters, ensuring that pli ≥ 0 and P 
+
+> i
+
+pli = 1 . Thus, before expo-nentiation, the modulator is a convex combination of sigmoid gates and therefore lies in [0 , 1] . Raising this value to the positive power βl preserves the same range while changing 4the curvature of the response: values βl > 1 make inter-mediate modulator values more suppressive, whereas values 
+
+0 < β l < 1 make them closer to one. The role of βl becomes especially important when we introduce our MoD method in a later section. This parametrization has a natural geometric interpretation. Each of the C components defines a learned soft preference over the normalized residual space through the projection 
+
+¯R⊤ 
+
+> l
+
+wli . When the residual stream aligns with directions fa-vored by the layer, the corresponding gates activate and the modulator outputs a larger value, allowing the layer update to contribute more strongly to the residual stream. Conversely, when the residual stream lies outside these preferred regions, the modulator outputs a smaller value and suppresses the update. In this sense, the modulator acts as a lightweight input-dependent gate, allowing each layer to specialize its updates to particular regions or directions of representation space. This construction is also analogous to the router in an MoE layer: just as a linear classifier learns directions that score and select among experts, the norm modulator learns directions that determine when a layer’s residual update should be emphasized or suppressed. Since we apply this mechanism to MoE layers in our models, we choose C in a layer to be at least the number of experts in that layer, ensuring that the modulator has sufficient directional capacity to represent expert-specific preferences. In our ablations, we use C = 32 ;empirically, we find that C typically needs to be at least 8–16 
+
+to provide sufficient flexibility. Putting these pieces together, the full norm-agnostic update is 
+
+Rl+1 = ρl ¯Rl + ρlαlml( ¯Rl)Nout 
+
+ f ⊥ 
+
+> l
+
+( ¯Rl) (14) Our update has a simple geometric interpretation. The layer rotates the residual stream in a direction orthogonal to its current state by an amount controlled by the norm modulator. Since both ¯Rl and Nout (f ⊥ 
+
+> l
+
+( ¯Rl)) have norm √d, and since they are orthogonal, the residual norm grows by 
+
+∥Rl+1 ∥2
+
+∥Rl∥2
+
+=
+
+q
+
+1 + α2 
+
+> l
+
+m2 
+
+> l
+
+( ¯Rl) (15) Thus, for fixed αl, the norm-modulator controls both the maximum rotation applied by the layer and the maximum per-layer increase in the residual norm. For improved numerical properties, we store the norm scalar 
+
+ρl in log space. Let 
+
+sl = log ρl (16) Since each layer operates only on the normalized residual stream ¯Rl, while sl tracks the accumulated norm through the forward pass, after applying a layer update, we renormalize the resulting direction and transfer the corresponding gain to the log-scale variable. Concretely, the full norm-agnostic residual stream update becomes, 
+
+¯Rl+1 = ¯Rl + αlml( ¯Rl)Nout 
+
+ f ⊥ 
+
+> l
+
+( ¯Rl)q
+
+1 + α2 
+
+> l
+
+m2 
+
+> l
+
+( ¯Rl)
+
+sl+1 = sl + 12 log (1 + α2 
+
+> l
+
+m2 
+
+> l
+
+( ¯Rl)) 
+
+(17) By storing the residual stream and its norm separately, we keep the high-dimensional residual stream bounded on the normalized hypersphere while preserving the accumulated norm in a high-precision scalar channel. Figure 1 illustrates the norm-agnostic architecture. An em-bedding is first retrieved, scaled by the gain factor Gencode ,and decomposed into a norm lane and a phase lane. All subsequent layers operate only on the phase component of the residual stream. After each layer computes an update, the result is normalized before being added back into the phase lane; the corresponding local gain is accumulated in the norm lane, where it is stored in high precision. Thus, unlike conventional normalization, the procedure does not discard norm information but rather transports it explicitly through the network. At decoding time, the final residual-stream direction ¯RL
+
+is compared with the normalized rows of the embedding table, producing cosine similarities. These logits are scaled by the accumulated confidence ρL = exp( sL), which contains the product of the initial embedding norm Gembedding , the learnable post-embedding gain Gencode , and the transport gain accumulated through the network, Gtravel . Because the decoder uses normalized embedding vectors, this carried norm acts as an inverse temperature. We therefore define the effec-tive temperature as its reciprocal: 
+
+Teff = 1
+
+Gtravel · Gembedding · Gencode 
+
+(18) Thus, output probabilities are determined by angular similarity to the embedding table, while the sharpness of the distribution is controlled by the norm accumulated during the forward pass. This gives the model a mechanism for learning its effective de-coding temperature: higher temperatures can support uncertain predictions early in training, while lower temperatures allow sharper predictions as the model becomes more confident. We apply the norm-agnostic formulation to all layer types in the model, both MoE layers and attention layers. In standard architectures, output normalization can degrade attention-layer performance, since the norm of the attention output may encode information retrieved from the KV cache. However, in our norm-agnostic architecture, we did not observe any detri-mental effect from applying the same normalization procedure to attention layers. The additional operations introduced by the norm-agnostic formulation are lightweight and add only a negligible number of parameters to the model. The only added parameters come primarily from the norm modulator, which contributes approx-imately Cd parameters per layer, a negligible increase relative to the full model size which scales as d2. Orthogonalization, output normalization, norm modulation, and norm tracking are all scalar per-token operations, making them well suited to efficient implementation using kernel fusion. 
+
+B. Depth-Scaled Initialization 
+
+A natural question is how to initialize the trainable pa-rameters αl. If αl were initialized uniformly across layers, 5Fig. 1: Schematic of the norm-agnostic architecture. The resid-ual stream is decomposed into separately propagated norm and direction components. Each layer operates only on the direction component: it computes an update, removes its mean, orthogonalizes it with respect to the incoming residual-stream direction, re-normalizes it, applies norm modulation, and adds the resulting direction update back into the direction-only residual stream. The induced norm increase is then transported to the norm lane. then every layer would initially be allowed to contribute the same maximum amount of rotation, regardless of depth. As a starting point, we analyze an idealized non-norm-agnostic setting in which the initial residual stream begins with unit norm and each layer adds an orthogonal update with unit norm. Equivalently, all norms in this discussion are measured relative to the normalization scale √d. Since each update is orthogonal to the current residual stream, the squared norm grows additively: 
+
+∥R1∥ = p12 + 1 2
+
+∥R2∥ = p12 + 1 2 + 1 2 (19) and more generally, after l layers, 
+
+∥Rl∥ = √1 + l (20) The relative norm gain between two consecutive layers is therefore 
+
+∥Rl∥∥Rl−1∥ =
+
+√1 + l
+
+√1 + l − 1 =
+
+r
+
+1 + 1
+
+l (21) In the norm-agnostic formulation, the layer update is scaled relative to the current residual norm. Ignoring the norm modulator at initialization, the per-layer norm gain is 
+
+∥Rl∥∥Rl−1∥ =
+
+q
+
+1 + α2 
+
+> l
+
+(22) To match the additive orthogonal-growth behavior described above, we initialize 
+
+αl = 1
+
+√l (23) where l is the layer index, starting from l = 1 .The norm-agnostic formulation does not require this specific initialization of αl. In principle, one could use a larger initial-ization, such as αl = 1 for all layers, allowing every layer to potentially contribute up to the same maximum magnitude regardless of its depth. We therefore explored a more general family of initializations 
+
+αl = 1
+
+lp (24) where p controls how quickly the initial update scale decays with depth. The choice p = 0 .5 recovers Eq. (23). Smaller values, such as p = 0 .25 , make the initial contributions of different layers more uniform, while larger values, such as 
+
+p = 0 .75 , make deeper layers contribute less at initialization. Although we find empirically that the best initial values of α
+
+are obtained with p = 0 .5, this does not preclude different layers from inducing comparable average rotations of the residual stream, as we show in the results section. IV. R ESULTS 
+
+A. NAG Loss and Evaluations 
+
+After training with input normalization, each layer implicitly becomes tuned to an expected residual-stream scale at which its contribution is meaningful. However, residual embeddings with different norms can induce similar layer outputs. In one case, the output may substantially rotate the residual stream; in another, it may be diluted by a much larger residual norm. We refer to this norm-dependent weakening of a layer’s relative contribution as an inhibitory effect. NAG is designed to remove this inhibitory effect by making each layer’s contribution independent of the current residual-stream norm. This property should become increasingly important in deeper models, recurrent or looped architectures (Raposo et al., 2024a; Csordás et al., 2025, 2024; Geiping et al., 2026), and mixture-of-depth settings where tokens may undergo different amounts of prior computation (Wang et al., 2022; Dehghani et al., 2018; Raposo et al., 2024a; Bae et al., 2025). In such 6settings, the residual-stream norm can vary substantially across tokens, making norm-dependent inhibition especially severe. To test whether mitigating this inhibitory effect improves depth utilization, we conducted an ablation study on MoE Transformer models with and without NAG. We considered width-to-depth ratios of 80, 60, 40, 30, and 20, where smaller ratios correspond to deeper models. Across all settings, both the total parameter count and the forward-pass parameter count were kept fixed. Table I summarizes the configuration of each experiment. All ablation models are MoE Transformer architectures with 150M forward-pass parameters and 900M total parameters. Each Transformer layer consists of an attention block followed by an MoE feed-forward block. Models were trained with a sequence length of 2048 using our CCA attention layer with CCGQA (Figliolia et al., 2025), with 8 query heads and 2 key/value heads. To realize effective non-integer average ex-pert counts, we interleaved layers using two different numbers of experts. All models were trained for 50 billion tokens on the Zyda2 dataset (Tokpanov et al., 2024b,a). We used the Muon optimizer (Jordan et al., 2024), a batch size of approximately 3 million tokens, and a cosine learning-rate schedule initialized at 7.5 × 10 −4 and decayed to 5 × 10 −5.Figure 2 reports the final training losses and loss differences after training. We also report downstream prefill evaluations, i.e. evaluations computed from model likelihoods rather than generated completions, in Table II. NAG consistently improves HellaSwag accuracy across the evaluated configurations. Since HellaSwag is known to correlate well with language-modeling loss, these results are consistent with the loss improvements observed in Figure 2. Across all measured model ratios, NAG achieves lower training loss than the corresponding baseline. Loss generally improves as models become deeper, although the gains begin to saturate at the deepest configurations. We believe this saturation is due, at this model scale, to the increasingly constrained residual-stream width required to keep the ablation models parameter-matched. As shown in Table I, increas-ing depth while maintaining approximately equal parameter count reduces the hidden size from 1408 to 928, which may make the residual stream a stronger bottleneck in the deepest models. Despite this saturation, the improvement from NAG grows substantially with depth, indicating that controlling the residual-stream norm becomes increasingly important in deeper networks, as predicted by our analysis. 
+
+B. Residual Stream Norm 
+
+We now examine how the NAG architecture changes the behavior of the residual stream. The first two panels in Figure 3 show the growth of residual-stream norm across layers in the baseline and norm-agnostic settings. NAG substantially reduces norm accumulation by inserting updates into the residual stream in a controlled, orthogonal manner, thereby limiting uncontrolled growth in magnitude. For the model with aspect ratio 80, this corresponds to an approximately 120 ×
+
+reduction in residual-stream norm relative to the baseline. Interestingly, within the NAG models, the residual-stream norm increases with deeper models. Under our decoding pa-rameterization, where the final residual norm acts as an inverse temperature, this corresponds to a lower effective temperature for deeper models. This suggests that deeper NAG models may learn to make sharper, more confident next-token predictions. Importantly, this trend is not solely a mechanical consequence of using more layers: the embedding-table norm, learnable post-embedding gain, layer scales, and norm modulators can all reduce the effective norm used at decoding if doing so is beneficial. The observed increase therefore suggests that deeper NAG models preserve, and in some cases amplify, this confidence signal as depth increases. We aggregate the results from the model-depth ratio ab-lations to estimate the average cumulative angular change experienced by the token representations with and without NAG. The rightmost panel in Figure 3 reports this quantity across models of varying depth. The two settings exhibit distinct scaling behavior. With NAG, cumulative rotation grows approximately linearly as depth increases, suggesting that additional layers continue to produce meaningful angular updates along the representation trajectory. In contrast, the non-NAG baseline shows weaker, sublinear growth with depth, suggesting a saturation effect in which later layers contribute progressively less to the overall representation change. This pattern is consistent with recent analyses of the curse of depth in pre-norm language models, which argue that deeper Transformer blocks can become increasingly ineffective as their derivatives approach the identity, thereby limiting their contribution during training (Sun et al., 2025). 
+
+C. Residual Stream Geometry 
+
+In a standard pre-norm model, each layer receives a nor-malized residual representation. Consequently, the layer has limited direct access to the current norm of the residual stream for each token. Its weights must therefore learn not only which direction to write into the residual stream, but also what update magnitude is useful on average. This magnitude is implicitly tuned during training to the typical residual-stream norm encountered at that layer. When the actual residual norm for a token deviates from this typical value, the same update can induce a different effective rotation of the residual stream than intended. Equivalently, the layer output can be viewed as a directionally structured update plus a norm-dependent deviation whose effect is not directly controlled on a per-token basis. Across many layers, such deviations may accumulate and introduce additional variability into the residual stream, mixing useful directions with norm-induced perturbations and broadening the effective covariance spectrum. Norm-agnostic updates are designed to remove this source of variation by controlling the resulting residual-stream ro-tation more directly for each token. Under NAG, we there-fore hypothesize that the normalized residual-stream geome-7Model Ratio 80 60 40 30 20 Number of layers 18 22 28 34 40 Hidden size 1408 1280 1120 1024 928 Average number of experts 8 7.91 7.82 7.82 7.78 MLP hidden size 2816 2560 2328 2096 1984 
+
+TABLE I: Model configurations used in the ablation study across different model ratios. All configurations maintain approximately 150M forward-pass parameters and 900M total parameters. Non-integer expert counts are handled by interleaving layers with more and fewer experts to achieve the desired ratio. 
+
+80 60 40 30 20 
+
+2.32 
+
+2.33 
+
+2.34 
+
+2.35 
+
+2.36 + 0.01176 + 0.01893    
+
+> +0.02202
+> +0.02186
+> +0.02849
+
+Model ratio Training loss 
+
+BASELINE NAG 
+
+Fig. 2: Training losses for the baseline and norm-agnostic MoE models across model ratios. Labels above each pair report the loss difference, computed as baseline loss minus NAG loss. NAG improves over the baseline at every model ratio, with the largest gain observed in the deepest configurations. 
+
+openbookqa boolq hellaswag arc_challenge arc_easy winogrande piqa BASELINE-80 0.356000 0.478593 0.507568 0.308020 0.589646 0.520126 0.723069 NAG-80 0.348000 0.582875 0.516730 0.310580 0.577862 0.559590 0.719804 BASELINE-60 0.322000 0.578593 0.512547 0.308020 0.584596 0.530387 0.715452 NAG-60 0.352000 0.582263 0.525991 0.315700 0.583754 0.518548 0.719804 BASELINE-40 0.352000 0.531804 0.513742 0.313993 0.585438 0.538279 0.717084 NAG-40 0.366000 0.529358 0.533260 0.324232 0.607744 0.531176 0.719804 BASELINE-30 0.368000 0.552294 0.516033 0.311433 0.589646 0.533544 0.731230 NAG-30 0.360000 0.535474 0.529576 0.335324 0.603535 0.552486 0.716540 BASELINE-20 0.358000 0.587462 0.515435 0.300341 0.573653 0.533544 0.720892 NAG-20 0.358000 0.571254 0.534256 0.309727 0.581650 0.543015 0.728509 
+
+TABLE II: Evaluation accuracy across benchmarks for BASELINE and NAG models trained for 50B tokens. We emphasize HellaSwag because, in this training regime, it is the least noisy and tracks loss trends more closely than the other benchmarks. NAG outperforms the corresponding BASELINE model on HellaSwag at every evaluated depth. try becomes more concentrated: representations become less affected by norm-induced noise, allowing the model to re-duce directional dispersion without necessarily collapsing onto fewer active directions. We first ask whether controlling residual-stream rotations changes the global geometry of the normalized residual rep-resentations. To test this hypothesis, Figure 4 analyzes the covariance spectrum of the normalized residual stream ¯Rl
+
+entering each layer. Let ¯Rl,i ∈ Rd denote the normalized residual vector for sample i at layer l. We compute the centered 80 10 20 30 40 50 60 70 80 
+
+> 0
+> 40
+> 80
+> 120
+> 160
+> 200
+> 240
+> 280
+> 320
+> 360
+> 400
+
+Layer 
+
+> Norm
+> 80
+> 60
+> 40
+> 30
+> 20
+
+(a) Baseline norm.         
+
+> 010 20 30 40 50 60 70 80
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> 12
+> 14
+> 16
+
+Layer Norm 
+
+> 80
+> 60
+> 40
+> 30
+> 20
+
+(b) NAG norm.     
+
+> 36 44 56 68 80
+> 500
+> 600
+> 700
+> 800
+> 900
+> 1,000
+> 1,100
+
+Model depth (layers) Cumulative rotation ( ◦) Baseline 
+
+> NAG
+
+(c) Cumulative rotation. 
+
+Fig. 3: Layer-wise norm values and cumulative embedding rotation across models of different depths. Left: norm values for baseline models with model ratios 80, 60, 40, 30, and 20. Middle: norm values for NAG models with model ratios 80, 60, 40, 30, and 20. Note the different y-axis scales for the baseline and NAG norm plots. Right: average cumulative embedding rotation across tested model depths, comparing models trained with and without NAG. Rotation values are measured in angular degrees. covariance 
+
+Σl = 1
+
+n
+
+> n
+
+X
+
+> i=1
+
+  ¯Rl,i − μl
+
+   ¯Rl,i − μl
+
+⊤ (25) 
+
+μl = 1
+
+n
+
+> n
+
+X
+
+> i=1
+
+¯Rl,i (26) We denote the eigenvalues of Σl by λl,j dj=1 . We summarize this spectrum using three complementary quantities. First, the total variance is 
+
+TV l = Tr(Σ l) = 
+
+> d
+
+X
+
+> j=1
+
+λl,j = 1
+
+n
+
+> n
+
+X
+
+> i=1
+
+¯Rl,i − μl 
+
+> 22
+
+(27) This measures the overall directional dispersion of the normal-ized residual vectors around their mean direction. Since nor-malization fixes the norm of each residual vector, ∥ ¯Rl,i ∥22 = d,we have 
+
+TV l = 1
+
+n
+
+> n
+
+X
+
+> i=1
+
+¯Rl,i  
+
+> 22
+
+− ∥ μl∥22 = d − ∥ μl∥22 (28) Thus, changes in total variance cannot be attributed to changes in representation scale. Instead, lower total variance is exactly equivalent to a larger mean-vector norm, meaning that the normalized residual vectors are more aligned with a shared direction. A reduction in TV l therefore indicates increased directional concentration, rather than collapse or expansion in scale. Second, we measure the effective rank, 
+
+erank l = exp 
+
+
+
+−
+
+> d
+
+X
+
+> j=1
+
+pl,j log pl,j 
+
+
+
+(29) 
+
+pl,j = λl,j 
+
+Pdk=1 λl,k 
+
+(30) The effective rank estimates the entropy-based number of principal directions carrying substantial variance. Third, we compute the participation ratio, 
+
+PR l =
+
+Pdj=1 λl,j 
+
+2
+
+Pdj=1 λ2
+
+> l,j
+
+= 1
+
+Pdj=1 p2
+
+> l,j
+
+(31) Like effective rank, the participation ratio measures how broadly variance is distributed across principal directions, but it is based on the second moment of the normalized eigenvalue distribution. In the norm-agnostic model, the total variance of ¯Rl de-creases with depth, whereas the baseline does not exhibit such a pronounced trend. This suggests that norm-agnostic updates progressively reduce directional dispersion in the residual stream. At the same time, effective rank and participation ratio remain comparatively stable across layers, indicating that this increased concentration does not come from a substantial reduction in the number of active principal directions. By contrast, the baseline begins with lower effective di-mensionality but shows a marked increase in effective rank and participation ratio in later layers. This late-layer expansion indicates that variance becomes spread across an increasingly large set of directions. Such broadening is consistent with our hypothesis that standard pre-norm updates accumulate norm-dependent deviations across layers. Together, these results support the view that norm-agnostic updates induce a more stable and controlled residual-stream geometry. Under NAG, the normalized residual stream be-comes more directionally concentrated, while avoiding the late-layer broadening of the principal spectrum observed in the baseline. Having examined the geometry of the residual stream itself, we next ask whether the learned NAG parameters produce comparable layer-wise contributions across depth. Although we initialize αl according to Eq. (23), we leave them learnable during training. Figure 5 shows the final learned values of 90 10 20 30                                            
+
+> 0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1
+> Layer
+> Aspect ratio 80
+> Total variance
+> 010 20 30
+> 0
+> 100
+> 200
+> 300
+> Layer
+> Participation ratio
+> 010 20 30
+> 200
+> 400
+> 600
+> 800
+> Layer
+> Effective rank
+> 010 20 30 40
+> 0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1
+> Layer
+> Aspect ratio 60
+> 010 20 30 40
+> 0
+> 100
+> 200
+> 300
+> Layer
+> 010 20 30 40
+> 200
+> 400
+> 600
+> 800
+> Layer
+> 020 40
+> 0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1
+> Layer
+> Aspect ratio 40
+> 020 40
+> 0
+> 100
+> 200
+> 300
+> Layer
+> 020 40
+> 200
+> 400
+> 600
+> 800
+> Layer
+> 020 40 60
+> 0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1
+> Layer
+> Aspect ratio 30
+> 020 40 60
+> 0
+> 100
+> 200
+> 300
+> Layer
+> 020 40 60
+> 200
+> 400
+> 600
+> 800
+> Layer
+> 020 40 60
+> 0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1
+> Layer
+> Aspect ratio 20
+> 020 40 60
+> 0
+> 100
+> 200
+> 300
+> Layer
+> 020 40 60
+> 200
+> 400
+> 600
+> 800
+> Layer
+> NAG BASELINE
+
+Fig. 4: Comparison of NAG and baseline across layers for total variance, participation ratio, and effective rank across five aspect-ratio settings. Blue denotes NAG and red denotes the baseline. 
+
+αl across layers for all ablated models. We report both the maximum possible gain, αl, and the average realized gain, 
+
+αlml( ¯Rl), at each layer. The average realized gain remains fairly constant across depth. Since this gain directly determines the angular update imposed on the residual stream, this sug-gests that NAG encourages layers to contribute comparable amounts of residual-stream rotation throughout the network. This is consistent with Figure 3c, where deeper NAG models exhibit an approximately linear increase in cumulative rotation with depth. The previous analysis shows that the realized update mag-nitudes are balanced across depth. We next examined which regions each layer is tuned to, and whether these regions differ across layers. To do this, we used the normalized residual stream ¯R and computed a weighted average direction over an entire training token batch B, using the norm modulator outputs as weights. Specifically, for each layer l, we computed the preferred direction ⃗p rl ⃗p rl =
+
+PB−1 
+
+> i=0
+
+ml( ¯Ril ) ¯Ril 
+
+PB−1 
+
+> i=0
+
+ml( ¯Ril ) (32) We then measured the cosine similarity between these vectors across all pairs of layers. The resulting heatmaps in Figure 6 show a clear local structure across depth: nearby layers tend to have more similar preferred directions, suggesting that adjacent layers operate on related regions of representation space. Outside this local window, the preferred directions become less similar, indicating that later layers do not simply reuse the same regions throughout the network. This suggests a possible state-machine interpretation of the NAG forward pass. Each layer acts as a conditional transition operator: when a token lies near the layer’s preferred region, the layer applies a meaningful rotation; otherwise, its contribution is suppressed. In this view, a token follows a trajectory through representation 10 0 5 10 15 20 25 30 35                           
+
+> 0
+> 0.5
+> 1
+> 1.5
+> 2
+> Layer
+> Value
+> α
+> Mean Gain
+> (a) Model Ratio 80.
+> 0510 15 20 25 30 35 40
+> 0
+> 0.5
+> 1
+> 1.5
+> 2
+> Layer Value
+> α
+> Mean Gain
+> (b) Model Ratio 60.
+> 010 20 30 40 50
+> 0
+> 0.5
+> 1
+> 1.5
+> 2
+> Layer Value
+> α
+> Mean Gain
+> (c) Model Ratio 40.
+> 010 20 30 40 50 60
+> 0
+> 0.5
+> 1
+> 1.5
+> 2
+> Layer Value
+> α
+> Mean Gain
+> (d) Model Ratio 30.
+> 010 20 30 40 50 60 70
+> 0
+> 0.5
+> 1
+> 1.5
+> 2
+> Layer Value
+> α
+> Mean Gain
+> (e) Model Ratio 20.
+
+Fig. 5: Layer-wise values of α and Mean Gain across model depths. The dotted curve shows α, while the solid curve shows Mean Gain. We observe that the mean gain is effectively flat across layers, implying that, on average, under our NAG residual stream, each layer contributes equally to rotating the residual stream. space, and local decisions to modify or preserve the residual direction influence which subsequent layers become active for that token. Finally, we return to the inhibitory-effect hypothesis directly by measuring whether angularly similar residual representa-tions can nevertheless have substantially different norms in the baseline model. For each layer, we group residual-stream representations by angular similarity and then measure how much their norms vary within each group. Equivalently, after approximately fixing the angular component of the residual stream, we measure the remaining variation in its radial component. We estimate norm variation within angularly similar resid-ual representations by clustering the unit-normalized residual embeddings using von Mises–Fisher (vMF) clustering. This choice is natural because vMF distributions are defined on the unit hypersphere and therefore cluster points according to angular similarity rather than Euclidean distance. For each layer, we use a number of clusters equal to the original vocabulary size, namely 32,000. After assigning embeddings to clusters, we normalize each residual norm by the mean norm of its corresponding cluster. We then compute the 10th and 90th percentiles of these normalized norms within each cluster, average the resulting percentile values across all clusters in a layer, and finally average them across layers. The resulting values are reported in Table III. Because the norms are normalized by their cluster mean, values below 1 indi-            
+
+> Model Ratio 10th Percentile 90th Percentile 80 0.723064 1.299667 60 0.750408 1.261029 40 0.750328 1.269054 30 0.809038 1.210986 20 0.799459 1.208804
+
+TABLE III: Average 10th and 90th percentiles of residual-stream norms normalized by the corresponding cluster mean norm. Percentiles are computed within each vMF cluster, averaged across clusters within each layer, and then averaged across layers for each model ratio. cate representations with smaller-than-average norm within an angularly similar group, while values above 1 indicate larger-than-average norm. Across model aspect ratios, the average 10th percentile ranges from 0.723 to 0.809, while the average 90th percentile ranges from 1.209 to 1.300. This means that, even among residual embeddings assigned to the same angular cluster, norms can vary by roughly 20–30% below or above the cluster mean. These results indicate substantial norm variation among angularly similar representations, consistent with the inhibition hypothesis. 
+
+D. Outlier and Quantization Diagnostics 
+
+Because NAG explicitly controls the size of layer updates to the residual stream, we hypothesized that it may reduce 11 (a) Model ratio 20. (b) Model ratio 30. (c) Model ratio 40. (d) Model ratio 60. (e) Model ratio 80. 
+
+Fig. 6: Cosine similarity between layer-wise preferred directions for each ablated model. Preferred directions are computed as weighted averages of normalized residual stream activations, with norm modulator outputs used as weights. In each heatmap, the top-left corner corresponds to the lowest layer and the bottom-right corner corresponds to the final layer. The pattern shows local correlations which are similar to a sliding window in the directions selected by the norm-modulator, showing that the norm-modulator tends to choose to operate in similar subspaces serially through depth. residual-stream activation outliers, which are a major obstacle to near-lossless low-precision quantization of large models (Dettmers et al., 2022; Xiao et al., 2023; Wei et al., 2023). In standard pre-norm models, a layer can produce an unusually large update that substantially increases the residual-stream norm, injecting high-norm activations that later layers must process. By contrast, NAG constrains the effective rotation applied to the residual stream through the parameter α. Since this rotation directly determines the corresponding norm in-crease, NAG limits the extent to which any individual layer can inject excessively large updates into the residual stream. This suggests that NAG may be a promising architecture for improving low-precision robustness. As an initial diagnostic, we examine whether NAG also changes simple distributional properties of the learned expert weights. While this is not a full activation-quantization eval-uation, weight centering and worst-case normalized weight magnitudes provide useful preliminary indicators of quantiza-tion suitability. For each expert weight matrix, we measure zero-centering using |μ|/σ , where μ and σ are the mean and standard deviation of the weights. Smaller values indi-cate that the weights are more tightly centered around zero, which is favorable for symmetric low-precision quantization. We also report the largest normalized weight magnitude, 
+
+max |W |/RMS( W ), as a simple worst-case outlier diagnostic. The results are shown in Table IV. NAG substantially improves weight centering relative to the baseline. For the first expert linear layer, the mean |μ|/σ decreases from 8.59 ×10 −4
+
+to 1.50 × 10 −4, while the maximum value decreases from 
+
+3.51 × 10 −3 to 5.06 × 10 −4. This corresponds to reductions of 82.5% and 85.6%, respectively. A similar trend is observed for the second expert linear layer, where the mean |μ|/σ decreases by 79.7% and the maximum value decreases by 16.7%. NAG also does not increase the worst-case normal-ized weight magnitude. For the first expert linear layer, 
+
+max |W |/RMS( W ) decreases from 19.85 to 13.84, while for the second expert linear layer it decreases slightly from 34.25 to 33.44. Overall, these results provide encouraging prelim-inary evidence that NAG has weight-distribution properties favorable to low-precision training and inference. In particular,                                       
+
+> Metric Linear NAG Baseline Change Mean |μ|/σ fc1 1.50 ×10 −48.59 ×10 −4−82 .5%
+> Max |μ|/σ fc1 5.06 ×10 −43.51 ×10 −3−85 .6%
+> Max |W|/RMS( W)fc1 13.84 19.85 −30 .3%
+> Mean |μ|/σ fc2 1.28 ×10 −46.29 ×10 −4−79 .7%
+> Max |μ|/σ fc2 1.68 ×10 −32.02 ×10 −3−16 .7%
+> Max |W|/RMS( W)fc2 33.44 34.25 −2.4%
+
+TABLE IV: Simple weight-distribution diagnostics for NAG and the baseline, aggregated over 174 expert tensors for each expert linear projection. The fc1 and fc2 entries correspond to the first and second linear layers in the MLP experts, respectively. Lower |μ|/σ indicates weights that are more tightly centered around zero. The maximum normalized weight magnitude provides a worst-case outlier diagnostic. the expert weights are substantially more zero-centered than in the baseline, while also avoiding larger worst-case weight outliers. These diagnostics do not constitute a full quantization evaluation, but they suggest that NAG may be more robust under low-precision deployment. 
+
+E. Attention Sink Analysis 
+
+A recurring phenomenon in transformer language models is the emergence of attention sinks , in which one or a few early tokens attract a disproportionately large fraction of attention from many subsequent positions (Xiao et al., 2024; Gu et al., 2025b; Barbero et al., 2025). This behavior can be useful: early tokens can provide a stable attention anchor, and because softmax attention requires each query to allocate all probability mass somewhere, a sink can also serve as a content-independent location for absorbing attention mass that is not needed for the current computation (Gu et al., 2025b; Kaul et al., 2025). However, the same mechanism may be undesirable when a large fraction of attention is repeatedly assigned to fixed initial positions rather than to contextually relevant tokens. In that case, attention sinks can distort the effective use of the context window and make the model overly dependent on a small set of initial tokens. 12 Attention sinks are also closely related to activation-outlier phenomena that complicate low-precision deployment. Prior work has linked sink tokens and first-token attention domi-nance to large hidden-state or residual-stream outliers, and has shown that mitigating sink-associated activations can improve activation quantization (Sun et al., 2024b; Son et al., 2024; Kaul et al., 2025). Since NAG explicitly controls the size of layer updates to the residual stream, we hypothesize that it may reduce the formation or persistence of attention-sink patterns. To evaluate whether NAG reduces attention-sink behavior, we measure average post-softmax attention weights over the first 64 token positions of each sequence for trained base-line and NAG models with ratio 60. We aggregate attention matrices across evaluation examples and visualize the result-ing average attention patterns as heatmaps, normalizing each heatmap by its maximum value. In a model exhibiting an atten-tion sink, these visualizations typically reveal a strong vertical band in the first one or few key-token positions, indicating that many query positions consistently allocate attention to the same initial tokens. In our experiments, the first token is always BOS . This vertical-band pattern is visible across most layers of the baseline model, as shown in Figure 12. Figure 7 shows the layer-averaged heatmaps from Figure 12, making the reduction in attention-sink behavior under NAG especially apparent. In contrast, the NAG model does not exhibit a comparable concentrated vertical band. Across layers, attention mass over the first 64 positions remains more broadly distributed rather than collapsing onto the beginning of the sequence. The absence of a dominant vertical stripe in the first-token columns indicates that early tokens do not act as persistent attention attractors to the same extent as in the baseline. These results suggest that, under our evaluation protocol, NAG substantially reduces the prominence of the attention-sink pattern observed in the baseline model. One possible explanation is that NAG provides an alter-native mechanism for suppressing unnecessary attention-layer contributions. In a standard softmax attention layer, attention probability must be allocated across available keys even when the layer has little useful information to contribute. This can encourage the model to allocate probability mass to a stable, low-information sink position. Under NAG, when the norm modulator drives an attention layer’s contribution close to zero, the attention output has little influence on the residual stream regardless of where the attention mass is assigned. As a result, the model may have less pressure to use early tokens as persistent “null” destinations for attention mass. V. A N EW MOD A PPROACH 
+
+Thus far, we have introduced a norm-agnostic residual-stream architecture that improves depth utilization, especially in deeper models. Eq. (14) reveals an additional consequence of the formulation: the magnitude of a layer’s contribution is determined before the expensive layer computation is per-formed. In the norm-agnostic update, the contribution strength is controlled by the normalized input ¯Rl through the norm  
+
+> (a) Baseline (b) NAG
+
+Fig. 7: Average post-softmax attention heatmaps across layers for the baseline and NAG models. Rows correspond to query positions, and columns correspond to key positions. Thus, a bright vertical band near the left side indicates that many query positions allocate high attention mass to the same early key tokens. The baseline exhibits a clear attention-sink pattern, whereas NAG substantially reduces this concentration. modulator ml( ¯Rl). When ¯Rl lies in a region favored by the modulator, the layer is allowed to contribute strongly to the residual stream; when it lies outside such a region, the layer contribution is suppressed. This has an important computational implication. Because the modulator depends only on ¯Rl, and not on the layer output 
+
+f ⊥ 
+
+> l
+
+( ¯Rl), the model can determine the rotation a layer can impose before computing the layer itself. If this rotation is sufficiently small, then the layer can be skipped with limited effect on the residual representation. Unlike standard router-based MoD approaches, this skipping decision is not based on an auxiliary opaque gating signal. It is tied directly to the geometry of the residual stream: the fraction of the layer’s maximum possible rotation that would be realized. Because the layer update is orthogonal to the residual stream, adding the update increases the residual norm accord-ing to the Pythagorean theorem. Geometrically, the original residual stream and the layer update form the two legs of a right triangle, while the post-layer residual stream corresponds to the hypotenuse. This geometry allows us to determine the angular displacement of the residual stream from the relative magnitude of the update before computing the full layer output. Specifically, this angle determines only how far the residual direction moves, not the exact output representation. The precise output still depends on the direction of the orthogonal update. For layer l, the induced rotation can be written as 
+
+θl = arctan  αlml( ¯Rl) (33) where αl is the learned layer scale and ml( ¯Rl) is the norm modulator output, computed from the normalized residual stream. The maximum possible rotation at layer l is 
+
+θmax  
+
+> l
+
+= arctan( αl) (34) Thus, rather than choosing an absolute angular threshold arbi-trarily, we normalize the predicted rotation by the maximum 13 rotation possible for that layer. This accounts for the fact that different layers may have different learned values of αl. We define the normalized rotation score 
+
+rl = arctan  αlml( ¯Rl)
+
+arctan( αl) (35) Given a target skipping-rate threshold pthres ∈ [0 , 1] , the layer-skipping rule is 
+
+rl > p thres −→ execute layer lrl ≤ pthres −→ skip layer l (36) This criterion compares the rotation induced by a layer to that layer’s own maximum possible rotation, rather than applying a fixed angular cutoff uniformly across layers. This accounts for the fact that different layers may learn different values of 
+
+αl, and therefore have different maximum rotation capacities. Expressing the decision relative to each layer’s own capacity makes the threshold scale-invariant across layers and gives it a direct interpretation: rl is the share of the layer’s maximum possible rotation that would be applied to the residual stream. This provides an interpretable mechanism for MoD-style adaptive computation that is integrated directly into the NAG residual update. Before executing a layer, the model can compute how much actual rotation the layer is allowed to contribute relative to its maximum possible rotation, and then decide whether that contribution is large enough to justify the computation. Thus, compute is allocated according to an explicit geometric quantity rather than a separate learned router. The discontinuity introduced by a hard skip depends on where the threshold lies relative to the layer’s maximum rotation. Skipping a layer whose predicted contribution is only 
+
+5% of its maximum rotation is a small perturbation, whereas skipping at 50% removes a much larger potential update. The latter case creates a sharper transition between applying no update and executing the full layer computation. To allow for substantial compute reduction while reducing this discontinuity, we introduce a lightweight learned fallback direction. In both the skipped and non-skipped cases, the layer contributes a learned vector ⃗ Xl, which we interpret as a layer-specific anchor direction. When the layer is executed, the computed update is added around this anchor; when the layer is skipped, the anchor alone provides a cheap substitute for the skipped computation. 
+
+ˆfl( ¯Rl) = 
+
+(
+
+fl( ¯Rl) + ⃗ Xl, rl > p thres ⃗Xl, rl ≤ pthres 
+
+(37) After applying the same centering, orthogonalization, and output normalization as in the base NAG update, the residual update becomes 
+
+Rl+1 = Rl + ρlαlml( ¯Rl)Nout 
+
+ ˆf ⊥ 
+
+> l
+
+( ¯Rl)
+
+
+
+(38) Thus, skipping does not remove the layer’s contribution en-tirely. Instead, the skipped layer still contributes a learned, layer-specific direction whose norm is controlled by the mod-ulator, while the expensive computation fl( ¯Rl) is evaluated only when the predicted rotation justifies the additional cost. We apply this skipping mechanism to both MoE and atten-tion blocks. In both cases, we specify a target skip rate, but we enforce this target differently for the two block types. For MoE layers, we enforce the target skip rate locally at each layer by adjusting a layer-specific threshold. For example, a target skip rate of 50% means that, within each MoE layer, approximately half of the token positions in a microbatch skip the feed-forward computation during training. This reduces the number of token positions processed by that layer by the same proportion. In practice, the remaining active computation is usually still large enough to avoid entering a bandwidth-limited regime during training. For attention layers, enforcing the same skip rate indepen-dently at every layer caused a substantial increase in loss. We therefore use a global thresholding strategy for attention: rather than requiring each attention layer to skip a fixed fraction of token positions, we enforce the target skip rate only on average across all attention layers through a shared threshold. This allows the model to distribute attention computation unevenly across depth. In our current setup, skipped tokens still produce their corresponding KV elements; that is, skipping affects the attention computation but does not remove those tokens from the KV cache. In this setting, we found the β parameters in the norm modulator to be particularly useful. Intuitively, each attention layer observes its own distribution of norm-modulator signals, with layer-dependent centers between 0 and 1, which is forced by the norm modulator being constrained to that range. Since the same threshold is applied to all attention layers, a layer whose distribution lies mostly below the threshold will be skipped for most token positions. If the model needs to pre-serve more computation in that layer, shifting the distribution upward through the sum of sigmoids alone may be difficult or slow. The β parameter provides a more direct mechanism: decreasing β can rapidly raise the modulator outputs, giving the layer a better chance of exceeding the shared threshold and therefore being evaluated. When training with a target skip rate, the MoD thresholds are updated using the same control principles that we applied in our ZAYA1 series of language models Anthony et al. (2025); Washbourne et al. (2026) in balancing experts. Specifically, we use a PID-style controller that compares the desired target skip rate with the empirical skip rate measured on the current batch. Let r⋆ denote the target skip rate and let ˆrt denote the observed skip rate at training step t. We define the error as 
+
+et = r⋆ − ˆrt (39) This error determines the direction in which the skipping threshold should be adjusted. Since increasing the threshold increases the number of skipped tokens, the threshold is increased when the observed skip rate is below the target and decreased when it is above the target. The resulting PID signal is treated as a pseudo-gradient and applied to 14 the corresponding bias term, allowing the model to track the desired utilization or skipping rate during training. This allows the model to maintain a desired compute budget while still learning how to distribute computation across tokens and layers. VI. M OD R ESULTS 
+
+A. NAG Loss under MoD 
+
+To validate our MoD approach, we first ablate which block types are skipped using the norm-agnostic model with width-to-depth ratio 60. We evaluate attention-only skipping, MLP/MoE-only skipping, and skipping both block types si-multaneously, with target skip rates of 5% , 10% , 20% , 30% ,and 40% . All runs use the same architecture and training setup described above. Figure 8 shows that loss increases gradually as the skip rate increases. Attention-only and MLP/MoE-only skipping produce similar loss degradation across the evaluated rates, and the combined setting remains stable even when both block types are skipped. These results indicate that, under NAG, both attention and MLP/MoE blocks can be skipped token-wise without catastrophic degradation. Next, we compare NAG-MoD against a non-norm-agnostic MoD baseline. In this baseline, a learned linear router produces a gating signal that determines whether the corresponding layer computation should be executed for each token. Specif-ically, for layer l, the router computes 
+
+gMoD  
+
+> l
+
+= σ( ¯Rl · wl + bl) (40) As in the NAG setting, a threshold determines which token positions execute the layer and which skip it. The gating signal is also used to modulate the output of the corresponding layer. We use local thresholds for MoE layers and a global threshold for attention layers, matching the NAG-MoD setup. Figure 9 compares training losses for NAG-MoD and the router-based baseline across all evaluated skip rates. NAG-MoD achieves substantially lower loss at every MoD level. For example, at 40% MoD, NAG increases loss by only 0.03937 ,whereas the baseline incurs an increase of 0.10647 , a differ-ence of 0.06710 . The advantage of NAG remains consistent across the full range of skip rates. These results suggest that tying MoD decisions to residual-stream geometry provides a substantially better training-time skipping criterion than a separate learned router. The annotations below the bar plot report the realized compute savings, along with the theoretical savings expected for longer sequences, where attention costs become increasingly dominant. The average number of skipped tokens is kept fixed across MoE layers. For attention layers, however, we apply a global threshold, as described above, which results in different MoD percentages across depth. In Figure 11 of the appendix, we report the resulting compression rates for all attention layers, where skipped tokens retain their corresponding KV elements. Here, in Figure 10, we show the distribution of depths seen by each token for all evaluated MoD percentages. These distributions show that some tokens pass through only afew layers, whereas others propagate through the full model, supporting the interpretation that tokens are allocated different amounts of computation depending on their complexity – i.e., that MoD implements an effective adaptive compute scheme. 
+
+B. ISO-FLOP Ablations 
+
+While Mixture-of-Depths (MoD) has been studied previ-ously, it has not yet been widely adopted in open-source production models. A key reason is that layer skipping typi-cally comes at the cost of model quality: under most nonzero skipping rates, the resulting model is generally less capable than its full-depth counterpart. As a result, MoD is usually viewed as a post-training mechanism for trading accuracy for reduced compute, rather than as a natural component of pretraining. This makes it difficult to justify using MoD during pretraining unless there is a clear compensating benefit. A more compelling perspective is to ask whether, for the same KV-cache budget and the same number of parameters, one can keep the total training compute fixed while reallocat-ing compute from the forward pass toward training on more tokens. If this tradeoff produces a model with comparable capability under an iso-compute training budget, then MoD becomes an attractive choice. In that setting, one obtains an equally capable model after training while also gaining a cheaper forward pass per token, and hence more efficient inference. Moreover, in most MoD settings, the effective number of active parameters used during the forward pass is reduced as well. Because NAG substantially reduces the loss degradation associated with MoD, we believe our norm-agnostic architecture is a particularly strong candidate for testing whether this tradeoff can make MoD viable during pretraining. We designed a new set of experiments to test this hypothesis. Since different MoD percentages change the per-token training cost, iso-compute training runs process different numbers of tokens. To make this comparison cleaner, we replaced the cosine learning-rate schedule with a constant learning rate of 
+
+7.5×10 −4. For each MoD setting, we computed the number of iterations and training tokens required to match the same total training FLOPs, and then measured the training loss at that compute-matched point. The results are reported in Table V. In addition to the achieved loss, we report the loss difference relative to the 0% MoD baseline and the effective number of executed parameters used in the forward pass, which decreases as the MoD percentage increases. The results suggest that moderate MoD rates are already justifiable during pretraining under an iso-compute budget. In particular, the 20% MoD run essentially matches the baseline without MoD, with a loss difference of only 0.00055 , while using fewer active forward-pass parameters. This suggests that MoD rates around 20% , and likely up to roughly 25% , may provide a favorable tradeoff, since loss differences on the order of a few thousandths are close to the noise level of these runs. Even at 40% MoD, the loss increases by only 0.01854 , while the active forward-pass parameter count drops from 156 .00 Mto 105 .54 M. Thus, although aggressive skipping begins to incur a measurable loss penalty, it may still be attractive in 15 5 10 20 30 40 
+
+2.32 
+
+2.33 
+
+2.34 
+
+2.35 
+
+2.36 
+
+2.37 
+
+2.38 
+
+2.39 
+
+> + 0.00173
+> + 0.00354
+> + 0.00750
+> + 0.01248
+> + 0.01997
+> + 0.00162
+> + 0.00247
+> + 0.00718
+> + 0.01307
+> + 0.01804
+> + 0.00265
+> + 0.00667
+> + 0.01603
+> + 0.02582
+> + 0.03937
+
+MoD % 
+
+> Training loss
+
+ATT MoD MLP/MoE MoD Full MoD 
+
+Fig. 8: Training losses for attention-only, MLP/MoE-only, and full MoD ablations across different skipping percentages. The no-MoD baseline loss is 2.33661 . Labels above each bar report the loss increase relative to the baseline. We observe that increasing the MoD skipping rate on a fixed model size (and thus decreasing FLOPs) leads to a small but roughly linear increase in loss. In NAG models, skipping attention leads to roughly the same loss increase as skipping MLP/MoE. 
+
+5 10 20 30 40 
+
+2.32 
+
+2.34 
+
+2.36 
+
+2.38 
+
+2.4
+
+2.42 
+
+2.44 
+
+2.46 
+
+2.48 
+
+2.5
+
+> + 0.00265
+> + 0.00667
+> + 0.01603
+> + 0.02582
+> + 0.03937
+> + 0.03535
+> + 0.04220
+> + 0.06073
+> + 0.07971
+> + 0.10647
+
+MoD % Training loss NAG BASELINE 
+
+MoD % Compute savings 5 10 20 30 40 Realized savings 4.47% 8.95% 17.89% 26.84% 35.79% Long-sequence limit 5.00% 10.00% 20.00% 30.00% 40.00% 
+
+Fig. 9: Training losses for NAG and baseline. The no-MoD NAG-60 loss is 2.33661 , and the corresponding BASELINE loss is 2.35539 . Labels above each bar report the loss increase relative to the no-MoD NAG model. The table below reports the corresponding realized compute savings for both training and inference. The long-sequence limit row reports the theoretical savings expected when attention costs dominate total computation, and the generation of KV elements for every token becomes negligible. The realized saving is smaller because when we skip attention we still compute the KV-cache element for the skipped token so not all of the compute in the attention block is avoided. settings where lower per-token compute is valuable. Overall, these experiments provide evidence that NAG makes MoD viable as a pretraining-time scaling strategy, with 20 –25% 
+
+MoD emerging as a practical regime for iso-compute training. VII. D ISCUSSION 
+
+In this work, we identified residual-stream norm growth as a key limitation in deep residual architectures. As the residual norm grows, later layer updates become small relative to the 16 0 5 10 15 20 25 30 35 40     
+
+> 0
+> 0.05
+> 0.1
+> 0.15
+> 0.2
+> 0.25
+> 0.3
+> Depth
+> Distribution
+> MoD-5% MoD-10% MoD-20% MoD-30% MoD-40%
+
+Fig. 10: Distribution of model depths seen by token across different target MoD percentages. We observe that the tokens form a distribution of depths that they see, implying that some tokens receive substantially more compute than others, indicating the model is learning to use its depth adaptively. We also observe that the distribution over depth appears approximately Gaussian for high skipping rates. The reason for this distribution and how to understand its variance is left to future work.                                    
+
+> MoD % 0510 20 30 40 Training iterations 16000 16749 17572 19486 21869 24916 Training tokens (B) 50 52.34 54.91 60.90 68.34 77.86 Achieved loss 2.38783 2.38583 2.38659 2.38838 2.39965 2.40637 Loss diff. 0.0 -0.002 -0.00124 0.00055 0.01182 0.01854 Active forward-pass params (M) 156.00 149.70 143.39 130.78 118.16 105.54
+
+TABLE V: Iso-compute training results across different MoD percentages. The 0% MoD column corresponds to the baseline with no MoD, trained for 16K iterations, or 50B tokens. For each nonzero MoD percentage, the number of iterations and training tokens is increased to match the same total training compute budget. We report the achieved training loss, the loss difference relative to the 0% MoD run, and the effective number of active parameters used in the forward pass. Negative or near-zero loss differences indicate that the MoD run matches or improves over the 0% MoD baseline under the same training-compute budget, while reducing the number of executed forward-pass parameters. current representation, limiting their ability to meaningfully modify the residual stream. Since each parameter in the model has the same compute and memory cost, regardless of its position, we argue that it should have an equal effect on the residual stream representation. More broadly, we speculate that a maximally efficient architecture should satisfy this effective parameter equality property; namely, that the marginal impact of removing a parameter should be roughly equal, on average, for all comparable parameters. Since large residual streams cause poor utilization of the deeper layers, we therefore argue that this represents a subtle but important loss of model capacity relative to its potential. To solve this, we introduced the Norm-AGnostic (NAG) model, a residual architecture that separates magnitude from direction in the residual stream, and constrains each layer to act through a controlled angular rotation, while tracking and preserving the norm in a separate stream. This allows deeper layers to remain effective without depending on the current residual-stream norm. Empirically, we show that NAG improves training loss over matched baselines, with the largest gains in deeper models. Our analyses show that NAG reduces uncontrolled norm accu-mulation, preserves meaningful representation rotation across depth, and improves weight-distribution behavior by producing more zero-centered expert weights without increasing worst-case normalized weight magnitudes. Because each layer output is normalized, orthogonalized, and modulated before being added to the residual stream, NAG also provides a natural mechanism for controlling layer-output activation norms, mak-ing it a strong candidate for reducing activation outliers that complicate quantization and thus performant inference. More speculatively, the fact that our NAG approach ap-pears to remove residual stream outliers and substantially ameliorates attention sink implies that these phenomena are not intrinsically useful themselves but are instead symptoms of a deeper pathology in the norms of standard residual transformers. In the case of residual stream outliers, it is plausible that these emerge as a direct consequence of the 17 repeated addition of correlated inputs to the residual stream, effectively corresponding to a kind of power iteration of the weights through depth. For attention sink, we believe that NAG provides an alternative way for the network to address its need for null attention — instead of assigning attention mass to the sink token, the model can instead use the norm-modulator to effectively skip the attention layer entirely by outputting a tiny rotation into the residual stream. NAG thus implicitly serves as a kind of input-dependent gating on attention, which has been shown to similarly reduce attention sink (Qiu et al., 2026). Our NAG architecture further provides a principled and interpretable basis for Mixture-of-Depths. The norm modulator predicts a layer’s maximum relative contribution before the expensive layer computation is performed, enabling token-wise skipping based on residual-stream geometry rather than an opaque learned router. This makes MoD decisions easier to interpret: the routing variable has a direct geometric meaning, measuring how much actual rotation the layer is expected to contribute to the residual stream compared to its maximum potential. As a result, MoD becomes not only a compute-saving mechanism, but also a window into how computation is allocated across tokens and layers. Most importantly, our iso-FLOP experiments provide, to our knowledge, the first strong justification for using MoD during pretraining. Under a fixed training-compute budget, skipped computation can be reinvested into additional tokens while preserving parameter count and KV-cache size. Moderate MoD rates match the 0% MoD baseline loss while reducing executed forward-pass parameters and per-token cost. It should be noted that this is the most stringent test of MoD since we are keeping parameter counts fixed and the marginal impact of training on more tokens declines over the course of training. If we were to compare iso-flop and iso-token while increasing the number of parameters, as is typically done in studies of MoE vs dense models, our MoD depth scaling would achieve a similarly decisive advantage. This means that our MoD method is not merely an inference-time tradeoff, but rather makes viable a novel depth-scaling axis for pretraining. One interesting feature of NAG is that it removes the final normalization layer, commonly applied to the residual stream before decoding. We observe that this normalization discards vital information about the gain , or effective prediction tem-perature, which is encoded in the norm of the residual stream. By contrast, NAG preserves this information and gives the residual-stream norm a functional interpretation. In NAG, confidence in the next-token prediction is reflected by an increase in the norm of the residual stream. This increase occurs only when the layers make a strong contribution—that is, when they encounter embeddings aligned with the preferred directions specified by the norm modulator. If the token moving through the forward pass has no clear connection to the features the layers are specialized to detect, the result-ing embedding will have a smaller norm at decoding time. This corresponds to a higher effective temperature, reflecting greater uncertainty in the prediction. Taken together, these results suggest that our norm-agnostic architecture is a promising direction for scaling language models in depth. By controlling residual-stream geometry, stabilizing layer contributions, reducing norm-related patholo-gies, enabling interpretable adaptive-depth behavior, and sup-porting pretraining-compatible MoD, NAG provides a unified architectural framework for building deeper, more compute-efficient, and potentially more quantization-friendly models. Looking forward more broadly, we believe our NAG resid-ual stream architecture unlocks scaling sparsity in depth. When combined with MoE, this gives us the option to be simultane-ously sparse in both width and depth. Determining the optimal ratio of these two forms of sparsities for training capability and final inference performance remains an open question. Moreover, we hypothesize that our NAG architecture allows us to revisit and develop ideas around repeatedly iterating through a fixed ‘instruction set’ of layers (Csordás et al., 2024; Geiping et al., 2026) indefinitely. Such an architecture could support unbounded scaling of inference compute at a fixed parameter budget, enabling vector “programs” of indefinite and dynamic length to be executed directly in the residual stream without relying on chain of thought reasoning, which must pass through a discrete token bottleneck. REFERENCES 
+
+Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Florencia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal Anadkat, et al. Gpt-4 technical report. arXiv preprint arXiv:2303.08774 ,2023. Quentin Anthony, Yury Tokpanov, Skyler Szot, Srivatsan Ra-jagopal, Praneeth Medepalli, Anna Golubeva, Vasu Shyam, Robert Washbourne, Rishi Iyer, Ansh Chaurasia, et al. Training foundation models on a full-stack amd platform: Compute, networking, and system design. arXiv preprint arXiv:2511.17127 , 2025. Jimmy Lei Ba, Jamie Ryan Kiros, and Geoffrey E. Hinton. Layer normalization. arXiv preprint arXiv:1607.06450 ,2016. Thomas Bachlechner, Bodhisattwa Prasad Majumder, Henry Mao, Gary Cottrell, and Julian McAuley. Rezero is all you need: Fast convergence at large depth. In Proceedings of the Thirty-Seventh Conference on Uncertainty in Artifi-cial Intelligence , volume 161 of Proceedings of Machine Learning Research , pp. 1352–1361. PMLR, 2021. URL https://proceedings.mlr.press/v161/bachlechner21a.html. Sangmin Bae, Yujin Kim, Reza Bayat, Sungnyun Kim, Jiyoun Ha, Tal Schuster, Adam Fisch, Hrayr Harutyunyan, Ziwei Ji, Aaron Courville, and Se-Young Yun. Mixture-of-recursions: Learning dynamic recursive depths for adaptive token-level computation. arXiv preprint arXiv:2507.10524 , 2025. Federico Barbero, Alvaro Arroyo, Xiangming Gu, Christos Perivolaropoulos, Petar Veliˇ ckovi´ c, Razvan Pascanu, and Michael M. Bronstein. Why do LLMs attend to the first token? In Conference on Language Modeling , 2025. URL https://openreview.net/forum?id=tu4dFUsW5z. 18 Nora Belrose, Igor Ostrovsky, Lev McKinney, Zach Furman, Logan Smith, Danny Halawi, Stella Biderman, and Jacob Steinhardt. Eliciting latent predictions from transformers with the tuned lens. arXiv preprint arXiv:2303.08112 , 2023. doi: 10.48550/arXiv.2303.08112. URL https://arxiv.org/abs/ 2303.08112. Yelysei Bondarenko, Markus Nagel, and Tijmen Blankevoort. Quantizable transformers: Removing outliers by helping attention heads do nothing. In Advances in Neural Infor-mation Processing Systems , 2023. URL https://openreview. net/forum?id=sbusw6LD41. Shaked Brody, Uri Alon, and Eran Yahav. On the expressivity role of LayerNorm in transformers’ attention. In Findings of the Association for Computational Linguistics: ACL 2023 ,pp. 14211–14221, Toronto, Canada, July 2023. Associ-ation for Computational Linguistics. doi: 10.18653/v1/ 2023.findings-acl.895. URL https://aclanthology.org/2023. findings-acl.895/. Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, et al. Lan-guage models are few-shot learners. Advances in neural information processing systems , 33:1877–1901, 2020. Chen Chen and Lai Wei. Post-layernorm is back: Stable, expressive, and deep, 2026. URL https://arxiv.org/abs/2601. 19895. Róbert Csordás, Kazuki Irie, Jürgen Schmidhuber, Christopher Potts, and Christopher D Manning. Moeut: Mixture-of-experts universal transformers. Advances in Neural Infor-mation Processing Systems , 37:28589–28614, 2024. Róbert Csordás, Christopher D. Manning, and Christopher Potts. Do language models use their depth efficiently?, 2025. URL https://arxiv.org/abs/2505.13898. Soham De and Samuel L. Smith. Batch normalization biases residual blocks towards the identity function in deep networks. In Advances in Neural Information Processing Systems , volume 33, 2020. URL https://proceedings.neurips.cc/paper/2020/hash/ e6b738eca0e6792ba8a9cbcba6c1881d-Abstract.html. Mostafa Dehghani, Stephan Gouws, Oriol Vinyals, Jakob Uszkoreit, and Lukasz Kaiser. Universal transformers. arXiv preprint arXiv:1807.03819 , 2018. Mostafa Dehghani, Stephan Gouws, Oriol Vinyals, Jakob Uszkoreit, and Łukasz Kaiser. Universal transformers. In International Conference on Learning Representations ,2019. URL https://arxiv.org/abs/1807.03819. Tim Dettmers, Mike Lewis, Younes Belkada, and Luke Zettle-moyer. LLM.int8(): 8-bit matrix multiplication for trans-formers at scale. In Advances in Neural Information Processing Systems , volume 35, pp. 30318–30332, 2022. Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. BERT: Pre-training of deep bidirectional trans-formers for language understanding. In Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Lan-guage Technologies, Volume 1 (Long and Short Papers) ,pp. 4171–4186, Minneapolis, Minnesota, 2019. Association for Computational Linguistics. doi: 10.18653/v1/N19-1423. URL https://aclanthology.org/N19-1423. Ming Ding, Zhuoyi Yang, Wenyi Hong, Wendi Zheng, Chang Zhou, Da Yin, Junyang Lin, Xu Zou, Zhou Shao, Hongxia Yang, and Jie Tang. CogView: Mastering text-to-image generation via transformers. In Advances in Neural Infor-mation Processing Systems , volume 34, pp. 19822–19835, 2021. URL https://proceedings.neurips.cc/paper/2021/hash/ a4d92e2cd541fca87e4620aba658316d-Abstract.html. Venmugil Elango, Nidhi Bhatia, Roger Waleffe, Rasoul Shafipour, Tomer Asida, Abhinav Khattar, Nave Assaf, Maximilian Golub, Joey Guman, Tiyasa Mitra, et al. La-tentmoe: Toward optimal accuracy per flop and parameter in mixture of experts. arXiv preprint arXiv:2601.18089 , 2026. Maha Elbayad, Jiatao Gu, Edouard Grave, and Michael Auli. Depth-adaptive transformer. In International Conference on Learning Representations , 2020. URL https://openreview. net/forum?id=SJg7KhVKPH. Nelson Elhage, Neel Nanda, Catherine Olsson, Tom Henighan, Nicholas Joseph, Ben Mann, Amanda Askell, Yuntao Bai, Anna Chen, Tom Conerly, et al. A mathematical framework for transformer circuits. Transformer Circuits Thread , 1(1): 12, 2021. Angela Fan, Edouard Grave, and Armand Joulin. Reducing transformer depth on demand with structured dropout. In In-ternational Conference on Learning Representations , 2020. URL https://openreview.net/forum?id=SylO2yStDr. Tomas Figliolia, Nicholas Alonso, Rishi Iyer, Quentin An-thony, and Beren Millidge. Compressed convolutional attention: Efficient attention in a compressed latent space. 
+
+arXiv preprint arXiv:2510.04476 , 2025. Jonas Geiping, Sean McLeish, Neel Jain, John Kirchenbauer, Siddharth Singh, Brian Bartoldson, Bhavya Kailkhura, Ab-hinav Bhatele, and Tom Goldstein. Scaling up test-time compute with latent reasoning: A recurrent depth approach. 
+
+Advances in Neural Information Processing Systems , 38: 41340–41391, 2026. Mor Geva, Avi Caciularu, Kevin Wang, and Yoav Goldberg. Transformer feed-forward layers build predictions by pro-moting concepts in the vocabulary space. In Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing , pp. 30–45, Abu Dhabi, United Arab Emirates, December 2022. Association for Computational Linguistics. doi: 10.18653/v1/2022.emnlp-main.3. URL https://aclanthology.org/2022.emnlp-main.3/. Alex Graves. Adaptive computation time for recurrent neural networks. arXiv preprint arXiv:1603.08983 , 2016. doi: 10. 48550/arXiv.1603.08983. URL https://arxiv.org/abs/1603. 08983. Klaus Greff, Rupesh K Srivastava, and Jürgen Schmidhuber. Highway and residual networks learn unrolled iterative estimation. arXiv preprint arXiv:1612.07771 , 2016. Andrey Gromov, Kushal Tirumala, Hassan Shapourian, Paolo Glorioso, and Daniel A. Roberts. The unreasonable ineffec-tiveness of the deeper layers. In International Conference on 
+
+19 Learning Representations , 2025. URL https://openreview. net/forum?id=ngmEcEer8a. Xiangming Gu, Tianyu Pang, Chao Du, Qian Liu, Fengzhuo Zhang, Cunxiao Du, Ye Wang, and Min Lin. When atten-tion sink emerges in language models: An empirical view. In International Conference on Learning Representations ,2025a. Xiangming Gu, Tianyu Pang, Chao Du, Qian Liu, Fengzhuo Zhang, Cunxiao Du, Ye Wang, and Min Lin. When attention sink emerges in language models: An empirical view. In International Conference on Learning Repre-sentations , 2025b. URL https://openreview.net/forum?id= 78Nn4QJTEN. Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image recognition. In Pro-ceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR) , pp. 770–778, June 2016. Jordan Hoffmann, Sebastian Borgeaud, Arthur Mensch, Elena Buchatskaya, Trevor Cai, Eliza Rutherford, DDL Casas, Lisa Anne Hendricks, Johannes Welbl, Aidan Clark, et al. Training compute-optimal large language models. arXiv preprint arXiv:2203.15556 , 10, 2022. Stanisław Jastrz˛ ebski, Devansh Arpit, Nicolas Ballas, Vikas Verma, Tong Che, and Yoshua Bengio. Residual con-nections encourage iterative inference. arXiv preprint arXiv:1710.04773 , 2017. Jiachen Jiang, Jinxin Zhou, and Zhihui Zhu. Tracing rep-resentation progression: Analyzing and enhancing layer-wise similarity. In International Conference on Learning Representations , 2025. URL https://openreview.net/forum? id=vVxeFSR4fU. Keller Jordan, Yuchen Jin, Vlado Boza, You Jiacheng, Franz Cesista, Laker Newhouse, and Jeremy Bernstein. Muon: An optimizer for hidden layers in neural networks, 2024. URL https://kellerjordan. github. io/posts/muon , 6(3):4, 2024. Prannay Kaul, Chengcheng Ma, Ismail Elezi, and Jiankang Deng. From attention to activation: Unraveling the enigmas of large language models. In International Conference on Learning Representations , 2025. URL https://openreview. net/forum?id=IjduZQK8gM. Bo-Kyeong Kim, Geonmin Kim, Tae-Ho Kim, Thibault Castells, Shinkook Choi, Junho Shin, and Hyoung-Kyu Song. Shortened LLaMA: Depth pruning for large language models with comparison of retraining methods. arXiv preprint arXiv:2402.02834 , 2024. URL https://arxiv.org/ abs/2402.02834. Aixin Liu, Bei Feng, Bing Xue, Bingxuan Wang, Bochao Wu, Chengda Lu, Chenggang Zhao, Chengqi Deng, Chenyu Zhang, Chong Ruan, et al. Deepseek-v3 technical report. 
+
+arXiv preprint arXiv:2412.19437 , 2024. Xin Men, Mingyu Xu, Qingyu Zhang, Qianhao Yuan, Bingn-ing Wang, Hongyu Lin, Yaojie Lu, Xianpei Han, and Weipeng Chen. ShortGPT: Layers in large language models are more redundant than you expect. In Findings of the Association for Computational Linguistics: ACL 2025 ,pp. 20192–20204, Vienna, Austria, July 2025. Associa-tion for Computational Linguistics. doi: 10.18653/v1/ 2025.findings-acl.1035. URL https://aclanthology.org/2025. findings-acl.1035/. Zihan Qiu, Zekun Wang, Bo Zheng, Zeyu Huang, Kaiyue Wen, Songlin Yang, Rui Men, Le Yu, Fei Huang, Suozhi Huang, et al. Gated attention for large language models: Non-linearity, sparsity, and attention-sink-free. Advances in Neural Information Processing Systems , 38:100092– 100118, 2026. David Raposo, Sam Ritter, Blake Richards, Timothy Lillicrap, Peter Conway Humphreys, and Adam Santoro. Mixture-of-depths: Dynamically allocating compute in transformer-based language models. arXiv preprint arXiv:2404.02258 ,2024a. David Raposo, Sam Ritter, Blake Richards, Timothy Lillicrap, Peter Conway Humphreys, and Adam Santoro. Mixture-of-depths: Dynamically allocating compute in transformer-based language models. arXiv preprint arXiv:2404.02258 ,2024b. doi: 10.48550/arXiv.2404.02258. URL https://arxiv. org/abs/2404.02258. Hassan Sajjad, Fahim Dalvi, Nadir Durrani, and Preslav Nakov. On the effect of dropping layers of pre-trained transformer models. Computer Speech & Lan-guage , 77:101429, January 2023. doi: 10.1016/j.csl. 2022.101429. URL https://www.sciencedirect.com/science/ article/pii/S0885230822000596. Seungwoo Son, Wonpyo Park, Woohyun Han, Kyuyeun Kim, and Jaeho Lee. Prefixing attention sinks can mitigate activa-tion outliers for large language model quantization. In Yaser Al-Onaizan, Mohit Bansal, and Yun-Nung Chen (eds.), 
+
+Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , pp. 2242–2252, Miami, Florida, USA, November 2024. Association for Computa-tional Linguistics. doi: 10.18653/v1/2024.emnlp-main.134. URL https://aclanthology.org/2024.emnlp-main.134/. Rupesh K Srivastava, Klaus Greff, and Jürgen Schmidhuber. Training very deep networks. Advances in neural informa-tion processing systems , 28, 2015. Mingjie Sun, Xinlei Chen, J. Zico Kolter, and Zhuang Liu. Massive activations in large language models. In Conference on Language Modeling , 2024a. URL https://openreview.net/ forum?id=F7aAhfitX6. Mingjie Sun, Xinlei Chen, J. Zico Kolter, and Zhuang Liu. Massive activations in large language models. In Conference on Language Modeling , 2024b. URL https://openreview.net/ forum?id=F7aAhfitX6. Wenfang Sun, Xinyuan Song, Pengxiang Li, Lu Yin, Yefeng Zheng, and Shiwei Liu. The curse of depth in large language models. arXiv preprint arXiv:2502.05795 , 2025. Wenfang Sun, Xinyuan Song, Pengxiang Li, Lu Yin, Yefeng Zheng, and Shiwei Liu. The curse of depth in large language models, 2026. URL https://arxiv.org/abs/2502.05795. Gemma Team, Morgane Riviere, Shreya Pathak, Pier Giuseppe Sessa, Cassidy Hardin, Surya Bhupatiraju, Léonard Hussenot, Thomas Mesnard, Bobak Shahriari, Alexandre Ramé, et al. Gemma 2: Improving open language models 20 at a practical size. arXiv preprint arXiv:2408.00118 , 2024. Yury Tokpanov, Paolo Glorioso, Quentin Anthony, and Beren Millidge. Zyda-2: a 5 trillion token high-quality dataset. 
+
+arXiv preprint arXiv:2411.06068 , 2024a. Yury Tokpanov, Beren Millidge, Paolo Glorioso, Jonathan Pilault, Adam Ibrahim, James Whittington, and Quentin Anthony. Zyda: A 1.3 t dataset for open language modeling. 
+
+arXiv preprint arXiv:2406.01981 , 2024b. Hugo Touvron, Matthieu Cord, Alexandre Sablayrolles, Gabriel Synnaeve, and Hervé Jégou. Going deeper with image transformers. In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) , pp. 32–42, October 2021. Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, and Illia Polosukhin. Attention is all you need. In Advances in Neural Information Processing Systems , 2017. Andreas Veit, Michael J. Wilber, and Serge J. Belongie. Residual networks behave like ensembles of relatively shallow networks. In Advances in Neural Information Processing Systems , volume 29, pp. 550–558, 2016. URL https://arxiv.org/abs/1605.06431. Hongyu Wang, Shuming Ma, Li Dong, Shaohan Huang, Dong-dong Zhang, and Furu Wei. Deepnet: Scaling transformers to 1,000 layers. arXiv preprint arXiv:2203.00555 , 2022. Robert Washbourne, Rishi Iyer, Tomas Figliolia, Henry Zheng, Ryan Lorig-Roach, Sungyeon Yang, Pritish Yuvraj, Quentin Anthony, Yury Tokpanov, Xiao Yang, et al. Zaya1-8b technical report. arXiv preprint arXiv:2605.05365 , 2026. Xiuying Wei, Yunchen Zhang, Yuhang Li, Xiangguo Zhang, Ruihao Gong, Jinyang Guo, and Xianglong Liu. Outlier suppression+: Accurate quantization of large language mod-els by equivalent and effective shifting and scaling. In 
+
+Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , pp. 1648–1665, Singapore, 2023. Association for Computational Linguistics. doi: 10. 18653/v1/2023.emnlp-main.102. URL https://aclanthology. org/2023.emnlp-main.102/. Guangxuan Xiao, Ji Lin, Mickael Seznec, Hao Wu, Julien Demouth, and Song Han. SmoothQuant: Accurate and efficient post-training quantization for large language mod-els. In Andreas Krause, Emma Brunskill, Kyunghyun Cho, Barbara Engelhardt, Sivan Sabato, and Jonathan Scarlett (eds.), Proceedings of the 40th International Conference on Machine Learning , volume 202 of Proceedings of Machine Learning Research , pp. 38087–38099. PMLR, 2023. Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient streaming language models with attention sinks. In International Conference on Learning Representations , 2024. Shufang Xie, Huishuai Zhang, Junliang Guo, Xu Tan, Jiang Bian, Hany Hassan Awadalla, Arul Menezes, Tao Qin, and Rui Yan. Residual: Transformer with dual resid-ual connections. arXiv preprint arXiv:2304.14802 , 2023. doi: 10.48550/arXiv.2304.14802. URL https://arxiv.org/abs/ 2304.14802. Ruibin Xiong, Yunchang Yang, Di He, Kai Zheng, Shuxin Zheng, Chen Xing, Huishuai Zhang, Yanyan Lan, Liwei Wang, and Tie-Yan Liu. On layer normalization in the transformer architecture. In Proceedings of the 37th In-ternational Conference on Machine Learning , volume 119 of Proceedings of Machine Learning Research , pp. 10524– 10533. PMLR, 2020a. URL https://proceedings.mlr.press/ v119/xiong20b.html. Ruibin Xiong, Yunchang Yang, Di He, Kai Zheng, Shuxin Zheng, Chen Xing, Huishuai Zhang, Yanyan Lan, Liwei Wang, and Tie-Yan Liu. On layer normalization in the transformer architecture. In International Conference on Machine Learning , 2020b. Yifei Yang, Zouying Cao, and Hai Zhao. LaCo: Large lan-guage model pruning via layer collapse. In Findings of the Association for Computational Linguistics: EMNLP 2024 ,pp. 6401–6417, Miami, Florida, USA, November 2024. Association for Computational Linguistics. doi: 10.18653/ v1/2024.findings-emnlp.372. URL https://aclanthology.org/ 2024.findings-emnlp.372/. Shuangfei Zhai. Exclusive self attention, 2026. URL https: //arxiv.org/abs/2603.09078. Biao Zhang, Ivan Titov, and Rico Sennrich. Improving deep transformer with depth-scaled initialization and merged at-tention, 2019. URL https://arxiv.org/abs/1908.11365. 21 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 
+
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> 80
+> 90
+> 100
+
+Layer 
+
+> Kept tokens %
+
+NAG                      
+
+> MoD-5%
+> MoD-10%
+> MoD-20%
+> MoD-30%
+> MoD-40%
+> 012345678910 11 12 13 14 15 16 17 18 19 20 21
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> 80
+> 90
+> 100
+
+Layer 
+
+> Kept tokens %
+
+BASELINE 
+
+> MoD-5%
+> MoD-10%
+> MoD-20%
+> MoD-30%
+> MoD-40%
+
+Fig. 11: MoD rates per attention layer for NAG and BASELINE under different target MoD percentages. APPENDIX 
+
+A. MoD Percentages Across Attention Layers 
+
+In Section VI, we noted that attention layers are skipped using a global threshold, allowing computation to be allocated unevenly across depth. Figure 11 shows the percentage of tokens retained at each attention layer for both NAG and the baseline across different target MoD percentages. At higher MoD rates, several layers retain very few tokens, suggesting that these layers may be candidates for further trimming or removal. 
+
+B. Attention Sink in NAG vs. Baseline 
+
+Here we present the full set of average attention matrices across all twenty layers for the NAG model and the baseline for the model with ratio 60. The NAG layers exhibit a clear causal attention pattern without a pronounced attention sink. In contrast, many baseline layers concentrate a large fraction of attention mass on the initial sink token, suggesting that these layers rely more heavily on a fixed low-information position rather than distributing attention across contextually relevant tokens. This pattern is consistent with reduced effective use of attention computation in the baseline. 22 Baseline Layer 0 NAG Layer 0 Baseline Layer 1 NAG Layer 1 Baseline Layer 2 NAG Layer 2 
+
+Baseline Layer 3 NAG Layer 3 Baseline Layer 4 NAG Layer 4 Baseline Layer 5 NAG Layer 5 
+
+Baseline Layer 6 NAG Layer 6 Baseline Layer 7 NAG Layer 7 Baseline Layer 8 NAG Layer 8 
+
+Baseline Layer 9 NAG Layer 9 Baseline Layer 10 NAG Layer 10 Baseline Layer 11 NAG Layer 11 
+
+Baseline Layer 12 NAG Layer 12 Baseline Layer 13 NAG Layer 13 Baseline Layer 14 NAG Layer 14 
+
+Baseline Layer 15 NAG Layer 15 Baseline Layer 16 NAG Layer 16 Baseline Layer 17 NAG Layer 17 
+
+Baseline Layer 18 NAG Layer 18 Baseline Layer 19 NAG Layer 19 Baseline Layer 20 NAG Layer 20 
+
+Fig. 12: Layer-wise comparison of average post-softmax attention patterns over the first 64 token positions. Rows correspond to query positions and columns to key positions. Each pair compares the baseline model and NAG at the same attention layer. The baseline exhibits pronounced vertical bands in early key-token positions across many layers, consistent with an attention-sink pattern, whereas these bands are substantially attenuated in NAG. This suggests that NAG reduces the prominence of attention sinks under our evaluation protocol. 23
