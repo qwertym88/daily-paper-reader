@@ -1,0 +1,2548 @@
+Title: Gaussian Mixture Attention: Linear-Time Sequence Mixing via Probabilistic Latent Routing
+
+URL Source: https://arxiv.org/pdf/2606.18283v1
+
+Published Time: Thu, 18 Jun 2026 00:03:02 GMT
+
+Number of Pages: 55
+
+Markdown Content:
+# Gaussian Mixture Attention: Linear-Time Sequence Mixing via Probabilistic Latent Routing 
+
+Yongchao Huang ∗ Hassan Raza †
+
+16/05/2026 
+
+Abstract 
+
+The dense token-to-token interaction pattern of standard dot-product attention remains a central bottleneck in scaling Transformer architectures to long contexts. We introduce Gaus-sian Mixture Attention (GMA) , a probabilistic attention-style sequence mixer that replaces explicit pairwise query–key comparison with routing through K learned Gaussian mixture com-ponents. Queries and keys are mapped to posterior responsibility vectors over a shared latent routing space; their overlap defines an implicit responsibility-space affinity, while values are written into and read from a K-slot latent memory. By exploiting the associativity of ma-trix multiplication, GMA avoids materializing the induced N × N affinity matrix and instead uses two responsibility matrices whose dominant activation storage scales as O(N K ) rather than O(N 2) for fixed K. We formulate bidirectional and causal variants of GMA, provide an end-to-end differentiable parameterization of the Gaussian mixture components, and ana-lyze its responsibility-modulated gradient structure, constrained non-negative low-rank affinity interpretation, and local routing stability. Empirically, GMA exhibits the intended fixed-K
+
+linear memory scaling and is competitive with attention-style baselines on long-context classi-fication, while causal GMA improves over tested linear/random-feature attention variants on WikiText-103 but remains behind optimized causal SDPA and Mamba in the current implemen-tation. Analysis of learned responsibilities further shows broad component usage and moderate alignment with surface-form token categories, supporting GMA as a probabilistic, interpretable, fixed-K linear-time attention-style alternative rather than a universal replacement for optimized softmax attention or state-space models. 
+
+# 1 Introduction 
+
+The Transformer architecture has achieved strong performance across language, vision, and multi-modal learning, driven largely by the representational power and parallelism of dot-product Multi-Head Attention (MHA) [49, 15, 41]. However, standard self-attention computes pairwise interac-tions between all N tokens in a sequence. For one attention head, let Q ∈ RN ×dk denote the query matrix, Katt ∈ RN ×dk denote the key matrix, and V ∈ RN ×dv denote the value matrix. Here 
+
+dk is the query/key channel dimension used to compute dot-product scores, while dv is the value dimension of the vectors being aggregated. Scaled dot-product attention computes 
+
+O = softmax 
+
+ QK ⊤
+
+> att
+
+√dk
+
+
+
+V, O ∈ RN ×dv . (1) 
+
+> ∗
+
+yongchao.huang@abdn.ac.uk 
+
+> †
+
+h.raza.24@abdn.ac.uk 
+
+1
+
+> arXiv:2606.18283v1 [cs.LG] 9 Jun 2026
+
+Intro | Lite | Method | Theory | Exps | Disc | Con | App The intermediate score matrix QK ⊤ 
+
+> att
+
+∈ RN ×N contains token-to-token scores between all query and key positions. Although the final output has dimension O ∈ RN ×dv , computing dense atten-tion requires forming or implicitly representing interactions between all pairs of positions. In the standard explicit formulation, this leads to O(N 2) attention-score storage and O(N 2dk + N 2dv)arithmetic for the score and value multiplications. When dk and dv are treated as fixed, this gives the familiar quadratic scaling in sequence length . This quadratic dependence makes long-context modelling expensive and motivates efficient alternatives for settings such as long-document processing, byte-level classification, high-resolution vision, genomics, and autoregressive language modelling [3, 54, 47, 50, 10, 28, 1]. A large body of work has attempted to reduce the quadratic attention bottleneck through sparse attention patterns, low-rank projections, kernel approximations, optimized exact-attention kernels, and recurrent or state-space sequence models [48, 3, 54, 50, 28, 10, 13, 19, 18]. Sparse attention methods, such as Longformer and BigBird , reduce computation by restricting each token to attend to a subset of local, global, or structured positions [3, 54]. Low-rank methods such as 
+
+Linformer compress the attention matrix through learned projections along the sequence dimension [50]. Kernel-based methods replace the softmax attention kernel with feature-map constructions, including deterministic positive feature maps in Linear Transformer and random-feature approx-imations in Performer [28, 10]. IO-aware implementations such as FlashAttention retain exact softmax attention while reducing memory traffic through hardware-aware tiling [13]. More re-cently, structured state-space and selective state-space models, including S4 and Mamba , have pursued linear or near-linear sequence modelling by replacing explicit attention with recurrent or state-space dynamics [19, 18]. These approaches expose different trade-offs: they can be highly efficient, but their internal routing structure is often less directly probabilistic or less immediately interpretable as a token-to-token distribution than the original softmax attention weights. In this work, we propose Gaussian Mixture Attention (GMA) , a probabilistic alternative to dot-product attention that reconceptualizes sequence mixing as latent responsibility-based rout-ing . Instead of explicitly computing all pairwise token-to-token similarities, GMA introduces K
+
+learned Gaussian mixture components in a projected routing representation space . Query and key representations are mapped to posterior responsibility vectors over these components. Key respon-sibilities write values into a latent memory ˜V ∈ RK×dv together with a component-wise normalizer 
+
+Z ∈ RK , while query responsibilities read from this normalized latent memory to produce token-level outputs. Thus, GMA replaces the explicit N × N token-to-token attention matrix with two non- negative responsibility matrices ΓQ, ΓK ∈ RN ×K . Although the induced affinity Γ Q(Γ K )⊤ is still an N × N matrix algebraically, GMA does not materialize it. Instead, it exploits the associa-tivity of matrix multiplication by computing the key–value latent memory (Γ K )⊤VX first and then multiplying by Γ Q. For fixed K, this gives linear-in-N dominant activation scaling while retaining a normalized attention-style routing interpretation. A key motivation for GMA is that the responsibility matrices are not merely computational intermediates: they are analyzable probabilistic objects. The marginal usage of mixture components can diagnose whether the latent routing space is broadly used or collapsed to a small subset of components, while hard assignments derived from zi = arg max k γi,k can be compared with token categories or other annotations. This provides an interpretability handle that is less direct in random-feature attention approximations or implicit recurrent/state-space hidden dynamics. Our later analysis shows that learned GMA responsibilities use most available components and exhibit moderate alignment with surface-form token categories, although the components should not be interpreted as clean semantic classes (Section 5.4). Our contributions and findings are as follows: Intro | Lite | Method | Theory | Exps | Disc | Con | App 1. We introduce Gaussian Mixture Attention (GMA), a normalized responsibility-based sequence mixer that replaces explicit token-to-token attention with routing through learned Gaussian mixture components. 2. We derive both bidirectional and causal GMA. The causal variant uses prefix latent memories and prefix normalizers so that autoregressive predictions at position i depend only on positions 
+
+j ≤ i, while preserving fixed-K linear-in-sequence-length scaling. 3. We analyze GMA’s optimization and representational structure, including responsibility-modulated gradients, a constrained non-negative low-rank affinity interpretation, and local Lipschitz continuity under bounded inputs and variance lower bounds. 4. We evaluate GMA in 4 empirical settings: controlled systems profiling (Table 1), Long Range Arena (LRA) long-context classification [47] (Table 2), WikiText-103 autoregressive language modelling [37] (Table 3), and latent-responsibility interpretability analysis (Table 4; Figures 2– 3). The results show that GMA exhibits the intended linear memory scaling and achieves competitive performance among attention-style baselines evaluated in our pipeline. On LRA, it gives the strongest average performance among those attention-style baselines (Table 2). On WikiText-103, causal GMA improves over Linear Transformer [28] and Performer [10], although optimized causal SDPA [49] and Mamba [18] remain stronger (Table 3). Finally, learned GMA responsibilities use most available components and show moderate alignment with surface-form token categories (Table 4; Figures 2–3). 5. We discuss future extensions of the GMA framework, including optimized and hybrid GMA implementations, cross-attention and multimodal routing, Bayesian and Dirichlet-process variants for adaptive component weighting, and probabilistic Mixture-of-Experts routing. 
+
+# 2 Related Work 
+
+Attention as learned compatibility. Attention mechanisms can be viewed broadly as methods for computing compatibility between query representations and context representations , and then using the resulting weights to aggregate values. Early neural encoder–decoder models used learned alignment mechanisms to focus decoding on relevant source positions [2, 33]. The Transformer 
+
+made scaled dot-product attention the dominant formulation by computing token-to-token scores through QK ⊤ 
+
+> att
+
+and applying row-wise softmax normalization [49], as in Eq. (1). This design is highly expressive and parallelizable: every token can form query–key scores against all other tokens using batched matrix multiplication, and the value aggregation can likewise be computed by dense linear algebra on modern accelerators. This parallel structure is a major reason for the success of Transformer architectures, but it also requires forming or implicitly representing an N × N
+
+interaction pattern, giving the familiar quadratic scaling in sequence length. From a broader design perspective, the dot product is only one possible compatibility function. Attention scores may also be based on learned additive scores, kernels, distances, divergences, sparsity patterns, or latent routing structures. GMA follows this broader view by replacing direct pairwise query–key comparison with compatibility in a probabilistic responsibility space. A more explicit taxonomy of similarity, distance, divergence, and latent-space attention designs is given in Appendix G. 
+
+Sparse and structured attention. One major line of efficient-Transformer research reduces the number of query–key pairs that are compared. Sparse Transformer uses structured sparse Intro | Lite | Method | Theory | Exps | Disc | Con | App patterns to generate long sequences more efficiently than dense attention [9]. Reformer replaces dense dot-product attention with locality-sensitive hashing attention and also uses reversible resid-ual layers to reduce activation storage [29]. Longformer combines a local sliding-window pattern with task-motivated global attention, giving linear scaling in sequence length and strong perfor-mance on long-document tasks [3]. BigBird combines local, random, and global attention patterns, obtaining linear sparse attention while preserving important theoretical properties of full attention, including universal approximation and Turing-completeness results under its sparse pattern [54]. These methods retain token-to-token attention but restrict the attention graph. Their efficiency therefore depends on a designed or sampled sparsity pattern. GMA differs by keeping dense global information available through latent mixture components rather than choosing a sparse set of token pairs. 
+
+Low-rank and landmark approximations. A second line approximates the attention matrix by a lower-dimensional representation. Linformer argues that self-attention can be approximated by a low-rank matrix and projects the sequence dimension to reduce the complexity of attention to linear time and space [50]. Nystr¨ omformer uses the Nystr¨ om method to approximate self-attention through a set of landmark points, also targeting linear complexity with favorable long-sequence performance [51]. These approaches are related to GMA in that they replace the full 
+
+N × N interaction structure by a smaller intermediate representation. However, their intermediate factors are projection- or landmark-based approximations of attention. GMA instead uses posterior responsibilities under learned Gaussian mixture components, producing a constrained non-negative low-rank affinity Γ Q(Γ K )⊤ with a probabilistic routing interpretation. 
+
+Kernelized and associative linear attention. Kernelized attention methods exploit the as-sociativity of matrix multiplication. Linear Transformer rewrites attention using feature maps so that the key–value summary can be computed before multiplying by queries, reducing the cost from quadratic to linear in sequence length [28]. Performer approximates softmax attention using positive orthogonal random features in the FAVOR+ mechanism, giving linear space and time with theoretical guarantees for the random-feature approximation [10]. These methods are especially close to GMA at the computational level: all use an ordering of the form “summarize keys and values first, then read with queries”. The difference lies in the feature map. Kernelized atten-tion uses deterministic or random feature maps designed to approximate a kernel such as softmax. 
+
+GMA uses learned Gaussian-mixture posterior responsibilities as the feature map, so the interme-diate representation is a probability vector over latent components. This gives GMA an additional diagnostic object, i.e. the responsibility matrix, but also introduces extra constant factors from Gaussian log-density and responsibility computations. 
+
+IO-aware exact attention. Another important direction does not change the mathematical attention definition, but optimizes its implementation. FlashAttention computes exact softmax attention using IO-aware tiling, reducing reads and writes between GPU high-bandwidth mem-ory and on-chip SRAM [13]. Later FlashAttention variants further improve hardware utilization through more aggressive scheduling and low-precision support [44]. These methods are essential baselines because they show that quadratic attention can be much faster and more memory effi-cient in practice without changing the underlying attention weights. GMA addresses a different question: it changes the attention-style operator itself to obtain fixed-K linear activation scaling and interpretable latent routing. Consequently, the relevant comparison is not only asymptotic complexity but also wall-clock efficiency, kernel maturity, memory traffic, and model quality. Intro | Lite | Method | Theory | Exps | Disc | Con | App 
+
+Latent bottleneck attention. Latent-array architectures reduce the cost of processing large inputs by routing information through a smaller set of latent variables. The Perceiver uses asym-metric cross-attention to distill high-dimensional inputs into a latent bottleneck and then processes the latent array with Transformer blocks [26]. Perceiver IO extends this idea to flexible structured outputs by querying the latent representation with output-specific queries [25]. GMA shares the high-level idea that a smaller latent substrate can mediate interactions among many input posi-tions. However, the latent objects are different. Perceiver uses learned latent vectors that attend to inputs through cross-attention. GMA uses learned Gaussian mixture components in routing space and maps each query/key token to a posterior responsibility vector over these components. The resulting latent memory is not a separate learned sequence, but a key-weighted aggregation of values through mixture responsibilities. 
+
+State-space and recurrent alternatives to attention. Structured state-space models provide a separate route to long-sequence modelling by replacing explicit attention with recurrent or con-volutional sequence dynamics. S4 introduced structured state-space layers for efficient long-range sequence modelling [19]. Mamba builds on this line by making state-space parameters input-dependent, allowing selective propagation or forgetting of information, and by using hardware-aware parallel algorithms for efficient training and inference [18]. These models often provide strong throughput and strong performance, especially in long-sequence or discrete-token settings. They are not attention mechanisms in the usual token-to-token sense, and their internal routing structure is less directly exposed as an attention matrix. GMA occupies a different position: it re-mains an attention-style sequence mixer with an induced token-to-token affinity, while introducing a probabilistic latent routing space that can be inspected through responsibility diagnostics. 
+
+Mixture models and probabilistic attention. Mixture models have a long history as prob-abilistic tools for soft assignment, density modelling, and responsibility-based learning [14, 5, 36, 6]. Several recent works have explored connections between mixture models and attention. 
+
+Transformer-MGK (Transformer with a Mixture of Gaussian Keys) replaces redundant attention heads with a mixture of Gaussian keys at each head, allowing each head to focus on different parts of the input while reducing parameters and computation [53]. However, the mixture is local to the key representation inside an attention head, and the model still relies on query–key attention com-putations unless combined with separate linear-attention approximations. In machine translation, 
+
+GMM-based cross-attention has been used to model concentrated attention around central source positions, improving alignment quality and long-sentence translation behaviour [55]. These works show that Gaussian mixtures can be useful inside attention, but they do not use a shared global mixture responsibility space to replace the explicit N × N token-to-token attention matrix. 
+
+GMA differs from these mixture-based approaches in three ways. First, it uses a shared global Gaussian mixture over routing vectors, rather than a local mixture attached to each position or attention head. Second, both queries and keys are mapped into responsibility vectors over the same mixture components, inducing the non-negative affinity eAGMA = Γ Q(Γ K )⊤. Third, the efficient implementation does not materialize this affinity; it uses the associative ordering (Γ K )⊤VX
+
+followed by multiplication with Γ Q. Thus, GMA is not merely a Gaussian modification of attention scores. It combines probabilistic responsibility-space similarity with latent-memory routing to obtain fixed-K linear activation scaling. 
+
+Mixture-of-Experts and probabilistic routing. GMA is also related to the broader literature on conditional computation and Mixture-of-Experts (MoE). Classical MoE models combine multi-Intro | Lite | Method | Theory | Exps | Disc | Con | App ple expert predictors through input-dependent gates [24]. Modern sparsely gated MoE models scale Transformer capacity by routing each token to a small number of feed-forward experts [45, 31, 16]. Recent work also explores MoE-style routing inside the attention mechanism itself, for example by switching among attention heads or computing fewer attention matrices [12]. These methods typically use learned softmax or noisy top-k gates and are motivated by conditional computation. 
+
+GMA ’s routing is different: the gating weights are posterior responsibilities under a learned Gaus-sian mixture model. This makes the routing probabilities density-based and interpretable as soft assignments to latent components. Although our present work uses GMA for sequence mixing rather than sparse expert selection, the same responsibility view suggests future probabilistic MoE extensions, as discussed in Section 6. 
+
+Positioning of GMA. Overall, prior work has reduced the quadratic attention bottleneck by sparsifying the attention graph, approximating the attention matrix, kernelizing the softmax, op-timizing exact attention kernels, introducing latent bottlenecks, or replacing attention with state-space dynamics. GMA contributes a complementary design point. It treats attention as routing through a learned probabilistic latent space: queries and keys are first converted into Gaussian-mixture responsibilities, values are written into a latent memory by key responsibilities, and queries read from that memory through normalized responsibility overlap. This gives GMA a fixed-K
+
+linear-time attention-style operator with an analyzable latent responsibility structure. Its purpose is not to replace all optimized attention or state-space models, but to expose a probabilistic and interpretable route to efficient sequence mixing. 
+
+# 3 Methodology: Gaussian Mixture Attention 
+
+We present GMA primarily in the self-attention setting, where queries, keys, and values are all pro-jected from the same sequence X. For clarity, the main equations are written for a single attention head; a multi-head GMA layer applies the same computation independently across heads and then combines the resulting head outputs in the usual way. This formulation covers the bidirectional sequence-mixing experiments and the causal language-modelling experiments considered later in this paper. Cross-attention follows analogously by forming queries from a query-side sequence X
+
+and keys/values from a separate context sequence Y ; the same responsibility-space routing mecha-nism can then be applied with Γ QX and Γ KY . A detailed distinction between standard self-attention, standard cross-attention, and their GMA counterparts is given in Appendix E. We leave a system-atic empirical study of GMA cross-attention to future work. 
+
+3.1 Method Overview 
+
+Standard self-attention relies on direct pairwise token-to-token comparisons, which gives the famil-iar quadratic interaction pattern in sequence length. GMA changes this computation by introduc-ing a latent memory architecture based on K learned Gaussian routing components. Instead of comparing each query with each key directly, GMA maps projected queries and keys to posterior responsibility vectors over a shared Gaussian mixture. Intuitively, the projected value matrix VX stores token-level information. The key responsibility matrix Γ K acts as a soft writing mechanism, routing value vectors into K latent memory slots. This produces a latent memory ˜V together with a component-wise normalizer Z. Query responsibilities ΓQ then act as a soft reading mechanism, determining how each output token reads from the normalized latent memory. Thus, queries do not explicitly compare against all keys in the efficient Intro | Lite | Method | Theory | Exps | Disc | Con | App implementation; instead, query–key compatibility is mediated through shared responsibility vectors over the latent Gaussian components. A consolidated notation table for the methodology and analysis is provided in Appendix A. 
+
+3.2 Probabilistic Latent Routing 
+
+Instead of computing direct token-to-token similarities, we introduce K learned latent centers, rep-resenting Gaussian routing components. We model these centers as the components of a Gaussian Mixture Model (GMM) [21, 22]. The k-th component is parameterized by a mean μk ∈ Rdr and a covariance matrix Σ k ∈ Sdr
+
+> ++
+
+, where dr is the routing dimension. For computational tractability, we use diagonal covariances, Σ k = diag( σ2
+
+> k, 1
+
+, . . . , σ 2 
+
+> k,d r
+
+). The mixture prior of component k is πk,with PKk=1 πk = 1. For a routing vector xi ∈ Rdr , which may be either a query projection or a key projection, the density under component k is 
+
+N (xi | μk, Σk) = 1(2 π)dr /2|Σk|1/2 exp 
+
+
+
+− 12 (xi − μk)⊤Σ−1 
+
+> k
+
+(xi − μk)
+
+
+
+. (2) Let zi ∈ { 1, . . . , K } denote the latent component assignment for xi. The responsibility of component 
+
+k for xi is the posterior probability p(zi = k | xi): 
+
+γi,k ≡ p(zi = k | xi) = p(zi = k)p(xi | zi = k)
+
+p(xi) = πkN (xi | μk, Σk)
+
+PKℓ=1 πℓN (xi | μℓ, Σℓ) . (3) This operation maps a sequence of routing vectors into a responsibility matrix Γ ∈ RN ×K . Since PKk=1 γi,k = 1 for every token i, each row of Γ is a probability distribution over the latent Gaussian components. 
+
+3.3 Linear-Time Normalized Attention via GMA 
+
+Let X ∈ RN ×dmodel denote the input sequence representations to a GMA layer, where N is the sequence length and dmodel is the model hidden dimension, i.e., the dimensionality of each token representation before it is projected into queries, keys, and values. As in standard attention, we first form query, key, and value projections: 
+
+QX = XW Q ∈ RN ×dr , KX = XW K ∈ RN ×dr , VX = XW V ∈ RN ×dv , (4) where WQ, W K ∈ Rdmodel ×dr and WV ∈ Rdmodel ×dv . Here dr is the routing dimension used to compute Gaussian responsibilities, and dv is the value dimension. We reserve scalar K for the number of Gaussian mixture components. Given QX and KX , GMA computes two responsibility matrices: ΓQ ∈ RN ×K , ΓK ∈ RN ×K .
+
+The entry γQi,k is the posterior responsibility of component k for the query vector qi = ( QX )i, : ∈ Rdr ,while γKj,k is the posterior responsibility of component k for the key vector kj = ( KX )j, : ∈ Rdr . These responsibilities are calculated using the Gaussian-mixture posterior in Eq. (3), applied separately to the query and key projections. The superscript K in Γ K denotes key responsibilities, not the number of mixture components. Intro | Lite | Method | Theory | Exps | Disc | Con | App To construct an end-to-end O(N K ) attention mechanism, GMA avoids forming the full N × N
+
+token-to-token attention matrix. Instead, it uses the key responsibilities to write the projected values VX into K latent memory slots, and then uses the query responsibilities to read from those slots. To make the induced attention weights stochastic over the sequence dimension, we normalize the latent routing operation. The computation proceeds in two associative steps. 1. Latent aggregation. The key responsibilities aggregate the value vectors into K latent memory slots and compute the total key mass assigned to each component: ˜V = (Γ K )⊤VX ∈ RK×dv , Z = (Γ K )⊤1N ∈ RK , (5) where 1N denotes the all-ones vector. Component-wise 1,˜Vk =
+
+> N
+
+X
+
+> j=1
+
+γKj,k VX,j ∈ Rdv , Zk =
+
+> N
+
+X
+
+> j=1
+
+γKj,k . (6) Thus, ˜Vk is the responsibility-weighted sum of all value vectors assigned to component k, and 
+
+Zk is the total key-responsibility mass assigned to that component. 2. Normalized broadcasting. The query responsibilities read from the latent memory and normalize by the corresponding routed key mass: 
+
+O = ΓQ ˜V
+
+ΓQZ + ϵ = ΓQ(Γ K )⊤VX
+
+ΓQZ + ϵ = AGMA VX ∈ RN ×dv , (7) where we have defined the implicit normalized affinity AGMA = ΓQ(Γ K )⊤ 
+
+> ΓQZ+ϵ
+
+, which is useful for interpretation and analysis, but not materialized in the efficient implementation. The denominator is broadcast across the value dimension, the division is applied row-wise , and 
+
+ϵ > 0 is used for numerical stability 2.Specifically, for token i, the output can be written as 
+
+Oi =
+
+PKk=1 γQi,k ˜Vk
+
+PKk=1 γQi,k Zk + ϵ =
+
+PKk=1 γQi,k 
+
+PNj=1 γKj,k VX,j 
+
+PKk=1 γQi,k 
+
+PNj=1 γKj,k + ϵ . (8) Thus, GMA induces the normalized attention weights 
+
+AGMA  
+
+> ij
+
+=
+
+PKk=1 γQi,k γKj,k 
+
+PNℓ=1 
+
+PKk=1 γQi,k γKℓ,k + ϵ , (9)                      
+
+> 1From a linear algebra perspective, the k-th row of ˜V, i.e. ˜Vk, is a linear combination of all rows of VX, with weights being the k-th column of Γ K.
+> 2Equivalently, one may write the row-wise normalization in matrix form. Define
+> d= Γ QZ+ϵ1N∈RN.
+> Then
+> O= diag( d)−1ΓQ˜V= diag( d)−1ΓQ(Γ K)⊤VX.
+> The corresponding implicit normalized affinity matrix is
+> AGMA = diag( d)−1ΓQ(Γ K)⊤.
+> This matrix is useful for interpretation and analysis, but it is not materialized in the efficient implementation.
+
+Intro | Lite | Method | Theory | Exps | Disc | Con | App so that 
+
+Oi =
+
+> N
+
+X
+
+> j=1
+
+AGMA  
+
+> ij
+
+VX,j (10) up to the numerical stabilizer. Thus, GMA replaces the explicit N × N attention matrix by two non-negative responsibility matrices Γ Q, ΓK ∈ RN ×K , while still admitting the implicit normalized affinity in Eq. (9). 
+
+Remark 1 ( Implicit affinity versus explicit attention ). Equation (7) can be read in two equivalent ways. Algebraically, substituting ˜V = (Γ K )⊤VX gives the implicit affinity Γ Q(Γ K )⊤, which is an 
+
+N × N token-to-token matrix, analogous in shape to the dot-product score matrix QK ⊤ in Eq. (1). However, GMA does not need to materialize this N × N matrix. Its efficient implementation uses the associative ordering ˜V = (Γ K )⊤VX ∈ RK×dv (Eq.5) followed by ΓQ ˜V , 
+
+together with the normalizer Γ QZ + ϵ. Thus, GMA first compresses the values into K latent memory slots and then reads from those slots, rather than first forming all pairwise query–key interactions. This is the source of the fixed-K linear scaling: the computation is organized around 
+
+N × K responsibility matrices and a K × dv latent memory, with K chosen independently of the sequence length and typically much smaller than N .The whole GMA workflow is visually represented in Fig.1. This ordering reflects a different routing philosophy from standard dot-product attention in Eq. (1). Standard attention first eval-uates query–key similarity by forming the token-to-token interaction matrix QK ⊤, normalizes this matrix into attention weights, and then uses those weights to collect information from the value matrix V . Informally, each query first “knocks on” all keys to decide where relevant content is located, and then retrieves the corresponding values. GMA reverses this order. It first uses the key projection KX to compute key responsibilities Γ K , which write the value projection VX into a compact latent memory ˜V = (Γ K )⊤VX . The query responsibilities Γ Q then read directly from this 
+
+K-slot memory through normalized broadcasting. Thus, standard attention follows a “query–key matching then value collection” principle, whereas GMA follows a “key-induced memory construc-tion then query-based memory reading” principle. 
+
+Understanding the GMA Workflow 
+
+The GMA computation can be summarized as responsibility-space affinity plus latent-memory rout-ing . Unlike standard dot-product attention, GMA does not directly score a query and key by the dot product q⊤ 
+
+> i
+
+kj . Instead, it first maps both query and key representations into posterior respon-sibility vectors over the same K learned Gaussian mixture components. For a routing vector x, the responsibility of component k is (Eq.3) 
+
+γk(x) = p(z = k | x) = πkN (x | μk, Σk)
+
+PKℓ=1 πℓN (x | μℓ, Σℓ) .
+
+For queries and keys, this gives 
+
+γQi,k = p(z = k | qi), γKj,k = p(z = k | kj ).
+
+Thus, the query vector qi is represented by the responsibility vector 
+
+γQi = ( γQi, 1, . . . , γ Qi,K ),Intro | Lite | Method | Theory | Exps | Disc | Con | App                                           
+
+> Input Sequence (X)
+> RN×dmodel
+> Query Projection (QX)
+> QX=XW Q
+> RN×dr
+> Read Responsibilities (Γ Q)via Eq. (3)
+> RN×K
+> Output (O)
+> O=ΓQ˜V
+> ΓQZ+ϵ
+> RN×dv
+> Key Projection (KX)
+> KX=XW K
+> RN×dr
+> Shared GMM Parameters
+> {πk, μ k,Σk}Kk=1
+> Value Projection (VX)
+> VX=XW V
+> RN×dv
+> Write Responsibilities (Γ K)via Eq. (3)
+> RN×K
+> Latent Memory ( ˜V)˜V=(Γ K)⊤VX
+> RK×dv
+> Normalizer (Z)
+> Z=(Γ K)⊤1N
+> RK
+> write
+> read
+
+Figure 1: End-to-end workflow of Gaussian Mixture Attention (GMA). The input sequence X is first projected into query, key, and value representations QX , KX , and VX . A shared Gaussian Mixture Model with parameters {πk, μ k, Σk}Kk=1 maps QX and KX to query and key responsibility matrices, Γ Q and Γ K , using the posterior responsibility formula in Eq. (3). The key responsibilities write the projected values VX into a latent memory ˜V and a component-wise normalizer Z. The query responsibilities then read from this normalized latent memory to produce the output sequence 
+
+O. This replaces explicit N × N token-to-token attention with routing through K latent Gaussian components. Intro | Lite | Method | Theory | Exps | Disc | Con | App and the key vector kj is represented by 
+
+γKj = ( γKj, 1, . . . , γ Kj,K ).
+
+GMA compares query and key positions through the overlap of these responsibility vectors: 
+
+eAGMA  
+
+> ij
+
+=
+
+> K
+
+X
+
+> k=1
+
+γQi,k γKj,k = ⟨γQi , γ Kj ⟩,
+
+which defines the un-normalized attention weight matrix (as compared to its normalised version Eq.9) eAGMA = Γ Q(Γ K )⊤. (11) Therefore, two tokens have high GMA affinity if their query and key representations assign high posterior probability mass to similar Gaussian components. The second part of the workflow is latent-memory routing, which avoids materializing the full pairwise affinity matrix in the efficient implementation. Rather than explicitly materializing the full N × N affinity matrix eAGMA , the key responsibilities first write values into a K-slot latent memory (Eq.5): ˜V = (Γ K )⊤VX ∈ RK×dv , Z = (Γ K )⊤1N ∈ RK .
+
+Component-wise (Eq.6), ˜Vk =
+
+> N
+
+X
+
+> j=1
+
+γKj,k VX,j , Zk =
+
+> N
+
+X
+
+> j=1
+
+γKj,k .
+
+Thus, ˜Vk is the memory slot associated with Gaussian component k: it stores a responsibility-weighted sum of the value vectors whose keys are assigned to that component. Finally, the query responsibilities read from this key-induced latent memory (Eq.7): 
+
+O = ΓQ ˜V
+
+ΓQZ + ϵ .
+
+For a single output token i, this becomes (Eq.8) 
+
+Oi =
+
+PKk=1 γQi,k ˜Vk
+
+PKk=1 γQi,k Zk + ϵ =
+
+PKk=1 γQi,k 
+
+PNj=1 γKj,k VX,j 
+
+PKk=1 γQi,k 
+
+PNj=1 γKj,k + ϵ .
+
+Equivalently, GMA induces normalized attention-style weights (Eq.9) 
+
+AGMA  
+
+> ij
+
+=
+
+PKk=1 γQi,k γKj,k 
+
+PNℓ=1 
+
+PKk=1 γQi,k γKℓ,k + ϵ ,
+
+so that the output for query position i is (Eq.10) 
+
+Oi =
+
+> N
+
+X
+
+> j=1
+
+AGMA  
+
+> ij
+
+VX,j .
+
+In short, GMA first compares query and key positions in responsibility space , through eAGMA  
+
+> ij
+
+=
+
+⟨γQi , γ Kj ⟩, but it avoids forming all such pairwise affinities explicitly. Instead, it computes ˜V =(Γ K )⊤VX first, and then reads this key-induced memory using O = ΓQ ˜V 
+
+> ΓQZ+ϵ
+
+. So GMA is best under-stood as responsibility-space affinity followed by latent-memory routing , rather than as dot-product matching against memory components. Appendix C gives a more dimension-explicit walkthrough of the same computation. Intro | Lite | Method | Theory | Exps | Disc | Con | App 
+
+3.4 Memory and computational costs 
+
+For one sequence and one attention head, assume the diagonal covariance parameterization above and an associative implementation that does not materialize AGMA . Excluding the standard linear projections used to form QX , K X , V X , the main GMA routing operations have the following costs. Computing Gaussian-mixture responsibilities for both query and key projections costs approxi-mately 2N Kd r + 2 N K, 
+
+where the first term accounts for evaluating diagonal Gaussian log-densities over K components for both QX and KX , and the second term accounts for the row-wise normalization over components. The write step ˜V = (Γ K )⊤VX costs N Kd v, and computing Z = (Γ K )⊤1N costs N K . The read step Γ Q ˜V costs N Kd v, computing the denominator Γ QZ + ϵ costs N K , and the final row-wise normalization of the output costs N d v. Thus, the total routing cost is 
+
+CGMA ≈ 2N Kd r + 2 N Kd v + 4 N K + N d v. (12) Equivalently, 
+
+CGMA = O(N Kd r + N Kd v).
+
+Including the projection matrices adds the usual cost 
+
+Cproj = O(N d model (2 dr + dv)) ,
+
+for forming QX = XW Q, KX = XW K , and VX = XW V . Hence, for fixed dr, d v, number of heads, and fixed number of mixture components K, GMA scales linearly with sequence length N while avoiding explicit O(N 2) attention storage 3.The attention-specific activation storage is similarly linear in N . The two responsibility matrices require 2 N K entries, the latent memory and normalizer require Kd v + K entries, and the output requires N d v entries. Thus, aside from standard projection activations, the routing-specific storage is 2N K + Kd v + K + N d v = O(N K + Kd v + N d v),
+
+which reduces to O(N K ) when focusing on the dominant responsibility storage for fixed dv and K.
+
+3.5 Causal GMA for Autoregressive Modelling 
+
+The formulation above is bidirectional: each output position may aggregate values from all key positions. For autoregressive language modelling, however, the output at position i must depend only on prefix positions j ≤ i. Therefore, the non-causal aggregation in Eq. (5) is replaced by prefix versions of the latent memory and normalizer. For each position i and component k, define ˜V (i) 
+
+> k
+
+= X
+
+> j≤i
+
+γKj,k VX,j ∈ Rdv , Z(i) 
+
+> k
+
+= X
+
+> j≤i
+
+γKj,k ∈ R. (6b) Here ˜V (i) 
+
+> k
+
+and Z(i) 
+
+> k
+
+are the causal prefix counterparts of ˜Vk and Zk in Eq. (6). In other words, ˜V (i)
+
+> k
+
+stores the value information assigned to component k using only tokens up to position i, while Z(i)
+
+> k
+
+stores the corresponding prefix key-responsibility mass. 
+
+> 3The matrix-multiplication associativity underlying this cost saving is discussed in Appendix B.
+
+Intro | Lite | Method | Theory | Exps | Disc | Con | App The causal GMA output for position i is then 4
+
+Oi =
+
+PKk=1 γQi,k ˜V (i)
+
+> k
+
+PKk=1 γQi,k Z(i) 
+
+> k
+
++ ϵ . (8b) Thus, query position i reads only from a prefix-restricted latent memory, rather than from the full-sequence memory used in the bidirectional case. Equivalently, causal GMA induces attention weights supported only on the prefix: 
+
+AcGMA  
+
+> ij
+
+= 1{j ≤ i}
+
+PKk=1 γQi,k γKj,k 
+
+P
+
+> ℓ≤i
+
+PKk=1 γQi,k γKℓ,k + ϵ . (9b) Therefore, 
+
+Oi = X
+
+> j≤i
+
+AcGMA  
+
+> ij
+
+VX,j (10b) up to the numerical stabilizer. In implementation, the prefix memories ˜V (i) 
+
+> k
+
+and prefix normalizers 
+
+Z(i) 
+
+> k
+
+are computed by cumulative sums along the sequence dimension, so the causal variant preserves the same fixed-K linear scaling in sequence length while enforcing autoregressive causality. 
+
+3.6 End-to-End Parameter Learning 
+
+Traditional Gaussian mixture models (GMMs) are typically fit to static datasets by maximum-likelihood estimation using the Expectation-Maximization (EM) algorithm [14, 36, 6, 21]. However, deploying an iterative EM loop inside each attention layer during every forward pass would be computationally prohibitive and would disrupt the continuous gradient flow required for end-to-end neural network training. Instead, we treat the GMM parameters in each GMA layer, i.e. the means μk, diagonal covariances Σ k, and mixture priors πk, as fully differentiable learnable parameters optimized jointly with the rest of the model by standard backpropagation. This treatment is related in spirit to Mixture Density Networks (MDNs) [5, 22], which combine neural networks with mixture density models and train mixture parameters by gradient-based optimization. The role of the mixture model, however, is different: MDNs parameterize an output conditional density, whereas GMA uses shared mixture components to define latent responsibility-based routing inside an attention layer. Thus, the GMA components are not fitted by standalone maximum-likelihood density estimation on a fixed dataset; rather, they are task-adapted latent routing components shaped by the predictive objective. For one GMA layer, the trainable routing parameters are ΘGMA = {WQ, W K , W V , μ, ω, α }, (13) where WQ, W K , W V are the query, key, and value projection matrices, μ contains the Gaussian com-ponent means, ω parameterizes the diagonal covariance entries, and α parameterizes the mixture-prior logits. These parameters are updated by minimizing the downstream task loss Ltask , such as cross-entropy for language modelling or classification. To ensure that the GMM parameters remain valid during gradient-based training, we use the following reparameterizations.               
+
+> 4Unlike the bidirectional case in Eq. (7), there is no single full-sequence matrix expression of the form O=ΓQ˜V / (Γ QZ+ϵ) unless one introduces an additional prefix-memory tensor. The reason is that the causal memory ˜V(i)
+> kand normalizer Z(i)
+> kdepend on the output position i: each query position reads from a different prefix-restricted memory built only from tokens j≤i. Therefore, we wrote the causal formulation row-wise as in Eq. (8b).
+
+Intro | Lite | Method | Theory | Exps | Disc | Con | App - Means ( μk). The latent routing centers are represented by unconstrained learnable param-eters μk ∈ Rdr , updated directly by the optimizer. - Covariances ( Σk). To guarantee that each diagonal covariance matrix remains strictly positive-definite, we maintain unconstrained learnable parameters ω ∈ RK×dr and set 
+
+σ2 
+
+> k,j
+
+= log(1 + exp( ωk,j )) + ϵσ, j = 1 , . . . , d r, (14) where ϵσ > 0 is a small numerical constant. The covariance of component k is then Σ k =diag( σ2
+
+> k, 1
+
+, . . . , σ 2 
+
+> k,d r
+
+). - Mixture priors ( πk). To ensure that the mixture priors lie on the probability simplex, we maintain unconstrained logits α ∈ RK and apply a softmax transformation: 
+
+πk = exp( αk)
+
+PKℓ=1 exp( αℓ) , k = 1 , . . . , K. (15) The training process is therefore fully differentiable 5. During the forward pass, the input se-quence X is projected into QX , KX , and VX via Eq. (4); the reparameterized GMM parameters define the query and key responsibility matrices Γ Q and Γ K through the Gaussian responsibility computation in Eq. (3); and the output O is computed by the normalized latent-memory operation in Eq. (7). During the backward pass, gradients of Ltask propagate through the Gaussian responsi-bility computation in Eq. (3), the softmax mixture-prior parameterization in Eq. (15), the softplus covariance parameterization in Eq. (14), and the latent aggregation and broadcasting operations in Eqs. (5) and (7). Consequently, no EM loop or auxiliary clustering loss is required inside the atten-tion layer. The resulting components are interpreted as task-adapted latent routing components rather than as classical GMM clusters obtained by standalone maximum-likelihood estimation. 
+
+# 4 Theoretical Analysis 
+
+To understand the learning dynamics and representational capacity of GMA, we analyze its gradient flow, its induced non-negative low-rank affinity structure, and the local stability of the Gaussian responsibility map. Throughout this section, xi ∈ Rdr denotes a generic routing vector, which may be either a query routing vector qi = ( QX )i, : or a key routing vector ki = ( KX )i, : after the projection Eq.(4). 
+
+4.1 Gradient Flow and Optimization Stability 
+
+A primary concern when replacing dot-product attention with Gaussian-mixture routing is the stability of the responsibility gradients, since Gaussian log-densities contain Mahalanobis-distance terms 6 and exponentials. We show that the softmax-normalized responsibility map yields a bounded and responsibility-modulated gradient structure.       
+
+> 5For details, Appendix D provides the corresponding gradient derivations for the reparameterized means, diagonal covariances, and mixture-prior logits, showing explicitly how gradients pass through the Gaussian responsibility computation during backpropagation.
+> 6A related pitfall is the “Mahalanobis Trace Trap” [22]: if the same mini-batch is used both to estimate an empirical covariance matrix and to evaluate Mahalanobis distances against its inverse, the quadratic term can algebraically collapse to a trace constant and lose its gradient signal. The same issue can arise component-wise in a GMM if each Σkis recomputed as the responsibility-weighted empirical covariance of the same batch being scored. GMA avoids this failure mode because μk, Σ k, and πkare learned layer parameters, reparameterized as in Eqs. (14) and (15), rather than empirical covariance estimates recomputed inside the forward pass.
+
+Intro | Lite | Method | Theory | Exps | Disc | Con | App For a routing vector xi ∈ Rdr and component k, define the pre-normalized log-density score 
+
+si,k = log πk − dr
+
+2 log(2 π) − 12 log |Σk| − 12 (xi − μk)⊤Σ−1 
+
+> k
+
+(xi − μk). (16) Then the responsibility in Eq. (3) can equivalently be written as a softmax over these scores: 
+
+γi,k = exp( si,k )
+
+PKℓ=1 exp( si,ℓ ) . (3b) Let L be the downstream loss and let gi,j = ∂L/∂γ i,j denote the upstream gradient arriving at the responsibility vector for token i. By the softmax Jacobian 7,
+
+∂γ i,j 
+
+∂s i,k 
+
+= γi,j (1{j = k} − γi,k ) . (17) Therefore, the gradient entering the score si,k is 8
+
+∂L
+
+∂s i,k 
+
+=
+
+> K
+
+X
+
+> j=1
+
+∂L
+
+∂γ i,j 
+
+∂γ i,j 
+
+∂s i,k 
+
+= γi,k 
+
+gi,k −
+
+> K
+
+X
+
+> j=1
+
+γi,j gi,j 
+
+ . (18) Thus, the gradient passed into each component score is a responsibility-weighted and mean-centered upstream gradient. For any learnable scalar parameter θ that enters the score, such as a component mean μk,m , a covariance parameter ωk,m (Eq. (14)), a mixture-prior logit αk (Eq. (15)), or an entry of the projection matrices WQ and WK through the routing vectors qi and ki (Eq. (4)), the chain rule gives 
+
+∂L
+
+∂θ = X
+
+> iK
+
+X
+
+> k=1
+
+∂L
+
+∂s i,k 
+
+∂s i,k 
+
+∂θ , (19) where ∂L/∂s i,k is given by Eq. (18). Equivalently, expanding the softmax Jacobian explicitly gives 
+
+∂L
+
+∂θ = X
+
+> iK
+
+X
+
+> j=1
+> K
+
+X
+
+> k=1
+
+∂L
+
+∂γ i,j 
+
+∂γ i,j 
+
+∂s i,k 
+
+∂s i,k 
+
+∂θ . (19b) This expression is the appropriate backpropagation form for the responsibility-based GMA layer. The familiar factor γi,k (1 − γi,k ) appears, from Eq.(17) with j = k, as the direct sensitivity of a component’s own responsibility to its own score: 
+
+∂γ i,k 
+
+∂s i,k 
+
+= γi,k (1 − γi,k ). (17b) For example, since 
+
+∇μk si,k = Σ −1 
+
+> k
+
+(xi − μk), (20) the direct derivative of γi,k with respect to the component mean is 
+
+∇μk γi,k = γi,k (1 − γi,k )Σ −1 
+
+> k
+
+(xi − μk). (21) 
+
+> 7
+
+For the binary sigmoid, the derivative is σ(x)(1 − σ(x)). The softmax generalizes this: its Jacobian has diagonal terms γk (1 − γk ) and off-diagonal terms −γj γk , which account for competition between components. 
+
+> 8
+
+Using ∂γ i,j /∂s i,k = γi,j (1{j = k} − γi,k ), we have P 
+
+> j
+
+gi,j γi,j (1{j = k} − γi,k ) = gi,k γi,k − γi,k 
+
+P 
+
+> j
+
+γi,j gi,j =
+
+γi,k 
+
+ gi,k − P 
+
+> j
+
+γi,j gi,j 
+
+.Intro | Lite | Method | Theory | Exps | Disc | Con | App For j̸ = k, the cross-component derivative is 
+
+∇μk γi,j = −γi,j γi,k Σ−1 
+
+> k
+
+(xi − μk). (22) These identities show that Gaussian routing gradients are naturally modulated by the uncer-tainty of the responsibility assignment. The direct self-sensitivity in Eq. (17b) is largest when the component assignment is uncertain and vanishes as γi,k approaches 0 or 1. In the full loss gradient, Eq. (18) shows that the update is further centered by the responsibility-weighted average upstream gradient. This gives a structured gradient-modulation mechanism, although it does not by itself rule out component under-use, component collapse, or poor conditioning; these properties must still be monitored empirically through component-usage diagnostics. 
+
+4.2 Non-Negative Low-Rank Affinity Interpretation 
+
+We have the implicit unnormalized GMA affinity matrix (Eq.11) 
+
+eAGMA = Γ Q(Γ K )⊤,
+
+where Γ Q, ΓK ∈ RN ×K are non-negative responsibility matrices whose rows lie on the probability simplex. Therefore, eAGMA is non-negative and satisfies rank( eAGMA ) ≤ K. (23) The normalized affinity used by GMA, i.e. Eq. (9), is obtained by row-wise normalization: 
+
+AGMA  
+
+> ij
+
+=
+
+eAGMA 
+
+> ij
+
+PNℓ=1 eAGMA  
+
+> iℓ
+
++ ϵ . (9b) Equivalently, if di = PNℓ=1 eAGMA  
+
+> iℓ
+
++ ϵ, then 
+
+AGMA = diag( d)−1 eAGMA .
+
+Since diag( d)−1 is a diagonal left multiplication with positive entries, the normalized affinity also has rank at most K.Thus, GMA induces a constrained non-negative low-rank affinity structure. Here “affinity” refers to the induced token-to-token relatedness eAGMA  
+
+> ij
+
+= PKk=1 γQi,k γKj,k , while “constrained” refers to the fact that the factor matrices Γ Q and Γ K are not arbitrary non-negative matrices: each row is a posterior probability distribution over latent Gaussian components. This is related to the intuition behind non-negative matrix factorization (NMF), in which non-negativity encourages additive rather than subtractive combinations [30]. However, GMA is not an NMF algorithm in the classical optimization sense: it does not solve a reconstruction or approximation problem for a given matrix. Instead, it learns two probabilistic responsibility factors as part of a task-trained neural sequence model. This distinction is important. The product Γ Q(Γ K )⊤ gives a rank-at-most-K non-negative affinity, but the effective rank may be smaller if some components are unused or if different respon-sibility columns become dependent. Consequently, the interpretation is a constrained non-negative low-rank affinity interpretation rather than a claim that GMA always produces an exact rank-K
+
+decomposition. Similarly, component specialization and parts-based structure are possible con-sequences of the learned responsibility factors, but they are not guaranteed by the factorization alone. They should therefore be evaluated empirically using the responsibility matrices, for exam-ple through component-usage statistics, responsibility heatmaps, top-token analysis, or alignment with token-category labels. Intro | Lite | Method | Theory | Exps | Disc | Con | App 
+
+4.3 Local Lipschitz Continuity and Routing Stability 
+
+Standard dot-product attention can be sensitive to large embedding norms, which motivates the scaling factor 1 /√dk in Eq. (1). In GMA, routing is instead determined by Gaussian responsibilities. We now show that, for fixed learned GMM parameters, under variance lower bounds and bounded routing vectors, the responsibility map is locally Lipschitz. 
+
+Theorem 1 (Local Lipschitz Continuity of GMA Responsibilities) . Assume that the diagonal variances satisfy σ2 
+
+> k,m
+
+≥ ϵσ > 0 for all components k and coordinates m = 1 , . . . , d r, and that routing vectors and component means lie in a bounded set such that 
+
+∥x − μk∥2 ≤ R for all k. 
+
+Then, for fixed GMM parameters, the responsibility map x 7 → γ(x) ∈ ∆K−1 is locally Lipschitz continuous. In particular, it has a finite Lipschitz constant depending on R, ϵσ, and K.Proof. For each component, the score from Eq. (16) can be written as 
+
+sk(x) = log πk − dr
+
+2 log(2 π) − 12 log |Σk| − 12 (x − μk)⊤Σ−1 
+
+> k
+
+(x − μk).
+
+Its gradient with respect to x is 9
+
+∇xsk(x) = −Σ−1 
+
+> k
+
+(x − μk).
+
+Since Σ k is diagonal 10 and σ2 
+
+> k,m
+
+≥ ϵσ for all m = 1 , . . . , d r, we have 
+
+∥Σ−1 
+
+> k
+
+∥2 = max 
+
+> 1≤m≤dr
+
+1
+
+σ2
+
+> k,m
+
+≤ 1
+
+ϵσ
+
+.
+
+Using the boundedness assumption ∥x − μk∥2 ≤ R and the operator-norm inequality, we obtain 
+
+∥∇ xsk(x)∥2 = ∥ − Σ−1 
+
+> k
+
+(x − μk)∥2 ≤ ∥ Σ−1 
+
+> k
+
+∥2∥x − μk∥2 ≤ 1
+
+ϵσ
+
+R = Rϵσ
+
+.
+
+Recall that a differentiable map f is Lipschitz on a region X if there exists a finite constant L < ∞
+
+such that 
+
+∥f (x) − f (x′)∥2 ≤ L∥x − x′∥2, x, x ′ ∈ X .
+
+For differentiable functions, a sufficient condition is that the Jacobian norm is uniformly bounded on X :sup 
+
+> x∈X
+
+∥Jf (x)∥2 < ∞.
+
+Applying this to the score map s(x) = ( s1(x), . . . , s K (x)), its Jacobian has rows ∇xsk(x)⊤. Since each row satisfies ∥∇ xsk(x)∥2 ≤ R/ϵ σ, the Frobenius norm gives 
+
+∥Js(x)∥2 ≤ ∥ Js(x)∥F =
+
+> K
+
+X
+
+> k=1
+
+∥∇ xsk(x)∥22
+
+!1/2
+
+≤√KR ϵσ
+
+.            
+
+> 9This quantity is the score of the component log-density with respect to the input variable, i.e. ∇xlog pk(x). In classical statistics, the term “score” often refers to the gradient of the log-likelihood with respect to model parameters; in score-based modelling convention, the gradient is taken with respect to the data or representation variable [20].
+> 10 Here we use the diagonal covariance parameterization from Eq. (14), namely Σ k= diag σ2
+> k, 1, . . . , σ 2
+> k,d r). The notation ∥Σ−1
+> k∥2denotes the spectral/operator norm of the inverse covariance, not the determinant. For a diagonal positive-definite matrix, this norm is the largest diagonal entry of Σ −1
+> k.
+
+Intro | Lite | Method | Theory | Exps | Disc | Con | App Thus, the score map has a finite local Lipschitz constant, with one simple upper bound proportional to √KR/ϵ σ.The softmax map from scores to responsibilities has a uniformly bounded Jacobian on RK , and is therefore globally Lipschitz. Hence the composition 
+
+x 7 → s(x) 7 → softmax( s(x)) = γ(x)is locally Lipschitz. The resulting Lipschitz constant is finite and depends on R, ϵσ, and K.This result shows that, under the stated boundedness and variance-lower-bound assumptions, small perturbations of a routing vector cannot cause unbounded changes in its responsibility vector. The statement should be interpreted as a local routing-stability guarantee, not as a global robustness guarantee for the entire Transformer architecture. For fixed model parameters and fixed sequence length N , the normalized GMA output is also locally stable on bounded domains. The latent aggregation ˜V = (Γ K )⊤VX and the normalizer 
+
+Z = (Γ K )⊤1N are finite sums of products of locally Lipschitz responsibility functions and bounded value vectors, while the broadcasting step divides by Γ QZ + ϵ. Since ϵ > 0 and all responsibilities are non-negative, the denominator is bounded below by ϵ. Therefore, on bounded sets of routing vectors and values, the full GMA mapping defined by Eq. (7) is a composition of locally Lipschitz operations and is itself locally Lipschitz. The corresponding Lipschitz constant may depend on N ,
+
+K, the parameter bounds, the variance lower bound, and the value-vector bounds. 
+
+# 5 Experiments 11 
+
+To empirically validate GMA, we evaluate four aspects: (1) controlled systems profiling of memory and throughput, (2) long-context classification accuracy on LRA, (3) autoregressive language mod-elling on WikiText-103, and (4) the interpretable latent structures induced by learned responsibility matrices. All experiments in this paper evaluate GMA in self-attention -style settings rather than cross-attention settings. Specifically, the systems profiling and LRA experiments use bidirectional sequence mixing, the WikiText-103 experiment uses causal self-attention-style sequence mixing, and the interpretability analysis examines the learned query responsibilities of the trained causal GMA model. 
+
+Experimental Setup and Baselines 
+
+We compare GMA against standard dot-product Multi-Head Attention (MHA) [49] and a suite of efficient sequence-modelling baselines chosen to represent distinct architectural trade-offs: 1. Low-Rank & Static Projections: Linformer [50] projects the sequence dimension N into a smaller fixed dimension k. This baseline tests a static low-rank compression approach against GMA’s input-dependent responsibility routing. 2. Kernel Approximations: Performer [10] uses random orthogonal fea-tures, and Linear Transformer [28] uses an ELU-based (exponential linear unit) feature map. These baselines compare GMA against fixed or random feature-map approaches to linear attention. 
+
+> 11 Part of the experimental code was developed with kind assistance from ChatGPT-5.5 [38], which the authors gratefully acknowledge.
+
+Intro | Lite | Method | Theory | Exps | Disc | Con | App 3. Modern State-Space Models: Mamba [18] is a strong selective state-space model with linear scaling in sequence length. We include it to situate GMA against contemporary sequence-modelling alternatives that do not use attention-style token-to-token routing. Across all experiments, GMA uses the multi-head normalized formulation described in Section 3, with mixture priors πk initialized uniformly. The number of Gaussian components K is chosen according to the purpose of each experiment. In the controlled systems profiling experiment, we report a component ablation over K ∈ { 64 , 128 , 256 , 512 } to characterize the efficiency–capacity trade-off. In the LRA accuracy experiments, we use K = 128 as a moderate setting that keeps responsibility-memory cost manageable while retaining sufficient routing capacity. In the WikiText-103 language-modelling experiments, we evaluate both K = 128 and K = 256 causal GMA variants to measure how increasing the number of components affects perplexity and throughput. All models are implemented in PyTorch [39] and trained using the AdamW optimizer [32]. 
+
+5.1 Controlled Systems Profiling 
+
+To isolate the computational behavior of each sequence-mixing mechanism, we first conduct 12 
+
+controlled systems profiling using synthetic sequences. This experiment does not measure task accuracy; instead, it empirically tests the memory and throughput behavior predicted by the GMA cost analysis in Section 3.4. Specifically, we measure incremental peak GPU memory allocation and forward–backward throughput for a single attention/mixing block under a shared input shape. This separates the computational scaling claims from the downstream representation-learning claims. Table 1: Single-block systems profiling of computational efficiency. Memory and throughput are empirical measurements for a forward-backward pass. Parameter counts, shown in parentheses, are reported in millions for each sequence-mixing layer. Underlined values denote the best value in each metric, i.e. lowest memory or highest throughput.                                                                                   
+
+> Model N= 1 K Mem. (Params) N= 1 K Speed N= 2 K Mem. (Params) N= 2 K Speed N= 4 K Mem. (Params) N= 4 K Speed
+> Standard MHA (Eager) 1.47 GB (2.4M) 1.02M tok/s 5.81 GB (2.4M) 610K tok/s 23.07 GB (2.4M) 186K tok/s Standard MHA (SDPA) 0.15 GB (2.4M) 3.33M tok/s 0.25 GB (2.4M) 3.34M tok/s 0.50 GB (2.4M) 2.38M tok/s Linear Transformer 0.18 GB (2.4M) 2.88M tok/s 0.36 GB (2.4M) 3.76M tok/s 0.73 GB (2.4M) 3.96M tok/s Linformer ( k= 256) 0.41 GB (2.9M) 2.17M tok/s 0.82 GB (3.4M) 2.56M tok/s 1.64 GB (4.4M) 2.68M tok/s Mamba 0.27 GB (3.8M) 2.06M tok/s 0.55 GB (3.8M) 1.99M tok/s 1.11 GB (3.8M) 2.07M tok/s Performer ( M= 256) 0.58 GB (2.4M) 1.30M tok/s 1.15 GB (2.4M) 1.37M tok/s 2.30 GB (2.4M) 1.39M tok/s
+> GMA (Ours, K= 64 )0.35 GB (2.5M) 688K tok/s 0.71 GB (2.5M) 722K tok/s 1.37 GB (2.5M) 742K tok/s
+> GMA (Ours, K= 128 )0.50 GB (2.6M) 566K tok/s 1.04 GB (2.6M) 592K tok/s 2.02 GB (2.6M) 607K tok/s
+> GMA (Ours, K= 256 )0.85 GB (2.8M) 416K tok/s 1.70 GB (2.8M) 430K tok/s 3.39 GB (2.8M) 437K tok/s
+> GMA (Ours, K= 512 )1.59 GB (3.2M) 270K tok/s 3.17 GB (3.2M) 277K tok/s 6.32 GB (3.2M) 280K tok/s
+
+Note: “Standard MHA (Eager)” denotes a conventional explicit scaled dot-product MHA implementation that materializes the attention score/probability tensors in the standard eager PyTorch execution path. “Standard MHA (SDPA)” denotes PyTorch’s optimized scaled-dot-product-attention backend, which uses fused memory-efficient kernels when available. Both compute standard dot-product attention; they differ in implementation backend rather than in the mathematical attention definition. 
+
+As shown in Table 1, eager standard MHA exhibits the expected quadratic memory growth, reaching 23.07 GB at N = 4000, together with a marked throughput drop. In contrast, GMA shows approximately linear empirical memory scaling in N for fixed K. For example, with K = 256, memory increases from 0.85 GB at N = 1000 to 1.70 GB at N = 2000 and 3.39 GB at N = 4000, while throughput remains nearly constant. This behavior is consistent with the fixed-K activation scaling analyzed in Section 3.4. 
+
+> 12
+
+Unless otherwise stated, all mechanisms are evaluated on a single NVIDIA A100-SXM4-40GB GPU using PyTorch 2.10.0 with CUDA 12.8, bfloat16 mixed precision, batch size 8, 12 heads, and model hidden dimension dmodel = 768. Intro | Lite | Method | Theory | Exps | Disc | Con | App The K-ablation exposes the expected efficiency–capacity trade-off. GMA’s parameter count grows with K but is independent of N , whereas its activation memory scales through the respon-sibility tensors Γ Q, ΓK ∈ RB×H×N ×K , where B, H, N , and K denote batch size, number of heads, sequence length, and number of Gaussian mixture components, respectively. Thus, for fixed K,memory scales linearly with sequence length, while for fixed N , both memory and arithmetic cost scale linearly with the number of components. At N = 4000, memory rises from 1.37 GB for K = 64 to 6.32 GB for K = 512, while the parameter count increases from 2.5M to 3.2M. By comparison, Linformer’s static projection matrices introduce an explicit sequence-length-dependent parameter cost, increasing from 2.9M parameters at N = 1000 to 4.4M at N = 4000. Overall, the profiling results empirically support the intended linear-in-N scaling of GMA, but also show that this high-level PyTorch implementation, currently without any optimisation, has larger constant factors than optimized SDPA, Linear Transformer, Mamba, and Performer baselines. This overhead comes from computing Gaussian log densities, Mahalanobis terms, and responsibility normalizers. The dominant responsibility activation storage is O(BHN K ). Summing over heads, the arithmetic cost is approximately O(BN KD ) when the per-head routing and value dimensions sum to the model hidden dimension D. Therefore, these results should be read as evidence for GMA’s empirical scaling behavior, not as evidence that the present implementation is the fastest raw sequence mixer. The downstream experiments test whether this probabilistic routing cost yields competitive accuracy and interpretable responsibility structure. 
+
+5.2 Long-Context Task Accuracy: LRA 
+
+Having isolated the single-block computational behavior, we next evaluate 13 representational ca-pability on the Long Range Arena (LRA) benchmark [47]. We focus on ListOps, a hierarchical reasoning task with sequence length N = 2K, and byte-level IMDb/Text classification with se-quence length N = 4K. We train each model for 20 epochs over 3 random seeds and report test accuracy at the epoch with the highest validation accuracy. For GMA, we use K = 128 components in this experiment, matching the efficiency–capacity trade-off identified in the controlled systems profiling experiment. Table 2: Task accuracy on the LRA ListOps and byte-level IMDb/Text tasks. Results are test accuracies at the best validation epoch, reported as mean ± standard deviation over 3 random seeds. The parameter column reports millions of parameters for ListOps/Text, respectively; differences arise from task-specific components and, for some baselines, sequence-length dependent modules. Underlined values denote the best overall result in each metric, while boldface highlights the GMA row.                                                                     
+
+> Model Params (L/T) ListOps (2K) Text (4K) Avg. Acc.
+> Standard MHA (SDPA) 3.74M / 4.25M 41 .33 ±0.49 64 .03 ±0.89 52 .68 ±0.48 Linformer ( k= 256) 7.84M / 12.44M 39 .15 ±0.13 58 .82 ±1.60 48 .99 ±0.86 Linear Transformer 3.74M / 4.25M 40 .03 ±0.70 64 .88 ±0.13 52 .46 ±0.29 Performer ( M= 256) 3.74M / 4.25M 40 .65 ±0.85 63 .38 ±0.73 52 .01 ±0.79 Mamba 4.44M / 4.95M 42 .28 ±1.75 82 .12 ±0.40 62 .20 ±0.68
+> GMA (Ours, K= 128 )4.01M / 4.52M 41 .17 ±0.23 64 .97 ±0.21 53 .07 ±0.12
+
+Table 2 shows that GMA is competitive with standard and efficient attention baselines under the same PyTorch LRA pipeline. On ListOps, GMA reaches 41 .17%, closely matching SDPA   
+
+> 13 All models are evaluated under the same PyTorch pipeline, using 4 sequence-mixing layers, model hidden di-mension dmodel = 256, eight heads, the AdamW optimizer [32], bfloat16 mixed precision, and a warmup-cosine learning-rate schedule.
+
+Intro | Lite | Method | Theory | Exps | Disc | Con | App attention (41 .33%) and outperforming Linformer, Linear Transformer, and Performer. On Text, GMA obtains 64 .97%, the strongest result among the attention-style baselines, slightly above Linear Transformer (64 .88%) and SDPA attention (64 .03%). Averaged over the two tasks, GMA achieves 53 .07%, giving the best average performance among the attention-based baselines evaluated here. Mamba performs best overall, driven mainly by its much stronger Text result (82 .12%), in-dicating that selective state-space models provide a different and highly effective inductive bias for byte-level classification. Nevertheless, GMA outperforms Linformer, Linear Transformer, and Performer on both ListOps and Text in this experiment, and gives the strongest average accuracy among the attention-style baselines. These results support the hypothesis that learned probabilis-tic routing can be competitive with static or randomized efficient-attention mechanisms under a shared training pipeline, while retaining the fixed-K, linear-in-N scaling and analyzable responsi-bility structure introduced in Sections 3.3 and 3.4. 
+
+5.3 Language Modelling on WikiText-103 
+
+Efficient attention mechanisms improve the scalability of Transformers on long sequences, but many do so by introducing sparsity patterns, low-rank projections, kernel feature maps, or other approxi-mations to full softmax attention [48, 28, 10]. Prior work has observed that such approximations can involve a model-quality trade-off relative to exact softmax attention, especially in settings requiring dense token-level prediction [13, 52]. We therefore evaluate autoregressive language modelling on WikiText-103 [37]. Unlike the bidirectional LRA setting, this experiment requires strictly causal sequence mixing: the representation at position i may depend only on tokens at positions j ≤ i, and is then used for next-token prediction. For GMA, we use the causal prefix-sum formulation described in Section 3.5, which accumulates key-weighted latent memories and normalizers only over prefix positions. This prevents future-token leakage while preserving linear-in-N complexity for fixed K.All models are trained 14 from scratch using a GPT-2 BPE tokenizer, with no pretrained model weights. We report validation perplexity at the best validation checkpoint 15 and training through-put in tokens per second. All models passed a prefix-causality test, with maximum prefix error equal to zero. Table 3: Autoregressive language modelling on WikiText-103 under a fixed training budget. We report validation perplexity at the best validation checkpoint; lower is better. Throughput is measured in training tokens per second; higher is better. Underlined values denote the best overall result in each metric, while boldface highlights the stronger GMA variant.                                                      
+
+> Model Architecture Params Val. PPL ↓Tok/s ↑
+> Standard MHA (causal SDPA) 45.17M 35 .40 ±0.06 110 ,778 ±809 Linear Transformer 45.17M 44 .81 ±0.11 41 ,693 ±47 Performer 45.17M 47 .49 ±0.23 14 ,559 ±6Mamba 49.04M 35 .44 ±0.21 74 ,532 ±564
+> GMA (Ours, K= 128 )45.96M 42 .62 ±0.38 22 ,912 ±23
+> GMA (Ours, K= 256 )46.76M 41 .72 ±0.21 13 ,056 ±21
+> 14 We use a fixed-budget decoder-only setup with context length 1024, model hidden dimension dmodel = 512, 6 layers, 8 heads, bfloat16 mixed precision, AdamW optimization, and an effective batch size of 16,384 tokens. Each model is trained for 20,000 optimization steps over 3 random seeds on an NVIDIA A100-SXM4-40GB GPU.
+> 15 Since the best validation checkpoint occurred at the final training step for all runs, these results should be interpreted as a fixed-budget accuracy-efficiency comparison rather than as full-convergence performance.
+
+Intro | Lite | Method | Theory | Exps | Disc | Con | App Table 3 shows that causal GMA improves perplexity over the tested linear-attention baselines on dense autoregressive prediction. GMA with K = 256 obtains a validation perplexity of 41 .72, outperforming Linear Transformer (44 .81) and Performer (47 .49) under the same fixed training budget. This suggests that learned Gaussian responsibilities can preserve token-level predictive information more effectively than the fixed ELU feature map of Linear Transformer or the random feature approximation used by Performer in this setup. However, causal GMA does not close the gap to optimized causal softmax attention or Mamba in this fixed-budget implementation. Standard MHA with causal SDPA achieves the best perplexity (35 .40) and the highest throughput, while Mamba reaches a similar perplexity (35 .44) with lower but still strong throughput. This does not contradict the linear-in-N complexity analysis of GMA. The cost estimate in Eq. (12) describes asymptotic scaling for fixed K, whereas wall-clock through-put also depends on constant factors, kernel fusion, memory access patterns, and implementation maturity. Moreover, at the context length used here ( N = 1024), the difference between N K and 
+
+N 2 is still modest for K = 128 or K = 256 before constant factors are taken into account. The scaling advantage of GMA is expected to become more relevant at longer sequence lengths when 
+
+K ≪ N , although realizing this advantage in wall-clock time would require optimized kernels. In the present high-level, non-optimized PyTorch implementation, GMA incurs larger constant fac-tors from Gaussian log-density computation, Mahalanobis terms, causal prefix accumulation, and responsibility normalization. Increasing the number of components from K = 128 to K = 256 im-proves perplexity from 42 .62 to 41 .72, but reduces throughput from 22 .9K to 13 .1K tokens/s—an expected capacity-efficiency trade-off. Overall, the WikiText-103 experiment supports GMA as a probabilistic and interpretable linear-time attention-style alternative that improves over the tested linear and random-feature attention variants, while remaining less efficient and less accurate than highly optimized causal SDPA and Mamba under the current implementation. 
+
+5.4 Interpretability: Latent Responsibility Structure 
+
+Motivated by the non-negative factorization structure of the GMA responsibility matrices, we analyze the learned query responsibilities on WikiText-103 validation sequences. We use the pre-viously trained causal GMA model with K = 128 and extract the last-layer query responsibility tensor Γ Q ∈ RS×H×L×K , where S = 64 is the number of validation sequences, H = 8 is the number of attention heads, L = 1024 is the sequence length, and K = 128 is the number of Gaussian components. For each token occurrence at sequence s and position ℓ, we average the responsibility vectors over heads, ¯γQs,ℓ,k = 1
+
+H
+
+> H
+
+X
+
+> h=1
+
+γQs,h,ℓ,k , k = 1 , . . . , K. (24) This produces one head-averaged responsibility vector ¯ γQs,ℓ, : ∈ ∆K−1 for each token occurrence. We then flatten the sequence-position pair ( s, ℓ ) into a token index t = 1 , . . . , T , where T =
+
+SL = 65 ,536, and write the resulting vector as ¯ γQt . Thus, the averaging is performed across heads for the same token occurrence, not across different sequence positions or across repeated token types. Because this diagnostic averages responsibilities across heads, the resulting component indices should be interpreted as aggregate, head-averaged routing channels rather than isolated per-head components. 16     
+
+> 16 If each head has its own independently learned Gaussian components, then component kin one head is not necessarily aligned with component kin another head. The head-averaged analysis is therefore a coarse diagnostic of aggregate routing structure; per-head component specialization is left for more detailed future analysis.
+
+Intro | Lite | Method | Theory | Exps | Disc | Con | App We study both soft and hard responsibility structure. The marginal component usage is defined as 
+
+pk = 1
+
+T
+
+> T
+
+X
+
+> t=1
+
+¯γQt,k . (25) We use the normalized usage entropy 
+
+Husage = − PKk=1 pk log pk
+
+log K (26) to measure whether the latent routing channels are broadly used or collapse to a small subset. A value close to 1 indicates broad component usage, while a value close to 0 indicates concentration on a few components. To measure routing sharpness, we compute the normalized mean token entropy 
+
+Htoken = 1
+
+T
+
+> T
+
+X
+
+> t=1
+
+− PKk=1 ¯γQt,k log ¯ γQt,k 
+
+log K . (27) Lower values indicate sharper, more confident routing. We also report the mean maximum respon-sibility 
+
+Rmax = 1
+
+T
+
+> T
+
+X
+
+> t=1
+
+max  
+
+> k
+
+¯γQt,k , (28) which gives a complementary measure of assignment sharpness. For hard-assignment diagnostics, we define 
+
+zt = arg max  
+
+> k
+
+¯γQt,k . (29) Let ct denote the surface-form category of token t, such as punctuation, numeric, capitalized, lower-case alphabetic, subword alphabetic, newline/space, or function word. For component k, let 
+
+nk,c =
+
+> T
+
+X
+
+> t=1
+
+1{zt = k, c t = c}, nk = X
+
+> c
+
+nk,c . (30) For components with nk > 0, the component purity is Purity( k) = max 
+
+> c
+
+nk,c 
+
+nk
+
+, (31) and the weighted category purity is Purity w = X 
+
+> k:nk>0
+
+nk
+
+T Purity( k). (32) This measures how strongly hard GMA assignments align with surface-form token categories. Finally, we compute the mutual information between hard component assignments Z and token categories C:
+
+I(Z; C) = X
+
+> k,c
+
+p(k, c ) log p(k, c )
+
+p(k)p(c) , (33) Intro | Lite | Method | Theory | Exps | Disc | Con | App where p(k, c ) = nk,c /T , p(k) = P 
+
+> c
+
+p(k, c ), and p(c) = P 
+
+> k
+
+p(k, c ). We report normalized mutual information as NMI( Z, C ) = I(Z; C)min {H(Z), H (C)} , (34) where H(Z) and H(C) are the marginal entropies of component assignments and token categories, respectively. Higher NMI indicates stronger alignment between latent routing and token surface-form categories. Table 4: Interpretability statistics for last-layer, head-averaged GMA query responsibilities on WikiText-103 validation sequences. Usage entropy and token entropy are normalized by log K.Purity, mutual information (MI), and normalized mutual information (NMI) are computed from hard assignments zt = arg max k ¯γQt,k and surface-form token categories.                 
+
+> Model KActive Usage Ent. Token Ent. Mean Max Resp. Purity MI NMI GMA 128 104/128 0.933 0.790 0.103 0.483 0.427 0.244
+
+Table 4 shows that the learned responsibilities use most of the available latent routing channels. In total, 104 out of 128 components receive at least one hard assignment, and the normalized usage entropy is 0.933, indicating that the soft usage distribution is broad rather than collapsed. At the same time, the normalized per-token entropy is 0.790 and the mean maximum responsibility is 0.103, showing that head-averaged routing remains soft rather than nearly one-hot. This softness is expected because responsibilities are averaged across heads. The hard component assignments nevertheless carry measurable surface-form information. The weighted category purity is 0 .483, substantially above a permutation baseline of 0 .293 ± 0.001 that preserves the component and category marginals while randomizing their association 17 . For reference, the largest global token category, lower-case alphabetic tokens, accounts for 0 .286 of the analyzed token set. The mutual information between component assignments and token categories is 0.427 nats, corresponding to a normalized mutual information of 0.244. Several high-usage components show preferences for recognizable token roles, including function words, punctuation, lower-case alphabetic tokens, numeric tokens, capitalized tokens, and subword pieces.                   
+
+> 17 The weighted category purity is computed as Purity w=P
+> k:nk>0(nk/T ) max cnk,c /n k, giving 0 .483 for the observed hard assignments. The permutation baseline is obtained by randomly permuting the surface-form cat-egory labels {ct}Tt=1 relative to the hard component assignments {zt}Tt=1 , recomputing Purity wfor each permu-tation, and reporting the mean and standard deviation across permutations. This preserves the empirical com-ponent counts and category counts while destroying their association. The global majority-category baseline is max cnc/T = 18 ,757 /65 ,536 ≈0.286, corresponding to lower-case alphabetic tokens.
+
+Intro | Lite | Method | Theory | Exps | Disc | Con | App 
+
+Figure 2: Last-layer, head-averaged GMA query responsibilities on a WikiText-103 validation se-quence. Rows show the most active latent routing channels in the sequence and columns show token positions. Concentrated bands indicate that different token positions route through distinct latent components. Figure 2 visualizes the learned responsibility structure at the token level. The heatmap shows that different token positions activate different subsets of latent routing channels, rather than routing uniformly through all components. This provides qualitative evidence that the GMA re-sponsibility matrix is an analyzable latent routing object. Intro | Lite | Method | Theory | Exps | Disc | Con | App 
+
+Figure 3: Category composition of the most-used GMA components under hard assignments zt =arg max k ¯γQt,k . Rows correspond to latent routing channels and columns correspond to surface-form token categories. Several components specialize toward categories such as function words, punctuation, capitalized tokens, lower-case alphabetic tokens, and subword fragments. Figure 3 further shows that high-usage components are not purely random with respect to surface-form categories: several components have visible preferences for categories such as function words, punctuation, capitalized tokens, lower-case alphabetic tokens, and subword fragments. This provides evidence that the learned responsibility matrices are analyzable latent routing objects. Additional diagnostics, including the token-category distribution, representative component exam-ples, permutation baselines, component-usage histograms, token-level assignment strips, and PCA projections, are provided in Appendix F. However, the components should not be interpreted as clean semantic classes. Many components are mixed, and the categories used here are surface-form categories rather than full syntactic or semantic annotations 18 . We therefore conclude that GMA learns a non-collapsed and analyzable latent responsibility structure with moderate alignment to token surface roles, rather than a set of fully disentangled semantic concepts. 
+
+# 6 Discussion 
+
+We position GMA as a new attention-style mechanism, not as a universally superior replacement for existing attention or state-space models. Its central contribution is to change both the geometry 
+
+and the computational ordering of attention. At its most abstract level, an attention score measures 
+
+> 18 Additional diagnostic plots in Appendix F, including component-usage histograms, purity bar plots, token-level assignment strips, and PCA projections of responsibility vectors, show partial structure with substantial overlap rather than fully separated clusters.
+
+Intro | Lite | Method | Theory | Exps | Disc | Con | App the affinity or compatibility between two representations. This affinity need not be a dot product: it may be defined by cosine similarity, learned additive scores, kernels, distances, divergences, or other task-adapted similarity functions. From this perspective, GMA can be seen as a responsibility-space attention mechanism. Rather than comparing projected queries and keys directly in the original routing representation space, GMA first maps them into posterior responsibility vectors over a shared set of learned Gaussian mixture components, and then defines their unnormalized affinity by the overlap (Eq. (11)) 
+
+eAGMA  
+
+> ij
+
+= ⟨γQi , γ Kj ⟩ =
+
+> K
+
+X
+
+> k=1
+
+γQi,k γKj,k .
+
+The expressiveness of this affinity depends not only on the number of mixture components K, but also on the routing dimension, covariance parameterization, projection matrices, number of heads, depth, and training objective. We discuss this broader view of attention design in Appendix G. This responsibility-space affinity alone would not necessarily reduce the computational cost: explicitly materializing eAGMA = Γ Q(Γ K )⊤ would still produce an N × N matrix. The efficiency of GMA comes from using the associativity of matrix multiplication to change the order of computa-tion. Instead of computing  ΓQ(Γ K )⊤VX ,
+
+GMA first writes values into a K-slot latent memory, ˜V = (Γ K )⊤VX ,
+
+and then reads from this memory using query responsibilities, 
+
+O = ΓQ ˜V
+
+ΓQZ + ϵ .
+
+Thus, GMA is best understood as responsibility-space affinity plus latent-memory routing : the induced token-to-token affinity exists algebraically, but it is not materialized in the efficient imple-mentation. This is the mechanism that gives GMA its fixed-K, linear-in-N activation scaling while retaining probabilistic responsibilities that can be inspected and analyzed. 
+
+Scaling behavior and implementation constants. The controlled systems profiling experi-ment confirms this intended scaling behavior. For fixed K, the routing-specific responsibility tensors scale as O(BHN K ) rather than O(BHN 2), and the observed memory growth is approximately linear in sequence length. This supports the cost analysis in Section 3.4. At the same time, the profiling results also show that asymptotic scaling does not directly imply superior wall-clock ef-ficiency at the sequence lengths tested here. The current high-level PyTorch implementation has larger constant factors than optimized SDPA, Linear Transformer, Performer, and Mamba imple-mentations. This is not surprising: GMA explicitly evaluates Gaussian log densities, Mahalanobis terms, posterior responsibilities, and normalizers, whereas several baselines benefit from simpler arithmetic, fused kernels, or highly optimized recurrent or state-space operators. Thus, the empir-ical message is twofold: GMA has the intended fixed-K linear memory structure, but realizing its full speed potential will likely require specialized kernels and implementation-level optimization. 
+
+Task accuracy and inductive bias. The LRA results suggest that the additional cost of prob-abilistic routing can come with useful representational capacity. On ListOps and byte-level Text classification, GMA is competitive with standard SDPA attention and gives the strongest average Intro | Lite | Method | Theory | Exps | Disc | Con | App performance among the attention-style baselines evaluated in our PyTorch pipeline. This indicates that the N ×K latent bottleneck does not merely compress away useful information; learned respon-sibilities can preserve task-relevant sequence structure while avoiding an explicit N × N attention matrix. However, the comparison with Mamba is also important. Mamba is substantially stronger on the byte-level Text task, suggesting that selective state-space dynamics provide a different and highly effective inductive bias for this setting. Therefore, GMA offers a competitive probabilistic attention-style alternative with a distinct routing mechanism and diagnostic structure. 
+
+Autoregressive modelling. The WikiText-103 experiment gives a more demanding test of causal GMA. Causal GMA improves over the Linear Transformer and Performer baselines in vali-dation perplexity under the same training budget, which suggests that learned Gaussian responsi-bilities can preserve more predictive information than the tested fixed or randomized feature-map approximations in this setup. Nevertheless, GMA remains behind optimized causal SDPA and Mamba in both perplexity and throughput. Increasing the number of mixture components from 
+
+K = 128 to K = 256 improves perplexity but reduces throughput, exposing the expected capacity– efficiency trade-off. These results clarify the present role of GMA in language modelling: its imme-diate strength is not raw speed or state-of-the-art perplexity, but the combination of linear scaling, probabilistic routing, and analyzable latent responsibilities. Longer contexts, optimized kernels, and hybrid local–global designs are natural settings in which this trade-off should be tested more thoroughly. 
+
+Interpretability and responsibility diagnostics. The interpretability experiment directly ex-amines one of the main advantages of a responsibility-based mechanism. The last-layer, head-averaged query responsibilities on WikiText-103 use most of the available latent routing channels: 104 out of 128 components receive at least one hard assignment, and the normalized usage entropy is 0.933. This indicates broad component usage rather than collapse to a small subset of mixture components. The hard assignments also carry measurable surface-form information, with weighted category purity 0.483 and normalized mutual information 0.244 relative to the token categories used in the analysis. These numbers should be interpreted carefully. The categories are surface-form categories derived from GPT-2 BPE tokens, not full syntactic or semantic annotations, and many components remain mixed. Moreover, because the diagnostic averages responsibilities over heads, the resulting components should be read as head-averaged routing channels rather than isolated per-head experts. Even with these qualifications, the analysis shows that GMA exposes a latent routing structure that can be quantified, visualized, and compared against external token annota-tions. This kind of diagnostic access is less direct in many random-feature, low-rank, or state-space alternatives. 
+
+Limitations. Several limitations remain. First, the present implementation is not optimized at the kernel level, so its wall-clock throughput underestimates what may be possible with fused Gaussian-responsibility computation and more efficient prefix accumulation. Second, all experi-ments in this paper use finite-K GMA; the number of components is selected manually rather than adapted automatically to the data or task. Third, the experiments focus on self-attention-style sequence mixing. Cross-attention follows naturally from the same formulation, as discussed in Appendix E, but it is not empirically evaluated here. Fourth, the interpretability analysis is intentionally limited: it uses surface-form token categories and head-averaged responsibilities, so it does not establish that GMA components correspond to clean semantic, syntactic, or discourse-level concepts. Finally, although GMA induces a constrained non-negative low-rank affinity structure, Intro | Lite | Method | Theory | Exps | Disc | Con | App this does not guarantee component specialization or disentanglement; these properties must be measured empirically. 
+
+GMA Extensions: Adaptive Mixtures and Probabilistic Expert Routing 
+
+The experiments in this paper evaluate GMA as a finite-K linear-time routing mechanism with learned mixture priors, means, and diagonal covariances. The results suggest several directions for future work: implementation-level optimization, adaptive mixture capacity, hybrid local–global attention, cross-attention and multimodal applications, and probabilistic expert routing. 
+
+Optimized and hybrid GMA. A first practical direction is to develop fused kernels for Gaussian log-density evaluation, responsibility normalization, and causal prefix accumulation. The current implementation is useful for validating the method and analyzing its behavior, but it does not exploit the same level of hardware specialization as SDPA or state-space implementations. Asecond direction is to combine exact local attention with long-range GMA routing. Such a hybrid architecture could use standard attention to capture short-range syntax, local byte-level patterns, or fine-grained visual details, while using mixture routing to summarize and retrieve long-range information through a fixed number of latent memory channels. This may be particularly relevant for long-context language modelling, document understanding, genomics, and multimodal settings where local detail and global context are both important. 
+
+Bayesian and nonparametric GMA. In the finite GMA formulation used in this paper, the number of latent Gaussian components K is fixed, and the mixture prior π = ( π1, . . . , π K ) is learned through unconstrained logits followed by a softmax, as in Eq. (15). A Bayesian extension would place a Dirichlet prior over the mixture weights, 
+
+π ∼ Dirichlet 
+
+ α0
+
+K , . . . , α0
+
+K
+
+
+
+, (35) where α0 > 0 controls how concentrated or diffuse the component usage is. Small values of α0
+
+encourage sparse component usage, while larger values encourage more uniform use of the available mixture components. For a generic routing vector xi, such as a query vector qi = ( QX )i, : ∈ Rdr or a key vector 
+
+ki = ( KX )i, : ∈ Rdr , the responsibility retains the same form (Eq.(3)), 
+
+γi,k = πkN (xi | μk, Σk)
+
+PKℓ=1 πℓN (xi | μℓ, Σℓ) , (36) but π is treated as a random variable or regularized latent parameter rather than only as a point es-timate. A finite Bayesian variant could be implemented by learning a variational Dirichlet posterior 
+
+q(π) = Dirichlet( a) and adding the KL penalty KL 
+
+h
+
+q(π) ∥ Dirichlet 
+
+ α0
+
+K , . . . , α0
+
+K
+
+i 
+
+(37) to the task loss Ltask . The forward pass could use samples from q(π) to propagate uncertainty over mixture weights, or use the posterior mean Eq[πk] = ak/ P 
+
+> ℓ
+
+aℓ as a deterministic approximation. This would provide a route toward representing uncertainty over mixture weights, rather than only learning point-valued priors. Intro | Lite | Method | Theory | Exps | Disc | Con | App A further extension is to replace the finite Dirichlet prior with a Dirichlet process prior, yielding a nonparametric or truncated infinite-mixture variant of GMA [17, 43, 42, 7]. In stick-breaking form, 
+
+vk ∼ Beta(1 , α ), πk = vk
+
+Y
+
+> ℓ<k
+
+(1 − vℓ), (38) where α is the concentration parameter. In practice, such a model would be implemented using a fi-nite truncation at a maximum size Kmax . The nominal routing cost would then scale as O(N K max ). The effective number of active components could be smaller if many learned stick weights become negligible, although actual wall-clock savings would require pruning, sparse evaluation, or another mechanism that skips negligible components. This would allow GMA to adapt its effective routing capacity to the data and task, rather than relying only on manual selection of K.
+
+Cross-attention and multimodal routing. Although the experiments in this work focus on self-attention-style sequence mixing, the same responsibility-space mechanism extends naturally to cross-attention. Queries can be formed from a query-side sequence X, while keys and values are formed from a separate context sequence Y , producing Γ QX and Γ KY as described in Appendix E. This suggests possible applications in encoder–decoder architectures, retrieval-augmented models, vision–language models, and multimodal systems in which the query and context streams have different statistical structure. In such settings, the mixture components may serve as shared latent routing channels between modalities or between source and target representations. A systematic study of GMA cross-attention is therefore a natural next step. 
+
+Probabilistic expert routing. A second direction is to use Gaussian responsibilities as prob-abilistic gates over attention heads, sequence-mixing modules, or expert networks. Let ri ∈ Rdg
+
+denote a gating representation of token i, and suppose that each expert or head h = 1 , . . . , H 
+
+is associated with a Gaussian routing component with parameters ( ρh, ν h, Λh), where ρh ≥ 0, 
+
+PHh=1 ρh = 1, νh ∈ Rdg , and Λ h ∈ Sdg
+
+> ++
+
+. A GMA-style gate could define 
+
+γMoE  
+
+> i,h
+
+= ρhN (ri | νh, Λh)
+
+PHℓ=1 ρℓN (ri | νℓ, Λℓ) . (39) Here γMoE  
+
+> i,h
+
+is the posterior responsibility of expert h for token i under the learned Gaussian gating model. If all experts are evaluated, the output can be written as the dense mixture 
+
+yi =
+
+> H
+
+X
+
+> h=1
+
+γMoE  
+
+> i,h
+
+Expert h(X)i, (40) where Expert h(X)i denotes the output of expert, head, or sequence-mixing module h at token position i. This dense form is fully differentiable, but it is not computationally sparse as all experts are executed. To obtain conditional-computation savings, one would need an additional sparse selection rule, such as top-r routing, stochastic sampling, or a differentiable relaxation. For example, let Si ⊂ { 1, . . . , H } denote the selected expert set for token i, obtained by top-r
+
+selection or sampling from γMoE  
+
+> i
+
+. A sparse GMA-MoE output can then be written as 
+
+yi = X
+
+> h∈S i
+
+¯γMoE  
+
+> i,h
+
+Expert h(X)i, ¯γMoE  
+
+> i,h
+
+= γMoE 
+
+> i,h
+
+P 
+
+> ℓ∈S i
+
+γMoE 
+
+> i,ℓ
+
+. (41) Intro | Lite | Method | Theory | Exps | Disc | Con | App The discrete expert-selection step could be implemented using an argmax or top-r operator, stochas-tic sampling, the Gumbel–Softmax or Concrete relaxation [27, 34], or a straight-through variant [4, 27, 23]. This formulation is related to conventional MoE routing [45, 31, 16], but differs in its probabilistic interpretation. Standard MoE gates are often implemented as learned softmax or noisy top-k classifiers over experts. A GMA-style gate instead defines expert probabilities as pos-terior responsibilities under a learned latent-density model. This could provide a principled way to combine conditional computation with uncertainty-aware and interpretable expert selection, while preserving the possibility of sparse execution through top-r or sampled routing. Taken together, these directions suggest that GMA is best viewed not only as a single efficient-attention module, but also as an instance of a broader design principle: attention mechanisms can be designed by choosing the space in which compatibility is measured, the normalization used to turn compatibility into routing weights, and the computational ordering used to retrieve values. The present paper studies one concrete realization of that principle using finite Gaussian mixtures and responsibility-space routing. In its current form, GMA is therefore not all you need : it is a probabilistic, interpretable, linear-time attention-style alternative whose value is clearest when latent routing structure, analyzability, and fixed-K scaling matter alongside task accuracy and implementation efficiency. 
+
+# 7 Conclusion 
+
+We introduced Gaussian Mixture Attention (GMA), a probabilistic attention-style sequence mixer that rethinks attention as routing through a learned latent responsibility space . Instead of comparing every query directly with every key, GMA maps queries and keys to posterior responsibility vectors over K learned Gaussian mixture components. Their overlap defines an implicit responsibility-space 
+
+affinity , and an efficient implementation avoids materializing the corresponding N × N matrix by first writing values into a K-slot latent memory and then reading from that memory with query responsibilities. This combination of responsibility-space affinity and associative latent-memory routing gives GMA fixed-K linear-in-N activation scaling while preserving a normalized attention-style interpretation. Methodologically, GMA opens a complementary route for attention design: rather than modi-fying only sparsity patterns, low-rank projections, kernel feature maps, or implementation kernels, it changes the space in which compatibility is computed. The resulting responsibility matrices are not merely computational intermediates; they are probabilistic routing objects that can be an-alyzed, visualized, and compared with token-level annotations. We developed bidirectional and causal variants of GMA, gave an end-to-end differentiable parameterization of the Gaussian mix-ture components, and analyzed its gradient structure, constrained non-negative low-rank affinity interpretation, and local routing stability. Empirically, the results support a balanced view of GMA. Controlled systems profiling con-firms the intended approximately linear memory growth with sequence length for fixed K, but also shows that the present high-level PyTorch implementation has larger constant factors than opti-mized SDPA, Linear Transformer, Performer, and Mamba implementations. On LRA ListOps and byte-level Text classification tasks, GMA is competitive with standard attention and achieves the strongest average performance among the attention-style baselines evaluated in our pipeline. On WikiText-103, causal GMA improves over Linear Transformer and Performer in validation perplex-ity, but remains behind optimized causal SDPA and Mamba in both perplexity and throughput. The interpretability analysis further shows broad, non-collapsed component usage and moderate alignment between hard responsibility assignments and surface-form token categories. Intro | Lite | Method | Theory | Exps | Disc | Con | App These findings position GMA not as a universal replacement for optimized softmax attention or state-space sequence models, but as a probabilistic, interpretable, fixed-K linear-time attention-style alternative. Its advantages are clearest when fixed-K scaling, normalized latent routing, and access to analyzable responsibility matrices are valuable. Its present limitations are also clear: the implementation is not yet kernel-optimized, the number of components is manually selected, the experiments focus on self-attention-style settings, and the current interpretability analysis does not establish clean semantic or syntactic disentanglement. Future work may pursue fused and hardware-aware GMA kernels, hybrid local–global architectures, adaptive Bayesian or nonparametric com-ponent selection, cross-attention and multimodal extensions, probabilistic expert-routing variants, and richer linguistic or task-specific analyses of learned mixture components. In this sense, GMA is not “all you need”, but it opens a complementary route for designing attention mechanisms through latent probabilistic routing spaces. 
+
+# Author Contributions 
+
+Dr. Yongchao Huang initiated the idea of Gaussian Mixture Attention, formulated the method-ological and theoretical framework, developed the mathematical derivations, co-designed and ran the experimental codebase, and drafted the manuscript. Hassan Raza contributed to the empirical evaluation by co-designing and running the Long Range Arena (LRA) and WikiText-103 experi-ments. Both authors reviewed and approved the final manuscript. Despite careful review, some errors or inaccuracies may remain; readers are therefore advised to exercise due caution when consulting the material. Code availability: GitHub 
+
+# References 
+
+[1] ˇZiga Avsec, Vikram Agarwal, Daniel Visentin, Joseph R. Ledsam, Agnieszka Grabska-Barwinska, Kyle R. Taylor, Yannis Assael, John Jumper, Pushmeet Kohli, and David R. Kelley. Effective gene expression prediction from sequence by integrating long-range interac-tions. Nature Methods , 18:1196–1203, 2021. [2] Dzmitry Bahdanau, Kyunghyun Cho, and Yoshua Bengio. Neural machine translation by jointly learning to align and translate, 2016. [3] Iz Beltagy, Matthew E. Peters, and Arman Cohan. Longformer: The long-document trans-former, 2020. [4] Yoshua Bengio, Nicholas L´ eonard, and Aaron Courville. Estimating or propagating gradients through stochastic neurons for conditional computation, 2013. [5] Christopher M. Bishop. Mixture density networks. Technical Report NCRG/94/004, Neural Computing Research Group, Aston University, 1994. [6] Christopher M. Bishop. Pattern Recognition and Machine Learning . Springer, New York, 2006. [7] David M. Blei and Michael I. Jordan. Variational inference for dirichlet process mixtures. 
+
+Bayesian Analysis , 1(1):121–143, 2006. Intro | Lite | Method | Theory | Exps | Disc | Con | App [8] Stephen Boyd and Lieven Vandenberghe. Introduction to Applied Linear Algebra – Vectors, Matrices, and Least Squares . Cambridge University Press, 2018. [9] Rewon Child, Scott Gray, Alec Radford, and Ilya Sutskever. Generating long sequences with sparse transformers, 2019. [10] Krzysztof Marcin Choromanski, Valerii Likhosherstov, David Dohan, Xingyou Song, Andreea Gane, Tamas Sarlos, Peter Hawkins, Jared Quincy Davis, Afroz Mohiuddin, Lukasz Kaiser, David Benjamin Belanger, Lucy J Colwell, and Adrian Weller. Rethinking attention with performers. In International Conference on Learning Representations , 2021. [11] Thomas H. Cormen, Charles E. Leiserson, Ronald L. Rivest, and Clifford Stein. Introduction to Algorithms . MIT Press, 3 edition, 2009. [12] R´ obert Csord´ as, Piotr Piekos, Kazuki Irie, and J¨ urgen Schmidhuber. Switchhead: accelerat-ing transformers with mixture-of-experts attention. In Proceedings of the 38th International Conference on Neural Information Processing Systems , NIPS ’24, Red Hook, NY, USA, 2024. Curran Associates Inc. [13] Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, and Christopher R´ e. Flashattention: fast and memory-efficient exact attention with io-awareness. In Proceedings of the 36th Interna-tional Conference on Neural Information Processing Systems , NIPS ’22, Red Hook, NY, USA, 2022. Curran Associates Inc. [14] A. P. Dempster, N. M. Laird, and D. B. Rubin. Maximum likelihood from incomplete data via the em algorithm. Journal of the Royal Statistical Society. Series B (Methodological) ,39(1):1–38, 1977. [15] Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, Jakob Uszkoreit, and Neil Houlsby. An image is worth 16x16 words: Transformers for image recognition at scale. In International Conference on Learning Representations , 2021. [16] William Fedus, Barret Zoph, and Noam Shazeer. Switch transformers: scaling to trillion parameter models with simple and efficient sparsity. J. Mach. Learn. Res. , 23(1), January 2022. [17] Thomas S. Ferguson. A bayesian analysis of some nonparametric problems. The Annals of Statistics , 1(2):209–230, 1973. [18] Albert Gu and Tri Dao. Mamba: Linear-time sequence modeling with selective state spaces, 2024. [19] Albert Gu, Karan Goel, and Christopher R´ e. Efficiently modeling long sequences with struc-tured state spaces. In International Conference on Learning Representations , 2022. [20] Yongchao Huang. Classification via score-based generative modelling, 2022. [21] Yongchao Huang. Sampling via gaussian mixture approximations, 2025. [22] Yongchao Huang. Gaussian joint embeddings for self-supervised representation learning, 2026. [23] Yongchao Huang. Neural bayesian sequential routing, 2026. Intro | Lite | Method | Theory | Exps | Disc | Con | App [24] Robert A. Jacobs, Michael I. Jordan, Steven J. Nowlan, and Geoffrey E. Hinton. Adaptive mixtures of local experts. Neural Computation , 3(1):79–87, 1991. [25] Andrew Jaegle, Sebastian Borgeaud, Jean-Baptiste Alayrac, Carl Doersch, Catalin Ionescu, David Ding, Skanda Koppula, Daniel Zoran, Andrew Brock, Evan Shelhamer, Olivier J Henaff, Matthew Botvinick, Andrew Zisserman, Oriol Vinyals, and Joao Carreira. Perceiver IO: A general architecture for structured inputs & outputs. In International Conference on Learning Representations , 2022. [26] Andrew Jaegle, Felix Gimeno, Andrew Brock, Andrew Zisserman, Oriol Vinyals, and Joao Carreira. Perceiver: General perception with iterative attention. In International Conference on Machine Learning , pages 4651–4664, 2021. [27] Eric Jang, Shixiang Gu, and Ben Poole. Categorical reparameterization with gumbel-softmax. In International Conference on Learning Representations , 2017. [28] Angelos Katharopoulos, Apoorv Vyas, Nikolaos Pappas, and Fran¸ cois Fleuret. Transformers are RNNs: Fast autoregressive transformers with linear attention. In Hal Daum´ e III and Aarti Singh, editors, Proceedings of the 37th International Conference on Machine Learning , volume 119 of Proceedings of Machine Learning Research , pages 5156–5165. PMLR, 13–18 Jul 2020. [29] Nikita Kitaev, Lukasz Kaiser, and Anselm Levskaya. Reformer: The efficient transformer. In 
+
+International Conference on Learning Representations , 2020. [30] Daniel D. Lee and H. Sebastian Seung. Learning the parts of objects by non-negative matrix factorization. Nature , 401(6755):788–791, oct 1999. [31] Dmitry Lepikhin, HyoukJoong Lee, Yuanzhong Xu, Dehao Chen, Orhan Firat, Yanping Huang, Maxim Krikun, Noam Shazeer, and Zhifeng Chen. Gshard: Scaling giant models with condi-tional computation and automatic sharding, 2020. [32] Ilya Loshchilov and Frank Hutter. Decoupled weight decay regularization, 2019. [33] Thang Luong, Hieu Pham, and Christopher D. Manning. Effective approaches to attention-based neural machine translation. In Llu´ ıs M` arquez, Chris Callison-Burch, and Jian Su, ed-itors, Proceedings of the 2015 Conference on Empirical Methods in Natural Language Pro-cessing , pages 1412–1421, Lisbon, Portugal, September 2015. Association for Computational Linguistics. [34] Chris J. Maddison, Andriy Mnih, and Yee Whye Teh. The concrete distribution: A continuous relaxation of discrete random variables. In International Conference on Learning Representa-tions , 2017. [35] Andr´ e F. T. Martins and Ram´ on F. Astudillo. From softmax to sparsemax: a sparse model of attention and multi-label classification. In Proceedings of the 33rd International Conference on International Conference on Machine Learning - Volume 48 , ICML’16, page 1614–1623. JMLR.org, 2016. [36] Geoffrey McLachlan and David Peel. Finite Mixture Models . Wiley Series in Probability and Statistics. John Wiley & Sons, 2000. [37] Stephen Merity, Caiming Xiong, James Bradbury, and Richard Socher. Pointer sentinel mix-ture models, 2016. Intro | Lite | Method | Theory | Exps | Disc | Con | App [38] OpenAI. Chatgpt-5.5. Large language model, 2026. Used for assistance with experimental code development. [39] Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan, Trevor Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, Alban Desmaison, Andreas K¨ opf, Edward Yang, Zach DeVito, Martin Raison, Alykhan Tejani, Sasank Chilamkurthy, Benoit Steiner, Lu Fang, Junjie Bai, and Soumith Chintala. PyTorch: an imperative style, high-performance deep learning library . Curran Associates Inc., Red Hook, NY, USA, 2019. [40] Ben Peters, Vlad Niculae, and Andr´ e FT Martins. Sparse sequence-to-sequence models. In 
+
+Proc. ACL , 2019. [41] Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agar-wal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, Gretchen Krueger, and Ilya Sutskever. Learning transferable visual models from natural language supervision. In Marina Meila and Tong Zhang, editors, Proceedings of the 38th International Conference on Machine Learning , volume 139 of Proceedings of Machine Learning Research , pages 8748–8763. PMLR, 18–24 Jul 2021. [42] Carl Edward Rasmussen. The infinite gaussian mixture model. In Proceedings of the 13th International Conference on Neural Information Processing Systems , NIPS’99, page 554–560, Cambridge, MA, USA, 1999. MIT Press. [43] Jayaram Sethuraman. A constructive definition of dirichlet priors. Statistica Sinica , 4(2):639– 650, 1994. [44] Jay Shah, Ganesh Bikshandi, Ying Zhang, Vijay Thakkar, Pradeep Ramani, and Tri Dao. Flashattention-3: fast and accurate attention with asynchrony and low-precision. In Proceed-ings of the 38th International Conference on Neural Information Processing Systems , NIPS ’24, Red Hook, NY, USA, 2024. Curran Associates Inc. [45] Noam Shazeer, *Azalia Mirhoseini, *Krzysztof Maziarz, Andy Davis, Quoc Le, Geoffrey Hin-ton, and Jeff Dean. Outrageously large neural networks: The sparsely-gated mixture-of-experts layer. In International Conference on Learning Representations , 2017. [46] Gilbert Strang. Introduction to Linear Algebra . Wellesley-Cambridge Press, 2016. [47] Yi Tay, Mostafa Dehghani, Samira Abnar, Yikang Shen, Dara Bahri, Philip Pham, Jinfeng Rao, Liu Yang, Sebastian Ruder, and Donald Metzler. Long range arena: A benchmark for efficient transformers, 2020. [48] Yi Tay, Mostafa Dehghani, Dara Bahri, and Donald Metzler. Efficient transformers: A survey. 
+
+ACM Comput. Surv. , 55(6), December 2022. [49] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, and Illia Polosukhin. Attention is all you need. In Proceedings of the 31st In-ternational Conference on Neural Information Processing Systems , NIPS’17, page 6000–6010, Red Hook, NY, USA, 2017. Curran Associates Inc. [50] Sinong Wang, Belinda Z. Li, Madian Khabsa, Han Fang, and Hao Ma. Linformer: Self-attention with linear complexity, 2020. Intro | Lite | Method | Theory | Exps | Disc | Con | App [51] Yunyang Xiong, Zhanpeng Zeng, Rudrasis Chakraborty, Mingxing Tan, Glenn Fung, Yin Li, and Vikas Singh. Nystr¨ omformer: A nystr¨ om-based algorithm for approximating self-attention. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 35, pages 14138–14148, 2021. [52] Songlin Yang, Bailin Wang, Yikang Shen, Rameswar Panda, and Yoon Kim. Gated linear attention transformers with hardware-efficient training. In Proceedings of the 41st International Conference on Machine Learning , ICML’24. JMLR.org, 2024. [53] Tam yen, Tan M. Nguyen, Dung D. Le, Duy Khuong Nguyen, Viet-Anh Tran, Richard G. Baraniuk, Nhat Ho, and Stanley J. Osher. Improving transformers with probabilistic attention keys. In International Conference on Machine Learning , 2022. [54] Manzil Zaheer, Guru Guruganesh, Avinava Dubey, Joshua Ainslie, Chris Alberti, Santiago Ontanon, Philip Pham, Anirudh Ravula, Qifan Wang, Li Yang, and Amr Ahmed. Big bird: transformers for longer sequences. In Proceedings of the 34th International Conference on Neu-ral Information Processing Systems , NIPS ’20, Red Hook, NY, USA, 2020. Curran Associates Inc. [55] Shaolei Zhang and Yang Feng. Modeling concentrated cross-attention for neural machine translation with gaussian mixture model. In Findings of the Association for Computational Linguistics: EMNLP 2021 , pages 1401–1411. Association for Computational Linguistics, 2021. 
+
+# A Notation for Gaussian Mixture Attention 
+
+Table 5 summarizes the notation used in the GMA methodology, theoretical analysis, and experi-ments. 
+
+# B Motivation: the Matrix Multiplication Association Rule 
+
+The linear-time implementation of GMA relies on a standard principle from matrix algebra and matrix-chain multiplication. Matrix multiplication is associative : whenever the dimensions are compatible, (AB )C = A(BC ). (42) Thus, different parenthesizations give the same final matrix. However, they can have very different computational costs. This is the classical matrix-chain multiplication observation: although all valid parenthesizations of a matrix product are algebraically equivalent, the choice of parenthesization can have a dramatic impact on the number of scalar multiplications required [11]. The associative law itself is a basic linear algebra identity [46]. To see this concretely, let 
+
+A ∈ Rm×n, B ∈ Rn×p, C ∈ Rp×q.
+
+Computing ( AB )C first forms AB ∈ Rm×p, so the approximate multiplication cost is [8] 
+
+C(AB )C = mnp + mpq. (43) In contrast, computing A(BC ) first forms BC ∈ Rn×q, giving cost 
+
+CA(BC ) = npq + mnq. (44) Intro | Lite | Method | Theory | Exps | Disc | Con | App Table 5: Notation used in the GMA methodology and analysis. 
+
+Symbol Meaning 
+
+Sequence, projection, and standard-attention notation 
+
+B Batch size, used in systems profiling and activation-scaling discussions. 
+
+H Number of attention heads, used when discussing multi-head activation scaling. 
+
+N Sequence length, i.e., the number of token positions. 
+
+dmodel Model hidden dimension of each input token representation before query, key, and value projection. 
+
+dk Query/key channel dimension in standard scaled dot-product attention. 
+
+dr GMA routing dimension used to compute Gaussian-mixture responsibilities. 
+
+dv Value dimension of the projected value vectors. 
+
+X ∈ RN ×dmodel Input sequence representations to a GMA layer in the self-attention setting. 
+
+Q ∈ RN ×dk Query matrix in standard scaled dot-product attention. 
+
+Katt ∈ RN ×dk Key matrix in standard scaled dot-product attention; the subscript distinguishes it from the scalar K used for the number of GMA mixture components. 
+
+V ∈ RN ×dv Value matrix in standard scaled dot-product attention. 
+
+WQ, W K ∈ Rdmodel ×dr GMA query and key projection matrices. 
+
+WV ∈ Rdmodel ×dv GMA value projection matrix. 
+
+QX = XW Q ∈ RN ×dr Query projection of the input sequence in GMA. 
+
+KX = XW K ∈ RN ×dr Key projection of the input sequence in GMA. 
+
+VX = XW V ∈ RN ×dv Value projection of the input sequence in GMA. 
+
+qi = ( QX )i, : Query routing vector at token position i.
+
+ki = ( KX )i, : Key routing vector at token position i.
+
+xi ∈ Rdr Generic routing vector, used when a formula applies to either qi or ki.
+
+Gaussian-mixture routing notation 
+
+K Number of latent Gaussian mixture components in GMA. 
+
+μk ∈ Rdr Mean vector of the k-th Gaussian routing component. Σk ∈ Sdr  
+
+> ++
+
+Covariance matrix of the k-th Gaussian component. In the implemented GMA layer, Σ k is diagonal. Σk = diag( σ2
+
+> k, 1
+
+, . . . , σ 2 
+
+> k,dr
+
+) Diagonal covariance parameterization used for computational tractability. 
+
+σ2 
+
+> k,m
+
+Diagonal variance of component k in routing coordinate m.
+
+πk Mixture prior probability of the k-th Gaussian component, with PKk=1 πk = 1. 
+
+zi ∈ { 1, . . . , K } Latent component-assignment variable for routing vector xi.
+
+γi,k Responsibility of component k for generic routing vector xi, i.e. p(zi = k | xi). 
+
+γQi,k Responsibility of component k for query routing vector qi.
+
+γKi,k Responsibility of component k for key routing vector ki.Γ ∈ RN ×K Generic responsibility matrix for a sequence of routing vectors. ΓQ ∈ RN ×K Query responsibility matrix computed from QX .ΓK ∈ RN ×K Key responsibility matrix computed from KX ; the superscript K denotes “key”, not the number of mixture components. 
+
+ω ∈ RK×dr Unconstrained covariance parameters used in the softplus reparameterization of diagonal variances. 
+
+α ∈ RK Unconstrained logits used to parameterize the mixture priors πk by a softmax. ΘGMA Trainable parameters of a GMA layer, e.g. {WQ, W K , W V , μ, ω, α }.
+
+ϵσ > 0 Numerical stabilizer used to lower-bound diagonal covariance entries. 
+
+Latent-memory routing and induced attention 
+
+1N All-ones vector in RN .˜V ∈ RK×dv Latent memory obtained by aggregating VX with key responsibilities: ˜V = (Γ K )⊤VX .˜Vk ∈ Rdv k-th latent memory slot, i.e. the k-th row of ˜V .
+
+Z ∈ RK Component-wise key-responsibility normalizer: Z = (Γ K )⊤1N .
+
+Zk Total key-responsibility mass assigned to component k.
+
+O ∈ RN ×dv Output sequence representation produced by GMA. 
+
+eAGMA ∈ RN ×N Implicit unnormalized GMA affinity matrix, eAGMA = Γ Q(Γ K )⊤; used for analysis but not materialized in the efficient implementation. 
+
+AGMA ∈ RN ×N Implicit normalized GMA affinity matrix induced by row-wise normalization of eAGMA ; not materialized in the efficient implementation. 
+
+ϵ > 0 Numerical stabilizer used in normalized latent-memory routing. 
+
+Causal GMA notation 
+
+˜V (i) 
+
+> k
+
+∈ Rdv Prefix-restricted latent memory slot for component k at autoregressive position i, using only positions 
+
+j ≤ i.
+
+Z(i) 
+
+> k
+
+Prefix-restricted key-responsibility normalizer for component k at autoregressive position i.
+
+AcGMA ∈ RN ×N Causal GMA affinity matrix supported only on prefix positions j ≤ i.
+
+Gradient and stability analysis 
+
+L Downstream task loss used in gradient-flow analysis. 
+
+si,k Pre-normalized log-density score of routing vector xi under Gaussian component k.
+
+gi,j = ∂L/∂γ i,j Upstream gradient arriving at responsibility γi,j .
+
+θ Generic learnable scalar parameter entering the score si,k , e.g. a component of μ, ω, α, WQ, or WK .
+
+Sdr  
+
+> ++
+
+Cone of dr × dr symmetric positive-definite matrices. 
+
+R Radius used in the local Lipschitz analysis to bound ∥x − μk ∥2.
+
+Lγ A local Lipschitz constant for the responsibility map x 7 → γ(x). 
+
+Computational-cost notation 
+
+CGMA Approximate routing cost of GMA, excluding the standard linear projections. 
+
+Cproj Cost of forming the query, key, and value projections QX , KX , and VX .Intro | Lite | Method | Theory | Exps | Disc | Con | App These two costs can differ substantially, even though the final result is identical. For example, take 
+
+A ∈ R1000 ×10 , B ∈ R10 ×1000 , C ∈ R1000 ×10 .
+
+Then computing ( AB )C first forms the large intermediate matrix AB ∈ R1000 ×1000 . The cost is 1000 · 10 · 1000 + 1000 · 1000 · 10 = 2 × 10 7.
+
+By contrast, computing A(BC ) first forms the much smaller intermediate matrix BC ∈ R10 ×10 .The cost is 10 · 1000 · 10 + 1000 · 10 · 10 = 2 × 10 5.
+
+Thus, the two parenthesizations produce the same output, but the second is cheaper by a factor of 100. This principle directly explains the efficient implementation of GMA. Ignoring the row-wise normalizer for the moment, the numerator of the GMA output in Eq. (7) has the algebraic form ΓQ(Γ K )⊤VX .
+
+If we identify 
+
+A = Γ Q ∈ RN ×K , B = (Γ K )⊤ ∈ RK×N , C = VX ∈ RN ×dv ,
+
+then the explicit-affinity computation corresponds to 
+
+ ΓQ(Γ K )⊤VX . (45) This first forms the implicit token-to-token affinity matrix ΓQ(Γ K )⊤ ∈ RN ×N ,
+
+which costs O(N 2K) arithmetic and requires O(N 2) intermediate storage before multiplying by 
+
+VX .GMA instead uses the associative parenthesization ΓQ (Γ K )⊤VX
+
+. (46) The inner product ˜V = (Γ K )⊤VX ∈ RK×dv (47) constructs a compact latent memory with only K slots. The final multiplication Γ Q ˜V then reads from this memory. The cost of these two matrix multiplications is 
+
+N Kd v + N Kd v = 2 N Kd v, (48) and the intermediate memory has size only K × dv. Therefore, GMA obtains the same implicit affinity interpretation without materializing the N × N affinity matrix. The full normalized GMA computation also includes the denominator 
+
+Z = (Γ K )⊤1N , ΓQZ + ϵ, (49) which adds only O(N K ) arithmetic. In addition, computing the two responsibility matrices Γ Q
+
+and Γ K under diagonal Gaussian components costs O(2 N Kd r), up to lower-order normalization terms. Thus, the overall routing computation remains linear in N for fixed K, dr, and dv, while retaining an implicit normalized attention matrix. Intro | Lite | Method | Theory | Exps | Disc | Con | App 
+
+# C Understanding GMA in Detail 19 
+
+We have briefly touched on the intuition behind GMA as responsibility-space affinity followed by latent-memory routing at the end of the core methodology in Section 3.3. This appendix gives a more dimension-explicit walkthrough of the same computation. The goal is to clarify how key responsibilities write values into a latent memory, how query responsibilities read from this memory, how the implicit token-to-token affinity arises, and why the computation avoids materializing an explicit N × N attention matrix. 
+
+C.1 Objects and Dimensions 
+
+Consider a sequence of length N . Let VX ∈ RN ×dv denote the value matrix, where VX,j ∈ Rdv is the value vector at position j. GMA computes two responsibility matrices: ΓK ∈ RN ×K , ΓQ ∈ RN ×K .
+
+The row γKj = ( γKj, 1, . . . , γ Kj,K ) gives the posterior responsibilities of the K latent Gaussian compo-nents for key position j. Similarly, γQi = ( γQi, 1, . . . , γ Qi,K ) gives the responsibilities of the same latent components for query position i. Thus, γKj,k measures how much key position j belongs to latent component k, while γQi,k measures how much query position i reads from component k.Each row of a responsibility matrix lies on the probability simplex: 
+
+> K
+
+X
+
+> k=1
+
+γKj,k = 1 ,
+
+> K
+
+X
+
+> k=1
+
+γQi,k = 1 .
+
+Therefore, GMA routes tokens through normalized probability vectors over latent components rather than through unconstrained similarity scores. 
+
+C.2 The Write Step: Keys Write Values into Latent Memory 
+
+The key responsibilities first aggregate the value vectors into K latent memory slots: ˜V = (Γ K )⊤VX ∈ RK×dv , Z = (Γ K )⊤1N ∈ RK ,
+
+where 1N is the all-ones vector. Component-wise, this means ˜Vk =
+
+> N
+
+X
+
+> j=1
+
+γKj,k VX,j ∈ Rdv , Zk =
+
+> N
+
+X
+
+> j=1
+
+γKj,k .
+
+Thus, ˜Vk is the responsibility-weighted sum of all value vectors assigned to latent component k,and Zk records the total key-responsibility mass written into that component. An intuitive normalized memory slot can be written as 
+
+Mk = ˜Vk
+
+Zk + ϵ =
+
+PNj=1 γKj,k VX,j 
+
+PNj=1 γKj,k + ϵ ∈ Rdv .
+
+This shows that Mk is the average value stored in latent component k, up to the numerical stabilizer 
+
+ϵ. In practice, the implementation does not need to explicitly materialize Mk; it is enough to keep the unnormalized memory ˜Vk and the normalizer Zk.
+
+> 19 In this section, the author would like to express sincere gratitude to those whose textbooks, lectures, and scholarly discussions have shaped his understanding of numerical linear algebra, including Gilbert Strang, Stephen Boyd, Steven Roman, Nick Higham, and many others.
+
+Intro | Lite | Method | Theory | Exps | Disc | Con | App 
+
+C.3 The Read Step: Queries Read from Latent Memory 
+
+After the write step, query responsibilities read from the latent memory. In matrix form, the GMA output is 
+
+O = ΓQ ˜V
+
+ΓQZ + ϵ ∈ RN ×dv ,
+
+where the denominator is broadcast across the value dimension and the division is applied row-wise. For query position i, this is 
+
+Oi =
+
+PKk=1 γQi,k ˜Vk
+
+PKk=1 γQi,k Zk + ϵ .
+
+Substituting the write step into this expression gives 
+
+Oi =
+
+PKk=1 γQi,k 
+
+PNj=1 γKj,k VX,j 
+
+PKk=1 γQi,k 
+
+PNj=1 γKj,k + ϵ .
+
+This equation makes the full workflow explicit: key responsibilities distribute values into latent components, and query responsibilities select a normalized mixture of those latent components. Ignoring the numerical stabilizer for clarity, we can also express the read operation as attention over normalized memory slots. If Zk > 0, define Mk = ˜Vk/Z k and 
+
+αi,k = γQi,k Zk
+
+PKℓ=1 γQi,ℓ Zℓ
+
+.
+
+Then P 
+
+> k
+
+αi,k = 1, and 
+
+Oi =
+
+> K
+
+X
+
+> k=1
+
+αi,k Mk.
+
+This form is useful for intuition. The query does not simply average memory slots using γQi,k 
+
+alone. Instead, the effective read weight αi,k also depends on Zk, the amount of key mass stored in component k. For fixed query responsibility γQi,k , a component with larger stored key mass receives a larger effective read weight than an almost-empty component. 
+
+C.4 Implicit Token-to-Token Attention 
+
+Although GMA does not explicitly construct an N ×N attention matrix, it still induces an attention-style weighting over value tokens. Combining the write and read equations gives 
+
+Oi =
+
+> N
+
+X
+
+> j=1
+
+AGMA  
+
+> ij
+
+VX,j ,
+
+where 
+
+AGMA  
+
+> ij
+
+=
+
+PKk=1 γQi,k γKj,k 
+
+PNℓ=1 
+
+PKk=1 γQi,k γKℓ,k + ϵ .
+
+Thus, two tokens interact strongly when their query and key responsibilities overlap in the latent mixture space. In standard attention, token i attends to token j through a direct dot product q⊤ 
+
+> i
+
+kj .In GMA, token i attends to token j through their shared responsibility mass P 
+
+> k
+
+γQi,k γKj,k .Intro | Lite | Method | Theory | Exps | Disc | Con | App When ϵ = 0, the induced weights are row-normalized: 
+
+> N
+
+X
+
+> j=1
+
+AGMA  
+
+> ij
+
+= 1 .
+
+With ϵ > 0, the row sum is slightly below one, since the stabilizer adds extra positive mass to the denominator. The stabilizer is included only for numerical safety. 
+
+C.5 Workflow Intuition 
+
+The full GMA computation can be understood as a three-stage routing process: 
+
+• First, the Gaussian mixture maps each token representation to a soft assignment over K latent components. This produces Γ K for keys and Γ Q for queries. These matrices are probabilistic: each row is a distribution over latent components. 
+
+• Second, key responsibilities write the sequence values into a compact latent memory. In-stead of storing N separate value vectors for direct pairwise comparison, GMA stores K
+
+responsibility-weighted memory slots. Each slot summarizes the values assigned to one la-tent component, together with a normalizer recording how much total key mass was assigned there. 
+
+• Third, query responsibilities read from this latent memory. A query token selects a mixture of memory slots according to its own responsibilities and the amount of key mass stored in those slots. The output is therefore a normalized mixture of component-level summaries. In short, the workflow can be summarised as: keys write values into K latent memory slots, and queries read mixtures of those slots to produce token outputs. 
+
+C.6 Why This Avoids the Quadratic Bottleneck 
+
+Standard dot-product attention forms or implicitly represents all pairwise token-to-token scores, producing an intermediate N ×N attention matrix. GMA instead uses the two N ×K responsibility matrices Γ K and Γ Q, together with the latent memory ˜V ∈ RK×dv and normalizer Z ∈ RK . For fixed K, the dominant activation storage is therefore linear in N .The main costs are: responsibility computation: O(N Kd r),
+
+where dr is the routing representation dimension, and latent write/read operations: O(N Kd v).
+
+Thus, for fixed K, GMA scales linearly with sequence length while retaining a normalized attention-style interpretation. Intro | Lite | Method | Theory | Exps | Disc | Con | App 
+
+C.7 Causal GMA 
+
+For autoregressive language modelling, position i must not read information from future positions 
+
+j > i . Causal GMA replaces the global write statistics by prefix-restricted statistics: ˜V (i) 
+
+> k
+
+= X
+
+> j≤i
+
+γKj,k VX,j , Z(i) 
+
+> k
+
+= X
+
+> j≤i
+
+γKj,k .
+
+The output at position i is then 
+
+Oi =
+
+PKk=1 γQi,k ˜V (i)
+
+> k
+
+PKk=1 γQi,k Z(i) 
+
+> k
+
++ ϵ .
+
+This is the same write-read idea, but the memory available to position i is restricted to its pre-fix. In implementation, the prefix memories are computed by cumulative sums along the sequence dimension. Therefore, causal GMA preserves the same fixed-K linear scaling while enforcing au-toregressive causality. 
+
+# D Detailed Gradient Derivations for Reparameterized GMM 
+
+In Section 3.6, we defined the trainable parameters of a GMA layer as Θ GMA = {WQ, W K , W V , μ, ω, α }
+
+in Eq. (13). Among these, WQ, W K , W V are the standard query, key, and value projection matri-ces (Eq. (4)), while μ, ω, α parameterize the Gaussian mixture routing mechanism: μ contains the component means, ω parameterizes the diagonal covariance entries (Eq. (14)), and α parameterizes the mixture-prior logits (Eq. (15)). This appendix derives the gradients for the reparameterized GMM routing parameters μ, ω, α . The projection matrices WQ and WK receive gradients through the routing vectors qi = ( QX )i, : and ki = ( KX )i, :, while WV receives gradients through the latent aggregation and output operations. Throughout, xi ∈ Rdr denotes a generic routing vector, which may be either a query routing vector qi or a key routing vector ki. We use θ to denote a generic scalar GMM routing parameter, i.e. θ ∈ { μk,m , ω k,m , α m} for appropriate component and coordinate indices. For component k,the pre-normalized log-density score under the diagonal covariance assumption is a coordinate-wise version of Eq. (16): 
+
+si,k = log πk − dr
+
+2 log(2 π) − 12
+
+> dr
+
+X
+
+> m=1
+
+log( σ2
+
+> k,m
+
+) − 12
+
+> dr
+
+X
+
+> m=1
+
+(xi,m − μk,m )2
+
+σ2
+
+> k,m
+
+. (50) The responsibility is the softmax-normalized score (Eq.(3b)) 
+
+γi,k = exp( si,k )
+
+PKℓ=1 exp( si,ℓ ) . (51) Let 
+
+gi,j = ∂L
+
+∂γ i,j 
+
+denote the upstream gradient arriving at the responsibility vector for token i. By the softmax Jacobian (Eq.(17)), 
+
+∂γ i,j 
+
+∂s i,k 
+
+= γi,j (1{j = k} − γi,k ) .Intro | Lite | Method | Theory | Exps | Disc | Con | App Therefore, the gradient entering the score si,k is (Eq.(18)) 
+
+δi,k ≡ ∂L
+
+∂s i,k 
+
+=
+
+> K
+
+X
+
+> j=1
+
+∂L
+
+∂γ i,j 
+
+∂γ i,j 
+
+∂s i,k 
+
+= γi,k 
+
+gi,k −
+
+> K
+
+X
+
+> j=1
+
+γi,j gi,j 
+
+ .
+
+This is the quantity that multiplies each parameter derivative ∂s i,k /∂θ in backpropagation. The familiar factor γi,k (1 − γi,k ) appears as the self-sensitivity ∂γ i,k /∂s i,k (Eq.(17b)), while the full gradient also includes cross-component softmax terms (Eq.(22)). For any learnable scalar parameter θ that enters the scores, such as a component of μ, ω, or α,or a projection parameter entering the routing vectors through WQ or WK , the chain rule gives 
+
+∂L
+
+∂θ = X
+
+> iK
+
+X
+
+> k=1
+
+∂L
+
+∂s i,k 
+
+∂s i,k 
+
+∂θ , (cc.Eq.19) where ∂L/∂s i,k is given by Eq. (18). Equivalently, expanding the softmax Jacobian explicitly gives 
+
+∂L
+
+∂θ = X
+
+> iK
+
+X
+
+> j=1
+> K
+
+X
+
+> k=1
+
+∂L
+
+∂γ i,j 
+
+∂γ i,j 
+
+∂s i,k 
+
+∂s i,k 
+
+∂θ . (cc.Eq.19b) This expression is the appropriate backpropagation form for the responsibility-based GMA layer. We now derive the score derivatives for the reparameterized GMM parameters. 
+
+D.1 Derivation for Latent Means 
+
+The means are unconstrained parameters μk ∈ Rdr . Differentiating Eq. (50) with respect to the 
+
+m-th coordinate of μk gives ∂s i,k 
+
+∂μ k,m 
+
+= xi,m − μk,m 
+
+σ2
+
+> k,m
+
+. (52) In vector form, 
+
+∇μk si,k = Σ −1 
+
+> k
+
+(xi − μk). (53) Thus, the full loss gradient with respect to the mean of component k is 
+
+∂L
+
+∂μ k
+
+= X
+
+> i
+
+δi,k Σ−1 
+
+> k
+
+(xi − μk). (54) Hence, the mean update is driven by precision-scaled residuals, weighted by the score-level gradient 
+
+δi,k induced by the responsibility softmax. 
+
+D.2 Derivation for Reparameterized Diagonal Covariances 
+
+To ensure positive diagonal covariance entries, GMA maintains unconstrained parameters ω ∈
+
+RK×dr and sets (Eq.(14)) 
+
+σ2 
+
+> k,m
+
+= softplus( ωk,m ) + ϵσ = log(1 + exp( ωk,m )) + ϵσ, m = 1 , . . . , d r. (55) By the chain rule, 
+
+∂s i,k 
+
+∂ω k,m 
+
+= ∂s i,k 
+
+∂σ 2
+
+> k,m
+
+∂σ 2
+
+> k,m
+
+∂ω k,m 
+
+. (56) Intro | Lite | Method | Theory | Exps | Disc | Con | App First, differentiating Eq. (50) with respect to the variance σ2 
+
+> k,m
+
+gives 
+
+∂s i,k 
+
+∂σ 2
+
+> k,m
+
+= − 12σ2
+
+> k,m
+
++ (xi,m − μk,m )2
+
+2( σ2
+
+> k,m
+
+)2 = 12σ2
+
+> k,m
+
+(xi,m − μk,m )2
+
+σ2
+
+> k,m
+
+− 1
+
+!
+
+. (57) Second, the derivative of the softplus reparameterization is 
+
+∂σ 2
+
+> k,m
+
+∂ω k,m 
+
+= exp( ωk,m )1 + exp( ωk,m ) = σsig (ωk,m ), (58) where σsig (·) denotes the logistic sigmoid function . Combining Eqs. (57) and (58), we obtain 
+
+∂s i,k 
+
+∂ω k,m 
+
+= 12σ2
+
+> k,m
+
+(xi,m − μk,m )2
+
+σ2
+
+> k,m
+
+− 1
+
+!
+
+σsig (ωk,m ). (59) Therefore, the full loss gradient for the covariance parameter is 
+
+∂L
+
+∂ω k,m 
+
+= X
+
+> i
+
+δi,k 
+
+12σ2
+
+> k,m
+
+(xi,m − μk,m )2
+
+σ2
+
+> k,m
+
+− 1
+
+!
+
+σsig (ωk,m ). (60) The sigmoid factor attenuates the gradient passed through the softplus reparameterization, while the additive lower bound ϵσ prevents the diagonal variances from becoming singular. This improves numerical stability, although it does not by itself eliminate the need for appropriate initialization, learning-rate control, or other optimization safeguards. 
+
+D.3 Derivation for Reparameterized Mixture Priors 
+
+To satisfy the simplex constraint, the mixture priors are parameterized by unconstrained logits 
+
+α ∈ RK (Eq.(15)): 
+
+πk = exp( αk)
+
+PKℓ=1 exp( αℓ) . (cc.Eq.15) Because si,k contains the term log πk (Eq.(50)), we need the derivative of log πk with respect to an arbitrary logit αm. Using the softmax Jacobian, 
+
+∂π k
+
+∂α m
+
+= πk(1{k = m} − πm). (61) Therefore, ∂s i,k 
+
+∂α m
+
+= ∂ log πk
+
+∂α m
+
+= 1
+
+πk
+
+∂π k
+
+∂α m
+
+= 1{k = m} − πm. (62) The full loss gradient with respect to prior logit αm is then 
+
+∂L
+
+∂α m
+
+= X
+
+> iK
+
+X
+
+> k=1
+
+δi,k (1{k = m} − πm) . (63) Since the score-level gradients δi,k arise from a softmax Jacobian, they satisfy PKk=1 δi,k = 0 for each token i. Hence Eq. (63) can also be written as 
+
+∂L
+
+∂α m
+
+= X
+
+> i
+
+δi,m . (64) At the score level, increasing αm increases the log-prior contribution of component m by 1 − πm
+
+and decreases the log-prior contribution of every other component by πm. The actual parameter update is then determined by the downstream loss through the score-level gradients δi,k .Intro | Lite | Method | Theory | Exps | Disc | Con | App 
+
+# E Self-Attention, Cross-Attention, and GMA 
+
+This appendix clarifies the distinction between self-attention and cross-attention , and shows how the GMA routing mechanism extends naturally to both settings. To avoid notational ambiguity, we write Katt for the standard-attention key matrix, while K denotes the number of Gaussian mixture components in GMA. 
+
+E.1 Standard Self-Attention 
+
+In self-attention, the queries, keys, and values are all projected from the same input sequence. Let 
+
+X ∈ RN ×dmodel ,
+
+where N is the sequence length. Standard self-attention forms 
+
+Q = XW Q, Katt = XW K , V = XW V ,
+
+with 
+
+Q, K att ∈ RN ×dk , V ∈ RN ×dv .
+
+The attention matrix and output are 
+
+A = softmax 
+
+ QK ⊤
+
+> att
+
+√dk
+
+
+
+, O = AV. 
+
+Elementwise, 
+
+Aij = exp( q⊤ 
+
+> i
+
+kj /√dk)
+
+PNℓ=1 exp( q⊤ 
+
+> i
+
+kℓ/√dk) , Oi =
+
+> N
+
+X
+
+> j=1
+
+Aij vj .
+
+Thus, token i attends to tokens j within the same sequence. For causal self-attention, as used in autoregressive language modelling, future positions are masked: 
+
+Aij = 0 for j > i. 
+
+Equivalently, 
+
+Aij = 1{j ≤ i} exp( q⊤ 
+
+> i
+
+kj /√dk)
+
+P 
+
+> ℓ≤i
+
+exp( q⊤ 
+
+> i
+
+kℓ/√dk) .
+
+The representation at position i may depend only on tokens at positions j ≤ i, and is then used for next-token prediction. 
+
+E.2 Standard Cross-Attention 
+
+In cross-attention, the queries come from one sequence, while keys and values come from another sequence. Let 
+
+X ∈ RNq ×dmodel 
+
+denote a query-side sequence, and let 
+
+Y ∈ RNk ×dmodel 
+
+denote a context or source sequence. Cross-attention forms 
+
+QX = XW Q, KY = Y W K , VY = Y W V ,Intro | Lite | Method | Theory | Exps | Disc | Con | App where 
+
+QX ∈ RNq ×dk , KY ∈ RNk ×dk , VY ∈ RNk ×dv .
+
+The attention matrix is rectangular: 
+
+A = softmax 
+
+ QX K⊤
+
+> Y
+
+√dk
+
+
+
+∈ RNq ×Nk ,
+
+and the output is 
+
+OX = AV Y ∈ RNq ×dv .
+
+Elementwise, 
+
+Aij = exp( q⊤
+
+> X,i
+
+kY,j /√dk)
+
+PNk 
+
+> ℓ=1
+
+exp( q⊤
+
+> X,i
+
+kY,ℓ /√dk) , OX,i =
+
+> Nk
+
+X
+
+> j=1
+
+Aij vY,j .
+
+Thus, query token i in sequence X attends to context token j in sequence Y . Self-attention is the special case in which the query-side and context-side sequences coincide. 
+
+E.3 GMA Self-Attention 
+
+The GMA mechanism developed in Section 3 is presented primarily in the self-attention setting. Given 
+
+X ∈ RN ×dmodel ,
+
+we form 
+
+QX = XW Q, KX = XW K , VX = XW V .
+
+Instead of computing all pairwise dot products q⊤ 
+
+> i
+
+kj , GMA maps query and key projections to responsibility vectors over K learned Gaussian components: ΓQ = Γ( QX ), ΓK = Γ( KX ),
+
+where ΓQ, ΓK ∈ RN ×K .
+
+For a generic routing vector x, the responsibility of component k is 
+
+γk(x) = πkN (x | μk, Σk)
+
+PKℓ=1 πℓN (x | μℓ, Σℓ) .
+
+The key-side responsibilities write values into a latent memory: ˜V = (Γ K )⊤VX , Z = (Γ K )⊤1N ,
+
+where ˜V ∈ RK×dv , Z ∈ RK .
+
+The query-side responsibilities then read from this latent memory: 
+
+O = ΓQ ˜V
+
+ΓQZ + ϵ ,
+
+where the denominator is broadcast row-wise across the value dimension. Equivalently, for token i,
+
+Oi =
+
+PKk=1 γQi,k ˜Vk
+
+PKk=1 γQi,k Zk + ϵ .Intro | Lite | Method | Theory | Exps | Disc | Con | App The induced GMA self-attention weight from token i to token j is 
+
+AGMA  
+
+> ij
+
+=
+
+PKk=1 γQi,k γKj,k 
+
+PNℓ=1 
+
+PKk=1 γQi,k γKℓ,k + ϵ .
+
+Thus, GMA replaces direct pairwise dot-product comparison with responsibility-space affinity fol-lowed by latent-memory routing. For causal GMA self-attention, the key-side latent memory is accumulated only over prefix positions: ˜V (i) 
+
+> k
+
+= X
+
+> j≤i
+
+γKj,k VX,j , Z(i) 
+
+> k
+
+= X
+
+> j≤i
+
+γKj,k .
+
+The causal output is 
+
+Oi =
+
+PKk=1 γQi,k ˜V (i)
+
+> k
+
+PKk=1 γQi,k Z(i) 
+
+> k
+
++ ϵ .
+
+The corresponding induced causal GMA weight is 
+
+AcGMA  
+
+> ij
+
+= 1{j ≤ i}
+
+PKk=1 γQi,k γKj,k 
+
+P
+
+> ℓ≤i
+
+PKk=1 γQi,k γKℓ,k + ϵ .
+
+This is the form used in the WikiText-103 language-modelling experiment. 
+
+E.4 GMA Cross-Attention 
+
+GMA can also be applied to cross-attention . Let 
+
+X ∈ RNq ×dmodel 
+
+be the query-side sequence and 
+
+Y ∈ RNk ×dmodel 
+
+be the context-side sequence. We form 
+
+QX = XW Q, KY = Y W K , VY = Y W V .
+
+The query-side and context-side responsibilities are ΓQX = Γ( QX ) ∈ RNq ×K , ΓKY = Γ( KY ) ∈ RNk ×K .
+
+The context sequence writes values into a latent memory: ˜VY = (Γ KY )⊤VY , ZY = (Γ KY )⊤1Nk .
+
+The query sequence reads from this context-side memory: 
+
+OX = ΓQX ˜VY
+
+ΓQX ZY + ϵ ∈ RNq ×dv .
+
+Elementwise, 
+
+OX,i =
+
+PKk=1 γQX,i,k ˜VY,k 
+
+PKk=1 γQX,i,k ZY,k + ϵ .Intro | Lite | Method | Theory | Exps | Disc | Con | App The induced GMA cross-attention weight from query token i in X to context token j in Y is 
+
+AGMA-cross  
+
+> ij
+
+=
+
+PKk=1 γQX,i,k γKY,j,k 
+
+PNk
+
+> ℓ=1
+
+PKk=1 γQX,i,k γKY,ℓ,k + ϵ .
+
+Thus, GMA cross-attention has the same structure as GMA self-attention, except that query re-sponsibilities are computed from the query-side sequence and key responsibilities/value memories are computed from the context-side sequence. The experiments in this paper focus on self-attention-style sequence mixing: bidirectional self-attention-style mixing for LRA and causal self-attention-style mixing for WikiText-103. A sys-tematic empirical study of GMA cross-attention, for example in encoder–decoder or multimodal architectures, is left to future work. 
+
+# F Additional Interpretability Diagnostics 
+
+This appendix reports additional diagnostics for the interpretability analysis in Section 5.4. All results use the trained WikiText-103 causal GMA model with K = 128. We extract the final-layer query responsibility tensor, average it over heads for each token occurrence, and analyze S = 64 validation sequences of length L = 1024, giving T = SL = 65 ,536 token-level responsibility vectors. Following Section 5.4, we write the resulting head-averaged responsibility vector as ¯ γQt ∈ ∆K−1 for 
+
+t = 1 , . . . , T , and define the hard assignment zt = arg max k ¯γQt,k .
+
+F.1 Token Category Distribution 
+
+The token categories used in the purity and mutual-information analysis are surface-form categories derived from GPT-2 BPE tokens. Table 6 shows the category frequencies in the analyzed validation subset. Table 6: Surface-form token category distribution in the analyzed WikiText-103 validation subset.                       
+
+> Category Count Fraction lower alpha 18,757 0.286 function word 18,359 0.280 punctuation 10,306 0.157 capitalized 8,714 0.133 subword alpha 4,208 0.064 numeric 2,451 0.037 newline or space 1,481 0.023 eos 738 0.011 all caps 334 0.005 other 188 0.003
+
+The largest single category is lower-case alphabetic tokens, with fraction 18 ,757 /65 ,536 ≈ 0.286. This gives a simple majority-category baseline for interpreting the weighted category purity. The observed weighted purity of 0 .483 is substantially above this baseline. 
+
+F.2 Representative Component Specialization 
+
+Table 7 shows representative routing channels with their hard-assignment frequency, dominant category, purity, and representative tokens. These examples illustrate that some channels are broad mixed routers, whereas others show clearer surface-form specialization. Intro | Lite | Method | Theory | Exps | Disc | Con | App Table 7: Representative GMA routing channels under hard assignments zt = arg max k ¯γQt,k . Purity is the fraction of tokens assigned to the channel that belong to its dominant surface-form category.                                                                                        
+
+> Comp. Hard frac. Purity Dominant category Representative high-count tokens 22 0.104 0.320 function word .,,,and ,the ,a,The ,his ,He
+> 50 0.089 0.788 lower alpha city ,yards ,well ,built ,song ,role ,season
+> 55 0.077 0.414 function word .,,,of ,in ,to ,the ,by ,from ,on
+> 50.035 0.696 function word the ,a,The ,it ,he ,his ,who ,which
+> 17 0.014 0.764 punctuation =,@,(,-, with occasional lexical tokens 73 0.032 0.516 capitalized M,Sh ,McC ,H,L,B,U,R
+> 116 0.023 0.621 function word to ,not ,he ,were ,are ,I,be ,was
+> 20.024 0.413 subword alpha ik ,gam ,mar ,our ,rom ,in ,ed
+
+The component examples show a mixture of broad and specialized behavior. High-usage chan-nels such as component 22 have low purity but absorb common mixed tokens. Other channels are more interpretable: component 50 is strongly associated with lower-case alphabetic words, compo-nents 5 and 116 are function-word-heavy, component 17 is punctuation-like, component 73 captures capitalized fragments, and component 2 captures subword alphabetic fragments. These examples should be interpreted as surface-form tendencies of head-averaged routing channels, not as clean syntactic or semantic categories. 
+
+F.3 Permutation Baseline 
+
+To check whether the observed component-category association could arise simply from imbalanced category frequencies, we compare against a permutation baseline. The category labels {ct}Tt=1 are randomly shuffled while keeping the learned hard component assignments {zt}Tt=1 fixed. This preserves both the marginal component distribution and the marginal category distribution, but destroys any systematic alignment between them. Table 8: Permutation sanity check for component-category alignment. The permutation baseline shuffles token categories while preserving hard component assignments and category frequencies.                      
+
+> Metric Observed Permutation mean ±std. Interpretation Weighted purity 0.483 0.293 ±0.001 above shuffled baseline
+> I(Z;C), nats 0.427 0.0067 ±0.0003 above shuffled baseline Normalized MI 0.244 0.0038 ±0.0002 above shuffled baseline
+
+The permutation baseline confirms that the observed purity and mutual information are not explained by the marginal token-category frequencies alone. The learned component assignments contain substantially more surface-form category information than randomized assignments with the same marginals. 
+
+F.4 Additional Visualizations 
+
+Figure 4 shows the marginal component usage and per-component category purity. The component usage distribution has normalized entropy 0 .933, indicating broad usage of the latent routing chan-nels. The purity plot shows that several high-usage channels have a clear dominant surface-form category, although many remain mixed. Intro | Lite | Method | Theory | Exps | Disc | Con | App 
+
+Figure 4: Additional component-level diagnostics. Top: marginal component usage distribution 
+
+pk = T −1 PTt=1 ¯γQt,k , showing broad component usage and no severe collapse. Bottom: dominant-category purity for the most-used components. Figure 5 gives a qualitative visualization of hard component assignments on one WikiText-103 validation segment. Tokens are colored by their dominant component. Repeated colors over related local token roles provide a visual indication of latent routing specialization. 
+
+Figure 5: Qualitative token strip in which each token is colored by its dominant GMA component. This visualization illustrates local routing patterns across a validation sequence. Figure 6 projects token responsibility vectors to two dimensions using PCA. The first two principal components explain approximately 12 .0% and 7 .9% of the variance, respectively. The category-colored projection shows partial but overlapping separation between surface-form cate-gories, while the component-colored projection shows that hard component assignments occupy structured regions of the responsibility space. Intro | Lite | Method | Theory | Exps | Disc | Con | App 
+
+Figure 6: PCA projections of token responsibility vectors. Top: points colored by surface-form token category. Bottom: points colored by hard GMA component assignment. The projections show structured but overlapping responsibility geometry. 
+
+# G Attention, Similarity, Distance, Divergence, and Correlation 
+
+This appendix provides a broader conceptual perspective on attention mechanisms. At an abstract level, an attention layer assigns weights to value vectors by first computing a compatibility score between a query representation and a set of key representations. Different attention mechanisms can therefore be viewed as different choices of compatibility function. Dot-product attention uses an inner product [49]; additive attention uses a learned neural alignment/scoring function [2]; kernelized attention uses feature-map similarities and associative matrix products [28, 10]; sparse attention modifies which query-key pairs are compared [9, 3, 54]; and GMA replaces direct pairwise comparison with routing through latent Gaussian mixture responsibilities, as introduced in this work. Intro | Lite | Method | Theory | Exps | Disc | Con | App 
+
+Similarity and distance. A similarity function assigns large values to objects that are considered compatible or related. A distance function assigns small values to objects that are close. These two notions are related, but not identical. A distance can be converted into a similarity through a monotone decreasing transformation, for example 
+
+κ(x, y ) = exp( −βd (x, y )) , κ(x, y ) = 11 + d(x, y ) , s(x, y ) = −d(x, y ),
+
+where β > 0. However, a similarity need not be the reciprocal of a distance, and not every similarity corresponds to a valid metric. A metric distance d(x, y ) satisfies non-negativity, identity of indiscernibles, symmetry, and the triangle inequality: 
+
+d(x, y ) ≥ 0, d(x, y ) = 0 ⇔ x = y, d(x, y ) = d(y, x ), d(x, z ) ≤ d(x, y ) + d(y, z ).
+
+Common pointwise distances include the ℓ1 distance, Euclidean distance, squared Euclidean dis-tance, Mahalanobis distance, cosine distance, Hamming distance, and edit distance. In representa-tion learning, these distances can be used directly as negative attention scores or indirectly through kernels such as the radial basis function (RBF) kernel 
+
+κ(x, y ) = exp 
+
+
+
+− ∥x − y∥22
+
+2σ2
+
+
+
+.
+
+The RBF kernel is a similarity derived from Euclidean distance: nearby points receive high simi-larity, while distant points receive exponentially small similarity. 
+
+Dot products, cosine similarity, and bilinear scores. Standard scaled dot-product attention uses 
+
+s(qi, k j ) = q⊤ 
+
+> i
+
+kj
+
+√dk
+
+,
+
+where qi is a query vector and kj is a key vector [49]. This is a bilinear compatibility score: it is linear in qi when kj is fixed, and linear in kj when qi is fixed. Cosine similarity normalizes the dot product by the vector norms, cos( qi, k j ) = q⊤ 
+
+> i
+
+kj
+
+∥qi∥2∥kj ∥2
+
+,
+
+so that compatibility depends on direction rather than magnitude. More general bilinear attention scores take the form 
+
+s(qi, k j ) = q⊤ 
+
+> i
+
+W k j ,
+
+where W is a learned matrix. Dot-product attention is the special case W = I, up to projection matrices and scaling. From this viewpoint, standard attention can be interpreted as a learned similarity-based retrieval mechanism. Given a query, the model asks which keys are most compatible with it, normalizes the resulting scores, and uses the normalized weights to aggregate values: 
+
+Aij = exp( s(qi, k j )) 
+
+PNℓ=1 exp( s(qi, k ℓ)) , Oi =
+
+> N
+
+X
+
+> j=1
+
+Aij Vj .
+
+Thus, attention is not merely a similarity function; it is a normalized similarity-weighted aggregation mechanism. Intro | Lite | Method | Theory | Exps | Disc | Con | App 
+
+Correlation and kernel similarity. Correlation is another form of relatedness. The Pearson correlation coefficient between scalar random variables X and Y is 
+
+ρ(X, Y ) = Cov( X, Y )
+
+pVar( X) Var( Y ) .
+
+It measures normalized linear dependence. Cosine similarity can be viewed as a closely related geometric quantity: it is the normalized dot product between two vectors. If vectors are centered, cosine similarity and Pearson correlation are closely aligned 20 .Kernel functions generalize inner-product similarity by implicitly mapping inputs into a feature space: 
+
+κ(x, y ) = ⟨ϕ(x), ϕ (y)⟩H.
+
+Examples include the linear kernel, polynomial kernel, RBF kernel, Laplacian kernel, Mat´ ern ker-nels and string kernels. Kernelized attention mechanisms build on this idea by replacing the softmax attention kernel with feature-map approximations or positive kernel decompositions. Linear Trans-former [28] and Performer [10] are examples: they approximate or reformulate attention through feature maps so that the attention computation can be reassociated and evaluated in linear time [28, 10]. In this sense, designing efficient attention can be viewed as designing a similarity function whose algebraic structure permits efficient aggregation. 
+
+Divergences between distributions. When the objects being compared are probability distri-butions rather than vectors, one often uses divergences or distributional distances. The Kullback-Leibler divergence is 
+
+DKL (p∥q) = 
+
+Z
+
+p(x) log p(x)
+
+q(x) dx. 
+
+It is not a metric because it is generally asymmetric and does not satisfy the triangle inequality. The Jensen-Shannon divergence symmetrizes and smooths KL: 
+
+DJS (p∥q) = 12 DKL (p∥m) + 12 DKL (q∥m), m = 12 (p + q).
+
+Other distributional comparisons include total variation distance, Hellinger distance, Wasserstein distance, Fisher-Rao distance, maximum mean discrepancy (MMD), and Bregman divergences. These quantities suggest possible distribution-aware attention mechanisms in which queries and keys are not treated as points, but as distributions with uncertainty. In such a setting, compatibility could be based on negative divergence, transport cost, kernel mean embedding distance, or overlap between probabilistic representations. 
+
+Attention as normalized compatibility. The common structure behind many attention mech-anisms is 
+
+Aij = Normalize j [Compat( qi, k j )] , Oi = X
+
+> j
+
+Aij Vj .
+
+The compatibility function may be a dot product, a bilinear score, a neural network, a negative distance, a kernel value, a negative divergence, or a probabilistic responsibility. The normalization may be a softmax, sparsemax [35], entmax [40], top-k normalization, kernel normalization, or an-other stochastic normalizer. This perspective separates two design choices: first, how compatibility is measured; second, how compatibility is converted into aggregation weights. 
+
+> 20 See e.g. Eq.(3.7) in [8].
+
+Intro | Lite | Method | Theory | Exps | Disc | Con | App This also clarifies why the relationship between similarity and attention is subtle. A similarity score is usually symmetric if the same representation space and symmetric function are used. Attention, however, is generally asymmetric: queries and keys are produced by different projections, and the normalization is row-wise. Even if s(qi, k j ) = s(kj , q i) were symmetric, the normalized attention matrix need not be symmetric because 
+
+Aij = exp( s(qi, k j )) 
+
+P 
+
+> ℓ
+
+exp( s(qi, k ℓ)) normalizes separately for each query position i.
+
+GMA as responsibility-based compatibility. GMA follows a different route from direct pair-wise similarity. Instead of first forming all N × N query-key scores, it maps queries and keys into posterior responsibility vectors over K learned Gaussian mixture components. For a query vector 
+
+qi and key vector kj , the induced unnormalized affinity is (Eq.11) 
+
+eAGMA  
+
+> ij
+
+=
+
+> K
+
+X
+
+> k=1
+
+γQi,k γKj,k .
+
+Thus, GMA compares tokens through their distributions over latent routing components, rather than through a dot product in the projected routing representation space . Equivalently, the affinity is an inner product in the probability simplex of component responsibilities. This makes GMA a responsibility-space similarity mechanism. The computational philosophy is also different. Standard attention first forms pairwise query-key compatibilities and then aggregates values. GMA first uses key responsibilities to write values into a compact latent memory (Eq.5), ˜V = (Γ K )⊤VX ,
+
+and then uses query responsibilities to read from this memory (Eq.7): 
+
+O = ΓQ ˜V
+
+ΓQZ + ϵ .
+
+In this sense, GMA replaces direct pairwise similarity with a latent mixture routing mechanism. The learned Gaussian components define a multi-modal routing space, the key responsibilities construct component-indexed memory slots, and the query responsibilities determine how each token reads from those slots. 
+
+Implications for attention design. This perspective suggests that new attention mechanisms can be designed by choosing different notions of compatibility or routing geometry. Possible choices Intro | Lite | Method | Theory | Exps | Disc | Con | App include: Dot-product attention q⊤k inner-product similarity ,
+
+Cosine attention q⊤k 
+
+> ∥q∥∥ k∥
+
+angular similarity ,
+
+Mahalanobis attention −(q − k)⊤Σ−1(q − k) anisotropic distance ,
+
+RBF-kernel attention exp( −∥ q − k∥2/2σ2) distance-induced similarity ,
+
+Polynomial-kernel attention (q⊤k + c)p higher-order feature similarity ,
+
+Divergence-based attention −D(pq∥pk) distributional compatibility ,
+
+Transport-based attention −Wp(pq, p k) geometry-aware distributional distance ,
+
+GMA P 
+
+> k
+
+γQi,k γKj,k responsibility-space affinity .
+
+The main challenge is not only to define a meaningful compatibility score, but also to make it computationally tractable. Pairwise similarities usually require an N × N score matrix. Efficient attention mechanisms therefore need additional structure: sparsity, low rank, kernel feature maps, recurrence, state-space dynamics, or latent routing. GMA belongs to the latent-routing family: it replaces direct token-to-token comparison with interaction through a fixed number of learned probabilistic components. Overall, attention can be understood as normalized compatibility-based aggregation. Dot-product attention is one important instance of this principle, but not the only one. Distances, similarities, correlations, kernels, divergences, and probabilistic responsibilities all provide possible foundations for attention design. GMA contributes to this broader view by showing how Gaussian-mixture responsibilities can define a linear-time, interpretable attention-style routing mechanism.

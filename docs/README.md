@@ -6,77 +6,77 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-19
-- 运行时间：2026-06-19 21:54:53 UTC
+- 最新运行日期：2026-06-20
+- 运行时间：2026-06-20 21:50:53 UTC
 - 运行状态：成功
 - 本次总论文数：19
 - 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日精读聚焦人形机器人操作与状态估计，两篇满分论文《ROVE》和《Proprioceptive Invariant State Estimation》值得重点关注。最推荐人形机器人通过强化学习实现操作干预（ROVE），以及非惯性地面上的本体感状态估计方法。建议优先阅读这两篇精读论文，若有时间可补充速读中关于机器人自我区分与多机器人轨迹生成的研究。
-- 详情：[/202606/19/README](/202606/19/README)
+今日共筛选19篇论文，精读7篇，重点关注变形物体操作的鲁棒性控制与高效动力学策略。最值得精读的两篇高分论文为《Robustness without Wrinkles》（并行仿真+鲁棒MPC）和《LaWAM》（潜在世界动作模型）。建议优先阅读这两篇，学习其提升机器人操作鲁棒性和动态建模效率的核心方法。
+- 详情：[/202606/20/README](/202606/20/README)
 
 ### 精读区论文标签
-1. [ROVE: Unlocking Human Interventions for Humanoid Manipulation via Reinforcement Learning](/202606/19/2606.17011v1-rove-unlocking-human-interventions-for-humanoid-manipulation-via-reinforcement-learning)  
-   标签：评分：10.0/10、query:hum-ctrl
-   evidence：使用人类干预的人形机器人操作强化学习框架
-2. [Proprioceptive Invariant State Estimation for Humanoid Robots on Non-Inertial Ground](/202606/19/2606.19512v1-proprioceptive-invariant-state-estimation-for-humanoid-robots-on-non-inertial-ground)  
-   标签：评分：10.0/10、query:hum-ctrl
-   evidence：基于不变扩展卡尔曼滤波的人形机器人状态估计，处理非惯性地面
-3. [SRL: Combining SLIP Model and Reinforcement Learning for Agile Robotic Jumping](/202606/19/2606.18625v1-srl-combining-slip-model-and-reinforcement-learning-for-agile-robotic-jumping)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：结合SLIP模型（传统控制）和强化学习实现跳跃
-4. [HALOMI: Learning Humanoid Loco-Manipulation with Active Perception from Human Demonstrations](/202606/19/2606.18772v1-halomi-learning-humanoid-loco-manipulation-with-active-perception-from-human-demonstrations)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：人形机器人移动操作学习从人类示范
-5. [Complementary Attention Head Pruning for Efficient Transformers](/202606/19/2606.19150v1-complementary-attention-head-pruning-for-efficient-transformers)  
-   标签：评分：9.0/10、query:neural-arch
-   evidence：基于图聚类的Transformer高效剪枝
-6. [CTS-MoE: Implicit Terrain Adaptation via Mixture-of-Experts for Perceptive Locomotion](/202606/19/2606.19633v1-cts-moe-implicit-terrain-adaptation-via-mixture-of-experts-for-perceptive-locomotion)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：使用混合专家模型的多任务强化学习实现不连续地形感知运动
-7. [PhysDrift: Bridging the Embodiment Gap in Humanoid Co-Speech Motion Generation](/202606/19/2606.19935v1-physdrift-bridging-the-embodiment-gap-in-humanoid-co-speech-motion-generation)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：弥合人形机器人共语运动生成中的具身差距
+1. [Robustness without Wrinkles: Parallel Simulation and Robust MPC for Certified Deformable Manipulation](/202606/20/2606.14188v1-robustness-without-wrinkles-parallel-simulation-and-robust-mpc-for-certified-deformable-manipulation)  
+   标签：评分：8.0/10、query:hum-ctrl
+   evidence：提出GPU并行可微仿真器和鲁棒MPC用于可变形物体操作
+2. [LaWAM: Latent World Action Models for Efficient Dynamics-Aware Robot Policies](/202606/20/2606.15768v1-lawam-latent-world-action-models-for-efficient-dynamics-aware-robot-policies)  
+   标签：评分：8.0/10、query:hum-ctrl
+   evidence：提出潜在世界动作模型，提升机器人策略的动力学感知
+3. [Unified Motion-Action Modeling for Heterogeneous Robot Learning](/202606/20/2606.16917v1-unified-motion-action-modeling-for-heterogeneous-robot-learning)  
+   标签：评分：8.0/10、query:hum-ctrl
+   evidence：统一的运动-动作建模用于机器人运动生成
+4. [MagicSim: A Unified Infrastructure for Executable Embodied Interaction](/202606/20/2606.17511v1-magicsim-a-unified-infrastructure-for-executable-embodied-interaction)  
+   标签：评分：8.0/10、query:hum-ctrl
+   evidence：统一的具身交互模拟基础设施，直接匹配物理仿真器需求
+5. [Variable-Width Transformers](/202606/20/2606.18246v1-variable-width-transformers)  
+   标签：评分：8.0/10、query:neural-arch
+   evidence：可变宽度Transformer架构
+6. [Gaussian Mixture Attention: Linear-Time Sequence Mixing via Probabilistic Latent Routing](/202606/20/2606.18283v1-gaussian-mixture-attention-linear-time-sequence-mixing-via-probabilistic-latent-routing)  
+   标签：评分：8.0/10、query:neural-arch
+   evidence：新的注意力机制：高斯混合注意力
+7. [Generating Natural and Expressive Robot Gestures through Iterative Reinforcement Learning with Human Feedback using LLMs](/202606/20/2606.18747v1-generating-natural-and-expressive-robot-gestures-through-iterative-reinforcement-learning-with-human-feedback-using-llms)  
+   标签：评分：8.0/10、query:hum-ctrl
+   evidence：使用人类反馈强化学习生成人形机器人手势
 
 ### 速读区论文标签
-1. [Proprioceptive-visual correspondence enables self-other distinction in humanoid robots](/202606/19/2606.13222v1-proprioceptive-visual-correspondence-enables-self-other-distinction-in-humanoid-robots)  
-   标签：评分：8.0/10、query:hum-ctrl
-   evidence：利用本体-视觉对应实现人形机器人的自我-他人区分
-2. [GAIT: Legged Robot Proprioceptive State Estimation with Attention over Inertial-Leg Tokens](/202606/19/2606.14160v1-gait-legged-robot-proprioceptive-state-estimation-with-attention-over-inertial-leg-tokens)  
-   标签：评分：8.0/10、query:hum-ctrl
-   evidence：基于注意力机制的腿式机器人本体状态估计
-3. [Robots as Tokens: Unified Diffusion Transformer for Coordinated Multi-Robot Trajectory Generation](/202606/19/2606.15550v1-robots-as-tokens-unified-diffusion-transformer-for-coordinated-multi-robot-trajectory-generation)  
-   标签：评分：8.0/10、query:hum-ctrl
-   evidence：用于协调多机器人轨迹生成的统一扩散transformer
-4. [MoECa: Aligning Feature Reuse with Expert Decomposition in Diffusion Transformers](/202606/19/2606.15615v1-moeca-aligning-feature-reuse-with-expert-decomposition-in-diffusion-transformers)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：面向扩散Transformer-MoE的专家分支级特征重用缓存减少推理冗余
-5. [Learning Task-Aware Sampling with Shared Saliency through Density-Equalizing Mappings](/202606/19/2606.12869v1-learning-task-aware-sampling-with-shared-saliency-through-density-equalizing-mappings)  
-   标签：评分：7.0/10、query:neural-arch
-   evidence：用于高效卷积的任务自适应采样
-6. [Improving Robotic Generalist Policies via Flow Reversal Steering](/202606/19/2606.13675v2-improving-robotic-generalist-policies-via-flow-reversal-steering)  
+1. [Environment-Aware Stable Neural Koopman Dynamics Learning for Input-Driven Systems under Environmental Constraints](/202606/20/2606.14136v1-environment-aware-stable-neural-koopman-dynamics-learning-for-input-driven-systems-under-environmental-constraints)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：流反转引导改进机器人通用策略
-7. [$μ_0$: A Scalable 3D Interaction-Trace World Model](/202606/19/2606.13769v1-0-a-scalable-3d-interaction-trace-world-model)  
+   evidence：提出环境感知的稳定神经Koopman动力学学习
+2. [EgoGuide: Egocentric Guidance for Efficient Robot-Free Demonstration Collection and Learning](/202606/20/2606.14665v1-egoguide-egocentric-guidance-for-efficient-robot-free-demonstration-collection-and-learning)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：3D交互轨迹世界模型用于运动生成
-8. [Elastic Queries Reinforcement Learning: Self-Aware Policy Execution for VLA Models](/202606/19/2606.14375v1-elastic-queries-reinforcement-learning-self-aware-policy-execution-for-vla-models)  
+   evidence：提出自我中心引导的机器人演示收集和门控残差策略
+3. [MimicIK: Real-Time Generative Inverse Kinematics from Teleoperation with FK Consistency](/202606/20/2606.15148v1-mimicik-real-time-generative-inverse-kinematics-from-teleoperation-with-fk-consistency)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：用于机器人控制中自适应VLA策略执行的RL框架
-9. [Reinforcement Learning-Guided Retrieval with Soft Fusion for Robust Multimodal Imitation Learning under Missing Modalities](/202606/19/2606.15514v1-reinforcement-learning-guided-retrieval-with-soft-fusion-for-robust-multimodal-imitation-learning-under-missing-modalities)  
+   evidence：实时生成式逆运动学用于机器人操作
+4. [MimicIK: Real-Time Generative Inverse Kinematics from Teleoperation with FK Consistency](/202606/20/2606.15148v2-mimicik-real-time-generative-inverse-kinematics-from-teleoperation-with-fk-consistency)  
+   标签：评分：7.0/10、query:hum-ctrl
+   evidence：通过生成式逆运动学实现机器人运动控制
+5. [Acting While Understanding: Asynchronous Semantic-Action Decoupling for Real-Time Vision-Language-Action Models](/202606/20/2606.15285v1-acting-while-understanding-asynchronous-semantic-action-decoupling-for-real-time-vision-language-action-models)  
+   标签：评分：7.0/10、query:hum-ctrl
+   evidence：面向实时机器人控制的异步语义-动作解耦方法
+6. [Learning Context-Aware Neural ODE Dynamics for Adaptive Robotic Control](/202606/20/2606.15469v1-learning-context-aware-neural-ode-dynamics-for-adaptive-robotic-control)  
+   标签：评分：7.0/10、query:hum-ctrl
+   evidence：用于自适应机器人控制的上下文感知神经常微分方程动力学
+7. [DragMesh-2: Physically Plausible Dexterous Hand-Object Interaction with Articulated Objects](/202606/20/2606.15133v1-dragmesh-2-physically-plausible-dexterous-hand-object-interaction-with-articulated-objects)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：强化学习引导的检索用于缺失模态下的鲁棒模仿学习
-10. [Learning New Tasks via Reusable Skills: Skill-Compositional Experts for Embodied Continual Learning](/202606/19/2606.15685v1-learning-new-tasks-via-reusable-skills-skill-compositional-experts-for-embodied-continual-learning)  
-   标签：评分：6.0/10、query:hum-ctrl
-   evidence：机器人持续学习中的技能组合
-11. [Where Should Action Generation Begin? A Learnable Source Prior for Generative Robot Policies](/202606/19/2606.17408v1-where-should-action-generation-begin-a-learnable-source-prior-for-generative-robot-policies)  
-   标签：评分：6.0/10、query:hum-ctrl
-   evidence：生成式机器人策略的可学习先验
-12. [ConSA: Controllable Sparsity in Hybrid Attention via Learnable Allocation](/202606/19/2606.18056v1-consa-controllable-sparsity-in-hybrid-attention-via-learnable-allocation)  
+   evidence：人形机器人操纵运动控制技术
+8. [Bayesian 3D Steerable CNNs: Enabling Equivariance and Uncertainty Quantification Simultaneously](/202606/20/2606.15479v1-bayesian-3d-steerable-cnns-enabling-equivariance-and-uncertainty-quantification-simultaneously)  
    标签：评分：6.0/10、query:neural-arch
-   evidence：大语言模型中混合注意力机制的可学习分配
+   evidence：贝叶斯可操控CNN：新颖神经网络架构设计
+9. [Identification of a Physics-Based Electrical Power Consumption Model for the Unitree G1 Humanoid Arm](/202606/20/2606.15915v1-identification-of-a-physics-based-electrical-power-consumption-model-for-the-unitree-g1-humanoid-arm)  
+   标签：评分：6.0/10、query:hum-ctrl
+   evidence：人形机器人手臂运动规划的物理功耗模型
+10. [TopoRetarget: Interaction-Preserving Retargeting for Dexterous Manipulation](/202606/20/2606.16272v1-toporetarget-interaction-preserving-retargeting-for-dexterous-manipulation)  
+   标签：评分：6.0/10、query:hum-ctrl
+   evidence：保持交互的重定向方法用于灵巧操作强化学习，属于机器人运动控制技术
+11. [Elastic ODYN: Differentiable Optimization for Infeasible Control and Learning in Robotics](/202606/20/2606.16564v1-elastic-odyn-differentiable-optimization-for-infeasible-control-and-learning-in-robotics)  
+   标签：评分：6.0/10、query:hum-ctrl
+   evidence：面向机器人不可行控制的可微QP求解器，适用于运动控制
+12. [Steering Generative Reinforcement Learning into Stable Robotic Controller](/202606/20/2606.16572v1-steering-generative-reinforcement-learning-into-stable-robotic-controller)  
+   标签：评分：6.0/10、query:hum-ctrl
+   evidence：通过潜在空间RL将生成式强化学习引导至稳定机器人控制器
 
 
 <div class="dpr-home-promo-card">
