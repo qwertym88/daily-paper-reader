@@ -6,79 +6,77 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-22
-- 运行时间：2026-06-22 22:55:29 UTC
+- 最新运行日期：2026-06-23
+- 运行时间：2026-06-23 22:22:09 UTC
 - 运行状态：成功
 - 本次总论文数：19
 - 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日共推荐19篇论文，精读2篇高分工作聚焦具身智能与图像翻译领域。
-最值得关注的是Qwen-RobotWorld的统一具身世界建模框架，以及RGB-to-SWIR图像翻译中解决细节瓶颈的潜在扩散改进。
-建议后续深入阅读具身世界模型与视频生成结合的方向，以及跨光谱图像翻译在遥感/安防中的实际应用。
-- 详情：[/202606/22/README](/202606/22/README)
+今日精读7篇、速读12篇，重点关注层次化运动表示与随机分割新范式这两项突破性研究。最值得精读的是9.0分的《MotionPyramid》和《Neural Architecture Distributions》，分别提出高效运动建模与随机分割新范式。建议优先阅读这两篇论文，并留意相关的机器人导航与控制综述，以理解前沿动态。
+- 详情：[/202606/23/README](/202606/23/README)
 
 ### 精读区论文标签
-1. [Qwen-RobotWorld Technical Report: Unifying Embodied World Modeling through Language-Conditioned Video Generation](/202606/22/2606.17030v3-qwen-robotworld-technical-report-unifying-embodied-world-modeling-through-language-conditioned-video-generation)  
+1. [MotionPyramid: Hierarchical Motion Representation and Residual Interfaces](/202606/23/2606.20705v1-motionpyramid-hierarchical-motion-representation-and-residual-interfaces)  
    标签：评分：9.0/10、query:hum-ctrl
-   evidence：语言条件视频世界模型，用于具身智能，包含人形机器人仿真
-2. [Addressing Detail Bottlenecks in Latent Diffusion for RGB-to-SWIR Image Translation](/202606/22/2606.19961v1-addressing-detail-bottlenecks-in-latent-diffusion-for-rgb-to-swir-image-translation)  
+   evidence：人形机器人控制的分层运动表示
+2. [Neural Architecture Distributions: A New Paradigm for Stochastic Segmentation](/202606/23/2606.21061v1-neural-architecture-distributions-a-new-paradigm-for-stochastic-segmentation)  
    标签：评分：9.0/10、query:neural-arch
-   evidence：利用跳跃连接向扩散模型解码器注入高分辨率特征
-3. [Long-Context Modeling via GSS-Transformer Hybrid Architecture with Learnable Mixing](/202606/22/2606.16093v1-long-context-modeling-via-gss-transformer-hybrid-architecture-with-learnable-mixing)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：用于长上下文建模的高效Transformer混合架构
-4. [DataLadder: A Simulation-Enabled Interconversion Toolchain for the Embodied Data Pyramid](/202606/22/2606.16776v1-dataladder-a-simulation-enabled-interconversion-toolchain-for-the-embodied-data-pyramid)  
+   evidence：通过学习算子选择分布进行神经架构搜索
+3. [From Convolution to Transformer: A Comparative Study of U-Net Variants for Brain Tumor and Retinal Vessel Segmentation](/202606/23/2606.22168v1-from-convolution-to-transformer-a-comparative-study-of-u-net-variants-for-brain-tumor-and-retinal-vessel-segmentation)  
+   标签：评分：9.0/10、query:neural-arch
+   evidence：U-Net变体比较，包括残差U-Net、注意力U-Net，涉及跳跃连接
+4. [OpenHLM: An Empirical Recipe for Whole-Body Humanoid Loco-Manipulation](/202606/23/2606.22174v1-openhlm-an-empirical-recipe-for-whole-body-humanoid-loco-manipulation)  
+   标签：评分：9.0/10、query:hum-ctrl
+   evidence：全身人形机器人视觉-语言-动作模型，涉及强化学习和运动控制
+5. [Neural Architecture Search of Sample Reweighting Networks for Complex Distribution Shift](/202606/23/2606.22991v1-neural-architecture-search-of-sample-reweighting-networks-for-complex-distribution-shift)  
+   标签：评分：9.0/10、query:neural-arch
+   evidence：神经网络架构搜索提升网络性能
+6. [TEXEDO : Test Time Scaling for Controller-aware Language-conditioned Humanoid Motion Generation](/202606/23/2606.22998v1-texedo--test-time-scaling-for-controller-aware-language-conditioned-humanoid-motion-generation)  
+   标签：评分：9.0/10、query:hum-ctrl
+   evidence：考虑控制器约束的人形机器人运动生成与测试时缩放
+7. [TopoRetarget: Interaction-Preserving Retargeting for Dexterous Manipulation](/202606/23/2606.16272v2-toporetarget-interaction-preserving-retargeting-for-dexterous-manipulation)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：仿真启用的机器人数据生成和评估工具链
-5. [Fixed-Point Reasoners: Stable and Adaptive Deep Looped Transformers](/202606/22/2606.18206v1-fixed-point-reasoners-stable-and-adaptive-deep-looped-transformers)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：具有固定点停止和残差缩放的新型循环Transformer
-6. [PU-UNet: Stable Multiplicative Interactions for Medical Image Segmentation](/202606/22/2606.20035v1-pu-unet-stable-multiplicative-interactions-for-medical-image-segmentation)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：U-Net中的乘积单元残差块，残差网络变体用于图像分割
-7. [Evolutionary Two-Stage Hyperparameter Optimization Strategies for Physics-Informed Neural Networks](/202606/22/2606.20442v1-evolutionary-two-stage-hyperparameter-optimization-strategies-for-physics-informed-neural-networks)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：用于物理信息神经网络的进化两阶段超参数优化
+   evidence：利用交互保持重定向进行人类示教的强化学习
 
 ### 速读区论文标签
-1. [Task-Instructed Causal Routing of Vision Foundation Models for Multi-Task Learning](/202606/22/2606.15765v1-task-instructed-causal-routing-of-vision-foundation-models-for-multi-task-learning)  
+1. [Long-Distance Real-World Navigation of the Legged-Wheeled Robot Go2-W Using Deep Reinforcement Learning](/202606/23/2606.21387v1-long-distance-real-world-navigation-of-the-legged-wheeled-robot-go2-w-using-deep-reinforcement-learning)  
+   标签：评分：8.0/10、query:hum-ctrl
+   evidence：深度强化学习用于腿轮机器人长距离导航
+2. [Temporal logics and formal synthesis for robot planning and control](/202606/23/2606.21438v1-temporal-logics-and-formal-synthesis-for-robot-planning-and-control)  
+   标签：评分：8.0/10、query:hum-ctrl
+   evidence：基于时间逻辑的传统控制理论用于机器人规划
+3. [AgentDSE: Reasoning-Augmented Architectural Design Space Exploration](/202606/23/2606.21836v1-agentdse-reasoning-augmented-architectural-design-space-exploration)  
+   标签：评分：8.0/10、query:neural-arch
+   evidence：基于LLM的神经网络架构设计空间探索
+4. [Leveraging AutoML for Sustainable Deep Learning: A Multi-Objective HPO Approach on Deep Shift Neural Networks](/202606/23/2606.23208v1-leveraging-automl-for-sustainable-deep-learning-a-multi-objective-hpo-approach-on-deep-shift-neural-networks)  
+   标签：评分：8.0/10、query:neural-arch
+   evidence：基于AutoML的深度移位神经网络多目标超参数优化
+5. [Unified Motion-Action Modeling for Heterogeneous Robot Learning](/202606/23/2606.16917v3-unified-motion-action-modeling-for-heterogeneous-robot-learning)  
+   标签：评分：7.0/10、query:hum-ctrl
+   evidence：异构机器人学习的统一运动-动作模型
+6. [DREAM-Chunk: Reactive Action Chunking with Latent World Model](/202606/23/2606.18589v1-dream-chunk-reactive-action-chunking-with-latent-world-model)  
+   标签：评分：7.0/10、query:hum-ctrl
+   evidence：潜在世界模型实现反应式机器人运动控制
+7. [Start Right, Arrive Right: Asynchronous Execution via Initial Noise Selection](/202606/23/2606.19774v1-start-right-arrive-right-asynchronous-execution-via-initial-noise-selection)  
+   标签：评分：7.0/10、query:hum-ctrl
+   evidence：生成机器人多步动作序列保持一致性
+8. [StreamKL: Fast and Memory-Efficient KL Divergence for Boosting Attention Distillation](/202606/23/2606.20005v1-streamkl-fast-and-memory-efficient-kl-divergence-for-boosting-attention-distillation)  
    标签：评分：7.0/10、query:neural-arch
-   evidence：任务指令引导的视觉基础模型路由实现多任务学习
-2. [V2P-Manip: Learning Dexterous Manipulation from Monocular Human Videos](/202606/22/2606.16436v1-v2p-manip-learning-dexterous-manipulation-from-monocular-human-videos)  
-   标签：评分：7.0/10、query:hum-ctrl
-   evidence：从人类视频学习灵巧操作策略，涉及机器人运动控制
-3. [HOLO-MPPI: Multi-Scenario Motion Planning via Hierarchical Policy Optimization](/202606/22/2606.16480v1-holo-mppi-multi-scenario-motion-planning-via-hierarchical-policy-optimization)  
-   标签：评分：7.0/10、query:hum-ctrl
-   evidence：结合强化学习和MPPI的分层运动规划
-4. [Steering Generative Reinforcement Learning into Stable Robotic Controller](/202606/22/2606.16572v1-steering-generative-reinforcement-learning-into-stable-robotic-controller)  
-   标签：评分：7.0/10、query:hum-ctrl
-   evidence：通过潜在空间引导实现稳定机器人控制器的强化学习
-5. [LOPAL: Local Performance-Aware Active Learning from Imperfect Demonstrations](/202606/22/2606.16888v1-lopal-local-performance-aware-active-learning-from-imperfect-demonstrations)  
-   标签：评分：7.0/10、query:hum-ctrl
-   evidence：从不完美演示中进行主动学习用于机器人技能获取
-6. [Unified Motion-Action Modeling for Heterogeneous Robot Learning](/202606/22/2606.16917v2-unified-motion-action-modeling-for-heterogeneous-robot-learning)  
-   标签：评分：7.0/10、query:hum-ctrl
-   evidence：统一的运动-动作模型用于机器人学习
-7. [An Adjoint-based Neural Regulator for Real-Time Optimal Control with State Constraints](/202606/22/2606.16303v1-an-adjoint-based-neural-regulator-for-real-time-optimal-control-with-state-constraints)  
+   evidence：高效KL散度方法用于注意力蒸馏，提升网络效率
+9. [ATHENA: Accelerated Multi-Task Heterogeneous Influence Functions for Robot Data Curation](/202606/23/2606.16208v1-athena-accelerated-multi-task-heterogeneous-influence-functions-for-robot-data-curation)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：人形机器人传统控制理论
-8. [Recover, Discover, Plan: Learning Skills and Concepts from Robot Failures](/202606/22/2606.18328v1-recover-discover-plan-learning-skills-and-concepts-from-robot-failures)  
+   evidence：机器人数据筛选的影响函数方法，加速多任务学习
+10. [Benchmarking Action Spaces in Reinforcement Learning for Vision-based Robotic Manipulation](/202606/23/2606.18594v1-benchmarking-action-spaces-in-reinforcement-learning-for-vision-based-robotic-manipulation)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：使用强化学习从失败中恢复并学习技能，可应用于人形机器人运动
-9. [Mem-World: Memory-Augmented Action-Conditioned World Models for Persistent Robot Manipulation](/202606/22/2606.18960v2-mem-world-memory-augmented-action-conditioned-world-models-for-persistent-robot-manipulation)  
+   evidence：强化学习中动作空间表示对机器人操控的影响基准测试
+11. [Temporal Self-Imitation Learning](/202606/23/2606.19752v1-temporal-self-imitation-learning)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：记忆增强的世界模型用于机器人操作，与仿真器和强化学习相关
-10. [Invertible Neural Network Adapter for One-Step Flow Matching in Robot Manipulation](/202606/22/2606.19194v1-invertible-neural-network-adapter-for-one-step-flow-matching-in-robot-manipulation)  
-   标签：评分：6.0/10、query:neural-arch
-   evidence：用于一步动作生成的可逆神经网络适配器
-11. [DF-ExpEnse: Diffusion Filtered Exploration for Sample Efficient Finetuning](/202606/22/2606.19656v1-df-expense-diffusion-filtered-exploration-for-sample-efficient-finetuning)  
+   evidence：强化学习用于高效机器人操作
+12. [A Neuromorphic Reinforcement Learning Framework for Efficient Pathfinding in Robotic Mobile Fulfillment Systems](/202606/23/2606.20031v2-a-neuromorphic-reinforcement-learning-framework-for-efficient-pathfinding-in-robotic-mobile-fulfillment-systems)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：强化学习探索技术用于机器人决策中的样本高效微调
-12. [Deep-Unfolded Coordination](/202606/22/2606.19920v1-deep-unfolded-coordination)  
-   标签：评分：6.0/10、query:hum-ctrl
-   evidence：用于分布式机器人优化的深度展开协调
+   evidence：神经形态强化学习用于机器人路径规划
 
 
 <div class="dpr-home-promo-card">

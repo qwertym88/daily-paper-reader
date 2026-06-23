@@ -1,0 +1,2060 @@
+Title: StreamKL: Fast and Memory-Efficient KL Divergence for Boosting Attention Distillation
+
+URL Source: https://arxiv.org/pdf/2606.20005v1
+
+Published Time: Fri, 19 Jun 2026 00:47:39 GMT
+
+Number of Pages: 14
+
+Markdown Content:
+# StreamKL : Fast and Memory-Efficient KL Divergence for Boosting Attention Distillation 
+
+Guangda Liu 
+
+Shanghai Jiao Tong University 
+
+Yiquan Wang 
+
+Shanghai Jiao Tong University 
+
+Chengwei Li 
+
+Shanghai Jiao Tong University 
+
+Wenhao Chen 
+
+Shanghai Jiao Tong University 
+
+Jing Lin 
+
+Huawei 
+
+Yiwu Yao 
+
+Huawei 
+
+Danning Ke 
+
+Huawei 
+
+Wenchao Ding 
+
+Fudan University 
+
+Jieru Zhao ∗
+
+Shanghai Jiao Tong University 
+
+Abstract 
+
+Attention distillation, which trains one attention distribution to match another by minimizing their Kullback-Leibler (KL) divergence, is widely used in knowledge distillation, model compression, continual learning, and sparse-attention LLM training. However, existing approaches materialize both at-tention distributions before computing the KL reduction, incurring 𝑂 (𝑁 𝑄 𝑁 𝐾 ) memory and IO costs that become pro-hibitive at long context lengths. We present StreamKL , the first fused GPU primitive for attention KL divergence that eliminates this quadratic materialization. StreamKL derives a novel online formulation for the coupled two-distribution KL reduction, enabling a single one-pass forward kernel that streams query-key tiles through on-chip SRAM. For the backward pass, StreamKL recomputes attention probabili-ties tile-by-tile, avoiding storage of quadratic intermediates. We further design and implement efficient GPU kernels with dedicated optimizations. Experiments show StreamKL de-livers up to 43 × and 14 × speedups over baseline methods in the forward and backward passes, respectively. Most im-portantly, StreamKL reduces the extra HBM footprint of attention distillation from 𝑂 (𝑁 𝑄 𝑁 𝐾 ) to 𝑂 (1), enabling long-context distillation on a single GPU. 
+
+1 Introduction 
+
+Attention distillation, which trains one attention distribution to match another by minimizing their Kullback-Leibler (KL) divergence, is a core building block of modern transformer workloads. In knowledge distillation, it transfers attention patterns from a large teacher model to a smaller student model [ 18 ]. In model pruning, it aligns the attention distri-butions of the pruned model with those of the dense model to preserve accuracy [ 19 ]. In continual learning, it aligns the attention distributions of the current model with a histor-ical snapshot to mitigate catastrophic forgetting [ 1 ]. Most recently, during the training of sparse-attention LLMs such as DeepSeek V3.2 and GLM-5, attention distillation is used to align a lightweight indexer distribution with the original 
+
+> ∗Corresponding author: zhao-jieru@sjtu.edu.cn.
+
+dense-attention distribution [ 7, 9 ]. Across all of these set-tings, the training objective is to minimize the KL divergence between two attention distributions 𝑃 1, 𝑃 2 ∈ R𝑁 𝑄 ×𝑁 𝐾 gen-erated from respective query-key pairs 𝑄 1 ∈ R𝑁 𝑄 ×𝑑 1 , 𝐾 1 ∈
+
+R𝑁 𝐾 ×𝑑 1 and 𝑄 2 ∈ R𝑁 𝑄 ×𝑑 2 , 𝐾 2 ∈ R𝑁 𝐾 ×𝑑 2 .A naïve approach to attention distillation first materializes both attention distributions in HBM and then computes the element-wise KL reduction, as shown in Fig. 1(a). This works at short context lengths; however, as the context grows, it faces significant performance challenges. First, the memory footprint explodes: at 𝑁 𝑄 = 𝑁 𝐾 = 64 K with 32 attention heads in BF16, storing the two distributions alone requires 
+
+512 GB , which is 3.6 times the 141 GB HBM capacity of a single NVIDIA H200 GPU. Second, the IO traffic of writing these distributions out and reading them back for the KL re-duction dominates runtime. Both of the costs scale quadrati-cally with the context length. As modern LLMs push context lengths toward 128K, 256K, and even beyond 1M tokens [ 7, 9], long-context attention distillation becomes a severe system bottleneck. A common workaround is chunked processing, which iterates over query chunks sequentially so that only a slice of 𝑃 1 and 𝑃 2 is materialized at a time. However, this trades latency for memory with no good operating point: small chunks leave the GPU idle, while large chunks trigger out-of-memory (OOM) errors. Fundamentally, these bot-tlenecks cannot be resolved without eliminating the 
+
+𝑂 (𝑁 𝑄 𝑁 𝐾 ) materialization of 𝑃 1 and 𝑃 2.Standard attention computation once faced a similar qua-dratic memory and IO problem, which FlashAttention [ 5, 6]solved by fusing the entire computation into a single online-update kernel that never materializes the 𝑁 𝑄 × 𝑁 𝐾 matrix. One might hope to apply a similar recipe to attention distil-lation, however, the adaptation is non-trivial. Directly lever-aging online softmax either still materializes 𝑂 (𝑁 𝑄 𝑁 𝐾 ) in-termediates, or requires two separate passes, doubling both computation and HBM reads. The key difficulty in achiev-ing one-pass fusion is that, unlike standard attention which applies a single softmax followed by a matrix multiply, KL divergence couples two independent softmax distributions           
+
+> arXiv:2606.20005v1 [cs.LG] 18 Jun 2026 Liu et al. P1= softmax( Q1K1T)
+> [N Q, N K]
+> P2= softmax( Q2K2T)
+> [N Q, N K]
+> Logits Blocks (SRAM)
+> Materializes full P 1, P 2in HBM →O(N QNK)memory
+> (a) Vanilla Attention Distillation
+> Inner Loop
+> Outer Loop
+> Compute
+> KL Div. on SRAM
+> QK Blocks (SRAM)
+> Inner Loop
+> Q2
+> K2T
+> Fully Fused
+> Online Compute on SRAM Never materializes P 1, P 2
+> O(1) extra HBM
+> Outer Loop
+> Q1
+> K1T
+> Q1
+> [N Q, d 1]
+> K1T[d 1, N K]
+> Q2
+> [N Q, d 2]
+> K2T[d 2, N K]
+> (b) StreamKL (Ours) (b) StreamKL (Ours)
+
+Figure 1. Overview of StreamKL . (a) Vanilla attention dis-tillation materializes full 𝑃 1, 𝑃 2 in HBM, costing 𝑂 (𝑁 𝑄 𝑁 𝐾 )
+
+memory and IO. (b) StreamKL fuses the computation into a one-pass tiled kernel that computes KL online in SRAM without materializing 𝑃 1 or 𝑃 2, reducing extra HBM to 𝑂 (1).through a weighted logit-difference term, and how to cor-rectly rescale the accumulated logit-difference as the running maxima of both distributions change is not straightforward to derive. To the best of our knowledge, no existing system provides a fused primitive for attention distillation that avoids materializing 𝑃 1 and 𝑃 2.
+
+To eliminate the quadratic memory and IO costs of at-tention distillation at the root, we present StreamKL , the first fused, one-pass primitive for attention KL divergence. For the forward pass, StreamKL derives a new online-update scheme for the coupled two-distribution KL reduction. Through a careful mathematical derivation, we reformulate the row-wise KL divergence into a form that can be computed incre-mentally in a single streaming pass over the keys. For the backward pass, StreamKL uses recomputation over the saved log-sum-exp (LSE) vectors to regenerate attention probabili-ties tile-by-tile, without storing the quadratic intermediates. As illustrated in Fig. 1, with complete fused online computa-tion on SRAM, StreamKL reduces the extra HBM footprint of attention distillation from 𝑂 (𝑁 𝑄 𝑁 𝐾 ) to 𝑂 (1).Beyond the algorithmic contribution, StreamKL designs and implements efficient GPU kernels, incorporating the optimizations for small-query workloads, such as the auto-regressive decoding in LLMs where 𝑁 𝑄 = 1. For the forward pass, a split-K variant partitions the key dimension across thread blocks to saturate SMs. For the backward pass, a 
+
+fused kernel eliminates redundant HBM traffic and logit recomputation by visiting each 𝑄𝐾 tile pair exactly once. On Hopper GPUs, dedicated kernels further leverage the Tensor Memory Accelerator (TMA) for asynchronous bulk copies. We evaluate StreamKL on NVIDIA H200 and A100 GPUs across various workloads. In the forward pass, StreamKL 
+
+achieves up to 18 × speedup over PyTorch, 3.7× over torch. compile , and 3.7× over FLA, widening to 43 ×, 7.0×, and 
+
+7.1× under causal masking. The backward pass delivers up to 6.5× over PyTorch on non-causal inputs and 14 .0× under causal masking. Most importantly, StreamKL reduces the extra HBM footprint from 𝑂 (𝑁 𝑄 𝑁 𝐾 ) to 𝑂 (1), making it the only solution that sustains 64K+ contexts on a single GPU. In summary, we make the following contributions: 
+
+• We identify the quadratic memory and IO bottlenecks that prevent attention KL divergence from scaling to long contexts (Sec. 2.3). 
+
+• We introduce the first online reformulation of atten-tion KL divergence, enabling a fully fused online-update forward primitive (Sec. 3), together with a recomputation-based backward pass. That eliminates the materialization of quadratic intermediates (Sec. 4). 
+
+• We design and implement efficient GPU kernels for 
+
+StreamKL with dedicated optimizations (Sec. 5). Ex-tensive experiments show that StreamKL achieves order-of-magnitude improvements in both latency and peak HBM footprint, enabling previously infeasi-ble long-context attention-distillation workloads (Sec. 6). 
+
+2 Background 
+
+2.1 Attention Distillation 
+
+Scaled dot-product attention (SDPA) is a core component of modern machine learning models, including LLMs, DiTs, ViTs, and other Transformer-based architectures [ 3 , 8, 14 , 17 ]. Attention distillation is a common technique in which one attention distribution is trained to match another. Given two query-key pairs, 𝑄 1 ∈ R𝑁 𝑄 ×𝑑 1 , 𝐾 1 ∈ R𝑁 𝐾 ×𝑑 1 and 𝑄 2 ∈
+
+R𝑁 𝑄 ×𝑑 2 , 𝐾 2 ∈ R𝑁 𝐾 ×𝑑 2 , let 𝑃 1 = softmax (𝑄 1𝐾 𝑇  
+
+> 1
+
+) and 𝑃 2 =
+
+softmax (𝑄 2𝐾 𝑇  
+
+> 2
+
+) denote the attention distributions ( √𝑑 omit-ted for brevity), where 𝑃 1, 𝑃 2 ∈ R𝑁 𝑄 ×𝑁 𝐾 . Attention distilla-tion then minimizes the KL divergence between these distri-butions, i.e., KL (𝑃 1 ∥𝑃 2), as the training objective. Attention distillation arises in a wide range of scenar-ios. In knowledge distillation, MiniLM [ 18 ] transfers atten-tion patterns from teacher to student by distilling SDPA over query-key and value-value interactions. In model com-pression, attention distillation guides pruned or quantized models to preserve the original model’s attention distribu-tions [ 4 , 19 ]. Beyond LLMs, DiT models exploit attention KL divergence for unsupervised segmentation, personalized generation, and reducing diffusion timesteps [10, 11, 15]. Another important application of attention distillation is training sparse-attention LLMs. For example, DeepSeek StreamKL 
+
+Sparse Attention (DSA), used in DeepSeek V3.2 and GLM-5, employs a lightning indexer to estimate token importance for sparse attention computation [ 7 , 9]. During training, at-tention distillation is used to align the lightning indexer distribution with the original dense-attention distribution. 
+
+KL Divergence. In batched multi-head attention, the train-ing objective is the mean KL divergence over batch, head, and query rows. For clarity, we present the formulation for a single query row with 𝑞 1 ∈ R1×𝑑 1 and 𝑞 2 ∈ R1×𝑑 2 . Let the logits be 𝑆 1 = 𝑞 1𝐾 𝑇  
+
+> 1
+
+∈ R1×𝑁 𝐾 and 𝑆 2 = 𝑞 2𝐾 𝑇  
+
+> 2
+
+∈ R1×𝑁 𝐾 ,and define the corresponding attention distributions as 𝑃 1 =
+
+softmax (𝑆 1) ∈ R1×𝑁 𝐾 and 𝑃 2 = softmax (𝑆 2) ∈ R1×𝑁 𝐾 . The forward computation of the row-wise KL divergence is 
+
+𝐿 = KL (𝑃 1 ∥𝑃 2) =
+
+> 𝑁 𝐾
+
+∑︁ 
+
+> 𝑖 =1
+
+𝑃 𝑖  
+
+> 1
+
+log 𝑃 𝑖 
+
+> 1
+
+𝑃 𝑖 
+
+> 2
+
+=
+
+> 𝑁 𝐾
+
+∑︁ 
+
+> 𝑖 =1
+
+𝑃 𝑖 
+
+> 1
+
+  log 𝑃 𝑖  
+
+> 1
+
+− log 𝑃 𝑖 
+
+> 2
+
+.
+
+(1) Here, 𝑃 𝑖  
+
+> 1
+
+and 𝑃 𝑖  
+
+> 2
+
+denote the 𝑖 -th token probabilities of 𝑃 1
+
+and 𝑃 2, respectively. During backpropagation, we consider two settings depending on which distribution is treated as fixed. In Setting 1, 𝑃 1 is fixed and 𝑃 2 is optimized (standard distillation). The gradients are computed for 𝑞 2 and 𝐾 2:
+
+𝑑𝑆 2 = 𝜕𝐿 𝜕𝑆 2
+
+= 𝑃 2 − 𝑃 1, 𝑑𝑞 2 = 𝑑𝑆 2𝐾 2, 𝑑𝐾 2 = 𝑑𝑆 𝑇  
+
+> 2
+
+𝑞 2. (2) In Setting 2, 𝑃 2 is fixed and 𝑃 1 is optimized. To compute gradients for 𝑞 1 and 𝐾 1, we define an intermediate variable 
+
+𝑟 = log 𝑃 1 − log 𝑃 2 ∈ R1×𝑁 𝐾 , and obtain 
+
+𝑑𝑆 1 = 𝜕𝐿 𝜕𝑆 1
+
+= 𝑃 1 ⊙ ( 𝑟 − 𝐿 ), 𝑑𝑞 1 = 𝑑𝑆 1𝐾 1, 𝑑𝐾 1 = 𝑑𝑆 𝑇  
+
+> 1
+
+𝑞 1. (3) 
+
+2.2 Online Softmax and FlashAttention 
+
+Online Softmax. The softmax function 𝑃 𝑖 = exp (𝑆 𝑖 )   
+
+> Í𝑗 exp (𝑆 𝑗 )
+
+poses a fundamental challenge for single-pass, tiled compu-tation: the normalization constant Í𝑗 exp (𝑆 𝑗 ) depends on all 𝑁 𝐾 elements, so a naïve implementation requires two sequential passes over the input to compute the maximum and denominator, and another to normalize. Milakov and Gimelshein [ 12 ] introduced the online softmax algorithm, which reduces this to a single pass by maintaining two run-ning statistics: the current maximum 𝑚 and the unnormal-ized sum of exponentials 𝑙 . Concretely, for each new tile of logits 𝑆 ′, the statistics are updated as follows: 
+
+𝑚 ′ = max (𝑚, max (𝑆 ′)) , 𝑙 ′ = 𝑙 · 𝑒 𝑚 −𝑚 ′
+
++∑︁  
+
+> 𝑗 ∈tile
+
+𝑒 𝑆 𝑗 −𝑚 ′
+
+. (4) When a new tile reveals a larger maximum 𝑚 ′, the accumu-lated sum 𝑙 is rescaled by the correction factor 𝑒 𝑚 −𝑚 ′
+
+to main-tain a consistent reference point. After all tiles have been processed, the log-sum-exp is recovered as LSE = 𝑚 + log 𝑙 ,and the probability can be obtained as 𝑃 𝑖 = exp (𝑆 𝑖 − LSE )
+
+without storing the full probabilities. This online formulation enables computing softmax in a tiled, streaming fashion. 32 64 128 256 512 1024       
+
+> Chunk Size
+> 0.0
+> 2.5
+> 5.0
+> 7.5
+> 10.0
+> 12.5
+> 15.0
+> 17.5
+> Latency (s)
+> Forward
+> 32 64 128 256 512 1024
+> Chunk Size
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> 30
+> 35
+> 40
+> Latency (s)
+> OOM
+> Backward (Setting 1)
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> 120
+> HBM Footprint (GB)
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> HBM Footprint (GB)
+> Latency HBM Footprint
+
+Figure 2. Latency-memory trade-off of chunked attention KL divergence, with 𝑁 𝑄 = 𝑁 𝐾 = 128 K and batch size 32. 
+
+FlashAttention. Modern GPUs feature a memory hierar-chy comprising a small but fast on-chip SRAM and a large but slow off-chip HBM. Standard attention computes the 
+
+𝑁 𝑄 ×𝑁 𝐾 attention matrix 𝑆 = 𝑄𝐾 𝑇 , writes 𝑃 = softmax (𝑆 ) to HBM, and then reads it back to compute the output 𝑂 = 𝑃𝑉 .This requires 𝑂 (𝑁 𝑄 𝑁 𝐾 ) HBM storage and memory traffic, which dominates both the runtime and the memory foot-print for long sequences. FlashAttention [ 5 , 6] eliminates this bottleneck by fusing the entire attention computation into a single kernel that never materializes 𝑃 in HBM. The algorithm partitions 𝑄 and 𝐾 into tiles and processes the tiles in a streaming manner. For each 𝑄𝐾 tile, the kernel computes a block of logits entirely in on-chip SRAM, applies the online softmax update to maintain running statistics (𝑚, 𝑙 ), and immediately accumulates the partial output by rescaling the accumulated output. Once all tiles have been processed, the final output is written to HBM. This tiling strategy largely reduces the HBM access complexity, while simultaneously reducing the memory footprint from 𝑂 (𝑁 𝑄 𝑁 𝐾 ) to 𝑂 (𝑁 𝑄 ).The backward pass of FlashAttention applies the same tiling philosophy as online softmax. Rather than storing 𝑃 
+
+from the forward pass, it saves only the per-row LSE val-ues and recomputes 𝑃 block-by-block from 𝑄 and 𝐾 during backpropagation. This recomputation-over-storage trade-off is favorable because the recomputation cost is dominated by fast on-chip matrix multiplies, whereas reading a stored 
+
+𝑂 (𝑁 𝑄 𝑁 𝐾 ) matrix from HBM would be far more expensive. 
+
+2.3 Motivation 
+
+Similar to attention computation, applying attention distilla-tion with long contexts presents severe system challenges. A naïve implementation first materializes both attention distributions 𝑃 1, 𝑃 2 ∈ R𝑁 𝑄 ×𝑁 𝐾 in HBM, then computes the element-wise KL divergence. This incurs the following two costs that scale quadratically with the context length. 
+
+Memory Footprint. Materializing both 𝑃 1 and 𝑃 2 requires 
+
+2 × 𝑁 𝑄 × 𝑁 𝐾 elements in HBM, scaling quadratically with the context length. For a typical long-context setup with 𝑁 𝑄 =
+
+𝑁 𝐾 = 64 K , 32 attention heads, and BF16 precision, the two distributions alone consume 2×32 ×64 K×64 K×2B = 512 GB Liu et al. 4K 8K 16K 32K 64K 128K      
+
+> Context Length
+> 0.0
+> 0.2
+> 0.5
+> 0.8
+> 1.0
+> 1.2
+> 1.5
+> 1.8
+> 2.0
+> Normalized Latency
+> Non-Causal
+> 4K 8K 16K 32K 64K 128K
+> Context Length
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> Normalized Latency
+> Causal
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> 10 6
+> HBM Footprint (MB)
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> 10 6
+> HBM Footprint (MB)
+> Latency:
+> HBM:
+> Attention KL Divergence
+> Attention KL Divergence
+> Vanilla Attention
+> Vanilla Attention
+> Flash Attention
+> Flash Attention
+
+Figure 3. Normalized latency and HBM footprint of attention KL divergence, vanilla attention, and FlashAttention (H200, batch 32). Hatched bars denote OOM with extrapolation. of HBM, which is 3.6 times the capacity of a single H200 (141 GB). In sparse-attention LLM training, context lengths can reach 128K, 256K, or even 1M [ 7 , 9 ], further amplifying the footprint. Even at shorter contexts where both distri-butions fit, the quadratic footprint crowds out activations and optimizer states, forcing smaller batch sizes or sharding across devices, both of which hurt training throughput. To reduce the memory footprint, a straightforward workaround is chunked processing: iterating over query chunks sequen-tially so that only slices of 𝑃 1, 𝑃 2 are materialized at a time. However, chunked processing faces an intrinsic dilemma be-tween latency and memory. Figure 2 illustrates this trade-off tested on an H200 with batch size 32 and 𝑁 𝑄 = 𝑁 𝐾 = 128 K .Smaller chunks reduce peak HBM footprint but increase la-tency, as fewer query rows per launch limit GPU parallelism. Larger chunks improve throughput but the memory foot-print grows rapidly. At chunk size 512, the backward pass already consumes about 70 GB, and at chunk size 1024 it triggers OOM on the 141 GB H200. 
+
+IO Bottleneck. Even when both 𝑃 1 and 𝑃 2 fit in HBM, IO traffic can dominate the runtime of attention distillation. The forward pass writes 2 × 𝑁 𝑄 × 𝑁 𝐾 values to HBM and reads them back for the KL reduction. Figure 3 compares the latency and HBM footprint of attention KL divergence against vanilla attention and FlashAttention across context lengths from 4K to 128K. Since KL divergence materializes two 𝑁 𝑄 × 𝑁 𝐾 matrices, its IO volume and latency are con-sistently 1.5–2× that of vanilla attention. FlashAttention, by contrast, eliminates the 𝑁 𝑄 ×𝑁 𝐾 materialization entirely via a fused kernel, achieving significantly lower latency and HBM footprint than vanilla attention. The advantage is even more pronounced under causal masking, where FlashAttention skips masked positions while the vanilla implementations still materialize and mask the full 𝑁 𝑄 × 𝑁 𝐾 matrix. FlashAttention demonstrates that fusing the attention computation into a single one-pass kernel and eliminating the 𝑁 𝑄 × 𝑁 𝐾 materialization can yield order-of-magnitude improvements in both latency and memory. This naturally raises the question: can a similar IO-aware fusion be applied to attention KL divergence? The answer is non-trivial. Directly leveraging online softmax either still materializes 𝑂 (𝑁 𝑄 𝑁 𝐾 )
+
+intermediates for the logit matrix 𝑆 , or requires two sepa-rate passes (one to obtain the LSE values and another to compute the KL reduction), doubling both computation and HBM reads. For a one-pass fusion, the key difficulty is that, unlike standard attention which applies a single softmax followed by a matrix multiply, KL divergence couples two 
+
+independent softmax distributions through a weighted logit-difference term. How to correctly rescale the accumulated weighted logit-difference as the running maxima of both distributions change is not straightforward to derive. No existing system provides such a fused attention-KL primitive. StreamKL addresses this challenge with a novel reformulation of attention KL divergence that enables one-pass, online computation over both distributions in a single fused kernel, eliminating all quadratic materializations and reducing the extra HBM footprint from 𝑂 (𝑁 𝑄 𝑁 𝐾 ) to 𝑂 (1).
+
+3 Forward Pass 
+
+3.1 Formulation for Online Computation 
+
+To evaluate KL (𝑃 1 ∥𝑃 2) without materializing the 𝑁 𝑄 × 𝑁 𝐾 
+
+attention distributions, we reformulate the KL divergence in online-computable form. Recall from Eq. (1) , the row-wise KL divergence is 𝐿 = Í𝑁 𝐾  
+
+> 𝑖 =1
+
+𝑃 𝑖  
+
+> 1
+
+log (𝑃 𝑖 
+
+> 1
+
+/𝑃 𝑖 
+
+> 2
+
+). Using the logits 
+
+𝑆 1 = 𝑞 1𝐾 𝑇  
+
+> 1
+
+and 𝑆 2 = 𝑞 2𝐾 𝑇  
+
+> 2
+
+, we write the softmax probabilities in terms of the online-softmax running statistics: the row-wise maximum 𝑚 1 = max 𝑗 𝑆 𝑗  
+
+> 1
+
+and 𝑚 2 = max 𝑗 𝑆 𝑗  
+
+> 2
+
+, and the unnormalized sums 𝑙 1 = Í𝑗 𝑒 𝑆 𝑗   
+
+> 1−𝑚 1
+
+and 𝑙 2 = Í𝑗 𝑒 𝑆 𝑗   
+
+> 2−𝑚 2
+
+:
+
+𝑃 𝑖  
+
+> 1
+
+= 𝑒 𝑆 𝑖  
+
+> 1−𝑚 1
+
+𝑙 1
+
+, 𝑃 𝑖  
+
+> 2
+
+= 𝑒 𝑆 𝑖  
+
+> 2−𝑚 2
+
+𝑙 2
+
+. (5) Substituting Eq. (5) into the KL divergence definition and expanding the log-ratio yields: 
+
+𝐿 =∑︁ 
+
+> 𝑖
+
+𝑒 𝑆 𝑖  
+
+> 1−𝑚 1
+
+𝑙 1
+
+log 𝑒 𝑆 𝑖   
+
+> 1−𝑚 1
+
+/𝑙 1
+
+𝑒 𝑆 𝑖   
+
+> 2−𝑚 2
+
+/𝑙 2
+
+=∑︁ 
+
+> 𝑖
+
+𝑒 𝑆 𝑖  
+
+> 1−𝑚 1
+
+𝑙 1
+
+h
+
+log 𝑒 𝑆 𝑖   
+
+> 1−𝑚 1
+
+− log 𝑒 𝑆 𝑖  
+
+> 2−𝑚 2
+
+| {z }     
+
+> =(𝑆 𝑖
+> 1−𝑚 1) − ( 𝑆 𝑖
+> 2−𝑚 2)
+
++ log 𝑙 2
+
+𝑙 1
+
+|{z}  
+
+> constant w.r.t. 𝑖
+
+i
+
+=∑︁ 
+
+> 𝑖
+
+𝑒 𝑆 𝑖  
+
+> 1−𝑚 1
+
+𝑙 1
+
+ 𝑆 𝑖  
+
+> 1
+
+− 𝑆 𝑖  
+
+> 2
+
+− 𝑚 1 + 𝑚 2
+
+ + log 𝑙 2
+
+𝑙 1
+
+. (6) In the last step, we used Í𝑖 𝑒 𝑆 𝑖   
+
+> 1−𝑚 1
+> 𝑙 1
+
+= Í𝑖 𝑃 𝑖  
+
+> 1
+
+= 1 to factor out the log 𝑙 2 
+
+> 𝑙 1
+
+term. Similarly, we now separate the constant 
+
+(𝑚 2 − 𝑚 1) from the 𝑖 -dependent logit difference by splitting StreamKL 
+
+the sum in Eq. (6): 
+
+𝐿 = 1
+
+𝑙 1∑︁ 𝑖 
+
+𝑒 𝑆 𝑖   
+
+> 1−𝑚 1
+
+(𝑆 𝑖  
+
+> 1
+
+− 𝑆 𝑖 
+
+> 2
+
+) + ( 𝑚 2 − 𝑚 1)∑︁ 
+
+> 𝑖
+
+𝑒 𝑆 𝑖  
+
+> 1−𝑚 1
+
+𝑙 1
+
+| {z }  
+
+> =𝑚 2−𝑚 1
+
++ log 𝑙 2
+
+𝑙 1
+
+= 1
+
+𝑙 1∑︁ 𝑖 
+
+𝑒 𝑆 𝑖   
+
+> 1−𝑚 1
+
+(𝑆 𝑖  
+
+> 1
+
+− 𝑆 𝑖 
+
+> 2
+
+)
+
+| {z }
+
+≜ acc 
+
++( 𝑚 2 − 𝑚 1) + log 𝑙 2 − log 𝑙 1. (7) Here we define the accumulator acc = Í𝑖 𝑒 𝑆 𝑖   
+
+> 1−𝑚 1
+
+(𝑆 𝑖  
+
+> 1
+
+− 𝑆 𝑖 
+
+> 2
+
+),which captures the weighted logit difference and must be maintained during the tiled pass. Finally, recalling that LSE 𝑡 = 𝑚 𝑡 + log 𝑙 𝑡 , we combine 
+
+(𝑚 2 − 𝑚 1) + log (𝑙 2/𝑙 1) = LSE 2 − LSE 1 and arrive at our online-computable objective: 
+
+𝐿 = KL (𝑃 1 ∥𝑃 2) = acc 
+
+𝑙 1
+
++ LSE 2 − LSE 1. (8) This formulation is the foundation of the StreamKL forward pass: the five scalars (𝑚 1, 𝑙 1, 𝑚 2, 𝑙 2, acc ) can all be online up-dated as each 𝐾 tile is streamed through SRAM, using a similar online rescaling mechanism as Eq. (4) . The detailed algorithm design is presented in Section 3.2. 
+
+Generalizability beyond Softmax. StreamKL readily extends to attention activation functions beyond softmax, such as the ReLU variant used in the indexer training of DeepSeek-V3.2 [ 7]. In fact, activation functions that lack softmax’s global normalization, such as ReLU, sigmoid, or tanh, are even simpler to support, as they remove the need for maintaining multiple global normalizations. 
+
+3.2 Algorithm Design 
+
+Algorithm 1 presents the StreamKL forward pass. Thanks to the reformulation in Eq. 7, the coupled two-distribution KL reduction is expressed in terms of five per-row running scalars (𝑚 1, 𝑙 1, 𝑚 2, 𝑙 2, acc ) that can be updated incrementally as key tiles are streamed through SRAM, with joint rescaling whenever either running maximum changes. The outer loop partitions query rows across thread blocks; the inner loop co-streams 𝐾 1 and 𝐾 2 tiles sequentially. 
+
+Accumulator rescaling invariant. We establish correct-ness by verifying the central loop invariant. After processing key tiles 1, . . . , 𝑗 , the accumulator satisfies: 
+
+acc ( 𝑗 ) =∑︁   
+
+> 𝑖 ∈tiles 1..𝑗
+
+𝑒 𝑆 𝑖     
+
+> 1−𝑚 (𝑗 )
+> 1
+
+(𝑆 𝑖  
+
+> 1
+
+− 𝑆 𝑖 
+
+> 2
+
+). (9) where 𝑚 ( 𝑗 ) 
+
+> 1
+
+is the running row-wise logit maximum of 𝑃 1 and 
+
+acc ( 𝑗 ) is the unnormalized logit-difference sum, both over tiles 1..𝑗 . When tile 𝑗 +1 raises the maximum, the accumulator 
+
+Algorithm 1 StreamKL Forward Pass 
+
+Require: 𝑄 1 ∈ R𝑁 𝑄 ×𝑑 1 , 𝐾 1 ∈ R𝑁 𝐾 ×𝑑 1 , 𝑄 2 ∈ R𝑁 𝑄 ×𝑑 2 , 𝐾 2 ∈ R𝑁 𝐾 ×𝑑 2
+
+in HBM, block sizes 𝐵 𝑄 , 𝐵 𝐾 . 
+
+> 1:
+
+Divide 𝑄 1, 𝑄 2 into 𝑇 𝑄 = ⌈𝑁 𝑄 /𝐵 𝑄 ⌉ blocks of size 𝐵 𝑄 ; divide 
+
+𝐾 1, 𝐾 2 into 𝑇 𝐾 = ⌈𝑁 𝐾 /𝐵 𝐾 ⌉ blocks of size 𝐵 𝐾 . 
+
+> 2:
+
+for 1 ≤ 𝑖 ≤ 𝑇 𝑄 in parallel do  
+
+> 3:
+
+Load 𝑄 1,𝑖 , 𝑄 2,𝑖 from HBM to SRAM.  
+
+> 4:
+
+Initialize on chip: 𝑚 (0) 
+
+> 1
+
+, 𝑚 (0) 
+
+> 2
+
+← (−∞) 𝐵 𝑄 ; 𝑙 (0) 
+
+> 1
+
+, 𝑙 (0) 
+
+> 2
+
+←(0)𝐵 𝑄 ; acc (0) ← ( 0)𝐵 𝑄 . 
+
+> 5:
+
+for 1 ≤ 𝑗 ≤ 𝑇 𝐾 do  
+
+> 6:
+
+Load 𝐾 1,𝑗 , 𝐾 2,𝑗 from HBM to SRAM.  
+
+> 7:
+
+Compute logit tiles 𝑆 1 = 𝑄 1,𝑖 𝐾 𝑇  
+
+> 1,𝑗
+
+, 𝑆 2 = 𝑄 2,𝑖 𝐾 𝑇  
+
+> 2,𝑗
+
+. 
+
+> 8:
+
+Update maximums: 
+
+𝑚 ( 𝑗 ) 
+
+> 1
+
+= max (𝑚 ( 𝑗 −1) 
+
+> 1
+
+, rowmax (𝑆 1)) ,
+
+𝑚 ( 𝑗 ) 
+
+> 2
+
+= max (𝑚 ( 𝑗 −1) 
+
+> 2
+
+, rowmax (𝑆 2)) . 
+
+> 9:
+
+Compute correction factors: 
+
+𝛼 1 = 𝑒 𝑚 ( 𝑗 −1)     
+
+> 1−𝑚 (𝑗 )
+> 1
+
+, 𝛼 2 = 𝑒 𝑚 ( 𝑗 −1)     
+
+> 2−𝑚 (𝑗 )
+> 2
+
+. 
+
+> 10:
+
+Compute unnormalized probabilities: 
+
+˜𝑃 1 = 𝑒 𝑆 1 −𝑚 ( 𝑗 ) 
+
+> 1
+
+∈ R𝐵 𝑄 ×𝐵 𝐾 , ˜𝑃 2 = 𝑒 𝑆 2 −𝑚 ( 𝑗 ) 
+
+> 2
+
+∈ R𝐵 𝑄 ×𝐵 𝐾 . 
+
+> 11:
+
+Update running sums: 
+
+𝑙 ( 𝑗 ) 
+
+> 1
+
+= 𝛼 1 𝑙 ( 𝑗 −1) 
+
+> 1
+
++ rowsum ( ˜𝑃 1),
+
+𝑙 ( 𝑗 ) 
+
+> 2
+
+= 𝛼 2 𝑙 ( 𝑗 −1) 
+
+> 2
+
++ rowsum ( ˜𝑃 2). 
+
+> 12:
+
+Update accumulator: 
+
+acc ( 𝑗 ) = 𝛼 1 acc ( 𝑗 −1) + rowsum   ˜𝑃 1 ⊙ ( 𝑆 1 − 𝑆 2). 
+
+> 13:
+
+end for  
+
+> 14:
+
+Compute LSE 1 = 𝑚 (𝑇 𝐾 ) 
+
+> 1
+
++ log 𝑙 (𝑇 𝐾 ) 
+
+> 1
+
+,Compute LSE 2 = 𝑚 (𝑇 𝐾 ) 
+
+> 2
+
++ log 𝑙 (𝑇 𝐾 ) 
+
+> 2
+
+. 
+
+> 15:
+
+Compute KL 𝑖 = acc (𝑇 𝐾 ) /𝑙 (𝑇 𝐾 ) 
+
+> 1
+
++ LSE 2 − LSE 1. 
+
+> 16:
+
+Write KL 𝑖 , LSE 1, LSE 2 to HBM.  
+
+> 17:
+
+end for  
+
+> 18:
+
+return KL values ∈ R𝑁 𝑄 and saved LSE 1, LSE 2 ∈ R𝑁 𝑄 .
+
+is rescaled by the correction factor 𝛼 1 = 𝑒 𝑚 ( 𝑗 )    
+
+> 1−𝑚 (𝑗 +1)
+> 1
+
+:
+
+acc ( 𝑗 +1) = 𝛼 1 acc ( 𝑗 ) +∑︁   
+
+> 𝑖 ∈tile 𝑗 +1
+
+𝑒 𝑆 𝑖     
+
+> 1−𝑚 (𝑗 +1)
+> 1
+
+(𝑆 𝑖  
+
+> 1
+
+− 𝑆 𝑖 
+
+> 2
+
+)
+
+=∑︁   
+
+> 𝑖 ∈tiles 1..𝑗 +1
+
+𝑒 𝑆 𝑖     
+
+> 1−𝑚 (𝑗 +1)
+> 1
+
+(𝑆 𝑖  
+
+> 1
+
+− 𝑆 𝑖 
+
+> 2
+
+). (10) By induction, at the end of the inner loop ( 𝑗 = 𝑇 𝐾 ), acc (𝑇 𝐾 )
+
+matches Í𝑁 𝐾  
+
+> 𝑖 =1
+
+𝑒 𝑆 𝑖   
+
+> 1−𝑚 1
+
+(𝑆 𝑖  
+
+> 1
+
+− 𝑆 𝑖 
+
+> 2
+
+) as required by Eq. (7) . The run-ning sums 𝑙 1 and 𝑙 2 follow standard online softmax rescaling (Eq. 4) using 𝛼 1 and 𝛼 2, respectively. Note that unlike FlashAttention, which must rescale a 
+
+𝐵 𝑄 ×𝑑 output matrix during each running maximum update, our accumulator acc is a 𝐵 𝑄 -dimensional vector. This reduces the arithmetic rescaling overhead by a factor of 𝑑 (typically at least 128). As recent studies such as FlashAttention-4 [ 21 ]indicate that rescaling arithmetic can become a prominent bottleneck on frontier hardware such as NVIDIA Blackwell, 
+
+StreamKL ’s vector-only rescaling ensures that the kernel can fully utilize tensor core throughput without being con-strained by scalar functional units. Liu et al. Batch 0 Q Block 0         
+
+> Batch 0 Q Block 1
+> Batch 0 Q Block 2
+> Batch 1 Q Block 0
+> Batch 1 Q Block 1
+> Batch 1 Q Block 2
+> Grid Size:
+> (bsz, T Q)
+> Inner Loop
+> K2T
+> Q2,1
+> Q1,1
+> K1T
+> S1
+> S2
+> l1l2m1m2acc
+> Update
+> Running Statistics
+> SRAM (a) Default Forward
+> Grid Size:
+> (bsz, T Q, W)
+> Batch 0 Q Block 0
+> Batch 1 Q Block 0
+> Batch 0 Q Block 1
+> Batch 1 Q Block 1 K Split 1 K Split 0
+> Inner Loop K2T
+> [0: NK/2]
+> Q2,1
+> Q1,1
+> K1T
+> [0: NK/2]
+> S1
+> S2
+> m1l1acc ...
+> Update
+> Running Statistics
+> SRAM HBM
+> m1(0)
+> l1(0)
+> acc (0)
+> m1(1)
+> l1(1)
+> acc (1)
+> acc
+> Reduce
+> (b) Split-K Variant
+
+Figure 4. Forward kernel design. (a) Default kernel on a 
+
+(bsz ,𝑇 𝑄 ) grid. (b) Split-K variant: a third grid dimension 
+
+𝑊 partitions the 𝐾 dimension; each block writes its partial statistics to HBM and a lightweight reduce merges them. 
+
+Causal masking. When causal masking is applied to the attention distributions, StreamKL exploits the triangular attention structure to avoid unnecessary computation. Costly element-wise masking operations are strictly isolated to the partially masked boundary logit tiles along the diagonal. The inner loop terminates early to skip all key tiles located entirely beyond the causal frontier. 
+
+Saved state for backward. To avoid materializing the full 
+
+𝑂 (𝑁 𝑄 𝑁 𝐾 ) attention matrices, StreamKL relies on recompu-tation. The forward pass writes only the final KL values and the log-sum-exp vectors LSE 1, LSE 2 to HBM, storing 𝑂 (𝑁 𝑄 )
+
+scalars. The backward pass regenerates 𝑃 𝑖  
+
+> 1
+
+= 𝑒 𝑆 𝑖   
+
+> 1−LSE 1
+
+and 
+
+𝑃 𝑖  
+
+> 2
+
+= 𝑒 𝑆 𝑖   
+
+> 2−LSE 2
+
+on the fly from the original 𝑄 , 𝐾 and saved LSEs, reducing activation memory from 𝑂 (𝑁 𝑄 𝑁 𝐾 ) to 𝑂 (1).
+
+IO complexity. Each query tile loads 𝑄 1,𝑖 ∈ R𝐵 𝑄 ×𝑑 1 , 𝑄 2,𝑖 ∈
+
+R𝐵 𝑄 ×𝑑 2 once and streams all 𝑇 𝐾 key tiles, giving total HBM reads 𝑂 (𝑁 𝑄 𝑁 𝐾 (𝑑 1 + 𝑑 2)/ 𝐵 𝑄 ). The HBM writes only consist of 3𝑁 𝑄 scalars (KL, LSE 1, LSE 2). 
+
+3.3 GPU Kernel Design 
+
+Default kernel. The default forward kernel directly in-stantiates Algorithm 1, where each thread block processes one query tile and streams all key tiles sequentially, as illus-trated in Figure 4(a). The grid is two-dimensional, indexed by 
+
+(𝑏, 𝑖 ) where 𝑏 is the batch/head index and 𝑖 is the query-tile index, yielding bsz × 𝑇 𝑄 thread blocks in total. The default kernel is efficient when bsz × 𝑇 𝑄 is large enough to saturate the GPU’s streaming multiprocessors (SMs). However, when 
+
+bsz × 𝑇 𝑄 falls well below the SM count, the GPU is under-utilized. For instance, with bsz = 1, 𝑁 𝑄 = 512 , and 𝐵 𝑄 = 32 ,only 16 thread blocks are launched on an H200 with 132 
+
+Algorithm 2 StreamKL Backward — Setting 1, Compute 𝑑𝑄 2
+
+Require: 𝑄 1, 𝐾 1, 𝑄 2, 𝐾 2 in HBM; saved LSE 1, LSE 2 ∈ R𝑁 𝑄 from forward pass; the upstream gradient 𝑑𝐿 ∈ R𝑁 𝑄 .
+
+1: for 1 ≤ 𝑖 ≤ 𝑇 𝑄 in parallel do 
+
+2: Load 𝑄 1,𝑖 , 𝑄 2,𝑖 and per-row LSE 1, LSE 2, 𝑑𝐿 from HBM to SRAM. 
+
+3: Initialize 𝑑𝑄 acc 2,𝑖 ← ( 0)𝐵 𝑄 ×𝑑 2 .
+
+4: for 1 ≤ 𝑗 ≤ 𝑇 𝐾 do 
+
+5: Load 𝐾 1,𝑗 , 𝐾 2,𝑗 from HBM to SRAM. 
+
+6: Recompute logits: 𝑆 1 = 𝑄 1,𝑖 𝐾 𝑇  
+
+> 1,𝑗
+
+, 𝑆 2 = 𝑄 2,𝑖 𝐾 𝑇  
+
+> 2,𝑗
+
+.
+
+7: Recompute probabilities: 
+
+𝑃 1 = 𝑒 𝑆 1 −LSE 1 , 𝑃 2 = 𝑒 𝑆 2 −LSE 2 .
+
+8: Compute logit gradient: 𝑑𝑆 2 = 𝑑𝐿 · ( 𝑃 2 − 𝑃 1).
+
+9: Accumulate: 𝑑𝑄 acc 2,𝑖 += 𝑑𝑆 2 𝐾 2,𝑗 .
+
+10: end for 
+
+11: Write 𝑑𝑄 acc 2,𝑖 to HBM. 
+
+12: end for 
+
+SMs—leaving over 85% of the SMs idle. The resulting low occupancy leaves the GPU unable to hide memory latency, severely underutilizing compute throughput. 
+
+Split-K variant. To recover full GPU utilization in these low-parallelism regimes, we introduce a split-K variant that creates additional parallelism along the key dimension, as illustrated in Figure 4(b). The key range [1, 𝑁 𝐾 ] is divided into 𝑊 contiguous chunks of size 𝐶 𝐾 = ⌈𝑁 𝐾 /𝑊 ⌉, and a third grid dimension is added so that the launch grid becomes 
+
+(𝑏, 𝑖, 𝑤 ) with bsz ×𝑇 𝑄 ×𝑊 thread blocks. Each partial thread block (𝑏, 𝑖, 𝑤 ) processes only its assigned key chunk and writes its local running statistics (𝑚 1, 𝑙 1, acc ) to a temporary buffer in HBM. A lightweight reduce kernel then merges the 𝑊 partial results for each (𝑏, 𝑖 ) pair. The merge applies a similar rescal-ing used in the inner loop: given two partial results 𝑎 and 𝑏 ,the combined statistics are: 
+
+𝑚 ′ 
+
+> 1
+
+= max (𝑚 (𝑎 ) 
+
+> 1
+
+, 𝑚 (𝑏 ) 
+
+> 1
+
+), 𝑙 ′ 
+
+> 1
+
+= 𝑙 (𝑎 ) 
+
+> 1
+
+𝑒 𝑚 (𝑎 )  
+
+> 1−𝑚 ′
+> 1
+
++ 𝑙 (𝑏 ) 
+
+> 1
+
+𝑒 𝑚 (𝑏 ) 
+
+> 1−𝑚 ′
+> 1
+
+acc ′ = acc (𝑎 )𝑒 𝑚 (𝑎 )  
+
+> 1−𝑚 ′
+> 1
+
++ acc (𝑏 )𝑒 𝑚 (𝑏 )  
+
+> 1−𝑚 ′
+> 1
+
+(11) Since the accumulator rescaling (Eq. 9) is associative, the merged result is identical to the original forward kernel. 
+
+Adaptive split selection. The split count 𝑊 is determined at launch time to reach a target occupancy of 𝑃 target thread blocks (typically 128 or 256). Let 𝑃 base = bsz × 𝑇 𝑄 denote the baseline thread-block count of the non-split kernel. When 
+
+𝑃 base ≥ 𝑃 target , the baseline kernel already saturates the GPU and is launched directly with 𝑊 = 1. Otherwise, the split count is computed as 𝑊 = min  ⌊𝑃 target /𝑃 base ⌋,𝑇 𝐾 
+
+ for launching at least 𝑃 target thread blocks. 
+
+4 Backward Pass 
+
+The backward pass of StreamKL computes the gradients of the KL divergence with respect to the query and key matrices. StreamKL 
+
+Algorithm 3 StreamKL Backward — Setting 2, Compute 𝑑𝑄 1
+
+Require: 𝑄 1, 𝐾 1, 𝑄 2, 𝐾 2 in HBM; saved LSE 1, LSE 2, 𝐿 ∈ R𝑁 𝑄 from forward pass; the upstream gradient 𝑑𝐿 ∈ R𝑁 𝑄 .
+
+1: for 1 ≤ 𝑖 ≤ 𝑇 𝑄 in parallel do 
+
+2: Load 𝑄 1,𝑖 , 𝑄 2,𝑖 and per-row LSE 1, LSE 2, 𝐿, 𝑑𝐿 from HBM to SRAM. 
+
+3: Precompute 𝛿 = LSE 1 − LSE 2 ∈ R𝐵 𝑄 .
+
+4: Initialize 𝑑𝑄 acc 1,𝑖 ← ( 0)𝐵 𝑄 ×𝑑 1 .
+
+5: for 1 ≤ 𝑗 ≤ 𝑇 𝐾 do 
+
+6: Load 𝐾 1,𝑗 , 𝐾 2,𝑗 from HBM to SRAM. 
+
+7: Recompute logits: 𝑆 1 = 𝑄 1,𝑖 𝐾 𝑇  
+
+> 1,𝑗
+
+, 𝑆 2 = 𝑄 2,𝑖 𝐾 𝑇  
+
+> 2,𝑗
+
+.
+
+8: Recompute: 𝑃 1 = 𝑒 𝑆 1 −LSE 1 .
+
+9: Compute stable log-ratio: 𝑟 = (𝑆 1 − 𝑆 2) − 𝛿 .
+
+10: Compute logit gradient: 𝑑𝑆 1 = 𝑑𝐿 · 𝑃 1 ⊙ ( 𝑟 − 𝐿 ).
+
+11: Accumulate: 𝑑𝑄 acc 1,𝑖 += 𝑑𝑆 1 𝐾 1,𝑗 .
+
+12: end for 
+
+13: Write 𝑑𝑄 acc 1,𝑖 to HBM. 
+
+14: end for 
+
+StreamKL supports two settings corresponding to the two gradient formulas derived in Section 2.1 (Eq. 2 and 3). In both settings, the key design principle is recomputation . The backward kernels regenerate 𝑃 1 and 𝑃 2 tile-by-tile from the saved LSE 1 and LSE 2 vectors, keeping only a 𝐵 𝑄 ×𝐵 𝐾 logit tile in SRAM at any time. Unlike the forward pass, the backward kernels do not require online softmax updates, since the global normalization constants LSE 1 and LSE 2 are already known from the forward pass, and attention probabilities can be recovered directly as 𝑃 𝑖 
+
+1 = 𝑒 𝑆 𝑖  
+
+> 1
+
+−LSE 1 , 𝑃 𝑖 
+
+2 = 𝑒 𝑆 𝑖  
+
+> 2
+
+−LSE 2 .
+
+4.1 Algorithm Design 4.1.1 Setting 1: Fixed 𝑃 1, Optimize 𝑃 2. In this setting, 𝑃 1
+
+is the fixed teacher distribution and 𝑃 2 is the trainable student. From Eq. 2, the logit-level gradient is 𝑑𝑆 2 = 𝑑𝐿 · ( 𝑃 2 − 𝑃 1),where 𝑑𝐿 = 𝜕 Ltotal /𝜕𝐿 is the upstream gradient. The query and key gradients follow as 𝑑𝑄 2 = 𝑑𝑆 2 𝐾 2 and 𝑑𝐾 2 = 𝑑𝑆 𝑇 
+
+2 𝑄 2.Algorithm 2 presents the 𝑑𝑄 2 computation. Each thread block loads one query tile and streams all key tiles, recom-puting 𝑃 1 and 𝑃 2 on the fly and accumulating 𝑑𝑄 2 in SRAM registers. The 𝑑𝐾 2 computation follows a transposed tiling pattern, where each thread block owns one key tile 𝐾 2,𝑗 and iterates over all query tiles, accumulating 𝑑𝐾 2,𝑗 = Í𝑖 𝑑𝑆 𝑇 
+
+2 𝑄 2,𝑖 
+
+in registers before writing the result to HBM. Since the tiling logic mirrors Algorithm 2 with the roles of 𝑄 and 𝐾 swapped, we omit the pseudocode for brevity. 
+
+4.1.2 Setting 2: Fixed 𝑃 2, Optimize 𝑃 1. In this setting, 𝑃 2
+
+is the fixed reference and 𝑃 1 is being optimized. From Eq. 3, the logit-level gradient is 𝑑𝑆 1 = 𝑑𝐿 · 𝑃 1 ⊙ ( 𝑟 − 𝐿 ), where 
+
+𝑟 = log 𝑃 1 − log 𝑃 2 is the element-wise log-ratio and 𝐿 =
+
+KL (𝑃 1 ∥𝑃 2) is the per-row KL value saved from the forward pass. The query and key gradients also follow as 𝑑𝑄 1 =
+
+𝑑𝑆 1 𝐾 1 and 𝑑𝐾 1 = 𝑑𝑆 𝑇 
+
+1 𝑄 1.Batch 0 Q Block 0  
+
+> Batch 0 Q Block 1
+> Batch 1 Q Block 0
+> Batch 1 Q Block 1
+> Grid Size:
+> (bsz, T Q)
+> Inner Loop
+> K2T
+> Q2,1
+> Q1,1
+> K1T
+> S1
+> S2
+> dQ 2,1
+> Accumulate dS 2K2
+
+SRAM         
+
+> (a) Backward (Separate dQ/dK)
+> LSE 1
+> LSE 2
+> dL P1= exp( S1-LSE 1)
+> dS 2= dL·( P2-P1)Q Gradients
+> Batch 0 K Block 0
+> Batch 0 K Block 1
+> Batch 1 K Block 0
+> Batch 1 K Block 1
+> Grid Size:
+> (bsz, T K)
+> Inner Loop
+> Q2T
+> K2,1
+> K1,1
+> Q1T
+> S1T
+> S2T
+> dK 2,1
+> Accumulate dS 2TQ2
+
+SRAM         
+
+> LSE 1
+> LSE 2
+> dL P1= exp( S1-LSE 1)
+> dS 2T= dL·( P2T-P1T)K Gradients Kernel 1: Compute dQ Kernel 2: Compute dK
+> Batch 0 K Block 2
+> Batch 1 K Block 2
+> Grid Size:
+> (bsz, T K)
+> Inner Loop
+> Q2T
+> K2,1
+> K1,1
+> Q1T
+> S1T
+> S2T
+> dK 2,1
+> Accumulate dS 2TQ2
+
+SRAM  
+
+> K Gradients
+> Batch 0 K Block 0
+> Batch 0 K Block 1
+> Batch 1 K Block 0
+> Batch 1 K Block 1
+> (b) Backward (Fused)
+
+L2 / HBM 
+
+> dQ 2,3
+> atomic_add
+> dS 2,3 K2,1
+> dS 2,3 K2,0
+> dS 2,3 K2,2
+
+Figure 5. Backward kernel design. (a) Separate strategy: two kernels for 𝑑𝑄 and 𝑑𝐾 on (bsz ,𝑇 𝑄 ) and (bsz ,𝑇 𝐾 ) grids respec-tively; each owns its output tile but reads inputs and recom-putes logit tiles twice. (b) Fused strategy: a single (bsz ,𝑇 𝐾 )
+
+grid where each thread block owns one 𝐾 tile, accumulates 
+
+𝑑𝐾 in registers, and writes 𝑑𝑄 via atomic_add .
+
+Numerically stable log-ratio. Computing 𝑟 𝑖 = log 𝑃 𝑖 
+
+1 −
+
+log 𝑃 𝑖 
+
+2 directly from probabilities is numerically hazardous: when 𝑃 𝑖 ≈ 0, taking the logarithm produces −∞ or NaN. Instead, we express the log-ratio using the saved LSE values: 
+
+𝑟 𝑖 = (𝑆 𝑖 
+
+1 − 𝑆 𝑖 
+
+2) − ( LSE 1 − LSE 2), (12) which involves only logit differences and is numerically sta-ble regardless of how small the probabilities are. Algorithm 3 presents the 𝑑𝑄 1 computation. The struc-ture mirrors Setting 1, with two differences: (i) the kernel additionally loads the forward KL values to compute the baseline-subtracted gradient 𝑟 − 𝐿 , and (ii) the logit gradient 
+
+𝑑𝑆 1 = 𝑑𝐿 ·𝑃 1 ⊙ ( 𝑟 −𝐿 ) involves an element-wise product with 
+
+𝑃 1 rather than a simple difference. For 𝑑𝐾 1, the tiling logic mirrors Algorithm 3 with the roles of 𝑄 and 𝐾 swapped; we omit the pseudocode for brevity. 
+
+4.2 GPU Kernel Design 
+
+Separate 𝑑𝑄 /𝑑𝐾 Kernels. As illustrated in Figure 5(a), a straightforward strategy is to launch two separate kernels for 
+
+𝑑𝑄 and 𝑑𝐾 , directly instantiating Algorithm 2 for 𝑑𝑄 2, 𝑑𝐾 2
+
+and Algorithm 3 for 𝑑𝑄 1, 𝑑𝐾 1. The 𝑑𝑄 kernel is launched with grid (bsz ,𝑇 𝑄 ): each thread block owns one query tile, Liu et al. 
+
+streams all key tiles, and accumulates 𝑑𝑄 in registers. The 
+
+𝑑𝐾 kernel is launched with grid (bsz ,𝑇 𝐾 ): each thread block owns one key tile, streams all query tiles, and accumulates 𝑑𝐾 
+
+in registers. Since each kernel owns its output tile exclusively, no cross-block synchronization is needed. However, this two-kernel strategy incurs redundant HBM traffic. Both 𝑄 1, 𝐾 1, 𝑄 2, 𝐾 2 are read from HBM twice (once per kernel), and the logit tiles 𝑆 1, 𝑆 2 are recomputed twice for each tile pair. A fused single-kernel design would halve these costs by visiting each tile pair exactly once. 
+
+Fused Backward Kernel. Figure 5(b) illustrates the fused design. The key obstacle to kernel fusion is a tiling conflict :
+
+𝑑𝑄 is accumulated along the 𝐾 dimension, while 𝑑𝐾 is accu-mulated along the 𝑄 dimension. Whichever dimension the grid is partitioned on, the other gradient has no exclusively owning thread block and must be written collaboratively via atomic_add . For the fused kernel, we partition on the 
+
+𝐾 dimension, launching with grid (bsz ,𝑇 𝐾 ), since 𝑁 𝑄 ≤ 𝑁 𝐾 
+
+in typical SDPA and the smaller 𝑑𝑄 buffer is more likely to remain in L2 cache, thus the cost of concurrent atomic oper-ations is reduced. Each thread block loads one key tile into registers, iterates over all query tiles in the inner loop and accumulates 𝑑𝐾 in registers, while per-tile 𝑑𝑄 contributions are written via atomic_add from multiple thread blocks. 
+
+Adaptive Strategy Selection. The fused kernel eliminates redundant HBM reads but introduces atomic contention on 
+
+𝑑𝑄 . When 𝑁 𝑄 ≪ 𝑁 𝐾 , the 𝑑𝑄 buffer is compact and fits in the L2 cache, making atomic updates inexpensive. However, when 𝑁 𝑄 is large, the 𝑑𝑄 working set spills from L2, and contention can negate the HBM savings of fusion. StreamKL 
+
+therefore adaptively selects between the two strategies at runtime: the fused kernel is chosen when 𝑇 𝑄 × 𝐶 ≤ 𝑇 𝐾 (i.e., 
+
+𝑑𝑄 is small relative to 𝑑𝐾 ), where 𝐶 is an empirically tuned constant; otherwise the separate kernels are used. 
+
+5 Implementation 
+
+We implement all StreamKL kernels in Triton [ 16 ] and ex-pose them as PyTorch function modules for drop-in use. We apply three techniques to maximize the kernel performance. First, on Hopper and newer architectures, StreamKL pro-vides a dedicated kernel variant that leverages hardware TMA (Tensor Memory Accelerator) bulk-copy instructions for asynchronous global-to-shared-memory transfers with hardware-accelerated address generation. When TMA is un-available, StreamKL transparently falls back to the generic kernels with standard pointer-based loads. Second, all ex-ponential operations use exp2 (2𝑥 log 2 𝑒 ) instead of the natu-ral exponential, since exp2 maps to a single-cycle SFU in-struction on NVIDIA GPUs, avoiding the extra FMUL that a natural exp would require. Third, StreamKL uses Triton’s auto-tuner to select (𝐵 𝑄 , 𝐵 𝐾 , num_warps , num_stages ) from 10 0 10 1 10 2 10 3 10 4 10 5 10 6 10 7
+
+> HBM Footprint (MB)
+> 4K
+> 8K
+> 16K
+> 32K
+> 64K
+> 128K
+> 8.2G
+> 33G
+> 132G
+> 528G
+> 2.1T
+> 8.2T
+> 1.0G
+> 4.0G
+> 16G
+> 64G
+> 256G
+> 1.0T
+> 1.0G
+> 4.0G
+> 16G
+> 64G
+> 256G
+> 1.0T
+> 1.0M
+> 2.0M
+> 4.0M
+> 8.0M
+> 16M
+> 32M
+> PyTorch
+> torch.compile
+> FLA
+> StreamKL
+> H200 141GB Limit
+
+Figure 6. Peak HBM footprint of the non-causal forward pass across context lengths ( 𝑁 𝑄 = 𝑁 𝐾 , batch 16, log-scale 
+
+𝑥 -axis). Hatched bars denote OOM cases with extrapolation. a predefined search space; the auto-tuner profiles each can-didate for a given problem shape (𝑁 𝑄 , 𝑁 𝐾 , 𝑑 1, 𝑑 2) and caches the fastest configuration for later use. 
+
+6 Evaluation 
+
+6.1 Setup 
+
+Hardware. We evaluate StreamKL on NVIDIA GPUs spanning two architecture generations: A100 (80 GB, Am-pere) and H200 (141 GB, Hopper). The A100 exercises the generic pointer-based kernel path, while the H200 exercises the TMA-accelerated variant. All experiments on both GPU models use CUDA 12.8, PyTorch 2.8, and Triton 3.4. 
+
+Baselines. We compare StreamKL against three imple-mentations of attention distillation: (i) PyTorch [13 ]: the eager implementation that materializes both 𝑁 𝑄 × 𝑁 𝐾 at-tention distributions and computes the KL divergence with standard PyTorch operators. (ii) torch.compile [ 2]: the Py-Torch implementation with graph compilation, which fuses element-wise operations and eliminates intermediate alloca-tions via Inductor-generated Triton kernels, but still materi-alizes the attention distributions. (iii) FLA [20 ]: provides a hand-written fused Triton kernel for the KL divergence com-putation, but the attention distributions are still materialized, with torch.compile enabled. Since FLA’s backward kernel only supports differentiating through the student distribu-tion (Setting 1), we exclude it from Setting 2 comparisons. 
+
+Workloads. We evaluate diverse workloads by sweeping batch sizes in {16 , 32 } and context lengths from 4K to 512K, under both non-causal and causal masking, and both back-ward settings. The head dimension is fixed at 𝑑 1 = 𝑑 2 = 128 ,a representative value for modern transformer architectures. 
+
+Metrics. We report the end-to-end latency and peak HBM usage for each implementation. Since all baselines material-ize the 𝑂 (𝑁 𝑄 𝑁 𝐾 ) attention distributions, they encounter out of memory (OOM) errors at long contexts. For these OOM cases, we extrapolate baseline costs from the completed runs using the linear scaling of latency and memory with respect to bsz × 𝑁 𝑄 × 𝑁 𝐾 , and denote the extrapolated values with hatched patterns in the figures. StreamKL 1 6.9 29 106 468 1.9s 7.5s 29s 119s 13 58 234 936 3.7s 14s 59s 239s 
+
+H200                 
+
+> 116 61 247 990 4.0s 15s 63s 253s 30 123 495 2.0s 7.9s 31s 126s 507s
+
+A100                                                                        
+
+> (16, 4K)
+> (16, 8K)
+> (16, 16K)
+> (16, 32K)
+> (16, 64K)
+> (16, 128K)
+> (16, 256K)
+> (16, 512K)
+> (32, 4K)
+> (32, 8K)
+> (32, 16K)
+> (32, 32K)
+> (32, 64K)
+> (32, 128K)
+> (32, 256K)
+> (32, 512K)
+> 0.1
+> 0.2
+> 0.3
+> 1.3
+> 6.3 23
+> 93 374 1.5s 6.0s 23s
+> 3.5
+> 12
+> 47 187 749 3.0s 11s 47s
+> 1.6
+> 4.4
+> 18
+> 69 281 1.1s 4.5s 18s
+> 3.1
+> 8.8 36 140 563 2.3s 9.0s 36s
+> 0.5
+> 1.8 6.9 26 112 433 1.7s 7.5s 1.0
+> 3.4 13 56 231 989 4.0s 14s
+> (16, 4K)
+> (16, 8K)
+> (16, 16K)
+> (16, 32K)
+> (16, 64K)
+> (16, 128K)
+> (16, 256K)
+> (16, 512K)
+> (32, 4K)
+> (32, 8K)
+> (32, 16K)
+> (32, 32K)
+> (32, 64K)
+> (32, 128K)
+> (32, 256K)
+> (32, 512K)
+> 0.1
+> 0.2
+> 0.3
+> 3.0
+> 12 49 198 798 3.2s 12s 51s
+> 7.4
+> 26 100 399 1.6s 6.4s 25s 102s
+> 4.5
+> 12
+> 41 166 665 2.7s 10s 42s
+> 7.3
+> 20 83 332 1.3s 5.3s 21s 85s
+> 1.2 4.5 16 66 268 1.1s 4.4s 17s 2.4 8.7 33 135 544 2.2s 8.8s 35s
+> Normalized Latency
+
+Non-Causal 
+
+PyTorch torch.compile FLA StreamKL                                                                                                            
+
+> 19.9 40 150 640 2.6s 10s 41s 164s 19 80 320 1.3s 5.1s 20s 82s 328s 122 84 337 1.4s 5.4s 21s 86s 345s 42 168 675 2.7s 10s 43s 172s 691s
+> (16, 4K)
+> (16, 8K)
+> (16, 16K)
+> (16, 32K)
+> (16, 64K)
+> (16, 128K)
+> (16, 256K)
+> (16, 512K)
+> (32, 4K)
+> (32, 8K)
+> (32, 16K)
+> (32, 32K)
+> (32, 64K)
+> (32, 128K)
+> (32, 256K)
+> (32, 512K)
+> 0.1
+> 0.2
+> 0.3
+> 1.9
+> 6.7 26
+> 101 419 1.7s 6.7s 26s
+> 4.0
+> 13 52 209 838 3.4s 13s 53s
+> 2.1
+> 6.7
+> 26
+> 101 423 1.7s 6.8s 27s
+> 4.2
+> 12 52 211 847 3.4s 13s 54s
+> 0.4
+> 1.1 3.8 15 60 257 1.1s 3.9s 0.6 2.0 7.7 30 122 522 2.1s 7.8s
+> (16, 4K)
+> (16, 8K)
+> (16, 16K)
+> (16, 32K)
+> (16, 64K)
+> (16, 128K)
+> (16, 256K)
+> (16, 512K)
+> (32, 4K)
+> (32, 8K)
+> (32, 16K)
+> (32, 32K)
+> (32, 64K)
+> (32, 128K)
+> (32, 256K)
+> (32, 512K)
+> 0.1
+> 0.2
+> 0.3
+> 3.2
+> 13 53 208 848 3.4s 13s 54s
+> 8.2
+> 27 106 424 1.7s 6.8s 27s 108s
+> 4.9
+> 15 61 246 985 3.9s 15s 63s
+> 9.8
+> 30 123 492 2.0s 7.9s 31s 126s
+> 0.8 2.5 9.4 36 144 572 2.3s 9.1s 1.5 4.7 18 71 284 1.1s 4.5s 18s
+> Normalized Latency
+
+Causal 
+
+Figure 7. Forward latency on H200 and A100. Each 𝑥 -axis label is a (batch size, 𝑁 𝑄 ) configuration with 𝑁 𝑄 = 𝑁 𝐾 . Hatched bars denote OOM cases with extrapolation; numbers are in ms unless suffixed. 
+
+6.2 Forward Pass 
+
+We compare StreamKL against the baselines on forward pass peak HBM footprint and latency, sweeping context lengths from 4K to 512K ( 𝑁 𝑄 = 𝑁 𝐾 ) and batch sizes in {16 , 32 } under both causal and non-causal masking. 
+
+Memory. Figure 6 reports the peak HBM footprint at batch size 16 on H200 across context lengths. The footprints on A100 follow a similar trend and are omitted for brevity. As shown, StreamKL ’s footprint stays essentially flat as 𝑁 𝐾 
+
+grows, since it never materializes the 𝑁 𝑄 × 𝑁 𝐾 attention distributions and only keeps 𝑂 (𝑁 𝑄 ) per-row statistics. In contrast, all three baselines scale quadratically with the con-text length. PyTorch already exceeds the 141 GB capacity of H200 at 16K, while torch.compile and FLA hit the wall at 32K. By 64K, StreamKL consumes over 16 ,000 × less HBM than torch.compile and FLA, and over 135 ,000 × less than PyTorch, with the gap doubling for every doubling of 𝑁 𝐾 .FLA consumes about 1.5× more HBM under causal masking than non-causal, since it materializes the causal mask, while 
+
+torch.compile fuses the masking into the downstream ker-nel and PyTorch absorbs it into its already-bloated working set. Only StreamKL sustains 64K and longer contexts, a regime that is fundamentally out of reach for any baseline. 
+
+Latency. Figure 7 reports the forward pass latency, nor-malized to PyTorch with absolute values labeled above each bar. StreamKL consistently outperforms all baselines across both GPUs and all inputs, achieving 13 .0–17 .6× speedup over PyTorch, 2.4–3.7× over torch.compile , and 2.3–3.7×
+
+over FLA in the non-causal setting. The advantage is even more pronounced under causal masking, where StreamKL 
+
+achieves 26 .6–42 .7× speedup over PyTorch, 4.2–7.0× over 
+
+torch.compile , and 5.8–7.1× over FLA. This widening gap 10 2 10 3 10 4 10 5 10 6 10 7
+
+HBM Footprint (MB) 
+
+> 4K
+> 8K
+> 16K
+> 32K
+> 64K
+> 128K
+> 8.2G
+> 33G
+> 132G
+> 528G
+> 2.1T
+> 8.2T
+> 1.0G
+> 4.0G
+> 16G
+> 64G
+> 256G
+> 1.0T
+> 1.0G
+> 4.1G
+> 16G
+> 64G
+> 258G
+> 1.0T
+> 33M
+> 66M
+> 132M
+> 264M
+> 528M
+> 1.0G
+
+PyTorch 
+
+torch.compile 
+
+FLA 
+
+StreamKL 
+
+> H200 141GB Limit
+
+Figure 8. Peak HBM footprint of the non-causal backward pass under Setting 1 across context lengths ( 𝑁 𝑄 = 𝑁 𝐾 , batch 16). Hatched bars denote OOM cases with extrapolation. stems from StreamKL ’s ability to skip masked computation at the kernel level, whereas the baselines still materialize the full 𝑁 𝑄 × 𝑁 𝐾 attention matrix and apply the mask post hoc, paying even more compute and IO cost than the non-causal case. The speedups remain stable across context lengths from 4K to 512K, demonstrating that StreamKL maintains its advantage as the workload scales. 
+
+6.3 Backward Pass 6.3.1 Setting 1 (Fixed 𝑃 1, Optimize 𝑃 2). 
+
+Memory. Figure 8 reports the peak HBM footprint of the non-causal backward at batch size 16; the causal numbers are identical and are omitted for brevity. As shown, StreamKL ’s footprint scales linearly with 𝑁 𝑄 , growing from 33 MB at 4K to 4 GB at 512K, since it stores only the 𝑂 (( 𝑁 𝑄 + 𝑁 𝐾 )𝑑 )
+
+gradient buffers 𝑑𝑄 2, 𝑑𝐾 2 alongside the per-row LSE statistics needed for recomputation. The three baselines, in contrast, scale quadratically due to storing 𝑃 1 and 𝑃 2, and quickly exhaust the 141 GB H200. PyTorch reaches 132 GB at 16K and OOMs at 32K, while torch.compile and FLA hit the wall at 64K. At 64K, StreamKL consumes over 4,000 × less HBM than Liu et al. 1 4.0 15 62 241 964 3.9s 15s 61s 7.7 30 120 482 1.9s 7.7s 30s 123s 
+
+H200                 
+
+> 18.5 31 127 511 2.0s 8.2s 32s 130s 16 63 255 1.0s 4.1s 16s 65s 261s
+
+A100                                                         
+
+> (16, 4K)
+> (16, 8K)
+> (16, 16K)
+> (16, 32K)
+> (16, 64K)
+> (16, 128K)
+> (16, 256K)
+> (16, 512K)
+> (32, 4K)
+> (32, 8K)
+> (32, 16K)
+> (32, 32K)
+> (32, 64K)
+> (32, 128K)
+> (32, 256K)
+> (32, 512K)
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 1.2
+> 4.1
+> 16
+> 65 258 1.0s 4.1s 16s
+> 2.4
+> 8.7
+> 32 129 516 2.1s 8.3s 33s
+> 0.6
+> 2.8
+> 10
+> 84
+> 303 1.2s 4.9s 19s
+> 1.6 6.1
+> 37 151 606 2.4s 9.7s 38s
+> 1.1 4.1
+> 15 62 249 969
+> 4.2s
+> 17s
+> 2.1 8.3 32 129 511
+> 2.2s 8.9s 35s
+> (16, 4K)
+> (16, 8K)
+> (16, 16K)
+> (16, 32K)
+> (16, 64K)
+> (16, 128K)
+> (16, 256K)
+> (16, 512K)
+> (32, 4K)
+> (32, 8K)
+> (32, 16K)
+> (32, 32K)
+> (32, 64K)
+> (32, 128K)
+> (32, 256K)
+> (32, 512K)
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 3.0
+> 8.6 35
+> 174
+> 562 2.3s 9.0s 36s
+> 5.2
+> 18
+> 70 281 1.1s 4.5s 18s 72s
+> 1.4
+> 5.9
+> 21
+> 108 432 1.7s 6.9s 27s 3.4 13
+> 75
+> 216 865 3.5s 13s 55s
+> 2.9 11
+> 42 169 681
+> 2.9s 11s
+> 48s
+> 5.8
+> 21 85 346
+> 1.5s 6.2s 24s 99s
+> Normalized Latency
+
+Non-Causal 
+
+PyTorch torch.compile FLA StreamKL                                                                                                    
+
+> 15.1 19 80 312 1.2s 5.0s 19s 79s 9.9 38 156 624 2.5s 10.0s 39s 159s 110 41 166 665 2.7s 10s 42s 170s 21 82 332 1.3s 5.3s 21s 85s 340s
+> (16, 4K)
+> (16, 8K)
+> (16, 16K)
+> (16, 32K)
+> (16, 64K)
+> (16, 128K)
+> (16, 256K)
+> (16, 512K)
+> (32, 4K)
+> (32, 8K)
+> (32, 16K)
+> (32, 32K)
+> (32, 64K)
+> (32, 128K)
+> (32, 256K)
+> (32, 512K)
+> 0.1
+> 0.2
+> 0.3
+> 1.4
+> 4.9
+> 17 70 285 1.1s 4.6s 18s
+> 2.7
+> 9.6
+> 35 142 571 2.3s 9.1s 36s
+> 0.8 3.1
+> 11
+> 83
+> 295 1.2s 4.7s 18s
+> 1.6 6.0
+> 36 147 591 2.4s 9.5s 37s
+> 0.6 2.2
+> 8.2 32 129 523 2.1s 8.5s
+> 1.2 4.4 17 67 260 1.1s 4.5s 18s
+> (16, 4K)
+> (16, 8K)
+> (16, 16K)
+> (16, 32K)
+> (16, 64K)
+> (16, 128K)
+> (16, 256K)
+> (16, 512K)
+> (32, 4K)
+> (32, 8K)
+> (32, 16K)
+> (32, 32K)
+> (32, 64K)
+> (32, 128K)
+> (32, 256K)
+> (32, 512K)
+> 0.1
+> 0.2
+> 0.3
+> 3.3
+> 9.5
+> 42 171 687 2.8s 11s 44s
+> 6.7
+> 23
+> 85 343 1.4s 5.5s 22s 88s
+> 1.4 5.9
+> 21
+> 109 437 1.7s 7.0s 27s 3.6 13
+> 74
+> 218 874 3.5s 13s 55s
+> 2.0
+> 6.0 23 95 380 1.5s 6.0s 24s
+> 3.6
+> 12 48 192 763 3.2s 12s 51s
+> Normalized Latency
+
+Causal 
+
+Figure 9. Backward (Setting 1) latency on H200 and A100. Each 𝑥 -axis label is a (batch size, 𝑁 𝑄 ) configuration with 𝑁 𝑄 = 𝑁 𝐾 .Hatched bars denote OOM cases with extrapolation; numbers are in ms unless suffixed. PyTorch and roughly 500 × less than torch.compile /FLA, with the gap doubling for every doubling of 𝑁 𝑄 .
+
+Latency. Figure 9 reports the Setting 1 backward latency. 
+
+StreamKL delivers 2.6–4.0× speedup over PyTorch in the non-causal setting and 5.3–9.9× under causal masking, again driven by the IO and masked computation savings of the fused kernel. The comparison with torch.compile and FLA, however, is more nuanced. All baselines store 𝑃 1 and 𝑃 2 in HBM after the forward pass and just read them back during the backward pass, while StreamKL requires recomputation for the 𝑂 (1) memory footprint. The cost of this recompute depends on two factors: the GPU’s compute throughput and whether causal masking is applied. On the compute-rich H200, the extra compute is largely hidden by the higher tensor-core throughput, thus the performance of StreamKL 
+
+essentially matches torch.compile (0.93 –1.16 ×) and stays close to FLA in the non-causal setting; on A100, where com-pute is the bottleneck, the recompute cost is exposed and 
+
+StreamKL trails torch.compile by up to 1.4× and FLA by up to 2.1×. Causal masking, on the other hand, halves the recompute workload since StreamKL skips masked 𝑄𝐾 
+
+tile computation entirely at the kernel level, flipping the comparison in StreamKL ’s favor on both H200 and A100. Specifically, on H200 StreamKL achieves 2.0–2.3× speedup over torch.compile and 1.4–2.6× over FLA, and on A100 
+
+1.6–1.9× and 0.7–1.5×, respectively. 
+
+6.3.2 Setting 2 (Fixed 𝑃 2, Optimize 𝑃 1). 
+
+Memory. Figure 10 reports the peak HBM footprint of the non-causal Setting 2 backward at batch size 16 on H200; as in Setting 1, the causal numbers are identical and are omitted for brevity. StreamKL retains the same linear 𝑂 (𝑁 𝑄 ) scaling and the same absolute footprint as in Setting 1, since the 10 2 10 3 10 4 10 5 10 6 10 7
+
+HBM Footprint (MB) 
+
+> 4K
+> 8K
+> 16K
+> 32K
+> 64K
+> 128K
+> 8.2G
+> 33G
+> 132G
+> 528G
+> 2.1T
+> 8.2T
+> 2.0G
+> 8.0G
+> 32G
+> 128G
+> 512G
+> 2.0T
+> 33M
+> 66M
+> 133M
+> 264M
+> 532M
+> 1.0G
+
+PyTorch 
+
+torch.compile 
+
+StreamKL 
+
+> H200 141GB Limit
+
+Figure 10. Peak HBM footprint of the non-causal backward pass under Setting 2 across context lengths ( 𝑁 𝑄 = 𝑁 𝐾 , batch 16). Hatched bars denote OOM cases with extrapolation. only addition is the per-row KL scalar 𝐿 used by the kernel. However, torch.compile consumes roughly 2× more HBM than in Setting 1 because the autograd tape now has to save additional 𝑂 (𝑁 𝑄 𝑁 𝐾 ) intermediates ( 𝑃 1 and log 𝑃 1), and the log-ratio 𝑟 to differentiate through every occurrence of 𝑃 1 in 
+
+𝑃 1 ⊙ ( 𝑟 − 𝐿 ). PyTorch’s footprint is essentially unchanged from Setting 1, since eager mode already materializes all intermediates regardless of which branch carries gradients. 
+
+Latency. Figure 11 reports the Setting 2 backward la-tency. StreamKL delivers 3.8–6.5× speedup over PyTorch in the non-causal setting and 9.1–14 .0× under causal mask-ing, mirroring the forward-pass trend. The comparison with 
+
+torch.compile now favors StreamKL more decisively than in Setting 1: even in the recompute-exposed non-causal regime StreamKL achieves 1.27 –1.89 × speedup on H200 and 
+
+0.92 –1.25 × on A100, whereas Setting 1 had StreamKL only tied with torch.compile . The reason is that the Setting 2 gradient 𝑑𝑆 1 = 𝑃 1 ⊙ ( 𝑟 − 𝐿 ) forces the autograd tape to differ-entiate through 𝑃 1 at three locations (the exp , the multiplier, StreamKL 1 5.8 22 90 352 1.4s 5.6s 22s 90s 11 43 176 704 2.8s 11s 45s 180s 
+
+H200                 
+
+> 112 46 187 750 3.0s 12s 48s 192s 23 93 375 1.5s 6.0s 24s 96s 384s
+
+A100                                          
+
+> (16, 4K)
+> (16, 8K)
+> (16, 16K)
+> (16, 32K)
+> (16, 64K)
+> (16, 128K)
+> (16, 256K)
+> (16, 512K)
+> (32, 4K)
+> (32, 8K)
+> (32, 16K)
+> (32, 32K)
+> (32, 64K)
+> (32, 128K)
+> (32, 256K)
+> (32, 512K)
+> 0.1
+> 0.2
+> 0.3
+> 1.4
+> 5.6 22
+> 108
+> 355 1.4s 5.7s 22s
+> 2.6 10
+> 44 177 710 2.8s 11s 45s
+> 1.0 3.6 13 57 229 890
+> 4.2s 16s
+> 1.9 7.4 29 119
+> 521
+> 2.2s 8.9s
+> 33s
+> (16, 4K)
+> (16, 8K)
+> (16, 16K)
+> (16, 32K)
+> (16, 64K)
+> (16, 128K)
+> (16, 256K)
+> (16, 512K)
+> (32, 4K)
+> (32, 8K)
+> (32, 16K)
+> (32, 32K)
+> (32, 64K)
+> (32, 128K)
+> (32, 256K)
+> (32, 512K)
+> 0.1
+> 0.2
+> 0.3
+> 3.1
+> 12
+> 53
+> 201 804 3.2s 12s 51s
+> 5.3 21
+> 100 402 1.6s 6.4s 25s 102s
+> 2.9 11 42 174
+> 742
+> 3.1s 12s 49s
+> 5.7 21 88
+> 375 1.6s 6.3s 25s 100s
+> Normalized Latency
+
+Non-Causal 
+
+PyTorch torch.compile StreamKL                                                                                  
+
+> 17.0 26 108 425 1.7s 6.8s 27s 108s 13 52 212 850 3.4s 13s 54s 217s 114 56 226 904 3.6s 14s 57s 231s 28 112 452 1.8s 7.2s 28s 115s 463s
+> (16, 4K)
+> (16, 8K)
+> (16, 16K)
+> (16, 32K)
+> (16, 64K)
+> (16, 128K)
+> (16, 256K)
+> (16, 512K)
+> (32, 4K)
+> (32, 8K)
+> (32, 16K)
+> (32, 32K)
+> (32, 64K)
+> (32, 128K)
+> (32, 256K)
+> (32, 512K)
+> 0.1
+> 0.2
+> 0.3
+> 1.5
+> 6.1
+> 23
+> 112
+> 380 1.5s 6.1s 24s
+> 2.8
+> 10
+> 47 190 761 3.0s 12s 48s
+> 0.6
+> 2.0 7.8 30 138 539 2.1s 8.5s 1.1 4.1 16 63 278 1.1s 4.5s 17s
+> (16, 4K)
+> (16, 8K)
+> (16, 16K)
+> (16, 32K)
+> (16, 64K)
+> (16, 128K)
+> (16, 256K)
+> (16, 512K)
+> (32, 4K)
+> (32, 8K)
+> (32, 16K)
+> (32, 32K)
+> (32, 64K)
+> (32, 128K)
+> (32, 256K)
+> (32, 512K)
+> 0.1
+> 0.2
+> 0.3
+> 3.7
+> 13
+> 56 222 890 3.6s 14s 56s
+> 6.0 22
+> 111 445 1.8s 7.1s 28s 113s
+> 1.6 5.8 23 93 372 1.6s 6.3s 25s 3.1 11 47 187 794 3.2s 12s 50s
+> Normalized Latency
+
+Causal 
+
+Figure 11. Backward (Setting 2) latency on H200 and A100. Each 𝑥 -axis label is a (batch size, 𝑁 𝑄 ) configuration with 𝑁 𝑄 = 𝑁 𝐾 .Hatched bars denote OOM cases with extrapolation; numbers are in ms unless suffixed. (1, 64K) 
+
+> (1, 128K)
+> (1, 256K)
+> (1, 512K)
+> (16, 64K)
+> (16, 128K)
+> (16, 256K)
+> (16, 512K)
+> (32, 64K)
+> (32, 128K)
+> (32, 256K)
+> (32, 512K)
+> (64, 64K)
+> (64, 128K)
+> (64, 256K)
+> (64, 512K)
+> 0
+> 2
+> 4
+> 6
+> 8
+> Normalized Latency
+
+Default 
+
+Split-K 
+
+Figure 12. Split-K vs. default forward kernel (non-causal, batch size 16). Each 𝑥 -axis label is a ( 𝑁 𝑄 ,𝑁 𝐾 ) configuration. Numbers are absolute latencies in ms. and the log-difference), producing a longer and more expen-sive compiled graph than Setting 1’s simple 𝑑𝑆 2 = 𝑃 2 − 𝑃 1.In contrast, the fused backward kernel of StreamKL only adds a per-row scalar load and a handful of ALU instruc-tions over its Setting 1 counterpart. Causal masking again halves the recompute workload and lifts StreamKL ’s lead over torch.compile to 2.5–3.7× on H200 and 1.9–2.4× on A100. 
+
+6.4 Ablation Study 6.4.1 Split-K Variant for Forward. Figure 12 compares the default forward kernel against the split-K variant from Sec. 3.3 on inputs with small 𝑁 𝑄 , which cannot saturate all SMs in the default kernel. The split-K variant delivers 5.4–
+
+8.4× speedup at 𝑁 𝑄 = 1 and 16 , 2.8–4.6× at 𝑁 𝑄 = 32 , and 
+
+1.9–2.3× at 𝑁 𝑄 = 64 , with the gain widening as 𝑁 𝐾 grows. The speedup shrinks as 𝑁 𝑄 grows since the default kernel launches enough query blocks to keep SMs fully utilized, leaving no idle parallelism for the split-K variant. The causal setting exhibits the same trend and is omitted for brevity. (1, 64K) 
+
+> (1, 128K)
+> (1, 256K)
+> (1, 512K)
+> (16, 64K)
+> (16, 128K)
+> (16, 256K)
+> (16, 512K)
+> (32, 64K)
+> (32, 128K)
+> (32, 256K)
+> (32, 512K)
+> (64, 64K)
+> (64, 128K)
+> (64, 256K)
+> (64, 512K)
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> Normalized Latency
+
+Default (Separate) 
+
+Fused (Atomic) 
+
+Figure 13. Separate vs. fused backward kernel (non-causal, Setting 1, batch size 16). Each 𝑥 -axis label is a ( 𝑁 𝑄 ,𝑁 𝐾 ) con-figuration. Numbers are absolute latencies in ms. 
+
+6.4.2 Separate/Fused Kernels for Backward. Figure 13 compares the two backward strategies from Sec. 4.2: the separate 𝑑𝑄 /𝑑𝐾 kernels that read inputs and recompute log-its twice, versus the fused atomic kernel that halves both the HBM traffic and the logit recomputation at the cost of 
+
+atomic_add contention on 𝑑𝑄 . The fused atomic kernel is 
+
+2.0× faster than the separate kernels at 𝑁 𝑄 = 1, 1.5×–1.6×
+
+faster at 𝑁 𝑄 = 16 , and 1.2×–1.3× faster at 𝑁 𝑄 = 32 , as the small 𝑑𝑄 buffer stays L2-resident and absorbs atomic updates without round trips to HBM. At 𝑁 𝑄 = 64 , the 𝑑𝑄 
+
+buffer spills from L2 and atomic contention overtakes the savings, flipping the comparison so that the separate ker-nels are marginally ( 1.02 ×) faster. This crossover justifies the adaptive runtime selection in Sec. 4.2, which picks the fused kernel only when 𝑑𝑄 is small enough to stay L2-resident, and falls back to the separate kernels otherwise. Setting 2 and the causal cases exhibit the same trend and are omitted. 
+
+6.4.3 Impact of TMA. Table 1 reports the speedup of the TMA-enabled kernels over the pointer-based fallback on H200. Enabling TMA yields up to 1.11 × on the forward pass, 
+
+1.08 –1.12 × on the Setting 1 backward, and 1.07 –1.18 × on Liu et al. 
+
+Table 1. TMA-enabled vs non-TMA speedup on H200.                          
+
+> Non-causal Causal Pass min median max min median max Forward 0.97 1.02 1.11 0.95 1.02 1.04 Backward Setting 1 0.99 1.03 1.07 1.05 1.08 1.12 Backward Setting 2 0.95 1.07 1.12 1.01 1.10 1.18
+
+the Setting 2 backward, with the largest gains on the causal variants. The backward passes benefit more because they issue twice as many global-to-shared loads per tile, allowing asynchronous bulk copies to hide a larger fraction of memory latency. Setting 2 benefits the most since TMA’s asynchro-nous loads overlap with its extra log-ratio arithmetic. Overall, the TMA implementation is consistently faster and no more than a few percent slower at worst. 
+
+7 Conclusion 
+
+We presented StreamKL , the first fused, one-pass primitive for attention distillation that reduces the extra HBM footprint from 𝑂 (𝑁 𝑄 𝑁 𝐾 ) to 𝑂 (1). Through a novel online formulation of the coupled two-distribution KL reduction, StreamKL 
+
+computes both forward and backward passes in tiled kernels that maintain only per-row statistics on chip. Experiments on A100 and H200 GPUs show consistent speedups and memory savings, enabling efficient attention distillation at context lengths of 64K and beyond on a single GPU. StreamKL 
+
+References 
+
+[1] Sanjay Agrawal, Deep Nayak, and Vivek Varadarajan Sembium. 2025. Multilingual Continual Learning using Attention Distillation. In Pro-ceedings of the 31st International Conference on Computational Linguis-tics: Industry Track , Owen Rambow, Leo Wanner, Marianna Apidianaki, Hend Al-Khalifa, Barbara Di Eugenio, Steven Schockaert, Kareem Dar-wish, and Apoorv Agarwal (Eds.). Association for Computational Lin-guistics, Abu Dhabi, UAE, 91–99. https://aclanthology.org/2025.coling-industry.8/ 
+
+[2] Jason Ansel, Edward Yang, Horace He, Natalia Gimelshein, Animesh Jain, Michael Voznesensky, Bin Bao, Peter Bell, David Berard, Evgeni Burovski, Geeta Chauhan, Anjali Chourdia, Will Constable, Alban Desmaison, Zachary DeVito, Elias Ellison, Will Feng, Jiong Gong, Michael Gschwind, Brian Hirsh, Sherlock Huang, Kshiteej Kalam-barkar, Laurent Kirsch, Michael Lazos, Mario Lezcano, Yanbo Liang, Jason Liang, Yinghai Lu, C. K. Luk, Bert Maher, Yunjie Pan, Christian Puhrsch, Matthias Reso, Mark Saroufim, Marcos Yukio Siraichi, Helen Suk, Shunting Zhang, Michael Suo, Phil Tillet, Xu Zhao, Eikan Wang, Keren Zhou, Richard Zou, Xiaodong Wang, Ajit Mathews, William Wen, Gregory Chanan, Peng Wu, and Soumith Chintala. 2024. Py-Torch 2: Faster Machine Learning Through Dynamic Python Bytecode Transformation and Graph Compilation. In Proceedings of the 29th ACM International Conference on Architectural Support for Program-ming Languages and Operating Systems, Volume 2 (La Jolla, CA, USA) 
+
+(ASPLOS ’24) . Association for Computing Machinery, New York, NY, USA, 929–947. doi: 10.1145/3620665.3640366 
+
+[3] Tom B. Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, Sandhini Agarwal, Ariel Herbert-Voss, Gretchen Krueger, Tom Henighan, Rewon Child, Aditya Ramesh, Daniel M. Ziegler, Jeffrey Wu, Clemens Winter, Christopher Hesse, Mark Chen, Eric Sigler, Mateusz Litwin, Scott Gray, Benjamin Chess, Jack Clark, Christopher Berner, Sam McCandlish, Alec Radford, Ilya Sutskever, and Dario Amodei. 2020. Language Models are Few-Shot Learners. arXiv:2005.14165 [cs.CL] https://arxiv.org/abs/2005.14165 
+
+[4] Kanghyun Choi, Hyeyoon Lee, Dain Kwon, SunJong Park, Kyuyeun Kim, Noseong Park, Jonghyun Choi, and Jinho Lee. 2025. MimiQ: Low-Bit Data-Free Quantization of Vision Transformers with Encouraging Inter-Head Attention Similarity. Proceedings of the AAAI Conference on Artificial Intelligence 39, 15 (April 2025), 16037–16045. doi: 10.1609/ aaai.v39i15.33761 
+
+[5] Tri Dao. 2023. FlashAttention-2: Faster Attention with Better Par-allelism and Work Partitioning. arXiv:2307.08691 [cs.LG] https: //arxiv.org/abs/2307.08691 
+
+[6] Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, and Christopher Ré. 2022. FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness. In Advances in Neural Information Processing Systems ,Vol. 35. [7] DeepSeek-AI, Aixin Liu, Aoxue Mei, Bangcai Lin, Bing Xue, Bingxuan Wang, Bingzheng Xu, Bochao Wu, Bowei Zhang, Chaofan Lin, Chen Dong, Chengda Lu, Chenggang Zhao, Chengqi Deng, Chenhao Xu, Chong Ruan, Damai Dai, Daya Guo, Dejian Yang, Deli Chen, Erhang Li, Fangqi Zhou, Fangyun Lin, Fucong Dai, Guangbo Hao, Guant-ing Chen, Guowei Li, H. Zhang, Hanwei Xu, Hao Li, Haofen Liang, Haoran Wei, Haowei Zhang, Haowen Luo, Haozhe Ji, Honghui Ding, Hongxuan Tang, Huanqi Cao, Huazuo Gao, Hui Qu, Hui Zeng, Jialiang Huang, Jiashi Li, Jiaxin Xu, Jiewen Hu, Jingchang Chen, Jingting Xi-ang, Jingyang Yuan, Jingyuan Cheng, Jinhua Zhu, Jun Ran, Junguang Jiang, Junjie Qiu, Junlong Li, Junxiao Song, Kai Dong, Kaige Gao, Kang Guan, Kexin Huang, Kexing Zhou, Kezhao Huang, Kuai Yu, Lean Wang, Lecong Zhang, Lei Wang, Liang Zhao, Liangsheng Yin, Lihua Guo, Lingxiao Luo, Linwang Ma, Litong Wang, Liyue Zhang, M. S. Di, M. Y Xu, Mingchuan Zhang, Minghua Zhang, Minghui Tang, Mingxu Zhou, Panpan Huang, Peixin Cong, Peiyi Wang, Qiancheng Wang, Qihao Zhu, Qingyang Li, Qinyu Chen, Qiushi Du, Ruiling Xu, Ruiqi Ge, Ruisong Zhang, Ruizhe Pan, Runji Wang, Runqiu Yin, Runxin Xu, Ruomeng Shen, Ruoyu Zhang, S. H. Liu, Shanghao Lu, Shangyan Zhou, Shanhuang Chen, Shaofei Cai, Shaoyuan Chen, Shengding Hu, Shengyu Liu, Shiqiang Hu, Shirong Ma, Shiyu Wang, Shuiping Yu, Shunfeng Zhou, Shuting Pan, Songyang Zhou, Tao Ni, Tao Yun, Tian Pei, Tian Ye, Tianyuan Yue, Wangding Zeng, Wen Liu, Wenfeng Liang, Wenjie Pang, Wenjing Luo, Wenjun Gao, Wentao Zhang, Xi Gao, Xiangwen Wang, Xiao Bi, Xiaodong Liu, Xiaohan Wang, Xi-aokang Chen, Xiaokang Zhang, Xiaotao Nie, Xin Cheng, Xin Liu, Xin Xie, Xingchao Liu, Xingkai Yu, Xingyou Li, Xinyu Yang, Xinyuan Li, Xu Chen, Xuecheng Su, Xuehai Pan, Xuheng Lin, Xuwei Fu, Y. Q. Wang, Yang Zhang, Yanhong Xu, Yanru Ma, Yao Li, Yao Li, Yao Zhao, Yaofeng Sun, Yaohui Wang, Yi Qian, Yi Yu, Yichao Zhang, Yifan Ding, Yifan Shi, Yiliang Xiong, Ying He, Ying Zhou, Yinmin Zhong, Yishi Piao, Yisong Wang, Yixiao Chen, Yixuan Tan, Yixuan Wei, Yiyang Ma, Yiyuan Liu, Yonglun Yang, Yongqiang Guo, Yongtong Wu, Yu Wu, Yuan Cheng, Yuan Ou, Yuanfan Xu, Yuduan Wang, Yue Gong, Yuhan Wu, Yuheng Zou, Yukun Li, Yunfan Xiong, Yuxiang Luo, Yuxi-ang You, Yuxuan Liu, Yuyang Zhou, Z. F. Wu, Z. Z. Ren, Zehua Zhao, Zehui Ren, Zhangli Sha, Zhe Fu, Zhean Xu, Zhenda Xie, Zhengyan Zhang, Zhewen Hao, Zhibin Gou, Zhicheng Ma, Zhigang Yan, Zhi-hong Shao, Zhixian Huang, Zhiyu Wu, Zhuoshu Li, Zhuping Zhang, Zian Xu, Zihao Wang, Zihui Gu, Zijia Zhu, Zilin Li, Zipeng Zhang, Ziwei Xie, Ziyi Gao, Zizheng Pan, Zongqing Yao, Bei Feng, Hui Li, J. L. Cai, Jiaqi Ni, Lei Xu, Meng Li, Ning Tian, R. J. Chen, R. L. Jin, S. S. Li, Shuang Zhou, Tianyu Sun, X. Q. Li, Xiangyue Jin, Xiaojin Shen, Xiaosha Chen, Xinnan Song, Xinyi Zhou, Y. X. Zhu, Yanping Huang, Yaohui Li, Yi Zheng, Yuchen Zhu, Yunxian Ma, Zhen Huang, Zhipeng Xu, Zhongyu Zhang, Dongjie Ji, Jian Liang, Jianzhong Guo, Jin Chen, Leyi Xia, Miaojun Wang, Mingming Li, Peng Zhang, Ruyi Chen, Shangmian Sun, Shaoqing Wu, Shengfeng Ye, T. Wang, W. L. Xiao, Wei An, Xianzu Wang, Xiaowen Sun, Xiaoxiang Wang, Ying Tang, Yukun Zha, Zekai Zhang, Zhe Ju, Zhen Zhang, and Zihua Qu. 2025. DeepSeek-V3.2: Pushing the Frontier of Open Large Language Models. arXiv:2512.02556 [cs.CL] https://arxiv.org/abs/2512.02556 
+
+[8] Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weis-senborn, Xiaohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, Jakob Uszkoreit, and Neil Houlsby. 2021. An Image is Worth 16x16 Words: Trans-formers for Image Recognition at Scale. arXiv:2010.11929 [cs.CV] 
+
+https://arxiv.org/abs/2010.11929 
+
+[9] GLM-5-Team, :, Aohan Zeng, Xin Lv, Zhenyu Hou, Zhengxiao Du, Qinkai Zheng, Bin Chen, Da Yin, Chendi Ge, Chenghua Huang, Chengxing Xie, Chenzheng Zhu, Congfeng Yin, Cunxiang Wang, Gengzheng Pan, Hao Zeng, Haoke Zhang, Haoran Wang, Huilong Chen, Jiajie Zhang, Jian Jiao, Jiaqi Guo, Jingsen Wang, Jingzhao Du, Jinzhu Wu, Kedong Wang, Lei Li, Lin Fan, Lucen Zhong, Mingdao Liu, Mingming Zhao, Pengfan Du, Qian Dong, Rui Lu, Shuang-Li, Shulin Cao, Song Liu, Ting Jiang, Xiaodong Chen, Xiaohan Zhang, Xuancheng Huang, Xuezhen Dong, Yabo Xu, Yao Wei, Yifan An, Yilin Niu, Yitong Zhu, Yuanhao Wen, Yukuo Cen, Yushi Bai, Zhongpei Qiao, Zihan Wang, Zikang Wang, Zilin Zhu, Ziqiang Liu, Zixuan Li, Bo-jie Wang, Bosi Wen, Can Huang, Changpeng Cai, Chao Yu, Chen Li, Chengwei Hu, Chenhui Zhang, Dan Zhang, Daoyan Lin, Dayong Yang, Di Wang, Ding Ai, Erle Zhu, Fangzhou Yi, Feiyu Chen, Guohong Wen, Hailong Sun, Haisha Zhao, Haiyi Hu, Hanchen Zhang, Hanrui Liu, Hanyu Zhang, Hao Peng, Hao Tai, Haobo Zhang, He Liu, Hongwei Wang, Hongxi Yan, Hongyu Ge, Huan Liu, Huanpeng Chu, Jia’ni Zhao, Jiachen Wang, Jiajing Zhao, Jiamin Ren, Jiapeng Wang, Jiaxin Zhang, Jiayi Gui, Jiayue Zhao, Jijie Li, Jing An, Jing Li, Jingwei Yuan, Jinhua Du, Jinxin Liu, Junkai Zhi, Junwen Duan, Kaiyue Zhou, Kangjian Wei, Ke Wang, Keyun Luo, Laiqiang Zhang, Leigang Sha, Liang Xu, Lindong Wu, Lintao Ding, Lu Chen, Minghao Li, Nianyi Lin, Pan Ta, Qiang Zou, Liu et al. 
+
+Rongjun Song, Ruiqi Yang, Shangqing Tu, Shangtong Yang, Shaoxi-ang Wu, Shengyan Zhang, Shijie Li, Shuang Li, Shuyi Fan, Wei Qin, Wei Tian, Weining Zhang, Wenbo Yu, Wenjie Liang, Xiang Kuang, Xiangmeng Cheng, Xiangyang Li, Xiaoquan Yan, Xiaowei Hu, Xiaoy-ing Ling, Xing Fan, Xingye Xia, Xinyuan Zhang, Xinze Zhang, Xirui Pan, Xu Zou, Xunkai Zhang, Yadi Liu, Yandong Wu, Yanfu Li, Yidong Wang, Yifan Zhu, Yijun Tan, Yilin Zhou, Yiming Pan, Ying Zhang, Yinpei Su, Yipeng Geng, Yong Yan, Yonglin Tan, Yuean Bi, Yuhan Shen, Yuhao Yang, Yujiang Li, Yunan Liu, Yunqing Wang, Yuntao Li, Yurong Wu, Yutao Zhang, Yuxi Duan, Yuxuan Zhang, Zezhen Liu, Zhengtao Jiang, Zhenhe Yan, Zheyu Zhang, Zhixiang Wei, Zhuo Chen, Zhuoer Feng, Zijun Yao, Ziwei Chai, Ziyuan Wang, Zuzhou Zhang, Bin Xu, Minlie Huang, Hongning Wang, Juanzi Li, Yuxiao Dong, and Jie Tang. 2026. GLM-5: from Vibe Coding to Agentic Engineering. arXiv:2602.15763 [cs.LG] https://arxiv.org/abs/2602.15763 
+
+[10] Sanghyun Jo, Ziseok Lee, Wooyeol Lee, Jonghyun Choi, Jaesik Park, and Kyungsu Kim. 2026. TRACE: Your Diffusion Model is Secretly an Instance Edge Detector. arXiv:2503.07982 [cs.CV] https://arxiv.org/ abs/2503.07982 
+
+[11] Habin Lim, Yeongseob Won, Juwon Seo, and Gyeong-Moon Park. 2025. ConceptSplit: Decoupled Multi-Concept Personalization of Diffusion Models via Token-wise Adaptation and Attention Disentanglement. arXiv:2510.04668 [cs.CV] https://arxiv.org/abs/2510.04668 
+
+[12] Maxim Milakov and Natalia Gimelshein. 2018. Online normalizer calculation for softmax. https://arxiv.org/abs/1805.02867 
+
+[13] Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan, Trevor Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, Alban Desmaison, Andreas Köpf, Edward Yang, Zach DeVito, Martin Raison, Alykhan Tejani, Sasank Chil-amkurthy, Benoit Steiner, Lu Fang, Junjie Bai, and Soumith Chintala. 2019. PyTorch: An Imperative Style, High-Performance Deep Learning Library. arXiv:1912.01703 [cs.LG] https://arxiv.org/abs/1912.01703 
+
+[14] William Peebles and Saining Xie. 2023. Scalable Diffusion Models with Transformers. arXiv:2212.09748 [cs.CV] https://arxiv.org/abs/ 2212.09748 
+
+[15] Junjiao Tian, Lavisha Aggarwal, Andrea Colaco, Zsolt Kira, and Mar Gonzalez-Franco. 2024. Diffuse, Attend, and Segment: Unsupervised Zero-Shot Segmentation using Stable Diffusion. arXiv:2308.12469 [cs.CV] https://arxiv.org/abs/2308.12469 
+
+[16] Philippe Tillet, H. T. Kung, and David Cox. 2019. Triton: an interme-diate language and compiler for tiled neural network computations. In Proceedings of the 3rd ACM SIGPLAN International Workshop on Machine Learning and Programming Languages (Phoenix, AZ, USA) 
+
+(MAPL 2019) . Association for Computing Machinery, New York, NY, USA, 10–19. doi: 10.1145/3315508.3329973 
+
+[17] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, and Illia Polosukhin. 2023. Attention Is All You Need. arXiv:1706.03762 [cs.CL] https://arxiv.org/ abs/1706.03762 
+
+[18] Wenhui Wang, Furu Wei, Li Dong, Hangbo Bao, Nan Yang, and Ming Zhou. 2020. MiniLM: Deep Self-Attention Distilla-tion for Task-Agnostic Compression of Pre-Trained Transformers. arXiv:2002.10957 [cs.CL] https://arxiv.org/abs/2002.10957 
+
+[19] Lang Xiong, Ning Liu, Ao Ren, Yuheng Bai, Haining Fang, Binyan Zhang, Zhe Jiang, Yujuan Tan, and Duo Liu. 2026. D2 Prune: Spar-sifying Large Language Models via Dual Taylor Expansion and Attention Distribution Awareness. Proceedings of the AAAI Con-ference on Artificial Intelligence 40, 32 (March 2026), 27171–27179. doi: 10.1609/aaai.v40i32.39932 
+
+[20] Songlin Yang and Yu Zhang. 2024. FLA: A Triton-Based Library for Hardware-Efficient Implementations of Linear Attention Mechanism .
+
+https://github.com/fla-org/flash-linear-attention 
+
+[21] Ted Zadouri, Markus Hoehnerbach, Jay Shah, Timmy Liu, Vijay Thakkar, and Tri Dao. 2026. FlashAttention-4: Algorithm and Kernel Pipelining Co-Design for Asymmetric Hardware Scaling. arXiv:2603.05451 [cs.CL] https://arxiv.org/abs/2603.05451
