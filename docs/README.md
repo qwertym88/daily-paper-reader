@@ -6,79 +6,79 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-25
-- 运行时间：2026-06-25 22:30:31 UTC
+- 最新运行日期：2026-06-26
+- 运行时间：2026-06-26 21:43:36 UTC
 - 运行状态：成功
 - 本次总论文数：19
 - 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日聚焦机器人 locomotion 与人形机器人控制，19 篇论文中精读 7 篇，两篇 9 分高亮。  
-最值得关注机器人多目标偏好学习（MAPL）与全身视觉-语言-动作框架（WOLF-VLA），均突破现有性能。  
-建议普通读者优先精读这两篇高评分论文，速读则关注注意力模型和 GNN 的稀疏滤波创新。
-- 详情：[/202606/25/README](/202606/25/README)
+1) 今日19篇论文聚焦人形机器人全身控制与操作、3D空间智能体及运动追踪，精读7篇中出现两篇9分大作。
+2) 最值得关注方向：基于RL引导的全身MPPI控制与通过接触流链式元技能的人形机器人操作。
+3) 建议优先精读《RGB》（9.0）和《OmniContact》（9.0），再速读《HoloAgent-0》与《BFMTrack》以拓宽感知和运动追踪理解。
+- 详情：[/202606/26/README](/202606/26/README)
 
 ### 精读区论文标签
-1. [MAPL: Multi-Objective Preference Learning for Robot Locomotion](/202606/25/2606.25398v1-mapl-multi-objective-preference-learning-for-robot-locomotion)  
+1. [RGB: RL Guided Whole-Body MPPI for Humanoid Control](/202606/26/2606.25123v1-rgb-rl-guided-whole-body-mppi-for-humanoid-control)  
    标签：评分：9.0/10、query:hum-ctrl
-   evidence：基于大语言模型的机器人运动多目标偏好学习
-2. [WOLF-VLA: Whole-Body Humanoid Optimal Locomotion Framework for Vision-Language-Action Learning](/202606/25/2606.25591v1-wolf-vla-whole-body-humanoid-optimal-locomotion-framework-for-vision-language-action-learning)  
+   evidence：强化学习引导的全身MPPI用于人形控制
+2. [OmniContact: Chaining Meta-Skills via Contact Flow for Generalizable Humanoid Loco-Manipulation](/202606/26/2606.26201v1-omnicontact-chaining-meta-skills-via-contact-flow-for-generalizable-humanoid-loco-manipulation)  
    标签：评分：9.0/10、query:hum-ctrl
-   evidence：基于视觉-语言-动作模型的全身体最优运动框架
-3. [Mixture-of-Experts RL for Fault-Tolerant Legged Locomotion](/202606/25/2606.25965v1-mixture-of-experts-rl-for-fault-tolerant-legged-locomotion)  
+   evidence：接触流用于人形机器人运动操作
+3. [A System for Fast, Resilient, and Adaptable Loco-Manipulation Behaviors on Humanoid Robots](/202606/26/2606.26425v1-a-system-for-fast-resilient-and-adaptable-loco-manipulation-behaviors-on-humanoid-robots)  
    标签：评分：9.0/10、query:hum-ctrl
-   evidence：使用强化学习实现腿足机器人容错运动控制
-4. [Hierarchical Reinforcement Learning for Neural Network Compression (HiReLC): Pruning and Quantization](/202606/25/2606.26002v1-hierarchical-reinforcement-learning-for-neural-network-compression-hirelc-pruning-and-quantization)  
-   标签：评分：9.0/10、query:neural-arch
-   evidence：层次强化学习实现神经网络的自动联合量化和剪枝
-5. [Grounding Generative Policies in Physics: Optimization-Guided Diffusion for Robot Control](/202606/25/2606.24208v1-grounding-generative-policies-in-physics-optimization-guided-diffusion-for-robot-control)  
+   evidence：人形机器人移动操作行为系统，支持运行时编辑
+4. [PressMimic: Pressure-Guided Motion Capture and Control for Humanoid Robot Imitation](/202606/26/2606.26741v1-pressmimic-pressure-guided-motion-capture-and-control-for-humanoid-robot-imitation)  
+   标签：评分：9.0/10、query:hum-ctrl
+   evidence：压力引导的人形机器人运动捕捉与模仿控制
+5. [Humanoid-DART: Humanoid Loco-Manipulation using Diffusion-guided Augmentation through Relabeling and Tracking](/202606/26/2606.26855v1-humanoid-dart-humanoid-loco-manipulation-using-diffusion-guided-augmentation-through-relabeling-and-tracking)  
+   标签：评分：9.0/10、query:hum-ctrl
+   evidence：人形操作任务，结合扩散模型和强化学习
+6. [DynaWM: Dynamics-Aware Distillation with World Model and Momentum Targets for Smooth Locomotion over Continuous Stairs](/202606/26/2606.24089v1-dynawm-dynamics-aware-distillation-with-world-model-and-momentum-targets-for-smooth-locomotion-over-continuous-stairs)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：优化引导的扩散方法用于机器人控制，确保物理可行性
-6. [Parallel Dynamic Programming for Conic Linear Quadratic Control](/202606/25/2606.24632v1-parallel-dynamic-programming-for-conic-linear-quadratic-control)  
+   evidence：动力学感知世界模型实现双轮足机器人在楼梯上平滑行走
+7. [FT-WBC: Learning Fault-Tolerant Whole-Body Control for Legged Loco-Manipulation](/202606/26/2606.24466v1-ft-wbc-learning-fault-tolerant-whole-body-control-for-legged-loco-manipulation)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：时间并行动态规划求解锥形LQ控制问题，实现并行计算
-7. [Beyond U-Net: A Latent-Representation-Aligned Skip-Free Backbone for Flow-Matching Speech Enhancement](/202606/25/2606.24745v1-beyond-u-net-a-latent-representation-aligned-skip-free-backbone-for-flow-matching-speech-enhancement)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：面向语音增强的新型无跳跃连接骨架提升准确率
+   evidence：强化学习用于腿足机器人运动控制
 
 ### 速读区论文标签
-1. [Asymptotic Signal Subspace Recovery in Softmax Attention Models](/202606/25/2606.22406v2-asymptotic-signal-subspace-recovery-in-softmax-attention-models)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：softmax注意力动力学及信号子空间恢复的理论分析
-2. [Convex--Concave Quadratic Spectral Filtering for Graph Neural Networks](/202606/25/2606.24956v1-convex--concave-quadratic-spectral-filtering-for-graph-neural-networks)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：图神经网络的新型谱滤波器设计以提高准确率
-3. [RGB: RL Guided Whole-Body MPPI for Humanoid Control](/202606/25/2606.25123v1-rgb-rl-guided-whole-body-mppi-for-humanoid-control)  
+1. [HoloAgent-0: A Unified Embodied Agent Framework with 3D Spatial Memory](/202606/26/2606.23565v1-holoagent-0-a-unified-embodied-agent-framework-with-3d-spatial-memory)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：强化学习引导的全身MPPI用于人形机器人控制
-4. [Learning Asynchronous Upper-body Task-space Trajectory Tracking Policy for Humanoid Robots](/202606/25/2606.25706v1-learning-asynchronous-upper-body-task-space-trajectory-tracking-policy-for-humanoid-robots)  
+   evidence：统一具身智能体框架，涵盖人形机器人控制
+2. [Frequency Domain Reservoir Computing](/202606/26/2606.24969v1-frequency-domain-reservoir-computing)  
+   标签：评分：8.0/10、query:neural-arch
+   evidence：频域储层计算提升神经网络结构效率
+3. [BFMTrack: Latent Sequence Optimization for Physics-Based Motion Tracking with Behavioral Foundation Models](/202606/26/2606.25056v1-bfmtrack-latent-sequence-optimization-for-physics-based-motion-tracking-with-behavioral-foundation-models)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：人形机器人上半身异步任务空间轨迹跟踪
-5. [Ramanujan Graph Rewiring with Non Negative Resistance Curvature](/202606/25/2606.21333v1-ramanujan-graph-rewiring-with-non-negative-resistance-curvature)  
+   evidence：基于行为基础模型的物理驱动运动跟踪潜变量序列优化
+4. [Learning to Adapt: Reptile-D-Learning for Robust and Efficient Control Under Parametric Uncertainty](/202606/26/2606.25659v1-learning-to-adapt-reptile-d-learning-for-robust-and-efficient-control-under-parametric-uncertainty)  
+   标签：评分：8.0/10、query:hum-ctrl
+   evidence：Reptile元学习用于参数不确定下的鲁棒控制
+5. [Ramanujan Graph Rewiring with Non Negative Resistance Curvature](/202606/26/2606.21333v2-ramanujan-graph-rewiring-with-non-negative-resistance-curvature)  
    标签：评分：7.0/10、query:neural-arch
-   evidence：提出图神经网络重连新策略以缓解过挤压，属于新颖的架构设计方法
-6. [Ramanujan Graph Rewiring with Non Negative Resistance Curvature](/202606/25/2606.21333v2-ramanujan-graph-rewiring-with-non-negative-resistance-curvature)  
+   evidence：图重连策略缓解图神经网络过挤压
+6. [A Reward-Petri-Net Interpretation of Temporal Behavior Trees](/202606/26/2606.21350v1-a-reward-petri-net-interpretation-of-temporal-behavior-trees)  
+   标签：评分：7.0/10、query:hum-ctrl
+   evidence：将时间行为树解释为奖励-网用于强化学习
+7. [Improving Engine Sound Analysis in Hot-Test Environments via a RAB-U-Net (Residual Attention Block U-Net) Noise Removal Method](/202606/26/2606.21887v1-improving-engine-sound-analysis-in-hot-test-environments-via-a-rab-u-net-residual-attention-block-u-net-noise-removal-method)  
    标签：评分：7.0/10、query:neural-arch
-   evidence：使用Ramanujan图的图重连策略缓解图神经网络中的过度挤压，新颖的架构设计方法
-7. [rush: Scalable Asynchronous Distributed Computing via Shared State in R](/202606/25/2606.21430v1-rush-scalable-asynchronous-distributed-computing-via-shared-state-in-r)  
+   evidence：U-Net中的残差注意力块（RAB）作为跳跃连接设计用于降噪
+8. [PolicyTrim: Boosting Intrinsic Policy Efficiency of Vision-Language-Action Models](/202606/26/2606.22540v2-policytrim-boosting-intrinsic-policy-efficiency-of-vision-language-action-models)  
    标签：评分：7.0/10、query:neural-arch
-   evidence：用于超参数和黑箱优化的异步分布式计算
-8. [Expressivity Saturation: Reduced Affine Region Usage Under Increasing Task Complexity](/202606/25/2606.21687v1-expressivity-saturation-reduced-affine-region-usage-under-increasing-task-complexity)  
-   标签：评分：7.0/10、query:neural-arch
-   evidence：分析神经网络中仿射区域饱和现象，为架构设计提供指导
-9. [DREAM-Chunk: Reactive Action Chunking with Latent World Model](/202606/25/2606.18589v1-dream-chunk-reactive-action-chunking-with-latent-world-model)  
+   evidence：VLA模型策略效率优化
+9. [ReFPO: Reflow Regularization for Flow Matching Policy Gradients](/202606/26/2606.21086v1-refpo-reflow-regularization-for-flow-matching-policy-gradients)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：基于潜在世界模型的机器人反应式动作分块
-10. [Hierarchical Pooling for Sheaf Neural Networks](/202606/25/2606.20932v1-hierarchical-pooling-for-sheaf-neural-networks)  
+   evidence：基于回流正则化的在线强化学习用于基于流的控制
+10. [Full-Domain Coupler: A Wireless Native Neural Backbone for Channel Representation and Deduction](/202606/26/2606.22038v1-full-domain-coupler-a-wireless-native-neural-backbone-for-channel-representation-and-deduction)  
    标签：评分：6.0/10、query:neural-arch
-   evidence：用于Sheaf神经网络的分层池化机制
-11. [ReFPO: Reflow Regularization for Flow Matching Policy Gradients](/202606/25/2606.21086v1-refpo-reflow-regularization-for-flow-matching-policy-gradients)  
+   evidence：用于无线信道表示的新颖神经网络主干
+11. [DeformX: A Versatile Co-Simulation Framework for Deformable Linear Objects](/202606/26/2606.22116v1-deformx-a-versatile-co-simulation-framework-for-deformable-linear-objects)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：流匹配策略梯度方法，可迁移用于人形机器人控制
-12. [Beyond the Next Step: Variable-Length Latent World Models for Long-Horizon Planning](/202606/25/2606.21775v1-beyond-the-next-step-variable-length-latent-world-models-for-long-horizon-planning)  
+   evidence：集成物理引擎与Isaac Sim的可变形线性物体协同仿真框架
+12. [Improving Robotic Imitation Learning via Trajectory Standardization](/202606/26/2606.22907v1-improving-robotic-imitation-learning-via-trajectory-standardization)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：潜在世界模型用于规划
+   evidence：轨迹标准化方法适用于人形机器人运动模仿学习
 
 
 <div class="dpr-home-promo-card">
