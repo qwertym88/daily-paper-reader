@@ -1,0 +1,458 @@
+Title: MoECodec: Image Compression for joint human and machine perception via Mixture-of-Experts
+
+URL Source: https://arxiv.org/pdf/2606.21033v1
+
+Published Time: Tue, 23 Jun 2026 00:32:34 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# MoECodec : Image Compression for joint human and machine perception via Mixture-of-Experts 
+
+Jiancheng Zhao 1, Xiang Ji 1, Yifan Zhan 1, Zunian Wan 1, and Yinqiang Zheng 1
+
+The University of Tokyo 
+
+Abstract. Image compression for machines calls for a unified codec that serves multiple downstream vision tasks. Existing approaches either adopt task-specific end-to-end designs, raising parameter and deploy-ment overhead, or rely on transfer-based adaptations that remain exter-nally attached and heuristic task design. A key limitation shared by both lines of work is their largely static computation pattern, which applies similar transformations across tokens despite the fact that different image regions exhibit markedly different semantic importance and complexity for machine perception. We propose MoECodec , a token-aware image compression framework that supports multiple downstream tasks within a single model. MoECodec replaces the FFN layers in transformer-based compression model token-wise Mixture-of-Experts (MoE), enabling dynamic, token-level computation conditioned on the input content and task objective. To make MoE effective in compression model, we intro-duce a stable routing strategy that combines expert-choice routing with spatial total variation regularization to encourage spatially coherent as-signments, and we propose a lightweight expert architecture, Group Shuf-fle MLP (GShMLP), to control parameter growth. Extensive experiments show consistent improvement against baselines on both conventional im-age reconstruction and machine tasks. 
+
+1 Introduction 
+
+Machine-oriented image compression has emerged as an active research area, driven by the rapid growth of machine-consumed visual data across a wide range of computer vision applications, such as classification, detection, and segmenta-tion. However, directly applying image compression models optimized for human visual quality to machine vision tasks often removes task-relevant semantics and degrades downstream performance. This has motivated a growing body of work aimed at developing unified compression frameworks that jointly optimize for multiple downstream machine vision. A straightforward strategy is task-specific end-to-end optimization, either with dedicated encoder-decoder pairs [26, 38, 52, 56] or with multi-branch task-adaptive architectures [2, 7, 16, 20, 25, 62]. This de-sign usually incurs substantial parameter overhead and deployment complexity. Another line of work uses transfer-based adaptation, where a human-oriented base codec is adapted to each downstream task with a small set of trainable parameters [8, 33, 41]. Although parameter-efficient, these methods still depend 
+
+> arXiv:2606.21033v1 [eess.IV] 19 Jun 2026
+
+2 J. Zhao et al. Expert n Expert 1  
+
+> …
+> Overall Compute Allocation
+> Less
+> Compute Area
+> More
+> Compute Area
+
+Fig. 1: Overview of dynamic compute allocation in MoECodec . Left: Tokens are dispatched to different experts conditioned on the optimization objective, enabling heterogeneous compute allocation that focuses more computation on task-relevant re-gions. Right: Reconstruction performance (BD-Rate) and efficiency (parameter effi-ciency and latency) on three transformer-based LIC backbones after applying MoE-Codec . Activated parameters denote the average number of parameters activated per token during a forward pass; detailed computation is provided in the Appendix. 
+
+on task-specific heuristics, and adaptation remains externally attached instead of being intrinsically learned in one unified model. To overcome these limitations, we introduce MoECodec , a unified image compression framework that incorporates token-wise Mixture-of-Experts (MoE) into transformer-based LIC methods to support joint optimization across mul-tiple perceptual tasks. Rather than relying on externally attached task-specific modules, MoECodec replaces the standard FFN layers in transformer blocks with MoE layers, enabling dynamic token-level computation. Each input token is adaptively routed to specialized experts according to its content and task objective. In contrast to prior methods that apply uniform transformations to all tokens regardless of perceptual demands, MoECodec establishes a dynamic computation paradigm in which heterogeneous task objectives are accommo-dated intrinsically within a single unified model. However, naively incorporating MoE into LIC models leads to sub-optimal performance. Through empirical analysis, we identify two key challenges. First, many transformer-based LIC models employ point-wise tokenization (e.g., patch size of 1 × 1), where each token corresponds to an isolated spatial location. As a result, token-wise MoE routing decisions are made without spatial context, producing noisy and fragmented expert assignment patterns that manifest as salt-and-pepper artifacts in the routing maps. Second, FFN layers account for the majority of parameters in transformer-based LIC models. Directly replacing each FFN with E independent expert networks therefore introduces an almost 
+
+E× parameter overhead. Simply reducing the expert network size, however, de-grades the channel aggregation capability of the FFN, leading to noticeable RD performance drops. To address the spatially inconsistent routing, we adopt expert-choice (EC) routing [64], where each expert actively selects its preferred MoECodec 3
+
+tokens from the full sequence rather than receiving independent per-token as-signments. This design promotes balanced expert utilization and produces more spatially coherent routing decisions, as experts can leverage global context when selecting tokens. We further introduce a Spatial Total Variance Regularization that explicitly encourages piecewise-smooth expert assignments by penalizing high-frequency variations in the spatial expert affinity maps. To alleviate param-eter overhead, we propose Group Shuffle MLP (GShMLP), a lightweight expert architecture with two-layers grouped projections. To restore the cross-channel interaction lost due to grouping, we incorporate a parameter-free channel shuf-fle [61] between the two projections. By setting the group number G, the total parameter count of MoECodec can be reduced to the corresponding baseline with moderate performance degradation. To summarize, our contributions are as follows: 
+
+– We propose MoECodec , a unified LIC framework that integrates token-wise Mixture-of-Experts into transformer-based codecs, enabling a single model to support both reconstruction quality and machine downstream tasks. 
+
+– We address two key challenges when introducing MoE into LIC: spatially dis-continuous routing and parameter overhead. Specifically, we improve routing coherence through expert-choice routing with Spatial Total Variance Regu-larization, and reduce expert complexity through Group Shuffle MLP. 
+
+– Extensive experiments validate the effectiveness of MoECodec . On recon-struction, MoECodec improves BD-Rate by 11.54% (TIC), 8.12% (TinyLIC), and 6.42% (TCM). On downstream tasks with TIC as the base codec, MoE-Codec further improves BD-Rate by 7.74% (classification), 8.98% (detec-tion), and 9.72% (instance segmentation) against Full Finetune-TIC. 
+
+2 Related Works 
+
+2.1 Learned Image Compression 
+
+Learned Image Compression (LIC) was first introduced in [5], which adopts an autoencoder-based architecture to perform transform coding in the pixel space. Due to its superior rate-distortion (R-D) performance, LIC has shown great po-tential as a promising alternative to traditional image compression paradigms. A typical LIC codec consists of three key components: an analysis transform that maps the input image from the high-dimensional pixel space to a compact latent representation; an entropy model that encodes the latent variables into a com-pressed bitstream; and a synthesis transform that reconstructs the image from the latent space back to the pixel domain. The main research directions in LIC can be broadly categorized into two types. The first focuses on designing more efficient and expressive codec architectures, including more representative anal-ysis and synthesis transforms. These structures have evolved from early CNN-based [5, 6, 9, 13] designs to Transformer-based [32, 39, 42, 66] models, enabling better modeling capacity. In addition, recent efforts explore user-controllable compression, such as variable-rate coding [12,30,59] and distortion–perception [3] 4 J. Zhao et al. 
+
+trade-off control, to enhance flexibility in practical applications. The second line of research focuses on designing more powerful entropy models to better estimate the probability distribution of latent representations. This has evolved from fac-torized [5] and hyperprior-based [6] models to more advanced autoregressive en-tropy models [23, 27, 44, 45, 49]. However, most LIC methods are human-centric, as they are typically optimized using perceptual quality metrics such as MSE or MS-SSIM. While effective for human viewing, such objectives may not align with the needs of machine vision. In particular, pixel-wise distortion metrics tend to over-allocate bits to visually fine-grained details, while potentially neglecting semantically important structures that are critical for downstream vision tasks. 
+
+2.2 Multi-Task Image Compression 
+
+MT-IC has been extensively studied [7, 11, 16, 20, 34, 52, 58]. Early work focused on the trade-off between reconstruction fidelity and human perception [2,25,62], but the growing prevalence of vision models has shifted attention toward coding for machines [8,16,20,34]. A straightforward strategy is per-task customization— training a dedicated encoder–decoder for each task [7, 26, 38, 52, 56]—yet this in-flates parameters and training cost. To reduce duplication, multi-branch codecs introduce task-specific pathways at the decoder side, including separate/multi-path [52, 62], or conditional decoders [2, 25, 62] and scalable bottleneck ˆy [11, 22, 24, 55, 58] tailored to each task. These designs typically adopt a unified en-coder and entropy model and derive a shared bottleneck feature ˆy for all tasks (i.e., a single bitstream), but still activate a large number of parameters. A complementary line adopts task-specific PEFT [8, 33, 41], inserting lightweight adapters or prompt layers into a shared codec to enable per-task adaptation with minimal parameters. Despite these advances, prior MT-IC systems largely per-form image-wide, uniform computation and lack token-level task discrimination. 
+
+MoECodec addresses this gap by replacing dense FFNs with sparsely activated MoE layers and coupling routing with task prompts, thereby introducing token-level granularity for heterogeneous computation in MT-IC and enabling precise task specialization. 
+
+2.3 Mixture of Experts (MoE) 
+
+Mixture-of-Experts (MoE) [50] is a representative form of conditional compu-tation [1, 10, 35, 48], where computation can be dynamically allocated based on the input. It has been extensively utilized to scale model capacity while keeping the increase in computation close to that of the original dense baseline. MoE has been comprehensively demonstrated to be successful in large-scale language models [31, 37, 65], and vision-models [4, 19, 21, 28, 46, 47, 57, 60]. Most existing MoE architectures adopt a token-choice (TC) routing strategy, where each token independently selects top-k experts for processing [15,17,29]. However, TC often suffers from load imbalance: a small subset of experts is over-utilized while many others remain underused, so auxiliary load-balancing losses are typically required to regularize the routing [51, 53, 63]. To address this, [64] propose an alternative MoECodec 5
+
+Expert-Choice (EC) routing scheme, in which, instead of tokens choosing ex-perts, each expert selects its top-C tokens to process. EC inherently ensures balanced utilization of all experts, and enables each expert get access to all to-kens within an entire image. Inspired by these applications, we introduce MoE architecture into the domain of image coding, building a codec with token-level computational granularity, and demonstrating the effectiveness of this sparsely gated, adaptive compute allocation strategy in multi-task coding. 
+
+3 Method EC Router     
+
+> Expert 1Expert E
+> …
+> Conv (5,2)
+> MoE Block
+
+𝑦 "𝑦          
+
+> TConv (3,2)
+> MoE Block
+> TConv (3,2)
+> MoE Block
+> TConv (3,2)
+> MoE Block
+> TConv (5,2)
+> MoE Block
+> AE
+> Q
+> AD
+> Entropy Model…
+> Trainable Fixed
+
+𝑥 "𝑥                            
+
+> (𝑯
+> 𝟐 ,𝑾
+> 𝟐 ,𝒄 𝟏 )
+> (𝑯 ,𝑾 , C)
+> (𝑯
+> 𝟒 ,𝑾
+> 𝟒 ,𝒄 𝟐 )
+> (𝑯
+> 𝟖 ,𝑾
+> 𝟖 ,𝒄 𝟑 )
+> (𝑯
+> 𝟏𝟔 ,𝑾
+> 𝟏𝟔 ,𝒄 𝟒 )
+> 𝑔 $𝑔 %
+> Conv (5,2)
+> MoE Block
+> Conv (5,2)
+> MoE Block
+> Conv (5,2)
+> MoE Block
+> ⊕
+> 123123
+> Multi -Head Self -Attention
+> and rest of the block
+> …
+> Spatial Token Channel
+> W+
+> W,
+> Channel
+> Shuffle
+
+(a) MoECodec (b) MoE Layer (c) GShMLP 
+
+> ×
+> ×
+
+Fig. 2: (a) : Overall architecture of MoECodec . Starting from a pre-trained Transformer-based base codec, all transformer blocks in the encoder and decoder are replaced with MoE blocks while keeping other components fixed. (b) : Structure of a MoE layer in each MoE block. Input tokens are distributed to different experts through EC routing, enabling token-adaptive computation within the block. (c) : Each expert network is instantiated as the proposed Group Shuffle MLP. 
+
+3.1 Unified Compression via MoE Preliminaries. A typical LIC model [5] adopts an autoencoder architecture, composed of an analysis encoder ga and a synthesis decoder gs. The encoder 
+
+ga maps the input image x from the high-dimensional pixel space to a compact latent representation y = ga(x), which is subsequently quantized to ˆy. The decoder gs then reconstructs the image from the quantized latent, i.e., ˆx = gs(ˆ y).Directly storing ˆy would incur significant storage overhead. To address this, LIC models the distribution of ˆy via a learned entropy model p(ˆ y), enabling 6 J. Zhao et al. 
+
+efficient entropy coding. The compression objective balances rate and distortion, formulated as: 
+
+Lrd = Ex∼px [λrd · r(ˆ y) + D(x, ˆx)] (1) where r(ˆ y) denotes the estimated bitrate, D(x, ˆx) is a distortion metric and λrd 
+
+is a hyperparameter that controls the rate-distortion trade-off. 
+
+MoECodec . Standard LIC models apply computation uniformly across all image regions, regardless of local complexity. This static computation paradigm lacks fine-grained, dynamic adaptability and fails to provide sufficient capacity to support heterogeneous perceptual objectives within a single unified model. To this end, we propose MoECodec , which replaces the standard FFN layers with Mixture-of-Experts (MoE) layers within the transformer blocks of both encoder and decoder (see Figure 2), enabling dynamic, content-adaptive computation paths across the encoding and decoding process. Each MoE layer in MoECodec 
+
+consists of a learned routing network and E parallel expert networks. The routing network takes the intermediate feature X ∈ RB×S×d as input and determines the token-expert assignment, dispatching each token to one or more expert networks for processing. Each expert network is instantiated as a lightweight two-layer Group Shuffle MLP (GShMLP), which partitions the input channels into groups and applies a lightweight nonlinear transform within each group independently. An explicit channel shuffle is inserted between the two grouped linear layers to facilitate cross-group channel aggregation. 
+
+3.2 Routing Strategy Expert-Choice Routing. The routing strategy plays a critical role in MoE layers, as it specifies how tokens are assigned to experts and thus determines the model’s computational allocation pattern. A common baseline is token-choice (TC) routing, which dispatches each token independently to its top-k preferred experts. While TC routing is generally effective, its fully independent token-wise decision mechanism becomes less aligned with LIC models, which typically adopt extremely fine-grained tokenization (e.g., patch size 1×1 at the pixel/-point level). Under such dense spatial sampling, routing decisions are made at isolated spatial locations, often leading to noisy and spatially fragmented expert assignment maps. To alleviate this issue, we first adopt expert-choice (EC) rout-ing [64], in which each expert actively selects its top-k tokens from the entire token sequence. By reversing the routing perspective from token-wise local de-cisions to expert-wise global selection, EC routing enables experts to consider global token competition during assignment. This global view mitigates locally inconsistent routing decisions and naturally encourages more coherent expert utilization across spatial regions. Moreover, EC routing enforces a fixed token budget per expert by construction, ensuring balanced expert utilization without requiring additional auxiliary load-balancing losses. Formally, given an input token sequence X ∈ RB×S×d, the router computes a token–expert affinity matrix via a learned projection Wr ∈ Rd×E :
+
+A = softmax( XW r , dim= − 1) ∈ RB×S×E . (2) MoECodec 7
+
+For each batch b and expert e, we select the top-k tokens along the sequence dimension: 
+
+Ib,e = TopK( Ab, :,e , k ) , (3) where k = ⌊S · fc/E ⌋ and fc is the capacity factor. The gating tensor G ∈ RB×S×E retains affinity scores for selected tokens and zeros out the rest: 
+
+Gb,s,e =
+
+(
+
+Ab,s,e , if s ∈ Ib,e ,
+
+0, otherwise. (4) The output is computed by aggregating expert outputs: 
+
+Xout  
+
+> b,s
+
+=
+
+PEe=1 Gb,s,e Fe(Xb,s )
+
+PEe=1 Gb,s,e + ϵ , (5) where ϵ is a small constant for numerical stability. 
+
+Spatial Total Variance Regularization. Although EC routing promotes globally balanced expert utilization, routing decisions are still made at the pixel level and may exhibit local spatial inconsistencies. To further encourage spa-tial coherence in expert assignment, we introduce a spatial total variance (TV) regularization on the token–expert affinity maps. Specifically, we reshape the affinity tensor A ∈ RB×S×E into a 2D spatial rep-resentation ˜A ∈ RB×E×H×W , where S = H × W . We then apply an anisotropic total variation (TV) regularization over spatial dimensions: 
+
+Lr = 1
+
+BE 
+
+> B
+
+X
+
+> b=1
+> E
+
+X
+
+> e=1
+
+
+
+∥∇ h ˜Ab,e ∥1 + ∥∇ w ˜Ab,e ∥1
+
+
+
+, (6) where ∇h and ∇w denote differences along the height and width dimensions, respectively. This regularization encourages spatial smoothness in expert affinity maps, promoting coherent expert specialization across neighboring tokens. It is applied only during training and introduces no additional inference overhead. In summary, the overall training objective is: 
+
+Ltotal = Lrd + αLr, (7) where α controls the strength of spatial regularization. 
+
+3.3 Group Shuffle MLP 
+
+Each expert Fe in the MoE layer is instantiated as a Group Shuffle MLP (GShMLP), a lightweight expert architecture designed to reduce parameter com-plexity while preserving effective cross-channel interaction. Standard FFN layers consist of two linear projections with an expansion ratio of 4: 
+
+FFN( X) = σ(XW 1)W2, W1 ∈ Rd×4d, W2 ∈ R4d×d, (8) 8 J. Zhao et al. 
+
+In a naive MoE design, each of the E experts is an independent FFN, yielding 
+
+E · 8d2 parameters in total—scaling linearly with E. A straightforward remedy, i.e., reducing the expansion ratio, degrades the channel aggregation capacity of the FFN, leading to a noticeable RD performance drop (see Table 2). Instead, GShMLP reduces parameter complexity through grouped channel processing, while restoring cross-group information exchange via a parameter-free channel shuffle [61]. Formally, GShMLP retains the two-projection structure of a standard FFN, but constrains the projection matrices to block-diagonal form. Specifically, we decompose the channel dimension into G groups and define: 
+
+W1 = diag( W(1) 1 , . . . , W(G)1 ) ∈ Rd×4d, W(g)1 ∈ R dG × 4dG (9) 
+
+W2 = diag( W(1) 2 , . . . , W(G)2 ) ∈ R4d×d, W(g)2 ∈ R 4dG × dG (10) A parameter-free channel shuffle is inserted between the two projections to enable cross-group interaction: 
+
+GShMLP( X) = (Shuffle( σ(XW 1))) W2. (11) 
+
+4 Experiments 
+
+To comprehensively evaluate MoECodec , we conduct experiments from three perspectives. First, to assess its performance on conventional image reconstruc-tion, we compare MoECodec with three transformer-based LIC baselines: TIC [42], TinyLIC [43], and TCM [40]. Second, to evaluate its adaptability to machine-oriented tasks, we adopt TIC as the base codec and compare MoECodec against strong transfer-based baselines, including full fine-tuning, AdaptICMH-TIC [41], and TransTIC [8]. Finally, to better understand the design choices of MoE-Codec , we conduct extensive ablation studies analyzing the effects of routing strategy, GShMLP, the number of experts, and the placement of MoE layers. 
+
+4.1 Experimental Setup Training and Datasets. Unless otherwise specified, we use E=4 experts and 
+
+G=8 groups, with capacity factor fc=1 .0 (Eq. 2) and spatial regularization weight α=1 × 10 −3 (Eq. 7). This default setting is selected to match the pa-rameter budget of baseline TIC. For conventional reconstruction, we train from scratch on Flickr2W under both MSE and MS-SSIM objectives for 3M iterations. We use Adam with initial learning rate 1 × 10 −4, decayed to 1 × 10 −5 in the final 25% iterations. For machine-oriented tasks, we use TIC initialized by pre-trained weights from [8] and train only router/expert parameters, while freezing the remaining codec parameters. For image classification, we train on ImageNet-1K [14] for 8 epochs with batch size 16. For object detection and instance seg-mentation, we train on COCO 2017 train [36] for 40 epochs with batch size 8. To MoECodec 9
+
+construct RD curves, we use λrd ∈ { 0.0005 , 0.001 , 0.002 , 0.005 , 0.007 , 0.01 }. For transfer baselines (TransTIC and AdaptICMH), we follow their original training protocols and report results under the same evaluation pipeline as ours. 
+
+Evaluation. For reconstruction quality, we report PSNR and MS-SSIM. Evalu-ations are conducted on the Kodak and CLIC [54] datasets. For classification, we evaluate on the ImageNet validation set with resize + center crop to 256 × 256 .We use pretrained ResNet50 from torchvision as the off-the-shelf evaluator and report top-1 accuracy. For object detection and instance segmentation, we eval-uate on the COCO 2017 validation set. We use pre-trained Faster R-CNN and Mask R-CNN from Detectron2 as evaluators, respectively. All test images are resized such that the shorter side is 800 pixels. We report mAP at IoU=0.5. 
+
+4.2 Results of multi-task performance Multi-task Performance. We evaluate MoECodec from both reconstruc-tion and machine-task perspectives. For reconstruction, we apply MoECodec 
+
+to three transformer LIC backbones (TIC [42], TinyLIC [43], and TCM [40]) and report BD-Rate on Kodak with VTM-17.1 as anchor. For machine-oriented eval-uation, we use TIC as the base codec and compare against Full Finetune-TIC, TransTIC [8], and AdaptICMH-TIC [41] on classification, object detection, and instance segmentation. Unless otherwise stated, we use MoECodec with E=4 
+
+and G=8 ; this E/G setting is chosen to match the parameter budget of baseline TIC. Table 1 shows that, on reconstruction (PSNR, Kodak), applying MoECodec 
+
+to TIC, TinyLIC, and TCM yields BD-Rate improvements of 11.54%, 8.12%, and 6.42%, respectively, while reducing total parameters by 4.5%, 11.4%, and 0.44%. For downstream tasks (anchor: Full finetune-TIC), MoECodec achieves BD-Rate gains of 7.74% on classification, 8.98% on detection, and 9.72% on instance segmentation. At the same time, activated parameters are reduced from 7.51M to 6.25M, showing improved utility-efficiency trade-off (See Appendix for the cal-culation method of activated parameters.) These trends are consistent with the curve-level comparison in Figure 3. The results demonstrate that MoECodec 
+
+provides a consistent improvement over strong baselines in both reconstruction quality and machine-task utility under constrained model cost. Next, we perform controlled ablations to isolate the contribution of each design choice. 
+
+4.3 Ablation Study 
+
+We perform controlled ablations on TIC and report Kodak PSNR BD-Rate (%) against VTM-17.1. Unless otherwise stated, all settings follow the default configuration and are trained with the same protocol. Results are summarized in Table 2. A more detailed results are in Appendix. 
+
+Routing strategy. We compare three routing variants: token-choice (TC) rout-ing, expert-choice (EC) routing, and EC with spatial regularization. For TC routing, we follow [18] by using top-1 routing with a capacity factor of 1 and an auxiliary load-balancing loss; we set its weight to 5×10 −4 for all training bitrates. 10 J. Zhao et al. 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9                                      
+
+> Bit-rate (bpp)
+> 30
+> 33
+> 36
+> PSNR (dB) ↑
+> Kodak(PSNR)
+> 0.2 0.3 0.4 0.5
+> 32.0
+> 32.8
+> 33.6
+> TIC
+> TinyLIC
+> TCM
+> TIC†
+> TinyLIC†
+> TCM†
+> VTM17.1
+> CRDR(β=0.0)
+> CRDR(β=3.84)
+> MRIC(β=0.0)
+> MRIC(β=2.56)
+> 0.1 0.2 0.3 0.4 0.5 0.6 0.7
+> Bit-rate (bpp)
+> 30
+> 33
+> 36
+> 39
+> PSNR (dB) ↑
+> CLIC(PSNR)
+> 0.2 0.3 0.4 0.4
+> 36.0
+> 36.8
+> 37.6
+> TIC
+> TinyLIC
+> TCM
+> TIC†
+> TinyLIC†
+> TCM†
+> VTM17.1
+> CRDR(β=0.0)
+> CRDR(β=3.84)
+> MRIC(β=0.0)
+> MRIC(β=2.56)
+> 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8
+> Bit-rate (bpp)
+> 12
+> 15
+> 18
+> 21
+> MS-SSIM (dB) ↑
+> Kodak(MS-SSIM)
+> 0.3 0.4 0.5
+> 18
+> 19
+> 20
+> 21
+> TinyLIC
+> TCM
+> ELIC
+> Cheng2020-anchor
+> TinyLIC†
+> TCM†
+> VTM17.1
+> 0.1 0.2 0.3 0.4
+> Bit-rate (bpp)
+> 54
+> 60
+> 66
+> 72
+> Top-1 Acc. (%) ↑
+> ImageNet-1K(Cls.)
+> TIC
+> TIC†
+> Full finetune-TIC
+> TransTIC
+> AdaptICMH-TIC
+> Uncompressed
+> 0.1 0.2 0.3
+> 32
+> 34
+> 36
+> 38
+> 40
+> mAP (%) ↑
+> COCO-2017(Det.)
+> TIC
+> TIC†
+> Full finetune-TIC
+> TransTIC
+> AdaptICMH-TIC
+> Uncompressed
+> 0.1 0.2 0.3 0.4
+> Bit-rate (bpp)
+> 30
+> 32
+> 34
+> 36
+> mAP (%) ↑
+> COCO-2017(Seg.)
+> TIC
+> TIC†
+> Full finetune-TIC
+> TransTIC
+> AdaptICMH-TIC
+> Uncompressed
+> Bit-rate (bpp)
+
+Fig. 3: Multi-task performance. Models applied using MoECodec is marked by †.
+
+For EC routing, we remove the spatial regularization term in Equation (7). The resulting routing maps are visualized in Figure 4. TC yields the noisiest and most fragmented assignments, while EC produces noticeably more spatially coherent maps; adding spatial regularization further improves the continuity of expert assignments. These qualitative trends are consistent with quantitative results in Table 2: replacing TC with EC improves BD-Rate from 19.57 to 15.90, and adding spatial regularization further reduces it to 15.44. 
+
+Expert architecture. Using dense FFN experts (ratio=4) achieves the best BD-Rate (14.82), but increases parameters to 12.27M. Reducing FFN expansion (ratio=1) lowers parameters to 7.53M but degrades BD-Rate to 19.07. GShMLP obtains a better efficiency-performance trade-off: 15.44 BD-Rate at 7.17M pa-rameters, substantially better than reduced FFN under a similar budget. 
+
+Expert number. Intuitively, using more experts increases the diversity of avail-able coding modes, potentially expanding the search space of content-adaptive transforms. We therefore investigate the effect of the expert number E on MoE-Codec . To keep the parameter count comparable to the baseline while scaling 
+
+E, we set the grouping factor in GShMLP to G = 2 E. As shown in Table 2, increasing E consistently improves rate–distortion performance: BD-Rate de-creases from 16.02 to 15.44 and further to 14.59. 
+
+MoE placement. We ablate where to insert MoE layers in MoECodec by placing them in the encoder only, the decoder only, or both. Under task-wise training, introducing MoE in either stage already enables task-dependent hetero-geneous computation and yields around a 10% BD-Rate gain over the baseline. But placing MoE in both the encoder and decoder provides the most flexibility and achieves the best overall performance. MoECodec 11 
+
+Table 1: Multi-task performance comparison. BD-Rate (%) is computed against VTM-17.1 and Full Finetune, respectively. † denotes MoECodec applied to the correspond-ing backbone. Red and Blue values denote positive and negative changes relative to the corresponding backbone baseline. GMACs are calculated on 768 × 512 input images. 
+
+Method GMACs #Params #Train.Params #Act.Params BD-Rate Enc. Dec. (M) (M) (M) (%) 
+
+PSNR (Kodak) 
+
+TIC [42] 28.4 28.2 7.51 7.51 7.51 26.98 TIC † 19.8 19.7 7.17(-4.5%) 7.17 6.25 15.44(-11.54) TinyLIC [43] 45.0 44.8 28.34 28.34 28.34 -3.42 TinyLIC † 31.0 30.7 25.11(-11.4%) 25.11 24.54 -11.54 (-8.12) TCM [39] 57.4 75.3 45.2 45.2 45.18 -5.45 TCM † 53.6 71.5 45.0(-0.44%) 45.0 44.93 -11.87(-6.42) 
+
+MS-SSIM (Kodak) 
+
+TinyLIC [43] 45.0 44.8 28.34 28.34 28.34 -48.60 TinyLIC † 31.0 30.7 25.11(-11.4%) 25.11 24.54 -52.58(-3.98) TCM [39] 57.4 75.3 45.2 45.2 44.93 -50.82 TCM † 53.6 71.5 45.0(-0.44%) 45.0 44.93 -55.90(-5.08) 
+
+Classification (ImageNet-1K-val) 
+
+Full finetune TIC 28.4 28.2 7.51 7.51 7.51 –TransTIC [8] 65.6 39.9 9.12(+21.4%) 1.61 9.12 35.77 AdaptICMH [41] 31.2 31.1 7.80(+3.8%) 0.29 7.80 5.01 AdaptICMH-Large [41] 65.0 75.9 8.95(+19.2%) 1.44 8.95 4.7 TIC † 19.8 19.7 7.17(-4.5%) 1.24 6.25 -7.74 
+
+Object Detection (COCO2017-val) 
+
+Full finetune TIC 28.4 28.2 7.51 7.51 7.51 –TransTIC [8] 65.6 39.9 9.12(+21.4%) 1.61 9.12 26.09 AdaptICMH [41] 31.2 31.1 7.80(+3.8%) 0.29 7.80 15.98 AdaptICMH-Large [41] 65.0 75.9 8.95(+19.2%) 1.44 8.95 14.38 TIC † 19.8 19.7 7.17(-4.5%) 1.24 6.25 -8.98 
+
+Instance Segmentation (COCO2017-val) 
+
+Full finetune TIC 28.4 28.2 7.51 7.51 7.51 –TransTIC [8] 65.6 39.9 9.12(+21.4%) 1.61 9.12 12.83 AdaptICMH [41] 31.2 31.1 7.80(+3.8%) 0.29 7.80 6.34 AdaptICMH-Large [41] 65.0 75.9 8.95(+19.2%) 1.44 8.95 5.71 TIC † 19.8 19.7 7.17(-4.5%) 1.24 6.25 -9.72 
+
+4.4 Qualitative Results Expert Specialization. We visualize expert specialization by plotting per-expert token-selection maps from the inter-slice features at the first encoder stage. For each expert, selected tokens are highlighted, and three routing strate-gies are compared: token-choice (TC), expert-choice (EC), and EC with Spatial Total Variance regularization. As shown in Figure 4, TC produces noisy and spa-tially fragmented expert-token maps, and also shows expert imbalance (e.g., on 
+
+Kodak14 , Expert 3 is over-activated and receives more tokens than the other ex-perts). Switching to EC markedly improves spatial coherence and yields clearer functional specialization. For instance, on Kodak14 , Experts 1 and 4 mainly fo-cus on the green parrot, while Experts 2 and 3 focus more on the red parrot. A mild discontinuity is still observable under EC, and is further reduced by adding Spatial Total Variance regularization (third row). Consistently, reconstruction quality improves from TC to EC and further to EC+Spatial TV. 12 J. Zhao et al.                                                                   
+
+> Table 2: Ablation study on MoECodec (Kodak, PSNR BD-Rate % vs. VTM17.1). The default MoECodec configuration is marked with ⋆.Group Variant Routing Expert Params (M) BD-Rate ↓
+> Routing TC routing TC GShMLP 7.17 19.57 EC routing EC GShMLP 7.17 15.90 EC + spatial reg ⋆EC GShMLP 7.17 15.44
+> Expert FFN (ratio=4) EC FFN 12.27 14.82
+> FFN (ratio=1) EC FFN ′7.53 19.07 GShMLP ⋆EC GShMLP 7.17 15.44
+> E, G E= 2 , G = 4 EC GShMLP 7.14 16.02
+> E= 4 , G = 8 ⋆EC GShMLP 7.17 15.44
+> E= 8 , G = 16 EC GShMLP 7.23 14.59
+> Placement Encoder only EC GShMLP 7.34 17.62 Decoder only EC GShMLP 7.34 17.54 Enc.+Dec. ⋆EC GShMLP 7.17 15.44
+
+Compute Allocation Visualization. To analyze task-dependent compute be-havior, we compare token-expert selection patterns for the same image under dif-ferent task objectives. Specifically, we visualize heatmaps of how many experts select each token. As shown in Figure 5, MoECodec exhibits clear task-adaptive allocation. MSE vs. Classification: When optimized for classification, MoE-Codec allocates more compute to semantically relevant targets and mid/low-frequency structures. For large objects (e.g., the 2nd and 3rd examples), higher allocation concentrates on object texture regions; for small objects (e.g., the 1st and 4th examples), allocation focuses more on object contours and edges. In contrast, under MSE optimization, MoECodec tends to allocate more compute to strong high-frequency variations in the scene, such as cluttered grass/water plants and backgrounds with sharp intensity changes. Object Detection vs. Instance Segmentation: These two tasks show broadly similar allocation pat-terns, but with consistent differences. For object detection, MoECodec places relatively more compute on structural cues (reflected as stronger mid/high-frequency emphasis in FFT). For instance segmentation, MoECodec further increases attention to fine high-frequency details, such as sofa boundaries, so-fa/wall/frame textures in the first example, and window edges and rail-like line structures in the second example. 
+
+4.5 Efficiency Comparison 
+
+We evaluate inference efficiency on the Kodak dataset using a single RTX 4090 with batch size 1. We report total parameter count, activated parameter count, and end-to-end latency (encoder + decoder). MoECodec is not only more parameter-efficient, but also achieves the best practical coding latency, even outperforming the original TIC by 8.4%. MoECodec 13 Expert 1 Expert 2 Expert 3 Expert 4 Recon. 
+
+> Original
+> TC
+> EC
+> Ours
+> Bpp0.532/PSNR28.76
+> Bpp0.38/PSNR29.3
+> Bpp0.372/PSNR29.62
+
+Expert 1 Expert 2 Expert 3 Expert 4 Recon. 
+
+> Original
+> TC
+> EC
+> Ours
+> Bpp0.283/PSNR33.04
+> Bpp0.140/PSNR34.04
+> Bpp0.35/PSNR34.5
+
+Fig. 4: Expert specialization comparison under TC, EC, and EC+Spatial Total Variance regularization. Images drown from Kodak14 , Kodak23 . Routing results at en-coder stage ga1. EC-based routing yields more balanced and spatially coherent expert allocation than TC, and Spatial regularization further refines continuity. 
+
+Table 3: Efficiency comparison on kodak (TIC [42] as backbone.). Method Total Params (M) Activated Params (M) Latency (ms) TIC [42] 7.51 7.51 155 TransTIC [8] 9.12 9.12 345 AdapICMh [41] 7.80 7.80 163 
+
+MoECodec 7.17 6.25 142 
+
+5 Conclusion 
+
+we present MoECodec , a unified multi-task image coding architecture, featured by it’s sparsely activated and dynamic compute allocation character. MoE-14 J. Zhao et al. Bpp0.59/PSNR21.69 Bpp0.583/PSNR21.75       
+
+> Bpp0.206/PSNR32.36
+> Bpp0.417/PSNR32.36
+> Bpp0.54/PSNR28.29
+> Bpp0.1241/PSNR34.31
+> Bpp0.3780/PSNR25.79
+> Bpp0.431/PSNR27.38
+> MSE vs. Classificatio nBpp0.234/PSNR27.2
+> Bpp0.172/PSNR26.54
+> Bpp0.204/PSNR27.07
+> Bpp0.190/PSNR26.45
+> Object Detection vs. Instance Segmentation Encoder Stage 1 Encoder Stage 3 Decoder Stage 4 Decoder Stage 6
+
+Fig. 5: Expert-token allocation across tasks. Top: four samples from ImageNet validation coded for MSE (upper row) vs. classification (lower row); columns show re-constructed image, FFT spectrum, and the stage-ga1 heatmap. Bottom: two samples from COCO2017 validation coded for object detection (upper row) vs. instance segmen-tation (lower row); columns show reconstructed image, FFT spectrum, and stage-wise heatmaps. Brighter regions indicate higher compute allocation (more experts selected). 
+
+Codec provides a novel way for end-to-end multi-task codec training, against previous static and task-specific custom training paradigm. Extensive evaluation and ablation demonstrate the effectiveness of our proposed method. 
+
+References 
+
+1. Abati, D., Tomczak, J., Blankevoort, T., Calderara, S., Cucchiara, R., Bejnordi, B.E.: Conditional channel gated networks for task-aware continual learning. In: MoECodec 15 Proceedings of the IEEE/CVF conference on computer vision and pattern recog-nition. pp. 3931–3940 (2020) 4 2. Agustsson, E., Minnen, D., Toderici, G., Mentzer, F.: Multi-realism image compres-sion with a conditional generator. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp. 22324–22333 (2023) 1, 4 3. Agustsson, E., Minnen, D., Toderici, G., Mentzer, F.: Multi-realism image com-pression with a conditional generator (2023), https://arxiv.org/abs/2212.13824 
+
+34. Balaji, Y., Nah, S., Huang, X., Vahdat, A., Song, J., Zhang, Q., Kreis, K., Ait-tala, M., Aila, T., Laine, S., et al.: ediff-i: Text-to-image diffusion models with an ensemble of expert denoisers. arXiv preprint arXiv:2211.01324 (2022) 4 5. Ballé, J., Laparra, V., Simoncelli, E.P.: End-to-end optimized image compression (2017), https://arxiv.org/abs/1611.01704 3, 4, 5 6. Ballé, J., Minnen, D., Singh, S., Hwang, S.J., Johnston, N.: Variational image compression with a scale hyperprior (2018), https://arxiv.org/abs/1802.01436 
+
+3, 4 7. Chamain, L.D., Racapé, F., Bégaint, J., Pushparaja, A., Feltman, S.: End-to-end optimized image compression for machines, a study. In: 2021 Data Compression Conference (DCC). pp. 163–172. IEEE (2021) 1, 4 8. Chen, Y.H., Weng, Y.C., Kao, C.H., Chien, C., Chiu, W.C., Peng, W.H.: Transtic: Transferring transformer-based image compression from human perception to ma-chine perception. In: Proceedings of the IEEE/CVF International Conference on Computer Vision. pp. 23297–23307 (2023) 1, 4, 8, 9, 11, 13 9. Cheng, Z., Sun, H., Takeuchi, M., Katto, J.: Learned image compression with discretized gaussian mixture likelihoods and attention modules (2020), https: //arxiv.org/abs/2001.01568 310. Cho, K., Bengio, Y.: Exponentially increasing the capacity-to-computation ratio for conditional computation in deep learning. arXiv preprint arXiv:1406.7362 (2014) 411. Choi, H., Bajić, I.V.: Scalable image coding for humans and machines. IEEE Trans-actions on Image Processing 31 , 2739–2754 (2022) 4 12. Choi, Y., El-Khamy, M., Lee, J.: Variable rate deep image compression with a con-ditional autoencoder. In: Proceedings of the IEEE/CVF international conference on computer vision. pp. 3146–3154 (2019) 3 13. Cui, Z., Wang, J., Gao, S., Bai, B., Guo, T., Feng, Y.: Asymmetric gained deep image compression with continuous rate adaptation (2022), https://arxiv.org/ abs/2003.02012 314. Deng, J., Dong, W., Socher, R., Li, L.J., Li, K., Fei-Fei, L.: Imagenet: A large-scale hierarchical image database. In: 2009 IEEE conference on computer vision and pattern recognition. pp. 248–255. Ieee (2009) 8 15. Du, N., Huang, Y., Dai, A.M., Tong, S., Lepikhin, D., Xu, Y., Krikun, M., Zhou, Y., Yu, A.W., Firat, O., et al.: Glam: Efficient scaling of language models with mixture-of-experts. In: International conference on machine learning. pp. 5547– 5569. PMLR (2022) 4 16. Duan, Z., Ma, Z., Zhu, F.: Unified architecture adaptation for compressed domain semantic inference. IEEE Transactions on Circuits and Systems for Video Tech-nology 33 (8), 4108–4121 (2023) 1, 4 17. Fedus, W., Zoph, B., Shazeer, N.: Switch transformers: Scaling to trillion parameter models with simple and efficient sparsity. Journal of Machine Learning Research 
+
+23 (120), 1–39 (2022) 4 16 J. Zhao et al. 18. Fedus, W., Zoph, B., Shazeer, N.: Switch transformers: Scaling to trillion parameter models with simple and efficient sparsity (2022), https://arxiv.org/abs/2101.0 3961 919. Fei, Z., Fan, M., Yu, C., Li, D., Huang, J.: Scaling diffusion transformers to 16 billion parameters. arXiv preprint arXiv:2407.11633 (2024) 4 20. Feng, R., Jin, X., Guo, Z., Feng, R., Gao, Y., He, T., Zhang, Z., Sun, S., Chen, Z.: Image coding for machines with omnipotent feature learning. In: European Conference on Computer Vision. pp. 510–528. Springer (2022) 1, 4 21. Feng, Z., Zhang, Z., Yu, X., Fang, Y., Li, L., Chen, X., Lu, Y., Liu, J., Yin, W., Feng, S., et al.: Ernie-vilg 2.0: Improving text-to-image diffusion model with knowledge-enhanced mixture-of-denoising-experts. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp. 10135– 10145 (2023) 4 22. Harell, A., De Andrade, A., Bajić, I.V.: Rate-distortion in image coding for ma-chines. In: 2022 Picture Coding Symposium (PCS). pp. 199–203. IEEE (2022) 4 23. He, D., Zheng, Y., Sun, B., Wang, Y., Qin, H.: Checkerboard context model for efficient learned image compression (2021), https://arxiv.org/abs/2103.15306 
+
+424. Hu, Y., Yang, S., Yang, W., Duan, L.Y., Liu, J.: Towards coding for human and machine vision: A scalable image coding approach. arXiv preprint arXiv:2001.02915 (2020) 4 25. Iwai, S., Miyazaki, T., Omachi, S.: Controlling rate, distortion, and realism: To-wards a single comprehensive neural image compression model. In: Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision. pp. 2900–2909 (2024) 1, 4 26. Le, N., Zhang, H., Cricri, F., Ghaznavi-Youvalari, R., Rahtu, E.: Image coding for machines: an end-to-end learned approach. In: ICASSP 2021-2021 IEEE In-ternational Conference on Acoustics, Speech and Signal Processing (ICASSP). pp. 1590–1594. IEEE (2021) 1, 4 27. Lee, J., Cho, S., Beack, S.K.: Context-adaptive entropy model for end-to-end op-timized image compression (2019), https://arxiv.org/abs/1809.10452 428. Lee, Y., Kim, J., Go, H., Jeong, M., Oh, S., Choi, S.: Multi-architecture multi-expert diffusion models. In: Proceedings of the AAAI Conference on Artificial Intelligence. vol. 38, pp. 13427–13436 (2024) 4 29. Lepikhin, D., Lee, H., Xu, Y., Chen, D., Firat, O., Huang, Y., Krikun, M., Shazeer, N., Chen, Z.: Gshard: Scaling giant models with conditional computation and automatic sharding. arXiv preprint arXiv:2006.16668 (2020) 4 30. Li, A., Li, F., Liu, Y., Cong, R., Zhao, Y., Bai, H.: Once-for-all: Controllable generative image compression with dynamic granularity adaption (2024), https: //arxiv.org/abs/2406.00758 331. Li, A., Gong, B., Yang, B., Shan, B., Liu, C., Zhu, C., Zhang, C., Guo, C., Chen, D., Li, D., et al.: Minimax-01: Scaling foundation models with lightning attention. arXiv preprint arXiv:2501.08313 (2025) 4 32. Li, H., Li, S., Dai, W., Li, C., Zou, J., Xiong, H.: Frequency-aware transformer for learned image compression (2024), https://arxiv.org/abs/2310.16387 333. Li, H., Li, S., Ding, S., Dai, W., Cao, M., Li, C., Zou, J., Xiong, H.: Image compres-sion for machine and human vision with spatial-frequency adaptation. In: European Conference on Computer Vision. pp. 382–399. Springer (2024) 1, 4 34. Li, H., Zhang, X.: Human–machine collaborative image compression method based on implicit neural representations. IEEE Journal on Emerging and Selected Topics in Circuits and Systems 14 (2), 198–208 (2024) 4 MoECodec 17 35. Lin, M., Fu, J., Bengio, Y.: Conditional computation for continual learning. arXiv preprint arXiv:1906.06635 (2019) 4 36. Lin, T.Y., Maire, M., Belongie, S., Hays, J., Perona, P., Ramanan, D., Dollár, P., Zitnick, C.L.: Microsoft coco: Common objects in context. In: European conference on computer vision. pp. 740–755. Springer (2014) 8 37. Liu, A., Feng, B., Xue, B., Wang, B., Wu, B., Lu, C., Zhao, C., Deng, C., Zhang, C., Ruan, C., et al.: Deepseek-v3 technical report. arXiv preprint arXiv:2412.19437 (2024) 4 38. Liu, J., Sun, H., Katto, J.: Improving multiple machine vision tasks in the com-pressed domain. In: 2022 26th International Conference on Pattern Recognition (ICPR). pp. 331–337. IEEE (2022) 1, 4 39. Liu, J., Sun, H., Katto, J.: Learned image compression with mixed transformer-cnn architectures (2023), https://arxiv.org/abs/2303.14978 3, 11 40. Liu, J., Sun, H., Katto, J.: Learned image compression with mixed transformer-cnn architectures. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 14388–14397 (2023) 8, 9 41. Liu, L., Hu, Z., Chen, Z., Xu, D.: Icmh-net: Neural image compression towards both machine vision and human vision. In: Proceedings of the 31st ACM International Conference on Multimedia. pp. 8047–8056 (2023) 1, 4, 8, 9, 11, 13 42. Lu, M., Guo, P., Shi, H., Cao, C., Ma, Z.: Transformer-based image compression (2021), https://arxiv.org/abs/2111.06707 3, 8, 9, 11, 13 43. Ma, G., Chai, Y., Jiang, T., Lu, M., Chen, T.: Tinylic-high efficiency lossy image compression method (2024), https://arxiv.org/abs/2402.11164 8, 9, 11 44. Minnen, D., Ballé, J., Toderici, G.: Joint autoregressive and hierarchical priors for learned image compression (2018), https://arxiv.org/abs/1809.02736 445. Minnen, D., Singh, S.: Channel-wise autoregressive entropy models for learned image compression (2020), https://arxiv.org/abs/2007.08739 446. Park, B., Go, H., Kim, J.Y., Woo, S., Ham, S., Kim, C.: Switch diffusion trans-former: Synergizing denoising tasks with sparse mixture-of-experts. In: European Conference on Computer Vision. pp. 461–477. Springer (2024) 4 47. Park, B., Woo, S., Go, H., Kim, J.Y., Kim, C.: Denoising task routing for diffusion models. arXiv preprint arXiv:2310.07138 (2023) 4 48. Puigcerver, J., Riquelme, C., Mustafa, B., Renggli, C., Pinto, A.S., Gelly, S., Key-sers, D., Houlsby, N.: Scalable transfer learning with expert models. arXiv preprint arXiv:2009.13239 (2020) 4 49. Qian, Y., Lin, M., Sun, X., Tan, Z., Jin, R.: Entroformer: A transformer-based entropy model for learned image compression (2022), https://arxiv.org/abs/22 02.05492 450. Shazeer, N., Mirhoseini, A., Maziarz, K., Davis, A., Le, Q., Hinton, G., Dean, J.: Outrageously large neural networks: The sparsely-gated mixture-of-experts layer. arXiv preprint arXiv:1701.06538 (2017) 4 51. Shi, M., Yuan, Z., Yang, H., Wang, X., Zheng, M., Tao, X., Zhao, W., Zheng, W., Zhou, J., Lu, J., et al.: Diffmoe: Dynamic token selection for scalable diffusion transformers. arXiv preprint arXiv:2503.14487 (2025) 4 52. Song, M., Choi, J., Han, B.: Variable-rate deep image compression through spatially-adaptive feature transform. In: Proceedings of the IEEE/CVF interna-tional conference on computer vision. pp. 2380–2389 (2021) 1, 4 53. Sun, H., Lei, T., Zhang, B., Li, Y., Huang, H., Pang, R., Dai, B., Du, N.: Ec-dit: Scaling diffusion transformers with adaptive expert-choice routing. arXiv preprint arXiv:2410.02098 (2024) 4 18 J. Zhao et al. 54. Toderici, G., Shi, W., Timofte, R., Theis, L., Balle, J., Agustsson, E., Johnston, N., Mentzer, F.: Workshop and challenge on learned image compression (clic2020). In: CVPR (2020) 9 55. Wang, S., Wang, S., Yang, W., Zhang, X., Wang, S., Ma, S., Gao, W.: Towards analysis-friendly face representation with scalable feature and texture compression. IEEE Transactions on Multimedia 24 , 3169–3181 (2021) 4 56. Wang, S., Wang, Z., Wang, S., Ye, Y.: Deep image compression toward machine vision: A unified optimization framework. IEEE Transactions on Circuits and Sys-tems for Video Technology 33 (6), 2979–2989 (2022) 1, 4 57. Xue, Z., Song, G., Guo, Q., Liu, B., Zong, Z., Liu, Y., Luo, P.: Raphael: Text-to-image generation via large mixture of diffusion paths. Advances in Neural Infor-mation Processing Systems 36 , 41693–41706 (2023) 4 58. Yan, N., Gao, C., Liu, D., Li, H., Li, L., Wu, F.: Sssic: Semantics-to-signal scalable image coding with learned structural representations. IEEE Transactions on Image Processing 30 , 8939–8954 (2021) 4 59. Yang, F., Herranz, L., Cheng, Y., Mozerov, M.G.: Slimmable compressive autoen-coders for practical neural image compression (2022), https://arxiv.org/abs/21 03.15726 360. Yu, J., Xu, Y., Koh, J.Y., Luong, T., Baid, G., Wang, Z., Vasudevan, V., Ku, A., Yang, Y., Ayan, B.K., et al.: Scaling autoregressive models for content-rich text-to-image generation. arXiv preprint arXiv:2206.10789 2(3), 5 (2022) 4 61. Zhang, X., Zhou, X., Lin, M., Sun, J.: Shufflenet: An extremely efficient convolu-tional neural network for mobile devices. In: Proceedings of the IEEE conference on computer vision and pattern recognition. pp. 6848–6856 (2018) 3, 8 62. Zhang, X., Guo, P., Lu, M., Ma, Z.: All-in-one image coding for joint human-machine vision with multi-path aggregation. Advances in Neural Information Pro-cessing Systems 37 , 71465–71503 (2024) 1, 4 63. Zhenxing, M., Xu, D.: Switch-nerf: Learning scene decomposition with mixture of experts for large-scale neural radiance fields. In: The Eleventh International Conference on Learning Representations (2022) 4 64. Zhou, Y., Lei, T., Liu, H., Du, N., Huang, Y., Zhao, V., Dai, A.M., Le, Q.V., Laudon, J., et al.: Mixture-of-experts with expert choice routing. Advances in Neu-ral Information Processing Systems 35 , 7103–7114 (2022) 2, 4, 6 65. Zoph, B., Bello, I., Kumar, S., Du, N., Huang, Y., Dean, J., Shazeer, N., Fedus, W.: St-moe: Designing stable and transferable sparse expert models. arxiv 2022. arXiv preprint arXiv:2202.08906 4 66. Zou, R., Song, C., Zhang, Z.: The devil is in the details: Window-based attention for image compression (2022), https://arxiv.org/abs/2203.08450 3
