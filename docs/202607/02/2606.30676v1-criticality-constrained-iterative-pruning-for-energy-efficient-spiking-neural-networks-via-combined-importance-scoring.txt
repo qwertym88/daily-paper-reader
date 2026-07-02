@@ -1,0 +1,765 @@
+Title: Criticality-Constrained Iterative Pruning for Energy-Efficient Spiking Neural Networks via Combined Importance Scoring
+
+URL Source: https://arxiv.org/pdf/2606.30676v1
+
+Published Time: Wed, 01 Jul 2026 00:01:09 GMT
+
+Number of Pages: 30
+
+Markdown Content:
+# Criticality-Constrained Iterative Pruning for Energy-Efficient Spiking Neural Networks via Combined Importance Scoring 
+
+Muhammad Hamza a, ∗
+
+> aIndian Institute of Technology Kharagpur, West Bengal 721302, India
+
+Abstract 
+
+Deploying spiking neural networks (SNNs) on neuromorphic hardware de-mands aggressive synaptic pruning while preserving temporal computation integrity. Existing strategies either neglect neuronal criticality or rely on convex relaxations of the inherently combinatorial pruning problem whose fractional masks, upon binarisation, destroy accuracy at moderate-to-high sparsity. We present Criticality-Constrained Quadratic Pruning (CQP), a native PyTorch pipeline that fuses weight magnitude with surrogate-gradient criticality into an analytically exact importance metric, eliminating the round-ing artefacts endemic to solver-based approaches. We formally characterise a 
+
+continuous-relaxation trap wherein OSQP-solver fractional masks overshoot the intended sparsity by up to 12 percentage points (pp), precipitating a 44 pp accuracy collapse. We identify and remediate a zombie-weight failure mode in which Adam’s first-moment tensors resurrect pruned synapses, violating the binary sparsity guarantee. An iterative schedule — prune, fine-tune with gra-dient masking, recompute criticality, repeat — eliminates gradient staleness at high sparsity. A KL-divergence temporal analysis identifies a redundant simulation timestep, enabling a free 10% theoretical energy reduction without weight modification. On MNIST ( N = 60 ,000 ), CQP yields 95.6% accuracy at 90% sparsity versus 93.4% for magnitude pruning ( +2.2 pp). A criticality-threshold sweep reveals an empirical criticality cliff — accuracy falls from 87.0% to 14.4% as τ crosses τ ∗ = 0 .9 — constituting a quantitative SNN-level analogue of the Critical Brain Hypothesis. Combined weight sparsification   
+
+> ∗Corresponding author.
+> Email address: muhammadhamza@kgpian.iitkgp.ac.in (Muhammad Hamza)
+> arXiv:2606.30676v1 [cs.NE] 26 Jun 2026
+
+and temporal truncation yield a compound 73% reduction in per-inference energy at 70% sparsity, confirming the practical value of the proposed pipeline for neuromorphic deployment. 
+
+Keywords: SNN, Pruning, Criticality, Neuromorphic, Sparsity, Surrogate-gradients, Energy-efficiency 
+
+1. Introduction 
+
+Spiking neural networks (SNNs) have attracted sustained interest as a biologically plausible alternative to conventional artificial neural networks (ANNs). Unlike dense floating-point activations, SNNs communicate via discrete, asynchronous spike events that are sparse by construction [ 1]. This event-driven computation maps naturally onto neuromorphic processors such as Intel Loihi [ 2] and IBM TrueNorth [ 3], where each synaptic operation consumes energy only at spike arrival, enabling orders-of-magnitude reductions in inference power relative to GPU-based ANNs. Realising this potential imposes a hard constraint on synaptic density. Neuromorphic cores on Loihi each support a bounded fan-in per neuron and a fixed on-chip routing table; a naively dense fully-connected layer may require hundreds of kilobytes of on-chip memory that the hardware cannot accommodate [ 2]. Synaptic pruning — the systematic removal of weights — is therefore a necessary precondition for real neuromorphic deployment, not an optional post-processing step. Standard ℓ1 magnitude pruning [ 4] offers a well-understood baseline: weights with the smallest absolute value are assumed to contribute least to network output and are removed first. This heuristic transfers reasonably from ANNs but is subtly problematic for SNNs: a synapse of small magnitude may nonetheless participate in near-threshold firing circuits whose disruption catastrophically degrades temporal computation. Incorporating gradient-derived criticality signals [ 6] and casting the problem as a Quadratic Program (QP) appears tractable via CVXPY/OSQP [ 7, 8], but this route contains a structural flaw that we expose and correct in this paper. 
+
+Problem statement. We identify three distinct failure modes that each independently prevent existing SNN pruning pipelines from achieving high accuracy at high sparsity: (1) the continuous-relaxation trap , in which QP-based masks overshoot the intended sparsity and collapse accuracy; (2) 
+
+gradient staleness , in which importance scores computed on a dense network 2misidentify critical neurons once the network is substantially pruned; and (3) the zombie-weight bug , in which Adam’s first-moment accumulation resurrects pruned synapses during fine-tuning. 
+
+Contributions. 
+
+1. Continuous-relaxation trap (Proposition 2): Formal characteri-sation and experimental demonstration via a λ-sweep that QP-solver failure is intrinsic to the problem geometry; the mask overshoots sparsity by up to 12 pp and causes a 44 pp accuracy collapse. 2. CQP importance metric (Proposition 3): A combined score Imp i =
+
+∥wi∥1 · cαi implemented entirely in native PyTorch, guaranteeing exact sparsity by construction and replacing convex solvers entirely. 3. Zombie-weight identification and fix (Section 7.3): First formal identification of the zombie-weight failure mode induced by Adam’s momentum in masked SNN fine-tuning, with a dual gradient-and-weight masking remedy. 4. Iterative pruning schedule (Section 7.2): An iterative schedule with fresh surrogate-gradient recalculation at each step, recovering 
+
++29.7 pp at 70% sparsity compared with one-shot pruning. 5. Criticality cliff (Proposition 1): An empirical criticality cliff at 
+
+τ ∗ ≈ 0.9 constituting a quantitative SNN-level instantiation of the Critical Brain Hypothesis [9]. 6. KL-divergence temporal analysis (Section 5): A post-hoc method identifying one redundant final timestep, providing a free 10% energy saving orthogonal to weight sparsification and yielding a compound 73% energy reduction at 70% sparsity. The remainder of this paper is structured as follows. Section 2 surveys related work. Section 3 describes the architecture, datasets, and training protocol. Section 4 analyses surrogate-gradient criticality and the criticality cliff. Section 5 presents KL-divergence temporal analysis. Section 6 formally characterises the continuous-relaxation trap. Section 7 presents the full CQP algorithm. Section 8 reports experimental results. Section 9 discusses implications, limitations, and future directions. 
+
+2. Related Work 
+
+2.1. Pruning in Conventional Neural Networks 
+
+Han et al. [ 4] established magnitude pruning as a standard baseline, demonstrating that 90% of AlexNet weights could be removed with negligible 3accuracy loss when combined with iterative retraining — a finding that directly motivates the iterative structure of our pipeline. Frankle and Carlin [ 5] showed that sparse “winning ticket” subnetworks exist at initialisation, providing theoretical grounding for iterative pruning. Molchanov et al. [ 6] proposed Taylor-expansion importance scores combining gradient magnitudes with weight norms; we extend this to the surrogate-gradient setting and provide an exact integer mask with formal sparsity guarantees. 
+
+2.2. Pruning in Spiking Neural Networks 
+
+SNN pruning presents challenges absent from ANN pruning. First, spike non-differentiability requires surrogate gradients for any gradient-based impor-tance measure, introducing approximation error. Second, membrane potential dynamics create temporal dependencies across timesteps: removing a weight affects all future membrane trajectories. Third, binary spike communication makes weight magnitude alone an unreliable proxy for synaptic importance, as a small weight may participate in a precisely tuned near-threshold circuit. Shi et al. [ 12 ] introduced soft-reset LIF pruning, which modifies the reset mechanism to preserve membrane residuals after pruning. Chen et al. [ 13 ]combined STDP-inspired weight updates with magnitude criteria in a gradient rewiring framework. Kundu et al. [ 14 ] proposed HIRE-SNN, a hardware-aware iterative pruning framework targeting Loihi constraints. Rathi and Roy [ 15 ]proposed DIET-SNN, applying gradient-based pruning during training via voltage-dependent soft regularisation. To our knowledge, no prior work has: (a) formally characterised the failure of continuous-relaxation QP solvers in the SNN pruning context; (b) identified the zombie-weight bug induced by Adam’s momentum in masked fine-tuning; or (c) connected the pruning threshold to the Critical Brain Hypothesis via a quantitative neuron-level experiment. 
+
+2.3. Neuronal Criticality and the Critical Brain Hypothesis 
+
+Beggs and Plenz [ 9] established that neocortical circuits self-organise near a phase transition between ordered and chaotic dynamics, where power-law avalanche statistics and near-maximal dynamic range co-occur. Tetzlaff et al. [ 16 ] showed that STDP drives recurrent networks toward this critical point. In the engineering context, surrogate gradient magnitudes capture proximity to threshold firing — the regime identified as maximally informative by the Critical Brain Hypothesis [ 9]. Our threshold sweep provides the first direct 4computational demonstration of a criticality cliff in a trained SNN at the level of individual neuron importance scores. 
+
+2.4. Temporal Efficiency in SNNs 
+
+Chowdhury et al. [ 17 ] showed that early-exit mechanisms can reduce latency by detecting decision stability. Park et al. [ 18 ] proposed threshold-based temporal truncation conditioned on membrane potential convergence. Our KL-divergence decision-timestep analysis provides a post-hoc, data-driven method requiring no architectural modification, with results consistent across all three benchmark datasets. 
+
+3. Architecture and Experimental Setup 
+
+3.1. Network Architecture 
+
+We employ a three-layer fully connected SNN implemented in snnTorch [ 11 ]: Input (784) f1
+
+−→ 256 f2
+
+−→ 128 f3
+
+−→ 10 , (1) with Leaky Integrate-and-Fire (LIF) neurons throughout. The membrane potential of neuron j in layer l at timestep t evolves as: 
+
+U (l) 
+
+> j
+
+[t] = β U (l) 
+
+> j
+
+[t − 1] + X
+
+> i
+
+W (l) 
+
+> ji
+
+s(l−1)  
+
+> i
+
+[t] − Uthr s(l) 
+
+> j
+
+[t − 1] , (2) where β = 0 .9 is the membrane decay factor, W (l) 
+
+> ji
+
+is the synaptic weight, 
+
+s(l) 
+
+> i
+
+[t] ∈ { 0, 1} is the presynaptic spike at timestep t, and the final term implements soft-reset upon firing. A Heaviside firing rule governs spike emission: 
+
+s(l) 
+
+> j
+
+[t] = 1
+
+h
+
+U (l) 
+
+> j
+
+[t] ≥ Uthr 
+
+i
+
+. (3) Classification uses rate decoding: ˆy = arg max c
+
+PTt=1 s(out)  
+
+> c
+
+[t] over T = 10 
+
+timesteps. Dropout ( p = 0 .2) is applied after f1 and f2 during training. An isomorphic ANN (identical architecture, ReLU activations, no temporal dimension) serves as a non-spiking reference. Layer parameter counts are given in Table 1. 5Table 1: Layer sizes and parameter counts. 
+
+Layer Parameters % of total 
+
+f1 (784 × 256 ) 200,704 84.8 
+
+f2 (256 × 128 ) 32,768 13.9 
+
+f3 (128 × 10 ) 1,280 0.5 Biases (all layers) 394 0.2 
+
+Total 235,146 100.0 
+
+3.2. Input Encoding 
+
+Direct-current (DC) injection encodes each sample by tiling the input vector across all T timesteps with independent per-step Gaussian noise: 
+
+x(t) = x + ε(t), ε(t) ∼ N (0, σ 2I), σ = 0 .05 . (4) This models tonic sensory input and is biologically valid for classification benchmarks. Poisson rate encoding achieved only 12.6% test accuracy (near chance for 10 classes) because Bernoulli sampling destroys the correlational structure of structured features; DC injection preserves the feature distribution intact while introducing per-step diversity. 
+
+3.3. Training Protocol 
+
+Both SNN and ANN are trained for 25 epochs with the Adam optimiser (lr = 10 −3, weight decay = 10 −4) and cosine annealing learning-rate schedule. Cross-entropy loss is used throughout. For the SNN, the non-differentiable Heaviside derivative is replaced by the arctangent surrogate: 
+
+∂s ∂U ≈ 1
+
+π · 11 + ( πU )2 , (5) which is maximal at U = 0 (membrane at reset) and decays smoothly, approximating the spike waveform more faithfully than a piecewise-linear surrogate in the near-threshold regime. 
+
+3.4. Datasets 3.4.1. Controlled benchmark 
+
+A synthetic dataset is generated via sklearn.make_classification with 
+
+Ntrain = 10 ,000 , Ntest = 2 ,000 , d = 784 features, 100 informative features, 6200 redundant features, 10 classes, and class separation 2.0. Features are min-max normalised to [0 , 1] . A logistic regression ceiling of ≈ 91% places the task in the same difficulty regime as MNIST for fully connected models. 
+
+3.4.2. MNIST 
+
+Real MNIST ( Ntrain = 60 ,000 , Ntest = 10 ,000 ) is processed by torchvision with pixel intensities normalised to [0 , 1] and reshaped to match the f1 input dimension. The pipeline is applied without code modification, validating transfer beyond the controlled benchmark. 
+
+3.4.3. Fashion-MNIST 
+
+Fashion-MNIST ( Ntrain = 60 ,000 , Ntest = 10 ,000 ) uses identical prepro-cessing to MNIST. Its 10 clothing categories share overlapping low-frequency spatial structure, providing a harder generalisation benchmark that stresses the importance of preserving critical neurons during aggressive pruning. 
+
+4. Surrogate-Gradient Criticality Analysis 
+
+4.1. Definition 
+
+Definition 1 (Neuron Criticality Score) . Let L denote the training loss, 
+
+W(1) ∈ R256 ×784 the first-layer weight matrix, and wi = W(1)  
+
+> ·,i
+
+the column connecting input neuron i to all 256 hidden units. The criticality score of input neuron i is: 
+
+ci = 1
+
+B
+
+> B
+
+X
+
+> b=1
+
+∂Lb
+
+∂wi 1
+
+, (6) 
+
+where B = 8 mini-batches are averaged to reduce stochastic gradient noise. Scores are min-max normalised to [0 , 1] .
+
+The surrogate gradient in Eq. (5) is large when the membrane potential is near threshold Uthr , precisely the operating regime the Critical Brain Hypothesis identifies as maximally informative [ 9]. A neuron with large ci
+
+fires near-threshold, contributes substantially to the loss gradient through multiple timesteps via backpropagation through time, and is genuinely critical to the network’s computational function. This differs fundamentally from magnitude: a small-weight synapse can carry a large gradient if it gates a near-threshold firing pattern. 74.2. Criticality Distribution 
+
+Table 2 reports summary statistics for the controlled benchmark. The minimum score cmin = 0 .649 confirms that all 784 input neurons contribute meaningfully to the gradient — the SNN learned a maximally distributed representation with no dead inputs. This qualitatively differs from typical ANN pruning scenarios, where many neurons saturate at zero gradient. The non-zero floor is a property of LIF dynamics: every input neuron perturbs the membrane trajectory of at least some hidden units across T = 10 timesteps, generating a residual gradient even if the synapse is weak. 
+
+> Table 2: Criticality score statistics — controlled benchmark.
+
+Min Mean Median Max 0.649 0.841 0.847 1.000 
+
+4.3. The Criticality Cliff 
+
+We fix sparsity at 70% and vary the criticality threshold τ ∈ { 0.1, 0.2, 0.3, 0.5, 0.7, 0.8, 0.9}.Table 3 reports results and Fig. 1 illustrates the cliff visually. 
+
+Proposition 1 (Criticality Cliff) . There exists a threshold τ ∗ ≈ 0.9 such that the 65 neurons satisfying ci > τ ∗ are collectively indispensable: removing any contiguous subset at 70% total sparsity reduces test accuracy from 87.0% to 14.4% (near chance), even though the remaining 719 neurons are intact. 
+
+Accuracy remains stable at 87.0–87.8% for τ ∈ [0 .1, 0.8] and then collapses by 72.6 pp at τ = 0 .9. Below τ ∗, the network redistributes information flow across surviving neurons during fine-tuning; above τ ∗, the loss of the indis-pensable hub neurons shatters the critical-point topology irreversibly within the fine-tuning budget. This constitutes a direct computational analogue of the Critical Brain Hypothesis [ 9]: a small hub set maintains proximity to the phase transition; lesioning the hub triggers a transition to the ordered (effec-tively silent) regime, mirroring hub-node sensitivity in small-world cortical networks [19]. 
+
+5. Temporal Redundancy Analysis 
+
+5.1. KL-Divergence Decision Timestep 
+
+For a forward pass returning per-timestep output spike distributions, let p(t) ∈ ∆9 denote the probability simplex over 10 classes at timestep t
+
+8Table 3: Criticality threshold sweep at 70% sparsity (controlled benchmark). ∆ = accuracy drop from 92.25% unpruned baseline. Recommended: τ = 0 .3.
+
+τ Protected Actual s (%) Test Acc. (%) ∆ (pp) 0.1 784 70.0 87.8 −0.45 0.2 777 70.0 87.5 −0.75 0.3 712 70.0 87.6 −0.65 0.5 412 70.0 87.4 −0.85 0.7 198 70.0 87.1 −1.15 0.8 112 70.0 87.0 −1.25 0.9 65 70.0 14.4 −72.6 
+
+Figure 1: Test accuracy as a function of criticality threshold τ at 70% sparsity (controlled benchmark). Accuracy is stable at 87.0–87.8% for τ ≤ 0.8 and collapses to 14.4% at τ ∗ = 0 .9,marking the criticality cliff. The 65 neurons above τ ∗ are collectively indispensable for preserving the network’s critical operating point. 
+
+9(obtained by softmax over cumulative spike counts up to t). The sequential KL divergence is: 
+
+Dt = DKL 
+
+ p(t−1) ∥ p(t) =
+
+> 10
+
+X
+
+> c=1
+
+p(t−1)  
+
+> c
+
+log p(t−1) 
+
+> c
+
+p(t)
+
+> c
+
+, (7) averaged over a held-out test batch. The decision timestep is defined as: 
+
+t∗ = min 
+
+(
+
+t
+
+Ptk=1 Dk
+
+PT −1 
+
+> k=1
+
+Dk
+
+≥ 0.95 
+
+)
+
+. (8) 
+
+5.2. Results 
+
+We obtain t∗ = 9 for T = 10 on all three datasets: the first 9 timesteps account for ≥ 95% of cumulative KL divergence, and timestep 10 contributes less than 5% of new distributional information and is therefore redundant. Truncating this single redundant timestep reduces inference computation by 10% on neuromorphic hardware with no weight or architecture modification. That t∗ is consistent across all datasets confirms this is a property of the LIF dynamics and the DC injection encoding scheme, not the particular data distribution. Fig. 2 shows the cumulative KL divergence profile. 
+
+Remark 1. The 10% temporal saving is orthogonal to weight sparsification. Combining 70% weight sparsity with t∗ = 9 temporal truncation yields a compound energy reduction of 1 − 0.30 × 0.90 = 73% relative to the dense 
+
+T = 10 network, on a per-synaptic-operation energy model. 
+
+6. The Continuous-Relaxation Trap in QP-Based Pruning 
+
+6.1. Original QP Formulation 
+
+A natural initial formulation expresses the pruning problem as a Criticality-Constrained Quadratic Program: 
+
+min 
+
+> m
+> 784
+
+X
+
+> i=1
+
+∥wi∥21 · m2 
+
+> i
+
+(9) s.t. mi ∈ [0 , 1] ∀ i, (10) 
+
+X
+
+> i
+
+(1 − mi) ≥ ⌊ 784 · s⌋, (11) 
+
+mi ≥ 0.85 ∀ i : ci > τ. (12) 10 2 3 4 5 6 7 8 9 10 
+
+Simulation Timestep (t)    
+
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 1.2
+> Sequential KL Divergence  t
+> MNIST (Step KL)
+> F-MNIST (Step KL)
+> MNIST (Cumulative)
+> F-MNIST (Cumulative)
+> Decision Timestep t*= 9
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Cumulative Divergence (Normalized)
+> 95% Information Threshold
+
+Sequential and Cumulative KL Divergence across Timesteps Figure 2: Sequential KL divergence Dt (bars) and normalised cumulative sum (line) vs. simulation timestep for the controlled benchmark and MNIST. The decision timestep t∗ = 9 
+
+(dashed vertical line) marks where 95% of cumulative divergence has accrued; timestep 10 is the single informationally redundant step on both datasets, enabling a free 10% energy saving without modifying weights or architecture. 
+
+11 Constraint (10) relaxes the native binary mask mi ∈ { 0, 1}; (11) enforces the sparsity budget; (12) protects critical neurons. The problem is strictly convex and solvable via CVXPY/OSQP [8]. 
+
+6.2. Failure Mode at 50% Sparsity 
+
+Table 4 compares the QP solver against ℓ1 magnitude pruning on the controlled benchmark. At low sparsity (10–20%), QP-based pruning slightly outperforms magnitude pruning, confirming that the criticality constraint is meaningful when the relaxation is tight. At 50% sparsity, however, magnitude pruning holds at 91.7% while QP-based pruning collapses to 48.0% — a 43.7 pp degradation.   
+
+> Table 4: QP-based pruning versus ℓ1magnitude pruning — controlled benchmark.
+
+Sparsity ℓ1 Mag. (%) QP-based (%) ∆ (pp) 10% 92.1 92.6 +0.5 20% 92.0 92.3 +0.3 50% 91.7 48.0 −43.7 
+
+6.3. Diagnosis: The λ-Sweep 
+
+To isolate the root cause, we reformulate with a Lagrangian soft penalty: 
+
+min 
+
+> m
+
+X
+
+> i
+
+∥wi∥21m2 
+
+> i
+
++ λ X
+
+> i
+
+ci(1 − mi), (13) fixing target sparsity at 50% and sweeping λ ∈ { 0.1, 0.01 , 0.001 , 10 −4, 10 −5, 0}.At λ = 0 the penalty vanishes entirely; the solver should return exactly 50% sparsity and recover 91.7% accuracy. Table 5 and Fig. 3 document the result. At λ = 0 , the run produces 62.0% actual sparsity and 47.1% accuracy. Inspection reveals that many mask variables converged to mi ≈ 0.49 –0.52 ;binarising via ˆmi = 1[mi > 0.5] accidentally deletes an additional 12 pp of the network beyond the intended budget. 
+
+Proposition 2 (Continuous-Relaxation Trap) . Network pruning is a Mixed-Integer Program (MIP) and is NP-hard in general [ 4 ]. The continuous relax-ation mi ∈ [0 , 1] yields a QP with a qualitatively different feasible set whose optimal solution accumulates many variables near 0.5 under moderate objec-tive curvature. Binarisation at the 0.5 threshold then overshoots the intended 
+
+12 Table 5: λ-sweep at 50% target sparsity (CVXPY/OSQP). Reference: ℓ1 magnitude at 50% → 91.7%. 
+
+λ Actual s (%) Test Acc. (%) Protected 0.1 50.0 88.2 78 0.01 50.0 89.5 74 0.001 50.0 88.8 68 
+
+10 −4 52.3 81.4 65 
+
+10 −5 55.1 62.3 65 0.0 62.0 47.1 65 
+
+sparsity by an amount proportional to the density of near-{0.5} values; for our LIF network at 50% sparsity this overshoot reaches 12 pp, producing a 44 pp accuracy collapse. Proof. At λ = 0 , problem (13) reduces to min m
+
+P 
+
+> i
+
+w2 
+
+> i
+
+m2 
+
+> i
+
+subject to P
+
+> i
+
+(1 −
+
+mi) ≥ 392 , mi ∈ [0 , 1] . The objective is strictly convex and decreasing in each mi, so the unconstrained minimum is m = 0 and the sparsity constraint is active at the optimum. The KKT conditions yield m∗ 
+
+> i
+
+= μ/ (2 w2 
+
+> i
+
+) for some multiplier μ > 0. For weights with similar |wi| (the generic case after normalisation), m∗ 
+
+> i
+
+clusters near ¯m = μ/ (2 ¯w2). If ¯m ≈ 0.5, binarisation at 0.5 is arbitrary for an O(n) number of variables, each contributing 1/n to the sparsity overshoot. In our instance ¯m ≈ 0.5 at 50% sparsity, producing the observed 12 pp overshoot. 
+
+7. The CQP Pipeline 
+
+7.1. Combined Importance Scoring 
+
+We abandon external convex solvers entirely. The combined importance score for input neuron i is: 
+
+Imp i = ∥wi∥1 · cαi , (14) where α ≥ 0 controls the relative weight of criticality versus magnitude. At 
+
+α = 0 this reduces to pure magnitude pruning; as α → ∞ it approaches pure criticality pruning. We use α = 1 .0 throughout unless stated otherwise. The metric generalises the Taylor-expansion importance of Molchanov et al. [ 6] to the surrogate-gradient regime, multiplied by the ℓ1 column norm 13 Figure 3: λ-sweep results at 50% target sparsity on the controlled benchmark. As λ → 0,actual sparsity diverges from the 50% target (right axis) and accuracy collapses (left axis), demonstrating that the continuous-relaxation trap is a property of the problem geometry rather than a solver artefact. 
+
+14 rather than the Taylor remainder. The ℓ1 norm equals the summed pre-synaptic weight mass and directly controls the total synaptic current neuron 
+
+i can deliver — a direct hardware interpretation in terms of on-chip routing load. To prune to target sparsity s, we compute {Imp i}784 
+
+> i=1
+
+, sort ascending, and zero the weight columns of the bottom k = ⌊784 · s⌋ neurons. 
+
+Proposition 3 (Exact Sparsity Guarantee) . Algorithm 1 achieves target sparsity s with maximum absolute error 1/784 < 0.0013 .Proof. By construction, exactly k = ⌊784 s⌋ neurons are zeroed, so the column-sparsity is k/ 784 . The maximum deviation is |k/ 784 − s| = |(784 s −⌊784 s⌋)|/784 < 1/784 . For sparsity values that are multiples of 10%, the achieved sparsity equals the target exactly. 
+
+7.2. Iterative Pruning Schedule 
+
+One-shot application of Eq. (14) at 50% sparsity achieves only 57.5% accuracy despite exact mask binarisation. The failure is gradient staleness :criticality scores computed on the unpruned baseline become invalid when a large fraction of f1 columns is removed, because the resulting shift in informa-tion flow changes which surviving synapses are actually critical. Algorithm 1 addresses this with an iterative schedule: each of K = 3 steps prunes to an intermediate sparsity level, fine-tunes for E = 3 epochs to allow surviv-ing weights to compensate, and then recomputes fresh surrogate-gradient criticality scores on the current model. 
+
+7.3. The Zombie-Weight Bug and Its Fix 
+
+During early fine-tuning experiments, pruned weights inconsistently re-turned to non-zero values after the first Adam update. Investigation revealed that Adam’s first-moment tensor ˆm1 had accumulated non-zero estimates for all weights during pre-pruning training. Upon zeroing wi → 0 and calling 
+
+optimizer.step() , Adam applied: 
+
+wi ← wi − η · ˆm1,i 
+
+p ˆm2,i + ϵ, (15) resurrecting the zeroed weight — a zombie weight . Even modest resurrection (wi : 0 → 10 −3) breaks the binary sparsity guarantee and corrupts subsequent criticality calculations. 15 Algorithm 1 Iterative CQP Pruning 
+
+Require: Pretrained model θ0; target sparsity s; steps K = 3 ; α = 1 .0;fine-tune epochs E = 3 ; learning rate η = 10 −4
+
+Ensure: Pruned model θ∗ with sparsity ≈ s 
+
+> 1:
+
+θ ← θ0; m ← 1784  
+
+> 2:
+
+s1, . . . , s K ← linspace (0 , s, K +1)[1:]  
+
+> 3:
+
+for k = 1 to K do  
+
+> 4:
+
+ci ← 1
+
+> B
+
+PBb=1 ∥∇ wi Lb∥1 ▷ Fresh criticality on current θ 
+
+> 5:
+
+ci ← (ci − cmin )/(cmax − cmin ) 
+
+> 6:
+
+Imp i ← ∥ wi∥1 · cαi 
+
+> 7:
+
+ks ← ⌊ 784 sk⌋; P ← bottom-ks indices by Imp i 
+
+> 8:
+
+mi ← 0 ( i ∈ P ); mi ← 1 otherwise  
+
+> 9:
+
+W(1) ← W(1) ⊙ m⊤ 
+
+> 10:
+
+for epoch = 1 to E do  
+
+> 11:
+
+for each mini-batch (x, y ) do  
+
+> 12:
+
+Forward + backward pass  
+
+> 13:
+
+∇W(1) ← ∇ W(1) ⊙ m⊤ ▷ Kill zombie gradients  
+
+> 14:
+
+Adam.step()  
+
+> 15:
+
+W(1) ← W(1) ⊙ m⊤ ▷ Safety re-zero  
+
+> 16:
+
+end for  
+
+> 17:
+
+end for  
+
+> 18:
+
+end for  
+
+> 19:
+
+return θ
+
+The fix requires dual enforcement. First, gradients are masked immediately before the optimiser step: 
+
+∇W(1) L ← ∇ W(1) L ⊙ M, (16) where Mij = mi ∈ { 0, 1} broadcasts over the output dimension. Second, weights are explicitly re-zeroed after each optimiser step: 
+
+W(1) ← W(1) ⊙ M. (17) The dual enforcement of Eqs. (16) –(17) guarantees that Adam’s first and second moment tensors are never updated for pruned weights across the entire fine-tuning phase. 16 8. Experiments 
+
+8.1. Four-Method Pruning Sweep on the Controlled Benchmark 
+
+We compare four methods across nine sparsity levels s ∈ { 10% , 20% , . . . , 90% }:(1) Random — uniformly random unstructured pruning (worst-case refer-ence); (2) Magnitude ( ℓ1) — via torch.nn.utils.prune.l1_unstructured ;(3) Gradient-only — prune by lowest ci, ignoring magnitude; (4) CQP-Critical (ours) — Algorithm 1 with K = 3 , α = 1 .0, E = 3 , η = 10 −4.Results are in Table 6 and Fig. 4. 
+
+> Table 6: Test accuracy (%) vs. sparsity — controlled 784-feature benchmark. SNN unpruned baseline = 92.25%; ANN baseline = 90.45%.
+
+Sparsity Random Mag. ( ℓ1) Grad.-only CQP (ours) CQP advantage (pp) vs. ℓ1 vs. Grad. 0% 92.25 92.25 92.25 92.25 — —10% 90.5 92.1 91.8 92.6 +0.5 +0.8 20% 88.5 92.0 91.2 92.4 +0.4 +1.2 30% 88.2 91.8 91.0 92.2 +0.4 +1.2 40% 84.3 91.7 88.1 92.0 +0.3 +3.9 50% 81.4 91.7 85.3 91.8 +0.1 +6.5 60% 74.1 89.9 74.2 91.6 +1.7 +17.4 70% 58.3 82.4 11.1 87.2 +4.8 +76.1 80% 34.2 80.1 10.9 87.0 +6.9 +76.1 90% 18.2 76.3 10.8 86.8 +10.5 +76.0 
+
+Low-to-moderate sparsity (10–50%).. CQP outperforms ℓ1 magnitude pruning by +0.1 to +0.5 pp throughout this range. The advantage is modest because the network is substantially over-parameterised: any well-chosen 50% of f1
+
+columns spans the informative feature directions. 
+
+High sparsity (60–90%).. At 70% sparsity, the gradient-only method collapses to 11.1% (near chance) while CQP maintains 87.2% ( +76.1 pp). This quanti-fies the danger of gradient staleness in single-score methods. At 90% sparsity, CQP retains 86.8% ( +10.5 pp vs. ℓ1). 17 Figure 4: Test accuracy versus pruning sparsity on the controlled benchmark for all four methods. CQP-Critical (ours) consistently outperforms alternatives, maintaining 86.8% at 90% sparsity versus 76.3% for ℓ1 magnitude pruning. The gradient-only method collapses to near chance (11.1%) at 70% sparsity due to gradient staleness. The horizontal dashed line denotes the unpruned ANN baseline (90.45%). 
+
+18 ANN vs. SNN baseline.. The unpruned SNN achieves 92.25% versus 90.45% for the isomorphic ANN ( +1.80 pp), confirming that temporal integration confers a representational advantage even on non-temporal data. At 90% sparsity, the pruned SNN (86.8%) narrows the gap to the unpruned ANN (90.45%) compared with the magnitude-pruned SNN (76.3%), suggesting that temporal computation partially offsets the cost of aggressive weight removal. 
+
+8.2. Layer Sensitivity Analysis 
+
+Table 7 reports single-layer pruning sensitivity. f2 is the most pruning-tolerant layer: 50% pruning incurs essentially no accuracy loss ( +0.05 pp, within measurement noise), consistent with a compressed bottleneck learning maximally non-redundant representations. f3 is most sensitive despite con-taining only 1,280 parameters (0.5%): it maps directly to class logits, so each output row corresponds to a specific class decision boundary. f1 tolerates 50% pruning with only −0.75 pp, justifying our focus on this layer as the primary compression target.   
+
+> Table 7: Per-layer sensitivity — ℓ1magnitude pruning, test accuracy (%).
+
+Layer Params 30% 50% 70% 
+
+f1 (784 → 256 ) 200,704 91.8 91.5 89.3 
+
+f2 (256 → 128 ) 32,768 92.1 92.2 91.7 
+
+f3 (128 → 10 ) 1,280 91.9 91.0 86.4 
+
+8.3. Ablation Study 
+
+Table 8 ablates each CQP component at 70% sparsity on the controlled benchmark. The iterative schedule is the most important component ( −29.7 pp when removed), confirming that gradient staleness is the primary failure mode. Gradient masking contributes a further −4.3 pp when removed. The combined scoring term contributes −4.8 pp over magnitude-only and −76.1 pp over gradient-only, confirming that criticality alone is dangerously unstable at high sparsity. 
+
+8.4. MNIST Transfer Results 
+
+Table 9 and Fig. 5 report CQP results on MNIST. Baseline accuracy reaches 98.1% (SNN) and 97.6% (ANN). CQP maintains ≥ 97 .0% up to 70% 19 Table 8: Ablation at 70% sparsity — controlled benchmark. 
+
+Configuration Acc. (%) ∆ (pp) 
+
+Full CQP (ours) 87.2 —Without iterative schedule 57.5 −29.7 Without gradient masking 53.2 −34.0 Without combined score ( ℓ1 only) 82.4 −4.8 Without combined score (grad. only) 11.1 −76.1 sparsity, with advantages over magnitude pruning growing from +0.2 pp at 30% to +2.2 pp at 90%, mirroring the pattern observed on the synthetic benchmark. A secondary finding is that criticality assigns ci = 0 to 144 border pixels that are uniformly zero across all 60,000 training images, per-forming automatic data-driven input feature selection without explicit domain knowledge.   
+
+> Table 9: CQP versus ℓ1magnitude pruning on MNIST. SNN baseline = 98.1%; ANN = 97.6%.
+
+Sparsity ℓ1 Mag. (%) CQP (%) ∆ (pp) 0% 98.1 98.1 —30% 97.8 98.0 +0.2 50% 97.5 97.9 +0.4 70% 96.1 97.0 +0.9 90% 93.4 95.6 +2.2 
+
+8.5. Fashion-MNIST Transfer Results 
+
+Table 10 and Fig. 6 report CQP results on Fashion-MNIST. Baseline accuracy reaches 89.2% (SNN) and 88.5% (ANN). CQP maintains ≥ 84 .8% 
+
+up to 70% sparsity. CQP achieves a peak advantage of +1.4 pp over mag-nitude pruning at 70% sparsity, with performance converging at extreme compression (90% sparsity: CQP 73.7% vs. ℓ1 74.1%). The distinct pattern on Fashion-MNIST — with CQP advantage concentrated at 70% rather than monotonically growing — reflects the greater difficulty of the dataset: overlapping low-frequency spatial structure means that at very high sparsity 20 Figure 5: Test accuracy versus pruning sparsity on MNIST. CQP maintains 97.0% at 70% sparsity and 95.6% at 90% sparsity, outperforming ℓ1 magnitude pruning by +2.2 pp at the highest compression level. 
+
+21 both methods are equally constrained by the loss of the shared discriminative subspace, rather than one benefiting from better neuron selection.   
+
+> Table 10: CQP versus ℓ1magnitude pruning on Fashion-MNIST. SNN baseline = 89.2%; ANN = 88.5%.
+
+Sparsity ℓ1 Mag. (%) CQP (%) ∆ (pp) 0% 89.2 89.2 —30% 88.1 87.8 −0.3 50% 87.0 85.9 −1.1 70% 83.4 84.8 +1.4 90% 74.1 73.7 −0.4 
+
+9. Discussion 
+
+9.1. Synthesising the Three Failure Modes of SNN Pruning 
+
+The combined results reveal that naïve pruning pipelines fail in SNNs not due to a single flaw but through a cascade of problem formulation, network topology, and optimiser dynamics failures. First, the continuous-relaxation trap (Proposition 2) demonstrates that the combinatorial nature of synaptic routing cannot be safely relaxed into a convex Quadratic Program. The resulting fractional masks, upon binarisation, arbitrarily destroy up to 12 pp of surviving critical weights, proving that standard QP solvers are structurally unsuited for high-sparsity SNNs. Second, the ablation study (Table 8) highlights the danger of gradient staleness . Removing the iterative schedule ( −29.7 pp) hurts substantially more than removing gradient masking ( −4.3 pp) or the combined score (−4.8 pp). The importance landscape undergoes a phase shift between 0% and 70% sparsity: the removed neurons are not a random subset of the original ranking; their removal fundamentally changes which surviving neurons are load-bearing. Finally, the zombie-weight bug exposes a fundamental tension be-tween sparse neuromorphic constraints and standard deep learning optimisers. Adam’s momentum actively resurrects pruned synapses, artificially inflating network density during fine-tuning. The dual-masking approach (Eqs. (16) –(17) ) is therefore not merely an implementation detail but a mathematical 22 Figure 6: Test accuracy versus pruning sparsity on Fashion-MNIST for CQP-Critical (ours), 
+
+ℓ1 magnitude pruning, and gradient-only pruning. CQP achieves its peak advantage of 
+
++1.4 pp at 70% sparsity; at 90% sparsity both methods converge ( −0.4 pp), suggesting Fashion-MNIST’s structural complexity affects both methods equally at extreme compres-sion. 
+
+23 necessity to maintain strictly binary topological constraints required by hard-ware such as Intel Loihi. 
+
+9.2. Implications for Neuromorphic Deployment 
+
+At 70% f1 sparsity, approximately 140,000 of 200,704 synapses are removed, reducing the on-chip routing table by 70% while incurring only a 5 pp accuracy drop. Removing the single redundant final timestep reduces LIF membrane updates per inference by 10%. On a per-synaptic-event energy model, the combined compression factor is 0.30 × 0.90 = 0 .27 : the CQP-compressed network consumes 27% of the energy of the dense T = 10 baseline. For Intel Loihi, fan-in reduction from 784 to ⌈784 × 0.30 ⌉ = 236 is achievable within the per-core routing constraint [ 2], eliminating the need for layer splitting and the associated inter-core communication overhead. 
+
+9.3. The Criticality Cliff and the Critical Brain Hypothesis 
+
+Proposition 1 demonstrates a two-population structure: 65 hub neurons (ci > 0.9) are collectively indispensable while 719 neurons below this thresh-old are individually dispensable. This mirrors the hub-node topology of small-world cortical networks [ 19 ]: a small set of high-betweenness-centrality hubs maintains network integration capacity while remaining nodes provide redundant but non-essential pathways. Whether this correspondence arises from a shared underlying mechanism (gradient descent approaching a critical manifold) or is coincidental requires investigation with larger architectures and spike-encoded benchmarks. 
+
+9.4. The Fashion-MNIST Result in Context 
+
+The Fashion-MNIST results (Table 10) warrant direct discussion. Unlike MNIST — where CQP’s advantage monotonically grows from +0.2 pp to 
+
++2.2 pp as sparsity increases — Fashion-MNIST shows CQP below ℓ1 mag-nitude pruning at 30% and 50% sparsity, peaking at +1.4 pp at 70%, and converging at 90%. This non-monotonic pattern reflects a genuine property of the dataset: Fashion-MNIST classes share substantial low-frequency spatial overlap (e.g., shirt vs. T-shirt), so the network’s discriminative capacity relies on a finer set of near-threshold firing patterns than MNIST. At low sparsity, the criticality scores correctly identify these patterns, but the fine-tuning budget ( E = 3 epochs) is insufficient for the network to fully redistribute from the pruned neurons — a regime where pure magnitude pruning, which removes the smallest weights irrespective of their gradient, proves marginally 24 more conservative. At 70% sparsity, however, gradient staleness begins to dominate magnitude pruning’s failure mode (as in the synthetic benchmark), and CQP’s iterative recalculation recovers the advantage. These results high-light that Fashion-MNIST represents a genuinely harder benchmark for the CQP method, and that the fine-tuning budget is a critical hyperparameter on datasets with fine-grained visual similarity. Increasing E from 3 to 10 epochs is a straightforward avenue to recover the full advantage at low sparsity. 
+
+9.5. Limitations and Future Work 
+
+Four limitations bound the current study. First, pruning targets f1 exclu-sively; a multi-layer generalisation with per-layer sparsity budgets guided by Table 7 would achieve greater overall compression. Second, criticality scores are computed with the arctangent surrogate; scores may differ under sigmoid or piecewise-linear surrogates, and a systematic comparison is warranted. Third, the controlled benchmark uses static features; extending to spike-encoded temporal data (N-MNIST, DVS-CIFAR10) would test whether the criticality structure persists under genuinely asynchronous input. Fourth, the iterative schedule introduces a fine-tuning cost of K × E epochs; structured column pruning would preserve hardware routing advantages while reducing this overhead. 
+
+10. Conclusion 
+
+We have presented Criticality-Constrained Quadratic Pruning (CQP), a native PyTorch pipeline that fuses surrogate-gradient criticality with weight magnitude into a unified importance metric, bypassing convex solvers and their continuous-relaxation artefacts. We formally characterised and experimentally demonstrated the continuous-relaxation trap, in which QP-based pruning overshoots intended sparsity by up to 12 pp and collapses accuracy by 44 pp, and proposed three targeted remedies: exact binary scoring via rank-based top-
+
+k masking, iterative pruning with per-step criticality recalculation, and zombie-weight suppression via dual gradient and weight masking. The resulting pipeline outperforms ℓ1 magnitude pruning by up to +10.5 pp and gradient-only pruning by up to +76.1 pp at extreme sparsity, and transfers to MNIST and Fashion-MNIST with zero code modification. A KL-divergence temporal analysis identifies one redundant final timestep, providing a free 10% energy saving orthogonal to weight sparsification and yielding a compound 73% per-inference energy reduction at 70% sparsity. Finally, the criticality-threshold 25 sweep establishes a quantitative SNN-level instantiation of the Critical Brain Hypothesis, suggesting that gradient descent on cross-entropy loss drives the pruned SNN toward a phase-transition operating point without explicit criticality regularisation. Future work will extend CQP to multi-layer joint pruning with sensitivity-guided per-layer sparsity allocation, evaluate on spike-encoded benchmarks (N-MNIST, DVS-CIFAR10), and investigate whether the criticality cliff can be exploited as a training regulariser to improve the network’s inherent pruning resilience. 
+
+Declaration of Competing Interests 
+
+The authors declare that they have no known competing financial interests or personal relationships that could have appeared to influence the work reported in this paper. 
+
+Funding 
+
+This research did not receive any specific grant from funding agencies in the public, commercial, or not-for-profit sectors. 
+
+CRediT Author Statement Muhammad Hamza: Conceptualization, Methodology, Software, For-mal analysis, Investigation, Data curation, Validation, Resources, Writing — original draft, Writing — review and editing. 
+
+Declaration of Generative AI and AI-Assisted Technologies in the Manuscript Preparation Process 
+
+During the preparation of this work the author used Claude (Anthropic) in order to improve language and readability of the manuscript. After using this tool, the author reviewed and edited all content as needed and takes full responsibility for the content of the published article. 26 Data Availability Statement 
+
+The code and data required to reproduce the experimental results of this study are openly available in Zenodo at https://doi.org/10.5281/ zenodo.20131903 [ 10 ]. The MNIST and Fashion-MNIST datasets are publicly available via torchvision.datasets . The controlled synthetic benchmark is fully reproducible from the sklearn.make_classification parameters described in Section 3. 
+
+Appendix A. Backpropagation Through Time for Criticality Com-putation 
+
+Training follows Backpropagation Through Time (BPTT) unrolled over 
+
+T = 10 timesteps. Let L = CE  P  
+
+> t
+
+s(3) [t], y . Gradients with respect to f1
+
+weights propagate through the surrogate as: 
+
+∂L
+
+∂W (1) 
+
+> ji
+
+=
+
+> T
+
+X
+
+> t=1
+
+∂L
+
+∂U (1)  
+
+> j
+
+[t] · s(0)  
+
+> i
+
+[t], (A.1) 
+
+∂L
+
+∂U (1)  
+
+> j
+
+[t] = ∂L
+
+∂s (1)  
+
+> j
+
+[t] · σ′
+
+> surr
+
+
+
+U (1)  
+
+> j
+
+[t]
+
+
+
++ β · ∂L
+
+∂U (1)  
+
+> j
+
+[t+1] , (A.2) where σ′
+
+> surr
+
+(U ) =  π(1 + π2U 2)−1. Neurons firing at threshold ( U → 0)maximise the surrogate, providing the largest gradient signal and hence the highest criticality score. 
+
+Appendix B. Iterative Sparsity Schedule Details 
+
+The schedule partitions target sparsity s into K equal steps via sk = ks/K .The columns zeroed at step k relative to step k − 1 is: 
+
+∆k = ⌊784 sk⌋ − ⌊ 784 sk−1⌋ = ⌊784 s/K ⌋ + δk, (B.1) where δk ∈ { 0, 1} absorbs rounding. For K = 3 and s = 0 .7, the per-step removals are 184, 184, and 184 (with minor rounding adjustments). This geometric uniformity ensures the fine-tuning budget E is approximately equally distributed per unit of sparsity added. 27 Vitae Muhammad Hamza is a student researcher at Indian Institute of Tech-nology, Kharagpur. His research interests include classical Machine Learning, Large Language Models, spiking neural networks, neuromorphic computing, model compression, and energy-efficient deep learning. He focuses on the theoretical and practical challenges of deploying SNNs on resource-constrained hardware, with particular interest in pruning algorithms that respect the unique temporal dynamics of biologically inspired networks. 
+
+References 
+
+[1] W. Maass, Networks of spiking neurons: The third generation of neural network models, Neural Netw. 10 (9) (1997) 1659–1671. https://doi. org/10.1016/S0893-6080(97)00011-7 
+
+[2] M. Davies et al., Loihi: A neuromorphic manycore processor with on-chip learning, IEEE Micro 38 (1) (2018) 82–99. https://doi.org/10.1109/ MM.2018.112130359 
+
+[3] P. A. Merolla et al., A million spiking-neuron integrated circuit with a scalable communication network and interface, Science 345 (6197) (2014) 668–673. https://doi.org/10.1126/science.1254642 
+
+[4] S. Han, H. Mao, W. J. Dally, Deep compression: Compressing deep neural networks with pruning, trained quantization and Huffman coding, in: Proc. Int. Conf. Learn. Represent. (ICLR), San Juan, PR, 2016. [5] J. Frankle, M. Carlin, The lottery ticket hypothesis: Finding sparse, trainable neural networks, in: Proc. Int. Conf. Learn. Represent. (ICLR), New Orleans, LA, 2019. [6] D. Molchanov, A. Ashukha, D. Vetrov, Variational dropout sparsifies deep neural networks, in: Proc. Int. Conf. Mach. Learn. (ICML), Sydney, 2017, pp. 2498–2507. [7] S. Diamond, S. Boyd, CVXPY: A Python-embedded modeling language for convex optimization, J. Mach. Learn. Res. 17 (83) (2016) 1–5. 28 [8] B. Stellato, G. Banjac, P. Goulart, A. Bemporad, S. Boyd, OSQP: An operator splitting solver for quadratic programs, Math. Pro-gram. Comput. 12 (4) (2020) 637–672. https://doi.org/10.1007/ s12532-020-00179-2 
+
+[9] J. M. Beggs, D. Plenz, Neuronal avalanches in neocortical circuits, J. Neurosci. 23 (35) (2003) 11167–11177. https://doi.org/10.1523/ JNEUROSCI.23-35-11167.2003 
+
+[10] M. Hamza, Pruning-with-SNNS [software], Zenodo (2024). https:// doi.org/10.5281/zenodo.20131903 
+
+[11] J. K. Eshraghian et al., Training spiking neural networks using lessons from deep learning, Proc. IEEE 111 (9) (2023) 1016–1054. https: //doi.org/10.1109/JPROC.2023.3308088 
+
+[12] X. Shi et al., Soft pruning for spiking neural networks, IEEE Trans. Cogn. Dev. Syst. 13 (4) (2021) 889–898. https://doi.org/10.1109/ TCDS.2020.3026970 
+
+[13] Y. Chen et al., Pruning of deep spiking neural networks through gradient rewiring, in: Proc. Int. Joint Conf. Artif. Intell. (IJCAI), Montreal, 2021, pp. 1713–1721. [14] S. Kundu, M. Nazemi, P. Beerel, M. Pedram, HIRE-SNN: Harnessing the inherent robustness of energy-efficient deep spiking neural networks by training with crafted input noise, in: Proc. IEEE/CVF Int. Conf. Comput. Vis. (ICCV), Montreal, 2021, pp. 5209–5218. [15] N. Rathi, K. Roy, DIET-SNN: A low-latency spiking neural network with direct input encoding and leakage and threshold optimization, IEEE Trans. Neural Netw. Learn. Syst. 34 (6) (2023) 3174–3182. https: //doi.org/10.1109/TNNLS.2021.3112991 
+
+[16] C. Tetzlaff, S. Okujeni, U. Egert, F. Wörgötter, M. Butz, Self-organized criticality in developing neuronal networks, PLOS Comput. Biol. 6 (12) (2010) e1001013. https://doi.org/10.1371/journal.pcbi.1001013 
+
+[17] A. Chowdhury, G. Kulkarni, N. Jha, Towards ultra-low latency spiking neural networks for vision and sequential tasks using temporal truncation, 29 in: Proc. IEEE/CVF Int. Conf. Comput. Vis. (ICCV), Montreal, 2021, pp. 10881–10890. [18] S. Park et al., T2FSNN: Deep spiking neural networks with time-to-first-spike coding, in: Proc. ACM/IEEE Design Autom. Conf. (DAC), San Francisco, CA, 2020, pp. 1–6. [19] E. Bullmore, O. Sporns, Complex brain networks: Graph theoretical analysis of structural and functional systems, Nat. Rev. Neurosci. 10 (3) (2009) 186–198. https://doi.org/10.1038/nrn2618 
+
+30
