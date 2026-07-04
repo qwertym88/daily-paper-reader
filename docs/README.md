@@ -6,77 +6,81 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-03
-- 运行时间：2026-07-03 21:58:52 UTC
+- 最新运行日期：2026-07-04
+- 运行时间：2026-07-04 21:32:08 UTC
 - 运行状态：成功
 - 本次总论文数：19
 - 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日推荐19篇论文，精读7篇，重点关注机器人策略评估与持续学习。最值得关注的是《RoboWorld》提出的快速可靠神经模拟器用于通用机器人策略评估（9.0分），以及《Continual Robot Policy Learning》的变分神经动力学持续学习方法（8.0分）。建议优先精读这两篇高分论文，并关注速读中的人形机器人零样本学习与四足机器人壁面行走控制。
-- 详情：[/202607/03/README](/202607/03/README)
+今日推荐19篇论文，精读2篇高分工作，速读3篇热点方向。
+
+最值得关注的是跨模态学习的连续线性集成方法（MSNN-LINet, 9.0分）与未知系统演示学习框架（9.0分）。
+
+普通读者可优先从这两篇精读入手，结合硬约束控制与视觉推理等速读内容拓展思路。
+- 详情：[/202607/04/README](/202607/04/README)
 
 ### 精读区论文标签
-1. [RoboWorld: Fast and Reliable Neural Simulators for Generalist Robot Policy Evaluation](/202607/03/2607.01060v1-roboworld-fast-and-reliable-neural-simulators-for-generalist-robot-policy-evaluation)  
+1. [MSNN-LINet: Cross-Modal Learning via Continuous Linear Integration](/202607/04/2606.31135v1-msnn-linet-cross-modal-learning-via-continuous-linear-integration)  
+   标签：评分：9.0/10、query:neural-arch
+   evidence：带有连续跨模态融合的新型神经网络架构
+2. [Learning from Demonstration via Spatiotemporal Tubes for Unknown Euler-Lagrange Systems](/202607/04/2607.00534v1-learning-from-demonstration-via-spatiotemporal-tubes-for-unknown-euler-lagrange-systems)  
    标签：评分：9.0/10、query:hum-ctrl
-   evidence：用于机器人策略评估的神经模拟器
-2. [Continual Robot Policy Learning via Variational Neural Dynamics](/202607/03/2606.27353v1-continual-robot-policy-learning-via-variational-neural-dynamics)  
+   evidence：基于控制理论的从示范学习
+3. [HEFT: Heavy-Payload Full-size Humanoid Teleoperation with Privileged Motion Guidance and Windowed Payload Curriculum](/202607/04/2607.02332v1-heft-heavy-payload-full-size-humanoid-teleoperation-with-privileged-motion-guidance-and-windowed-payload-curriculum)  
+   标签：评分：9.0/10、query:hum-ctrl
+   evidence：全尺寸人形遥操作运动控制
+4. [Regularized Reward-Punishment Reinforcement Learning](/202607/04/2606.28152v1-regularized-reward-punishment-reinforcement-learning)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：基于变分神经动力学的持续机器人策略学习，与人形机器人运动控制和强化学习相关
-3. [Physics Models for Sim-to-Real Transfer in Professional-Level Robot Table Tennis](/202607/03/2606.28805v2-physics-models-for-sim-to-real-transfer-in-professional-level-robot-table-tennis)  
+   evidence：KL耦合策略正则化用于奖惩强化学习，可应用于人形机器人控制
+5. [Unleashing Infinite Motion: Scaling Expressive Quadrupedal Motion via Generative Video Priors](/202607/04/2606.28237v1-unleashing-infinite-motion-scaling-expressive-quadrupedal-motion-via-generative-video-priors)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：高保真物理仿真用于强化学习机器人乒乓球
-4. [RQP: Resource-Oriented Quantiser Pruning for Neural Networks on FPGAs](/202607/03/2606.30382v1-rqp-resource-oriented-quantiser-pruning-for-neural-networks-on-fpgas)  
+   evidence：利用生成式视频先验生成机器人运动
+6. [X-Morph: Human Motion Priors for Scalable Robot Learning Across Morphologies](/202607/04/2606.30290v1-x-morph-human-motion-priors-for-scalable-robot-learning-across-morphologies)  
+   标签：评分：8.0/10、query:hum-ctrl
+   evidence：人类运动先验用于跨形态机器人运动学习
+7. [Gradient Smoothing: Coupling Layer-wise Updates for Improved Optimization](/202607/04/2606.30813v1-gradient-smoothing-coupling-layer-wise-updates-for-improved-optimization)  
    标签：评分：8.0/10、query:neural-arch
-   evidence：面向资源的量化剪枝方法，优化网络结构
-5. [HASTE: A Framework for Training-Free, Dynamic, and Steerable Compression of Pre-Trained Convolutional Neural Networks](/202607/03/2606.30516v1-haste-a-framework-for-training-free-dynamic-and-steerable-compression-of-pre-trained-convolutional-neural-networks)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：无需训练的动态CNN压缩实现高效网络结构
-6. [Warp RL: Reshaping Base Policy Distributions for Dynamics Adaptation](/202607/03/2606.31043v2-warp-rl-reshaping-base-policy-distributions-for-dynamics-adaptation)  
-   标签：评分：8.0/10、query:hum-ctrl
-   evidence：重塑基础策略分布以自适应机器人强化学习的动态变化
-7. [RoboTacDex: A Dexterous Visual-Tactile-Action Dataset for Humanoid Manipulation](/202607/03/2606.31836v1-robotacdex-a-dexterous-visual-tactile-action-dataset-for-humanoid-manipulation)  
-   标签：评分：8.0/10、query:hum-ctrl
-   evidence：用于人形机器人的多模态灵巧操作数据集
+   evidence：层间梯度平滑方法，改进深度神经网络优化
 
 ### 速读区论文标签
-1. [Human-as-Humanoid: Enabling Zero-Shot Humanoid Learning from Ego-Exo Human Videos with Human-Aligned Embodiments](/202607/03/2606.32009v1-human-as-humanoid-enabling-zero-shot-humanoid-learning-from-ego-exo-human-videos-with-human-aligned-embodiments)  
-   标签：评分：8.0/10、query:hum-ctrl
-   evidence：通过人体视频监督的人形运动控制
-2. [Muon as a Residual Connection](/202607/03/2607.01124v1-muon-as-a-residual-connection)  
+1. [ShardNet: Training Neural Controllers with Hard, Non-Convex Constraints](/202607/04/2606.30935v1-shardnet-training-neural-controllers-with-hard-non-convex-constraints)  
    标签：评分：8.0/10、query:neural-arch
-   evidence：Muon作为隐式残差连接
-3. [Multi-Rate Nonlinear Model Predictive Control for Wall-Supported Bipedal Locomotion of Quadrupedal Robots](/202607/03/2607.01574v1-multi-rate-nonlinear-model-predictive-control-for-wall-supported-bipedal-locomotion-of-quadrupedal-robots)  
-   标签：评分：8.0/10、query:hum-ctrl
-   evidence：双足行走的非线性模型预测控制
-4. [Actuator Reality Shaping for Zero-Shot Sim-to-Real Robot Learning](/202607/03/2607.02205v1-actuator-reality-shaping-for-zero-shot-sim-to-real-robot-learning)  
-   标签：评分：8.0/10、query:hum-ctrl
-   evidence：通过塑造执行器现实实现零样本模拟到真实迁移
-5. [Fractional Stochastic Neural Networks](/202607/03/2606.29438v1-fractional-stochastic-neural-networks)  
-   标签：评分：7.0/10、query:neural-arch
-   evidence：带残差动力学的分数阶随机神经网络
-6. [Learning Transferable Dynamics Priors from Action to World Modeling](/202607/03/2606.29501v1-learning-transferable-dynamics-priors-from-action-to-world-modeling)  
+   evidence：提出新颖神经网络架构ShardNet，通过可微投影层严格满足约束，提升安全性能
+2. [Information-Regularized Attention for Visual-Centric Reasoning](/202607/04/2607.00434v1-information-regularized-attention-for-visual-centric-reasoning)  
+   标签：评分：8.0/10、query:neural-arch
+   evidence：提出新的信息正则化注意力机制，提高视觉中心推理的准确性
+3. [DRDN: Decoupled Representation Dynamic Network for From-Scratch ViT Class-Incremental Learning](/202607/04/2607.01630v1-drdn-decoupled-representation-dynamic-network-for-from-scratch-vit-class-incremental-learning)  
+   标签：评分：8.0/10、query:neural-arch
+   evidence：用于类增量学习的新型动态网络架构
+4. [S$^2$-VLA: State-Space Guided Vision-Language-Action Models for Long-Horizon Manipulation](/202607/04/2606.27872v1-s2-vla-state-space-guided-vision-language-action-models-for-long-horizon-manipulation)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：世界模型用作机器人学习仿真器
-7. [ConCent: Contact-Centric Real-to-Sim-to-Real Learning from One Demonstration](/202607/03/2606.30268v1-concent-contact-centric-real-to-sim-to-real-learning-from-one-demonstration)  
+   evidence：自适应注意力用于机器人操作，与人形机器人控制相关
+5. [Dual-Flow Reinforcement Learning with State-Aware Exploration](/202607/04/2606.29820v1-dual-flow-reinforcement-learning-with-state-aware-exploration)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：以接触为中心的实到模到实学习，直接与机器人物理仿真器相关
-8. [X-Morph: Human Motion Priors for Scalable Robot Learning Across Morphologies](/202607/03/2606.30290v1-x-morph-human-motion-priors-for-scalable-robot-learning-across-morphologies)  
+   evidence：使用双流匹配的强化学习实现连续控制
+6. [WARP: Whole-Body Retargeting for Learning from Offline Human Demonstrations](/202607/04/2606.29940v1-warp-whole-body-retargeting-for-learning-from-offline-human-demonstrations)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：跨形态机器人运动学习的人类运动先验
-9. [Tactile-WAM: Touch-Aware World Action Model with Tactile Asymmetric Attention](/202607/03/2606.26663v1-tactile-wam-touch-aware-world-action-model-with-tactile-asymmetric-attention)  
+   evidence：人形机器人全身运动重定向
+7. [Sampling-Based Coordination-Informed Multi-Objective Multi-Robot Reinforcement Learning](/202607/04/2606.30893v1-sampling-based-coordination-informed-multi-objective-multi-robot-reinforcement-learning)  
+   标签：评分：7.0/10、query:hum-ctrl
+   evidence：基于采样的协调感知多目标多机器人强化学习，涉及并行化与控制
+8. [ELASTIC: Efficiently Learning to Adaptively Scale Test-Time Compute for Generative Control Policies](/202607/04/2606.31132v1-elastic-efficiently-learning-to-adaptively-scale-test-time-compute-for-generative-control-policies)  
+   标签：评分：7.0/10、query:hum-ctrl
+   evidence：生成控制策略中测试时计算的并行缩放自适应
+9. [CORE Planner: Contextual-memory Oriented Reinforcement-learning in Unknown Environments for Robot Navigation](/202607/04/2606.29222v1-core-planner-contextual-memory-oriented-reinforcement-learning-in-unknown-environments-for-robot-navigation)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：触觉感知的世界动作模型用于接触丰富的机器人操作
-10. [Liquid Fusion of Heterogeneous Representations Towards General Salient Object Detection](/202607/03/2606.26849v1-liquid-fusion-of-heterogeneous-representations-towards-general-salient-object-detection)  
-   标签：评分：6.0/10、query:neural-arch
-   evidence：融合SSM和CNN的新型神经网络架构
-11. [World Action Models Enable Continual Imitation Learning with Recurrent Generative Replays](/202607/03/2606.27374v1-world-action-models-enable-continual-imitation-learning-with-recurrent-generative-replays)  
+   evidence：上下文记忆导向的强化学习规划器，结合传统方法与RL，用于机器人导航运动控制
+10. [Chronos: A Physics-Informed Full-History Framework for Non-Markovian Long-Horizon Manipulation](/202607/04/2606.30318v1-chronos-a-physics-informed-full-history-framework-for-non-markovian-long-horizon-manipulation)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：世界动作模型用于机器人运动控制
-12. [WattLayer: Get Layers Right to Estimate Inference Energy of Neural Networks](/202607/03/2606.27841v1-wattlayer-get-layers-right-to-estimate-inference-energy-of-neural-networks)  
-   标签：评分：6.0/10、query:neural-arch
-   evidence：面向神经网络架构的逐层能量估计模型
+   evidence：物理信息全历史框架用于非马尔可夫长期机器人操作，涉及运动控制
+11. [Warp RL: Reshaping Base Policy Distributions for Dynamics Adaptation](/202607/04/2606.31043v1-warp-rl-reshaping-base-policy-distributions-for-dynamics-adaptation)  
+   标签：评分：6.0/10、query:hum-ctrl
+   evidence：通过可逆变换重塑基础策略动作分布以适应机器人动力学变化
+12. [Efficient Sim-to-Real Transfer of World-Action Models from Synthetic Priors](/202607/04/2606.31101v1-efficient-sim-to-real-transfer-of-world-action-models-from-synthetic-priors)  
+   标签：评分：6.0/10、query:hum-ctrl
+   evidence：仿真到现实的世界-动作模型迁移用于机器人操作
 
 
 <div class="dpr-home-promo-card">
