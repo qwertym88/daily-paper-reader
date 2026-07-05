@@ -6,81 +6,76 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-04
-- 运行时间：2026-07-04 21:32:08 UTC
+- 最新运行日期：2026-07-05
+- 运行时间：2026-07-05 21:37:45 UTC
 - 运行状态：成功
-- 本次总论文数：19
-- 精读区：7
+- 本次总论文数：18
+- 精读区：6
 - 速读区：12
 
 ### 今日简报（AI）
-今日推荐19篇论文，精读2篇高分工作，速读3篇热点方向。
-
-最值得关注的是跨模态学习的连续线性集成方法（MSNN-LINet, 9.0分）与未知系统演示学习框架（9.0分）。
-
-普通读者可优先从这两篇精读入手，结合硬约束控制与视觉推理等速读内容拓展思路。
-- 详情：[/202607/04/README](/202607/04/README)
+今日推荐聚焦触觉感知与人形机器人操作，两篇9.0分论文分别探索LLM驱动的架构自演化与灵巧操作数据集。  
+最值得关注方向：触觉感知架构的自动化发现，以及多模态（视觉-触觉-动作）数据集的构建与应用。  
+建议普通读者优先精读TacEvo的演化方法论和RoboTacDex的数据集设计，后续可追踪ViPSim在长程世界模型中的视觉-参数协作思路。
+- 详情：[/202607/05/README](/202607/05/README)
 
 ### 精读区论文标签
-1. [MSNN-LINet: Cross-Modal Learning via Continuous Linear Integration](/202607/04/2606.31135v1-msnn-linet-cross-modal-learning-via-continuous-linear-integration)  
+1. [TacEvo: Self-Evolving Architecture Discovery for Robotic Tactile Perception via LLM-Driven Quality-Diversity Search](/202607/05/2606.30109v1-tacevo-self-evolving-architecture-discovery-for-robotic-tactile-perception-via-llm-driven-quality-diversity-search)  
    标签：评分：9.0/10、query:neural-arch
-   evidence：带有连续跨模态融合的新型神经网络架构
-2. [Learning from Demonstration via Spatiotemporal Tubes for Unknown Euler-Lagrange Systems](/202607/04/2607.00534v1-learning-from-demonstration-via-spatiotemporal-tubes-for-unknown-euler-lagrange-systems)  
+   evidence：用于机器人触觉感知的神经架构搜索
+2. [RoboTacDex: A Dexterous Visual-Tactile-Action Dataset for Humanoid Manipulation](/202607/05/2606.31836v1-robotacdex-a-dexterous-visual-tactile-action-dataset-for-humanoid-manipulation)  
    标签：评分：9.0/10、query:hum-ctrl
-   evidence：基于控制理论的从示范学习
-3. [HEFT: Heavy-Payload Full-size Humanoid Teleoperation with Privileged Motion Guidance and Windowed Payload Curriculum](/202607/04/2607.02332v1-heft-heavy-payload-full-size-humanoid-teleoperation-with-privileged-motion-guidance-and-windowed-payload-curriculum)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：全尺寸人形遥操作运动控制
-4. [Regularized Reward-Punishment Reinforcement Learning](/202607/04/2606.28152v1-regularized-reward-punishment-reinforcement-learning)  
+   evidence：人形机器人灵巧操作数据集，支持运动控制研究
+3. [Physics Models for Sim-to-Real Transfer in Professional-Level Robot Table Tennis](/202607/05/2606.28805v1-physics-models-for-sim-to-real-transfer-in-professional-level-robot-table-tennis)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：KL耦合策略正则化用于奖惩强化学习，可应用于人形机器人控制
-5. [Unleashing Infinite Motion: Scaling Expressive Quadrupedal Motion via Generative Video Priors](/202607/04/2606.28237v1-unleashing-infinite-motion-scaling-expressive-quadrupedal-motion-via-generative-video-priors)  
+   evidence：机器人乒乓球中的物理仿真用于sim-to-real迁移
+4. [BIFROST: Bridging Invariant Feature Representation for Observation-space Sim2Real Transfer](/202607/05/2607.01410v1-bifrost-bridging-invariant-feature-representation-for-observation-space-sim2real-transfer)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：利用生成式视频先验生成机器人运动
-6. [X-Morph: Human Motion Priors for Scalable Robot Learning Across Morphologies](/202607/04/2606.30290v1-x-morph-human-motion-priors-for-scalable-robot-learning-across-morphologies)  
+   evidence：面向机器人策略的仿真到现实迁移方法
+5. [Training-free Controllable Human Motion Generation under Heterogeneous Constraints](/202607/05/2607.01990v1-training-free-controllable-human-motion-generation-under-heterogeneous-constraints)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：人类运动先验用于跨形态机器人运动学习
-7. [Gradient Smoothing: Coupling Layer-wise Updates for Improved Optimization](/202607/04/2606.30813v1-gradient-smoothing-coupling-layer-wise-updates-for-improved-optimization)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：层间梯度平滑方法，改进深度神经网络优化
+   evidence：人体运动生成与控制视角结合
+6. [WorldSample: Closed-loop Real-robot RL with World Modelling](/202607/05/2607.02431v1-worldsample-closed-loop-real-robot-rl-with-world-modelling)  
+   标签：评分：8.0/10、query:hum-ctrl
+   evidence：结合世界模型仿真器的真实机器人强化学习
 
 ### 速读区论文标签
-1. [ShardNet: Training Neural Controllers with Hard, Non-Convex Constraints](/202607/04/2606.30935v1-shardnet-training-neural-controllers-with-hard-non-convex-constraints)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：提出新颖神经网络架构ShardNet，通过可微投影层严格满足约束，提升安全性能
-2. [Information-Regularized Attention for Visual-Centric Reasoning](/202607/04/2607.00434v1-information-regularized-attention-for-visual-centric-reasoning)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：提出新的信息正则化注意力机制，提高视觉中心推理的准确性
-3. [DRDN: Decoupled Representation Dynamic Network for From-Scratch ViT Class-Incremental Learning](/202607/04/2607.01630v1-drdn-decoupled-representation-dynamic-network-for-from-scratch-vit-class-incremental-learning)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：用于类增量学习的新型动态网络架构
-4. [S$^2$-VLA: State-Space Guided Vision-Language-Action Models for Long-Horizon Manipulation](/202607/04/2606.27872v1-s2-vla-state-space-guided-vision-language-action-models-for-long-horizon-manipulation)  
+1. [ViPSim: Collaborating Visual and Parameter Spaces for Consistent Long-Horizon Embodied World Models](/202607/05/2606.28804v1-vipsim-collaborating-visual-and-parameter-spaces-for-consistent-long-horizon-embodied-world-models)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：自适应注意力用于机器人操作，与人形机器人控制相关
-5. [Dual-Flow Reinforcement Learning with State-Aware Exploration](/202607/04/2606.29820v1-dual-flow-reinforcement-learning-with-state-aware-exploration)  
+   evidence：ViPSim框架用于一致性长程具身世界模型作为仿真器
+2. [STEAM: Self-Supervised Temporal Ensemble Advantage Modeling for Real-World Robot Learning](/202607/05/2606.29834v1-steam-self-supervised-temporal-ensemble-advantage-modeling-for-real-world-robot-learning)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：使用双流匹配的强化学习实现连续控制
-6. [WARP: Whole-Body Retargeting for Learning from Offline Human Demonstrations](/202607/04/2606.29940v1-warp-whole-body-retargeting-for-learning-from-offline-human-demonstrations)  
+   evidence：适用于人形机器人运动控制的机器人学习方法
+3. [Motion Planning in Compressed Representation Spaces](/202607/05/2606.30940v1-motion-planning-in-compressed-representation-spaces)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：人形机器人全身运动重定向
-7. [Sampling-Based Coordination-Informed Multi-Objective Multi-Robot Reinforcement Learning](/202607/04/2606.30893v1-sampling-based-coordination-informed-multi-objective-multi-robot-reinforcement-learning)  
+   evidence：在压缩表示空间中使用深度学习和模型基方法进行运动规划
+4. [Z-1: Efficient Reinforcement Learning for Vision-Language-Action Models](/202607/05/2606.31846v1-z-1-efficient-reinforcement-learning-for-vision-language-action-models)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：基于采样的协调感知多目标多机器人强化学习，涉及并行化与控制
-8. [ELASTIC: Efficiently Learning to Adaptively Scale Test-Time Compute for Generative Control Policies](/202607/04/2606.31132v1-elastic-efficiently-learning-to-adaptively-scale-test-time-compute-for-generative-control-policies)  
+   evidence：机器人视觉-语言-动作模型的强化学习后训练
+5. [AutoSpeed: Annotation-Free Stage-Adaptive Motion Speed Learning for Robot Manipulation](/202607/05/2607.01051v1-autospeed-annotation-free-stage-adaptive-motion-speed-learning-for-robot-manipulation)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：生成控制策略中测试时计算的并行缩放自适应
-9. [CORE Planner: Contextual-memory Oriented Reinforcement-learning in Unknown Environments for Robot Navigation](/202607/04/2606.29222v1-core-planner-contextual-memory-oriented-reinforcement-learning-in-unknown-environments-for-robot-navigation)  
+   evidence：无需速度标注的机器人操作阶段自适应运动速度学习
+6. [FAR: Failure-Aware Retry for Test-Time Recovery and Continual Policy Improvement](/202607/05/2607.01111v1-far-failure-aware-retry-for-test-time-recovery-and-continual-policy-improvement)  
+   标签：评分：7.0/10、query:hum-ctrl
+   evidence：机器人强化学习策略的测试时改进
+7. [LAMP: Long-Horizon Adaptive Manipulation Planning for Multi-Robot Collaboration in Cluttered Space](/202607/05/2606.29358v1-lamp-long-horizon-adaptive-manipulation-planning-for-multi-robot-collaboration-in-cluttered-space)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：上下文记忆导向的强化学习规划器，结合传统方法与RL，用于机器人导航运动控制
-10. [Chronos: A Physics-Informed Full-History Framework for Non-Markovian Long-Horizon Manipulation](/202607/04/2606.30318v1-chronos-a-physics-informed-full-history-framework-for-non-markovian-long-horizon-manipulation)  
+   evidence：多机器人长时域协作操作规划，涉及运动与接触推理
+8. [Separation Capacity of Scattering Networks](/202607/05/2606.30822v1-separation-capacity-of-scattering-networks)  
+   标签：评分：6.0/10、query:neural-arch
+   evidence：散射网络架构的理论分析
+9. [ELMP: Efficient Learning for Motion Planning via Analytical Policy Gradients](/202607/05/2607.00215v1-elmp-efficient-learning-for-motion-planning-via-analytical-policy-gradients)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：物理信息全历史框架用于非马尔可夫长期机器人操作，涉及运动控制
-11. [Warp RL: Reshaping Base Policy Distributions for Dynamics Adaptation](/202607/04/2606.31043v1-warp-rl-reshaping-base-policy-distributions-for-dynamics-adaptation)  
+   evidence：用于运动规划的分析策略梯度，可应用于人形机器人控制
+10. [ASPIRE: Agentic /Skills Discovery for Robotics](/202607/05/2607.00272v1-aspire-agentic-skills-discovery-for-robotics)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：通过可逆变换重塑基础策略动作分布以适应机器人动力学变化
-12. [Efficient Sim-to-Real Transfer of World-Action Models from Synthetic Priors](/202607/04/2606.31101v1-efficient-sim-to-real-transfer-of-world-action-models-from-synthetic-priors)  
+   evidence：受强化学习启发的机器人技能发现
+11. [Learning Gait-Aware Quadruped Locomotion with Temporal Logic Specifications](/202607/05/2607.00442v1-learning-gait-aware-quadruped-locomotion-with-temporal-logic-specifications)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：仿真到现实的世界-动作模型迁移用于机器人操作
+   evidence：用时序逻辑的强化学习步态控制，可迁移至人形机器人运动
+12. [Guided Action Flow: Q-Guided Inference for Flow-Matching Vision-Language-Action Policies](/202607/05/2607.02092v1-guided-action-flow-q-guided-inference-for-flow-matching-vision-language-action-policies)  
+   标签：评分：6.0/10、query:hum-ctrl
+   evidence：机器人动作生成方法，与运动控制相关
 
 
 <div class="dpr-home-promo-card">
