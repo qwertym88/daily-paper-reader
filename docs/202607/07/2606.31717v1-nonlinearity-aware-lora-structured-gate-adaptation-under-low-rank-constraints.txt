@@ -1,0 +1,797 @@
+Title: Nonlinearity-Aware LoRA: Structured Gate Adaptation under Low-Rank Constraints
+
+URL Source: https://arxiv.org/pdf/2606.31717v1
+
+Published Time: Wed, 01 Jul 2026 01:14:48 GMT
+
+Number of Pages: 19
+
+Markdown Content:
+# NONLINEARITY -A WARE LORA: S TRUCTURED GATE 
+
+# ADAPTATION UNDER LOW -R ANK CONSTRAINTS 
+
+Shuai Yuan 1, Sudong Cai 2∗
+
+, Bingzhi Chen 1, Shuyuan Zheng 3 , Chuan Xiao 3
+
+Makoto Onizuka 3 , Rui Mao 41Beijing Institute of Technology, Zhuhai ; 2The Hong Kong Polytechnic University; 
+
+> 3
+
+The University of Osaka; 4Shenzhen University 
+
+yuanshuai@bit.edu.cn; sudong.cai@polyu.edu.hk 
+
+ABSTRACT 
+
+Low-rank adaptation (LoRA) is commonly justified as an update-space approxi-mation to full fine-tuning, yet this view is incomplete for self-gated Transformer feed-forward networks (FFNs). Drawing on the decision-making interpretation of activation as selective feature recalibration, we show that a low-rank resid-ual can change not only the projected features but also the nonlinear selection weights that determine which channels contribute to the FFN output. We formal-ize this effect as selection misalignment and connect it to the local effective ho-mogeneity of self-gated activations: the output behavior of a channel is governed by the gate pre-activation through a data-dependent homogeneity profile. This motivates an effective-homogeneity-aware principle for PEFT: low-rank updates should spend capacity on gate channels whose nonlinear states remain respon-sive and should shape, rather than suppress, the temporal evolution of selection. We propose NA-LoRA (Nonlinearity-Aware LoRA), a training-only method that implements this principle with two lightweight mechanisms: a derivative-based temporal-importance mask for gate-related LoRA updates, and an activation-specific step-scaling rule when a meaningful coarse effective-homogeneity par-tition is available. NA-LoRA adds no auxiliary loss and incurs no inference-time overhead. Across language-model fine-tuning and vision-language transfer bench-marks, NA-LoRA improves over vanilla LoRA and is competitive with or better than strong PEFT variants across task metrics, often approaching or exceeding full fine-tuning in the reported settings. 
+
+1 INTRODUCTION 
+
+Low-Rank Adaptation (LoRA) Hu et al. (2022) has become a standard parameter-efficient fine-tuning (PEFT) method for large language models. By freezing the pretrained backbone and learning a low-rank update, LoRA reduces memory and optimization cost while retaining much of the flexi-bility of full fine-tuning. Nevertheless, a persistent gap between LoRA and full fine-tuning remains in many settings Ding et al. (2023). Recent variants reduce this gap through better rank alloca-tion, initialization, update parameterization, or optimizer design Kalajdzievski (2023); Zhang et al. (2023); Meng et al. (2024); Liu et al. (2024). Most of these methods share an implicit premise: if the low-rank update is well aligned with the full update in weight, gradient, or subspace geometry, then the adapted model should behave similarly. This premise is useful but incomplete for Transformer feed-forward networks (FFNs), especially gated variants such as SwiGLU. In a gated FFN, behavior is not determined solely by the linear pro-jections. The gate activation also converts pre-activation scores into multiplicative decision weights that reweight channel utilities. Thus, a low-rank update can be close to a target update in parameter space while still inducing a different pattern of nonlinear channel selection. This discrepancy is particularly important when small gate perturbations move channels across responsive, saturated, or positive non-amplifying regimes, because these regime changes alter how features are emphasized or suppressed by the FFN. 
+
+> ∗
+
+Corresponding author: Sudong Cai. 
+
+1                     
+
+> arXiv:2606.31717v1 [cs.LG] 30 Jun 2026 Weight Space
+> Selection mismatch:
+> output changes even as
+> weight residual shrinks
+> LoRA FT
+> Nonlinear amplification:
+> perturbations can make
+> flips near boundary
+> Feature Space
+> LoRA
+> FT
+> Evaluation –De cision Process Channel Space
+> Trainable Trainable Frozen Frozen Activation Function Activation Function Weight Distribution Weight Distribution LoRA Projection LoRA Projection FT Projection FT Projection Mismatched Channels Mismatched Channels Feature Vector Feature Vector Postive Postive Negative Negative
+
+Figure 1: Motivation. Weight-space alignment does not guarantee activation-induced selection alignment in self-gated FFNs. NA-LoRA targets the training-time gate dynamics that control channel usage. 
+
+We revisit LoRA through the decision-making view of neural activation developed in the MCDM activation literature Cai (2023; 2024); Cai et al. (2026). In this view, an affine or linear projection provides an evaluation score, and the activation acts as a selective recalibrator that transforms the score into a decision weight. Adapting this lens from activation design to PEFT leads to a differ-ent diagnosis of the LoRA gap: beyond approximating a full update, an adapter should account for the selection behavior induced by the existing nonlinear gates. We call the resulting failure mode selection misalignment ; Figure 1 illustrates why a small weight-space residual can still change activation-induced channel selection. Our analysis decomposes this misalignment into a view mismatch, a residual-through-view term, and a selection-mismatch term. We further connect the selection term to the local effective homo-geneity of self-gated activations, which describes how a channel’s nonlinear output changes under local score and input scaling. This profile reveals whether gate changes are suppressive, responsive, or already in a positive non-amplifying state. Importantly, these regions are not fixed engineering constants; they are induced by the activation-specific effective-homogeneity curve. This suggests a design principle for low-rank adaptation: LoRA updates should not only fit gradients, but should also allocate capacity and update speed according to the nonlinear state of FFN gates. We propose NA-LoRA (Nonlinearity-Aware LoRA), a training-only method that implements this principle without auxiliary alignment losses or inference-time overhead. First, a temporal-importance channel mask uses gate-derivative sensitivity to identify channels whose gate states are consistently responsive, allocating limited low-rank capacity to channels that can most affect se-lection behavior. Second, a homogeneity-dynamics step scaling rule uses activation-specific coarse regime statistics when they are non-degenerate, shaping update speed without unstructured amplifi-cation of the entire FFN adapter. Attention projections remain standard LoRA; NA-LoRA applies nonlinearity-aware control only where FFN gates induce selection dynamics. 
+
+Contributions. (1) We identify selection misalignment as a behavior-space source of the LoRA gap in self-gated FFNs, complementing existing weight-, gradient-, and rank-centric analyses. (2) We formalize a decision-making view of LoRA adaptation and derive effective-homogeneity di-agnostics that connect gate sensitivity, channel utility, and structured temporal modulation. (3) We introduce NA-LoRA , combining sensitivity-based temporal channel masking with activation-specific LoRA step scaling when a non-degenerate regime statistic is available. (4) We validate NA-LoRA on language-model fine-tuning and CLIP transfer benchmarks, showing consistent gains over vanilla LoRA and competitive or improved performance relative to strong PEFT baselines with zero inference-time overhead. 
+
+2 RELATED WORK 
+
+Low-rank adaptation. Parameter-efficient fine-tuning adapts pretrained models by updating a small set of trainable parameters, e.g., adapters, prompts, or low-rank factors Houlsby et al. (2019); Lester et al. (2021); Ding et al. (2023); Hu et al. (2022). LoRA Hu et al. (2022) is particularly widely used because it freezes the backbone and represents each update by a low-rank product. Recent variants improve LoRA through rank allocation, initialization, update reparameterization, or gradi-ent/optimization alignment Kalajdzievski (2023); Zhang et al. (2023); Meng et al. (2024); Liu et al. (2024); Wang et al. (2024; 2025); He et al. (2025). These methods mainly reason in weight, gra-dient, or subspace geometry; our focus is the nonlinear behavior induced by self-gated FFNs after such updates. 2Activation as selection. Self-gated activations such as SiLU/GELU transform pre-activation scores into input-dependent recalibration weights. A related decision-making line interprets the affine– activation pipeline as feature evaluation followed by decision weighting, and uses this view to im-prove activation design or adaptive scaling Cai (2023; 2024); Cai et al. (2026). Recent nonlinear adapter work also suggests that adding nonlinear mappings to LoRA can improve PEFT expressiv-ity Dong et al. (2025). NA-LoRA differs in that it does not redesign the activation or add inference-time nonlinear modules; it uses the selection view to modulate how existing FFN gates evolve during LoRA training. 
+
+Our position. Existing LoRA methods narrow the gap to full fine-tuning by improving the low-rank update itself. We study a complementary failure mode: a low-rank update may be plausible in parameter space yet alter the gate-induced score-to-weight recalibration that determines chan-nel usage. NA-LoRA therefore treats FFN gates as output-determining selection units and applies training-only, history-aware modulation to their low-rank updates. 
+
+3 PROBLEM : S ELECTION MISALIGNMENT IN LORA 
+
+LoRA is usually analyzed as a low-rank approximation to a target update. For a self-gated FFN, however, the output is determined jointly by the feature view, the gate score, and the activation-induced decision weight. A small residual in a gate projection can therefore change the nonlinear rule by which channels are selected, even if the residual is small under a conventional matrix norm. We call this behavior-space discrepancy selection misalignment .The target full-fine-tuning update used below is a conceptual reference, not an additional signal required by NA-LoRA. It exposes why update-space alignment alone is insufficient and motivates training-time control that can be estimated from the observed gate dynamics of the LoRA model itself. 3.1 SELECTION VIEW OF SELF -GATED FFN S
+
+Consider a SwiGLU-style FFN block 
+
+u = Wux, z = Wg x, h = ϕ(z) ⊙ u, y = Wdh, (1) where u is the feature view and z is the gate pre-activation. We omit biases and normalization from the notation; the analysis applies locally after the normalized representation has been formed, and LoRA scaling factors are absorbed into the low-rank matrices. 
+
+Definition 3.1 (Selection weights) . For a self-gated nonlinearity of the form ϕ(z) = ϱ(z)z, define the channel-wise selection weight 
+
+ϕ(z) = s(z) ⊙ z, si(z) = ϱ(zi) ≥ 0. (2) At isolated points where the ratio form is ambiguous, s is defined by continuity. For SiLU, for example, si(z) = σ(zi).
+
+Insight 3.2 (Activation as selective recalibration) . Following the MCDM interpretation of activa-tion, z acts as an evaluation score, s(z) acts as a decision-weighting rule, and u provides the candidate feature view. The FFN channel utility is therefore 
+
+U(z, u ) := ϕ(z) ⊙ u =  s(z) ⊙ z ⊙ u. (3) 
+
+Selection alignment means preserving this score-to-weight recalibration, not merely approximating the linear projection that produces z.
+
+3.2 WEIGHT -SPACE FIT NEED NOT IMPLY SELECTION ALIGNMENT 
+
+Let the target and LoRA-adapted gate projections be 
+
+Wg, tar = Wg, 0 + ∆ Wg , Wg, lora = Wg, 0 + d∆W g , d∆W g = Bg Ag , (4) and define the gate residual Eg := ∆ Wg − d∆W g . Similarly, define the feature-view residual 
+
+Eu := ∆ Wu − d∆W u for the up projection. For an input x,
+
+ztar = Wg, tar x, zlora = Wg, lora x, ∆z = ztar − zlora = Eg x, (5) and analogously ∆u = utar − ulora = Eux.3Proposition 3.3 (Exact decomposition of FFN mismatch) . For a self-gated FFN with ϕ(z) = s(z)⊙
+
+z, the channel-utility mismatch admits the exact decomposition 
+
+U(ztar , u tar ) − U (zlora , u lora )=  s(ztar ) ⊙ ∆z ⊙ ulora 
+
+| {z }
+
+> residual through the current view
+
++  s(ztar ) − s(zlora ) ⊙ zlora ⊙ ulora 
+
+| {z }
+
+> selection mismatch
+
++ ϕ(ztar ) ⊙ ∆u
+
+| {z }
+
+> view mismatch
+
+. (6) The second term is the object ignored by a purely weight-space view. It is small only when the low-rank residual induces little change in the decision weights, or when the affected channels have little utility. Thus, what matters is not just ∥Eg ∥, but how Eg x aligns with gate-sensitive and high-utility directions on the data distribution. 
+
+Corollary 3.4 (Selection change is a behavior-space control variable) . For any ℓp norm compatible with the elementwise product, 
+
+∥U (ztar , u tar ) − U (zlora , u lora )∥p
+
+≤ ∥ ulora ∥∞
+
+
+
+∥s(ztar )∥∞∥∆z∥p + ∥zlora ∥∞∥s(ztar ) − s(zlora )∥p
+
+
+
++ ∥ϕ(ztar )∥∞∥∆u∥p. (7) 
+
+Consequently, a useful behavior-space bound requires controlling target-misaligned selection change ∥s(ztar ) − s(zlora )∥p in addition to the projection residuals. 
+
+Proposition 3.5 (Sensitivity-weighted selection mismatch) . Assume s is differentiable on the seg-ment between zlora and ztar . For each channel c, there exists an intermediate point ¯zc on this segment such that  s(ztar ,c ) − s(zlora ,c )zlora ,c ulora ,c = s′(¯ zc) ∆ zc zlora ,c ulora ,c . (8) 
+
+Thus the squared selection-mismatch energy is governed by 
+
+X
+
+> c
+
+|s′(¯ zc)|2|zlora ,c |2|ulora ,c |2|∆zc|2. (9) This expression gives the rank-allocation principle behind NA-LoRA: under a fixed low-rank budget, updates should prioritize channels that are both responsive to gate perturbations and repeatedly useful for the FFN output. Directly estimating s′(¯ zc) and the target residual is impractical, so we next introduce a gate statistic that is available during ordinary LoRA training. 3.3 GATE SENSITIVITY AND EFFECTIVE HOMOGENEITY 
+
+The MCDM view treats activation as a decision rule, but a training algorithm needs a computable statistic. We use two related quantities. The first is the derivative magnitude |ϕ′(z)|, which directly modulates the gate-projection gradient. For an upstream signal g of the same shape as h,
+
+∇Wg L = ( g ⊙ u ⊙ ϕ′(z)) x⊤. (10) Hence saturated or insensitive gate states produce low-utility gate updates, whereas responsive states make LoRA updates on the gate path effective. For the commonly used SiLU gate ϕ(z) = zσ (z),
+
+|ϕ′(z)| = σ(z) + zσ (z)(1 − σ(z)) . (11) The second quantity describes the local scaling behavior of the channel. 
+
+Definition 3.6 (Effective homogeneity profile) . For a differentiable self-gated nonlinearity ϕ, define 
+
+κϕ(z) := zϕ ′(z)
+
+ϕ(z) + ϵ , χϕ(z) := 1 + κϕ(z), (12) where ϵ > 0 is used only for numerical stability. We call χϕ(z) the effective homogeneity profile of the FFN channel. 
+
+Proposition 3.7 (Channel-wise local scaling sensitivity) . Let hc(x) = ϕ(zc(x)) uc(x), where 
+
+zc(x) = Wg,c x and uc(x) = Wu,c x. Along the scaling ray x 7 → αx , the logarithmic elasticity at α = 1 is ∂ log |hc(αx )|
+
+∂ log α α=1 
+
+= 1 + κϕ(zc(x)) = χϕ(zc(x)) . (13) 4Proposition 3.7 shows that the gate pre-activation controls the local scaling regime of each FFN channel. The coarse regimes used by NA-LoRA are obtained from the characteristic points of the activation-specific effective-homogeneity curve, such as zeros, extrema, or discontinuities of κϕ.For SwiGLU this yields suppressive, responsive, and positive non-amplifying regions; for piecewise-linear or other smooth gates the partition can collapse or become uninformative. We therefore define the principle here and instantiate thresholds only through activation-specific characteristic points used in each experiment. 
+
+Definition 3.8 (Effective-homogeneity movement) . For consecutive LoRA states θt and θt+1 , define the data-dependent homogeneity movement 
+
+DEH (t) := Ex
+
+" dhX
+
+> c=1
+
+ωt,c (x) χϕ(zt+1 ,c (x)) − χϕ(zt,c (x)) 2
+
+#
+
+, (14) where ωt,c (x) ≥ 0 is a channel-importance weight, instantiated in NA-LoRA by the derivative-based mask. We use DEH (t) as a local trajectory diagnostic and design guide, not as an auxiliary loss or as a requirement that cumulative raw gate movement decrease. 
+
+Proposition 3.9 (A local bound on homogeneity movement) . Assume κϕ is Lκ-Lipschitz on the gate region visited by the minibatch. Let δz t,c (x) = zt+1 ,c (x) − zt,c (x). Then 
+
+χϕ(zt+1 ,c (x)) − χϕ(zt,c (x)) ≤ Lκ|δz t,c (x)|. (15) 
+
+If the LoRA-only update is scaled by st and masked by mt,c on the gate output channel, then locally 
+
+Ex
+
+|χϕ(zt+1 ,c ) − χϕ(zt,c )|2 ≲ η2s2 
+
+> t
+
+m2
+
+> t,c
+
+L2 
+
+> κ
+
+Ex
+
+∥Gg,c,t ∥2∥x∥2, (16) 
+
+where Gg,c,t denotes the effective gate-projection gradient for channel c and η is the learning rate. 
+
+This bound clarifies the two control variables used by NA-LoRA. The mask controls where 
+
+homogeneity-sensitive movement is emphasized by downweighting low-responsiveness channels, and the step scale locally modulates how fast FFN LoRA parameters move at each optimization step. In practice we do not add Eq. (14) as a loss; we implement its implication as lightweight training-time control on LoRA gradients. 3.4 TEMPORAL CONTROL AS A DESIGN PRINCIPLE 
+
+Selection mismatch can accumulate over training. Let Dt(x) denote any scalar decision score in-duced by the FFN block at optimization step t; it may be a channel score, a logit contribution, or a coarse regime indicator. We use the following elementary margin principle to justify temporal control. 
+
+Proposition 3.10 (Margin-based flip bound) . For any threshold τ > 0,
+
+P[sign( Dt+1 (x)) ̸ = sign( Dt(x))] ≤ P[|Dt(x)| ≤ τ ] + P[|Dt+1 (x) − Dt(x)| > τ ] . (17) The first term captures inherently low-margin inputs. The second term captures temporal score movement induced by the update. NA-LoRA uses this term to motivate step scaling: the method shapes one-step movement while still allowing, and sometimes amplifying, task-driven movement on responsive channels. 
+
+Corollary 3.11 (Step-size control of one-step movement) . Let θt denote the LoRA parameters af-fecting Dt(x). Assume Dt(x) is locally Lipschitz in θt with constant LD (x) and the LoRA update has the form θt+1 = θt − ηs tgt. Then, for any τ > 0,
+
+P |Dt+1 (x) − Dt(x)| > τ  ≤ η2s2
+
+> t
+
+τ 2 ELD (x)2∥gt∥2 . (18) Together, the decomposition, effective-homogeneity profile, and temporal margin bound yield the core design rule of NA-LoRA: allocate rank to responsive selection channels and shape the speed and location of nonlinear gate movement under the low-rank budget. Figure 2 summarizes how this principle is implemented as a training-time controller. 5down_proj 
+
+Gated FFN with LoRA  Nonlinear -State Sensing  
+
+> up_proj gate_proj
+
+Macro Controller: 
+
+Homogeneity -Dynamics Step Scaling 
+
+Micro Controller: 
+
+Temporal -Importance Mask    
+
+> Activation
+> function
+> (1) Responsiveness
+> (2) Effective homogeneity
+> (3) Regime view over
+> Trainable Trainable Frozen Frozen
+> Projection scales （depend on ）
+> Responsive channels over
+> slow
+> slow
+> slow
+> fast
+> fast
+> fast
+> distribution
+> Apply to gate LoRA gradient ：
+
+Gradient -Only NA -LoRA Update       
+
+> Proportions score ：
+> channels
+> soft top -k
+> EMA
+> mask (0 -1)
+> Suppressive Postive non -
+> amplifying
+> Responsive
+> Selective
+> recalibration
+> determines which
+> channels contribute.
+> Motivation:
+> LoRA updates affect not only
+> projected features but also
+> gate -induced channel selection Responsiveness metric ：
+> Channel -level ：
+> Scaling metric ：
+> FFN effective -
+> homogeneity:
+> partition
+> Controller outputs act as gradient
+> modifiers, not forward modules. Micro output: Macro output:
+
+Figure 2: NA-LoRA overview. The temporal-importance mask allocates gate-related low-rank updates to responsive channels, while activation-specific step scaling modulates FFN LoRA update speed when a non-degenerate coarse regime statistic is available. Both controls are training-only. 
+
+4 NONLINEARITY -A WARE LORA 
+
+What problem does NA-LoRA solve? Standard LoRA assigns low-rank updates according to modules, but not according to the nonlinear state of FFN channels. In a gated FFN, however, the use-fulness of updating a gate channel depends on whether that channel is locally insensitive, responsive, suppressive, or already positive and non-amplifying. Under a tight rank budget, treating all channels uniformly can spend update capacity on directions that barely affect the activation-induced selection rule. NA-LoRA addresses this nonlinearity-blind allocation problem. It complements gradient- and initialization-centric LoRA variants by asking where low-rank motion should be expressed inside the nonlinear FFN, rather than only how the low-rank update should approximate a full update. Its goal is not to minimize raw sigmoid-gate movement, but to make LoRA-induced movement more concentrated on effective-homogeneity-sensitive channels and more structured over training. 
+
+Why should this be effective? The analysis in Section 3 gives two usable signals. First, Eq. (10) shows that the actual gate-projection gradient is modulated by ϕ′(z); channels with larger |ϕ′(z)|
+
+have larger marginal ability to change the FFN utility through the gate path. Second, the effective-homogeneity profile κϕ(z) identifies activation-specific regions in which gate movement has dif-ferent functional meaning. These signals let NA-LoRA spend rank where gate changes are likely to matter and, when a non-degenerate coarse regime statistic exists, regulate FFN update speed ac-cording to the current nonlinear regime. This interpretation is consistent with our diagnostics in Section 5: NA-LoRA exhibits larger raw gate movement than LoRA, but that movement is accom-panied by stronger and more sustained effective-homogeneity modulation, especially in middle and deeper layers. NA-LoRA has two training-only components. The temporal-importance channel mask decides 
+
+where gate-related LoRA capacity should be used. The homogeneity-dynamics step scaling de-cides how fast LoRA parameters in the FFN should move when the activation admits a meaningful coarse gate-regime statistic. When the coarse statistic is unavailable or degenerate, the scaling is dis-abled and NA-LoRA reduces to sensitivity-based channel allocation. Neither component changes the frozen backbone, adds an auxiliary loss, or introduces inference-time computation. 64.1 TEMPORAL -IMPORTANCE CHANNEL MASK 
+
+Channel allocation. Proposition 3.5 and Eq. (10) imply that gate-related updates are most useful when they affect channels that are both selected by the data and locally responsive to gate perturba-tions. We use the derivative magnitude 
+
+k(z) := |ϕ′(z)| (19) as a first-order proxy for this responsiveness. For SiLU, this is 
+
+k(z) = σ(z) + zσ (z)(1 − σ(z)) . (20) Given gate pre-activations z ∈ RB×S×dh in one FFN block, the per-channel score is 
+
+keff (c) := Eb,s [k(zb,s,c )] , c ∈ [dh]. (21) Large keff (c) indicates that channel c repeatedly visits a state where gate-score perturbations can change the channel utility; small values indicate low marginal utility for gate-path adaptation. 
+
+Soft top-k mask with temporal smoothing. Given a keep ratio ρkeep ∈ (0 , 1] , let 
+
+τk = Quantile  keff , 1 − ρkeep 
+
+, (22) and define 
+
+mnew  
+
+> c
+
+= σ β (keff (c) − τk) ∈ (0 , 1) , (23) where β > 0 controls boundary sharpness. We smooth the mask over optimization steps, 
+
+mt = ηmmt−1 + (1 − ηm)mnew , ηm ∈ [0 , 1) , (24) so that the selected support reflects persistent gate responsiveness rather than minibatch noise. 
+
+Gradient use. The mask is applied along the output-channel dimension of gate-related LoRA gradients. With Bg ∈ Rdh×r and Ag ∈ Rr×d,
+
+(∇Bg )c, : ← mt,c (∇Bg )c, :. (25) Thus NA-LoRA changes only the adapter update. Attention projections use standard LoRA because they do not contain the FFN gate-selection mechanism targeted here. 4.2 HOMOGENEITY -DYNAMICS STEP SCALING 
+
+Trajectory shaping. The mask reallocates gate-related LoRA updates across channels, but it does not control the overall speed of FFN LoRA updates. Corollary 3.11 and Proposition 3.9 show that, locally, a LoRA-only scale controls an upper bound on one-step score and homogeneity change. We use this fact as a trajectory-shaping device rather than as a claim that cumulative raw gate move-ment should be smaller than vanilla LoRA. The scale can accelerate adaptation when a block has substantial responsive mass and can damp updates when the block is dominated by already positive non-amplifying states. This component is used only when the activation provides a non-degenerate coarse effective-homogeneity partition. 
+
+Coarse gate-regime statistic. For SwiGLU FFN blocks, the characteristic points of the SiLU effective-homogeneity curve give a finite symmetric threshold τz = 1 .27846 . We therefore partition gate pre-activations as 
+
+psup = E[I(z < −τz )] , pres = E[I(|z| ≤ τz )] , ppos = E[I(z > τ z )] , (26) where the expectation is over batch, token, and channel dimensions. The three regions correspond to suppressive or negative gate-contribution states, responsive homogeneity-amplifying states, and positive non-amplifying states. The threshold is activation-specific rather than a universal design constant. For ReLU FFNs, such as t5-base v1.0 , ReLU can be written as ϕ(z) = zI(z > 0) with a hard sign/Heaviside-type gate and a single characteristic point at z = 0 ; the responsive band collapses, so pres is not available. For GELU FFNs, such as CLIP-ViT-B/16, the self-gate can be viewed as a smooth sigmoid-type 7gate without finite suppressive and positive boundaries under our coarse statistic; equivalently, the boundary is degenerate. In both cases we disable homogeneity-dynamics step scaling and keep the sensitivity mask as the active NA-LoRA component. We summarize the block state by 
+
+a = clamp  pres − λpos ppos , 0, 1, (27) where λpos > 0 penalizes dominance by the positive non-amplifying region. A larger a means that more mass lies in the responsive band, where additional LoRA motion is expected to be useful. 
+
+Projection-wise LoRA scaling. For each FFN projection ⋆ ∈ { up , gate , down }, we compute 
+
+snew  
+
+> ⋆
+
+= clip  1 + α⋆(2 a − 1) , s ⋆
+
+> min
+
+, s ⋆
+
+> max
+
+, (28) and optionally smooth it by 
+
+s⋆,t = βss⋆,t −1 + (1 − βs)snew  
+
+> ⋆
+
+. (29) The scale is applied only to the LoRA parameters of the corresponding projection: 
+
+∇θ⋆ ← s⋆,t ∇θ⋆. (30) The frozen backbone and forward computation remain unchanged. This scaling should be inter-preted as coarse block-level modulation: it does not prevent regime crossings and does not define instability by crossing frequency alone. Rather, it works with the channel mask to concentrate adap-tation on useful nonlinear states while avoiding unstructured amplification of the entire FFN adapter. 
+
+Summary. NA-LoRA solves a rank-allocation problem, and when the activation supports it, a trajectory-shaping problem in FFNs. The mask increases the share of low-rank update capac-ity assigned to responsive gate channels, and the step scale adjusts FFN LoRA update speed us-ing activation-specific effective-homogeneity regimes. Together they promote structured nonlinear gate adaptation while preserving the simplicity and inference cost of standard LoRA. The complete training-time procedure and hook-level details are provided in Appendix G. 
+
+5 EXPERIMENTS 
+
+Setup and naming. Following the experimental taxonomy of LoRA-GA and LoRA-Pro Wang et al. (2024; 2025), we evaluate NA-LoRA on natural language understanding, large-language-model adaptation, and image classification. The main text focuses on Llama-3.1-8B-Base Dubey et al. (2024) and Llama-2-7B-Base Touvron et al. (2023) instruction tuning, including dialogue generation, mathematical reasoning, and code generation with WizardLM Xu et al. (2024), Meta-MathQA Yu et al. (2024), and CodeFeedback Zheng et al. (2024b). We evaluate these tasks with MT-Bench Zheng et al. (2024a), GSM8K Cobbe et al. (2021), and HumanEval Chen et al. (2021). T5-Base/GLUE and CLIP-ViT-B/16 transfer results are reported in Appendix B. Full details and hyperparameters are in Appendix A. Unless stated otherwise, rank is r = 8 , all non-head linear modules are adapted, and NA-LoRA applies nonlinearity-aware controls only to FFN projections. 
+
+Baselines. We compare with full fine-tuning and representative PEFT baselines: LoRA Hu et al. (2022), rsLoRA Kalajdzievski (2023), AdaLoRA Zhang et al. (2023), DoRA Liu et al. (2024), LoRA+ Hayou et al. (2024), PiSSA Meng et al. (2024), LoRA-GA Wang et al. (2024), LoRA-Pro Wang et al. (2025), and GoRA He et al. (2025). 5.1 RESULTS ON LARGE LANGUAGE MODELS 
+
+Main results. Table 1 summarizes the LLM results. Under the matched rank-8 setting, NA-LoRA obtains the best PEFT results on all three Llama-3.1-8B-Base tasks, improving vanilla LoRA by 
+
+0.31 , 3.64 , and 5.29 points on MT-Bench, GSM8K, and HumanEval. It also outperforms strong LoRA variants that improve scaling, initialization, rank allocation, or gradient alignment, suggesting that FFN nonlinear selection provides complementary information to existing weight- or gradient-space designs. 8Table 1: Large-language-model results. Dialogue generation, mathematical reasoning, and code generation are evaluated by MT-Bench, GSM8K, and HumanEval, respectively.                                                                                      
+
+> Llama-3.1-8B-Base Llama-2-7B-Base
+> Method MT-Bench GSM8K HumanEval MT-Bench GSM8K HumanEval
+> Full 5.88 ±0.23 73.69 ±0.28 51.63 ±1.27 5.30 ±0.11 59.36 ±0.85 35.31 ±2.13 LoRA 6.08 ±0.02 71.52 ±0.73 41.05 ±2.85 5.61 ±0.10 42.08 ±0.04 14.76 ±0.17 rsLoRA 6.16 ±0.02 73.85 ±0.23 42.27 ±3.46 5.25 ±0.03 45.62 ±0.10 16.01 ±0.79 AdaLoRA 6.18 ±0.16 73.74 ±0.71 43.49 ±1.63 5.57 ±0.05 50.72 ±1.39 17.80 ±0.44 DoRA 6.32 ±0.10 74.65 ±1.19 45.12 ±2.44 5.97 ±0.02 53.07 ±0.75 19.75 ±0.41 LoRA+ 6.27 ±0.02 74.42 ±0.88 43.09 ±2.85 5.71 ±0.08 52.11 ±0.62 18.17 ±0.52 PiSSA 6.10 ±0.01 73.59 ±1.11 43.70 ±4.47 5.30 ±0.02 44.54 ±0.27 16.02 ±0.17 LoRA-GA 6.00 ±0.05 74.30 ±1.06 44.10 ±2.85 5.95 ±0.16 53.60 ±0.30 19.81 ±1.46 LoRA-Pro 6.21 ±0.06 74.93 ±1.01 43.63 ±1.49 5.72 ±0.03 57.57 ±0.50 22.97 ±0.35 GoRA 6.30 ±0.02 74.55 ±1.04 45.32 ±1.62 5.61 ±0.12 54.04 ±0.22 24.80 ±1.04 NA-LoRA r=8 6.39 ±0.04 75.16 ±1.34 46.34 ±1.22 5.92 ±0.03 57.97 ±3.08 26.02 ±0.81
+> NA-LoRA r=32 6.20 ±0.02 75.33 ±1.42 47.13 ±1.01 5.72 ±0.04 59.46 ±0.78 27.64 ±0.41 NA-LoRA r=128 6.12 ±0.04 76.06 ±0.48 47.76 ±1.02 5.78 ±0.02 59.74 ±1.13 28.66 ±2.44 All PEFT methods adapt non-head linear layers under matched protocols (details in Appendix A); NA-LoRA’s nonlinearity-aware controls apply only to FFN projections.
+
+On Llama-2-7B-Base, NA-LoRA achieves the best rank-8 GSM8K and HumanEval scores while remaining close to the best MT-Bench result. The gains are more pronounced on reasoning and code-generation tasks, where FFN-mediated feature recombination is likely more important. Overall, NA-LoRA consistently improves the low-rank frontier without changing inference-time computation. 
+
+Rank scaling. Larger ranks further improve GSM8K and HumanEval in several cases, but the trend is not monotonic for MT-Bench. This indicates that NA-LoRA is not simply a capacity-increasing method: increasing rank also changes the strength of gate-selection modulation, which may benefit reasoning and code generation but does not necessarily improve open-ended dialogue evaluation. We therefore use r = 8 for the main fair comparison. 
+
+FFN-specific evidence. Since NA-LoRA modifies only FFN LoRA updates, we further exam-ine whether the gains are tied to FFN adaptation rather than generic module-wise capacity. Ap-pendix B shows that attention-only LoRA substantially underperforms all-linear LoRA on GSM8K, whereas FFN-only LoRA recovers most of the all-linear performance and remains competitive on HumanEval. Under the same FFN-only target-module setting, NA-LoRA further improves over LoRA. This supports the central design choice of applying nonlinearity-aware control to FFN pro-jections, where gate activations directly determine channel selection. 
+
+Gate-selection and effective-homogeneity dynamics. To examine whether NA-LoRA changes the intended nonlinear behavior, we record FFN gate pre-activations from mlp.gate proj dur-ing MetaMathQA fine-tuning of Llama-3.1-8B. Diagnostics are computed on a fixed GSM8K-train probe subset by comparing adjacent checkpoints saved every 250 steps. The cumulative raw sigmoid-gate movement Dsel (t) is larger for NA-LoRA than LoRA (0.3744 vs. 0.3199), so NA-LoRA should not be interpreted as suppressing gate movement. Instead, its effect is to make gate movement more concentrated in behaviorally meaningful nonlinear regimes. For SiLU, we compute κϕ(z) = zϕ ′(z)/(ϕ(z) + 10 −6) and partition gate scores with τz = 1 .27846 .Figures 3–4 show that NA-LoRA yields larger cumulative regime flips (0.1609 vs. 0.1421), larger κϕ
+
+drift (1.0896 vs. 0.9349), and larger suppressive-regime crossings (0.1449 vs. 0.1279). These results support the proposed mechanism: NA-LoRA induces stronger effective-homogeneity modulation rather than merely smaller raw displacement. Meanwhile, severe regime jumps remain nearly zero for both methods ( 1.10 ×10 −7 for LoRA and 3.36 ×10 −7 for NA-LoRA), indicating that the stronger modulation is structured rather than unstable. 
+
+Target modules and transfer. Additional T5/GLUE and CLIP-ViT-B/16 results in Appendix B further test activation-specific boundary cases where homogeneity step scaling is disabled, showing that the temporal-importance mask remains useful beyond SwiGLU FFNs. 90 10000 20000 30000 40000 50000              
+
+> Training step
+> 0.0005
+> 0.0010
+> 0.0015
+> 0.0020
+> 0.0025
+> 0.0030
+> Regime flip rate
+> ARegime Flip Rate
+> LoRA r=8
+> NA-LoRA r=8
+> 010000 20000 30000 40000 50000
+> Training step
+> 0.0025
+> 0.0050
+> 0.0075
+> 0.0100
+> 0.0125
+> 0.0150
+> 0.0175
+> 0.0200
+> drift
+> BEffective-Homogeneity Drift
+> LoRA r=8
+> NA-LoRA r=8
+> 010000 20000 30000 40000 50000
+> Training step
+> 0.0005
+> 0.0010
+> 0.0015
+> 0.0020
+> 0.0025
+> 0.0030
+> Suppressive-regime crossing rate
+> CSuppressive-Regime Crossing Rate
+> LoRA r=8
+> NA-LoRA r=8
+> Effective-Homogeneity Diagnostics over Training
+
+Figure 3: Effective-homogeneity diagnostics over training. Adjacent-checkpoint regime flip rate, κϕ drift, and suppressive-regime crossing rate on the fixed GSM8K-train probe subset. 0 5 10 15 20 25 30                
+
+> Layer index
+> 0.0000
+> 0.0005
+> 0.0010
+> 0.0015
+> 0.0020
+> 0.0025
+> Average regime flip rate
+> ARegime Flip Rate
+> LoRA r=8
+> NA-LoRA r=8
+> 0510 15 20 25 30
+> Layer index
+> 0.002
+> 0.004
+> 0.006
+> 0.008
+> Average  drift
+> BEffective-Homogeneity Drift
+> LoRA r=8
+> NA-LoRA r=8
+> 0510 15 20 25 30
+> Layer index
+> 0.0000
+> 0.0005
+> 0.0010
+> 0.0015
+> 0.0020
+> Average suppressive-regime crossing rate
+> CSuppressive-Regime Crossing Rate
+> LoRA r=8
+> NA-LoRA r=8
+> Layer-wise Effective-Homogeneity Diagnostics
+
+Figure 4: Layer-wise effective-homogeneity diagnostics. Layer averages of the three diagnostics in Figure 3. 
+
+Table 2: Ablation on Llama-3.1-8B-Base ( r=8 ). 
+
+Method GSM8K HumanEval 
+
+FT 73.69 ±0.28 51.63 ±1.27 LoRA 71.52 ±0.73 41.05 ±2.85 rsLoRA 73.85 ±0.23 42.27 ±3.46 NA-LoRA 75.16 ±1.34 46.34 ±1.22 
+
+NA-LoRA w/o channel mask 74.53 ±1.82 45.53 ±1.42 NA-LoRA w/o scaling step 74.43 ±0.63 44.31 ±5.69 
+
+Ablation study. Table 2 isolates the two NA-LoRA components on Llama-3.1-8B-Base with 
+
+r = 8 . Removing either the temporal-importance mask or the homogeneity-dynamics step scaling weakens performance on at least one metric. This suggests that the two controls play complemen-tary roles: the mask determines where gate-related low-rank updates should be expressed, while the scaling step controls how fast FFN LoRA parameters move through nonlinear regimes. The larger HumanEval variance without scaling further suggests that trajectory control helps stabilize code-generation adaptation. 
+
+6 CONCLUSION 
+
+We revisited the LoRA–full-fine-tuning gap through an evaluation–decision view of self-gated FFNs. The key issue is that update-space approximation alone does not ensure behavioral align-ment: low-rank residuals can alter the activation-induced score-to-weight recalibration that decides channel usage. NA-LoRA addresses this selection misalignment with two training-only controls: a derivative-based temporal mask and, when the activation permits, a regime-aware homogeneity-dynamics scale, while leaving inference identical to standard LoRA. Experiments and gate-dynamics diagnostics show that behavior-aware, effective-homogeneity-sensitive modulation is a useful com-plement to weight-, gradient-, and rank-centric PEFT design. 10 REFERENCES 
+
+Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Florencia Leoni Ale-man, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal Anadkat, et al. Gpt-4 technical report. arXiv preprint arXiv:2303.08774 , 2023. Sudong Cai. Iieu: Rethinking neural feature activation from decision-making. In ICCV , 2023. Sudong Cai. Adashift: Learning discriminative self-gated neural feature activation with an adaptive shift factor. In CVPR , 2024. Sudong Cai, Shuyuan Zheng, Bingzhi Chen, Shuai Yuan, Chuan Xiao, Jianbin Qin, and Bing Wang. Toward principled flexible scaling for self-gated neural activation. In ICLR , 2026. Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde De Oliveira Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, et al. Evaluating large language models trained on code. arXiv preprint arXiv:2107.03374 , 2021. Gong Cheng, Junwei Han, and Xiaoqiang Lu. Remote sensing image scene classification: Bench-mark and state of the art. Proceedings of the IEEE , 105(10):1865–1883, 2017. Mircea Cimpoi, Subhransu Maji, Iasonas Kokkinos, Sammy Mohamed, and Andrea Vedaldi. De-scribing textures in the wild. In CVPR , 2014. Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, et al. Training verifiers to solve math word problems. arXiv preprint arXiv:2110.14168 , 2021. Ning Ding, Yujia Qin, Guang Yang, Fuchao Wei, Zonghan Yang, Yusheng Su, Shengding Hu, Yulin Chen, Chi-Min Chan, Weize Chen, et al. Parameter-efficient fine-tuning of large-scale pre-trained language models. Nature Machine Intelligence , 5(3):220–235, 2023. Haonan Dong, Wenhao Zhu, Guojie Song, and Liang Wang. Aurora: Breaking low-rank bottleneck of lora with nonlinear mapping. In NeurIPS , 2025. Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Amy Yang, Angela Fan, et al. The llama 3 herd of models. 
+
+arXiv preprint arXiv:2407.21783 , 2024. Soufiane Hayou, Nikhil Ghosh, and Bin Yu. Lora+: Efficient low rank adaptation of large models. In ICML , 2024. Haonan He, Peng Ye, Yuchen Ren, Yuan Yuan, LuyangZhou, ShucunJu, and Lei Chen. Gora: Gradient-driven adaptive low rank adaptation. In NeurIPS , 2025. Patrick Helber, Benjamin Bischke, Andreas Dengel, and Damian Borth. Eurosat: A novel dataset and deep learning benchmark for land use and land cover classification. IEEE Journal of Selected Topics in Applied Earth Observations and Remote Sensing , 12(7):2217–2226, 2019. Sebastian Houben, Johannes Stallkamp, Jan Salmen, Marc Schlipsing, and Christian Igel. Detection of traffic signs in real-world images: The german traffic sign detection benchmark. In IJCNN ,2013. Neil Houlsby, Andrei Giurgiu, Stanislaw Jastrzebski, Bruna Morrone, Quentin De Laroussilhe, An-drea Gesmundo, Mona Attariyan, and Sylvain Gelly. Parameter-efficient transfer learning for nlp. In ICML , 2019. Edward J Hu, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, Weizhu Chen, et al. Lora: Low-rank adaptation of large language models. In ICLR , 2022. Damjan Kalajdzievski. A rank stabilization scaling factor for fine-tuning with lora. arXiv preprint arXiv:2312.03732 , 2023. Jonathan Krause, Michael Stark, Jia Deng, and Li Fei-Fei. 3d object representations for fine-grained categorization. In ICCV Workshop , 2013. 11 Brian Lester, Rami Al-Rfou, and Noah Constant. The power of scale for parameter-efficient prompt tuning. In EMNLP , 2021. Shih-yang Liu, Chien-Yi Wang, Hongxu Yin, Pavlo Molchanov, Yu-Chiang Frank Wang, Kwang-Ting Cheng, and Min-Hung Chen. Dora: Weight-decomposed low-rank adaptation. In ICML ,2024. Ilya Loshchilov and Frank Hutter. Decoupled weight decay regularization. In ICLR , 2019. Fanxu Meng, Zhaohui Wang, and Muhan Zhang. Pissa: Principal singular values and singular vectors adaptation of large language models. arXiv preprint arXiv:2404.02948 , 2024. Yuval Netzer, Tao Wang, Adam Coates, Alessandro Bissacco, Baolin Wu, Andrew Y Ng, et al. Reading digits in natural images with unsupervised feature learning. In NeurIPS workshop , 2011. Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, et al. Learning transferable visual models from natural language supervision. In ICML , 2021. Colin Raffel, Noam Shazeer, Adam Roberts, Katherine Lee, Sharan Narang, Michael Matena, Yanqi Zhou, Wei Li, and Peter J Liu. Exploring the limits of transfer learning with a unified text-to-text transformer. Journal of machine learning research , 21(140):1–67, 2020. Hugo Touvron, Louis Martin, Kevin Stone, Peter Albert, Amjad Almahairi, Yasmine Babaei, Niko-lay Bashlykov, Soumya Batra, Prajjwal Bhargava, Shruti Bhosale, et al. Llama 2: Open founda-tion and fine-tuned chat models. arXiv preprint arXiv:2307.09288 , 2023. Alex Wang, Amanpreet Singh, Julian Michael, Felix Hill, Omer Levy, and Samuel R Bowman. Glue: A multi-task benchmark and analysis platform for natural language understanding. In 
+
+ICLR , 2019. Shaowen Wang, Linxi Yu, and Jian Li. Lora-ga: Low-rank adaptation with gradient approximation. In NeurIPS , 2024. Zhengbo Wang, Jian Liang, Ran He, Zilei Wang, and Tieniu Tan. Lora-pro: Are low-rank adapters properly optimized? In ICLR , 2025. Jianxiong Xiao, James Hays, Krista A Ehinger, Aude Oliva, and Antonio Torralba. Sun database: Large-scale scene recognition from abbey to zoo. In CVPR , 2010. Can Xu, Qingfeng Sun, Kai Zheng, Xiubo Geng, Pu Zhao, Jiazhan Feng, Chongyang Tao, Qing-wei Lin, and Daxin Jiang. Wizardlm: Empowering large pre-trained language models to follow complex instructions. In ICLR , 2024. Longhui Yu, Weisen Jiang, Han Shi, YU Jincheng, Zhengying Liu, Yu Zhang, James Kwok, Zhen-guo Li, Adrian Weller, and Weiyang Liu. Metamath: Bootstrap your own mathematical questions for large language models. In ICLR , 2024. Qingru Zhang, Minshuo Chen, Alexander Bukharin, Pengcheng He, Yu Cheng, Weizhu Chen, and Tuo Zhao. Adaptive budget allocation for parameter-efficient fine-tuning. In ICLR , 2023. Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin, Zhuohan Li, Dacheng Li, Eric Xing, et al. Judging llm-as-a-judge with mt-bench and chatbot arena. In NeurIPS , 2024a. Tianyu Zheng, Ge Zhang, Tianhao Shen, Xueling Liu, Bill Yuchen Lin, Jie Fu, Wenhu Chen, and Xiang Yue. Opencodeinterpreter: Integrating code generation with execution and refinement. In 
+
+Findings of ACL , 2024b. 12 A EXPERIMENTAL DETAILS 
+
+Data and models. We follow the naming and setup of LoRA-GA/LoRA-Pro-style evalua-tions Wang et al. (2025; 2024); He et al. (2025): natural language understanding uses T5-Base Raffel et al. (2020) on GLUE Wang et al. (2019), large-language-model experiments include dialogue gen-eration, mathematical reasoning, and code generation on Llama models, and image classification uses CLIP-ViT-B/16 transfer Radford et al. (2021). The main Llama experiments use 100K Meta-MathQA examples for mathematical reasoning Yu et al. (2024), 100K CodeFeedback examples for code generation Zheng et al. (2024b), and a 52K WizardLM subset for dialogue generation Xu et al. (2024). The main backbones are Llama-3.1-8B-Base Dubey et al. (2024) and Llama-2-7B-Base Touvron et al. (2023). 
+
+Adapters and optimization. Unless otherwise stated, all PEFT methods adapt all linear modules except embeddings, normalization layers, and output heads. For attention projections, NA-LoRA uses the vanilla LoRA update; the temporal-importance mask and homogeneity-dynamics scaling are applied only to FFN projections. When the activation-specific coarse regime statistic degener-ates, as in ReLU-FFN T5 v1.0 or GELU-based CLIP-ViT, homogeneity-dynamics scaling is dis-abled. We use AdamW Loshchilov & Hutter (2019) and match the learning-rate schedule, batch size, sequence length, and epochs of the LoRA-Pro protocol Wang et al. (2025), which follows LoRA-GA-style settings Wang et al. (2024). Unless otherwise stated, NA-LoRA uses learning rate 
+
+2 × 10 −5.
+
+Evaluation and reporting. We follow prior work for MT-Bench judging Zheng et al. (2024a), GSM8K accuracy Cobbe et al. (2021), HumanEval pass@1 Chen et al. (2021), and mean ±std re-porting over seeds; MT-Bench responses are judged using GPT-4 Achiam et al. (2023). All main experiments are run on 4×A100 GPUs. The additional GLUE and CLIP transfer settings are de-scribed with their corresponding tables below. 
+
+B ADDITIONAL EXPERIMENTAL RESULTS 
+
+Effect of target modules. Table 3 varies the adapted module group on Llama-3.1-8B-Base at rank r = 8 . Attention-only LoRA degrades GSM8K relative to all-linear LoRA, while FFN-only LoRA recovers most of the math performance and remains competitive on code. Replacing FFN-only LoRA with NA-LoRA further improves both GSM8K and HumanEval under the same target-module setting, supporting the claim that nonlinearity-aware modulation is most useful where FFN gates directly determine selection dynamics.                
+
+> Table 3: Target-module ablation on Llama-3.1-8B-Base ( r=8 ).
+> Method Target Modules GSM8K HumanEval
+> LoRA All linear 71.52 ±0.73 41.05 ±2.85 LoRA Attention only 67.78 ±1.25 43.09 ±0.35 LoRA FFN only 71.97 ±1.23 42.07 ±0.61 NA-LoRA FFN only 73.34 ±0.63 44.31 ±2.64
+
+B.1 RESULTS ON NATURAL LANGUAGE UNDERSTANDING TASKS 
+
+T5-Base on GLUE. Table 4 reports five GLUE sub-tasks Wang et al. (2019) using T5-Base Raf-fel et al. (2020). Prior LoRA-GA/LoRA-Pro/GoRA evaluations use t5-base v1.0 , whose FFN uses ReLU rather than the SwiGLU gates used in the main Llama analysis; gated GeGLU is adopted in t5-base v1.1 . Under the self-gate rewriting ReLU( z) = zI(z > 0) , the gate is a hard sign/Heaviside function with only the characteristic point z = 0 . The responsive interval therefore collapses and there is no coarse pres statistic. For a protocol-compatible comparison, NA-LoRA* 
+
+disables homogeneity-dynamics step scaling and applies only the temporal-importance mask. The strong results in this activation-specific boundary case suggest that sensitivity-based channel alloca-tion remains useful even when the coarse regime statistic is unavailable. 13 Table 4: T5-Base on GLUE. NA-LoRA* is mask-only because ReLU FFNs do not provide a non-degenerate coarse-regime statistic. Method MNLI SST-2 CoLA QNLI MRPC Average 
+
+Full 86.33 ±0.00 94.75 ±0.21 80.70 ±0.24 93.19 ±0.22 84.56 ±0.73 87.91 LoRA 85.30 ±0.04 94.04 ±0.11 69.35 ±0.05 92.96 ±0.09 68.38 ±0.01 82.08 PiSSA 85.75 ±0.07 94.07 ±0.06 74.27 ±0.39 93.15 ±0.14 76.31 ±0.51 84.71 rsLoRA 85.73 ±0.10 94.19 ±0.23 72.32 ±1.12 93.12 ±0.09 52.86 ±2.27 79.64 LoRA+ 85.81 ±0.09 93.85 ±0.24 77.53 ±0.20 93.14 ±0.03 74.43 ±1.39 84.95 DoRA 85.67 ±0.09 94.04 ±0.53 72.04 ±0.94 93.04 ±0.06 68.08 ±0.51 82.57 AdaLoRA 85.45 ±0.11 93.69 ±0.20 69.16 ±0.24 91.66 ±0.05 68.14 ±0.28 81.62 LoRA-GA 85.70 ±0.09 94.11 ±0.18 80.57 ±0.20 93.18 ±0.06 85.29 ±0.24 87.77 LoRA-Pro 86.03 ±0.19 94.19 ±0.13 81.94 ±0.24 93.42 ±0.05 86.60 ±0.14 88.44 
+
+GoRA 85.91 ±0.02 94.68 ±0.43 79.86 ±0.35 93.27 ±0.08 86.10 ±0.20 87.96 NA-LoRA* 86.29 ±0.10 93.96 ±0.07 81.46 ±0.13 93.44 ±0.06 87.01 ±0.00 88.43 
+
+B.2 RESULTS ON IMAGE CLASSIFICATION TASKS 
+
+CLIP-ViT-B/16 transfer. Table 5 follows the LoRA-Pro image-classification protocol Wang et al. (2025) with CLIP-ViT-B/16 Radford et al. (2021) transfer on Cars Krause et al. (2013), DTD Cimpoi et al. (2014), EuroSAT Helber et al. (2019), GTSRB Houben et al. (2013), RESISC45 Cheng et al. (2017), SUN397 Xiao et al. (2010), and SVHN Netzer et al. (2011). CLIP-ViT-B/16 uses GELU FFNs; under a self-gate rewriting, GELU behaves as a smooth sigmoid-type gate and does not pro-vide finite suppressive and positive boundaries for the coarse statistic used in Eq. (26). We therefore disable homogeneity-dynamics step scaling for CLIP-ViT and use the temporal-importance mask as the active NA-LoRA component. NA-LoRA achieves the best average accuracy, indicating that the nonlinearity-aware allocation principle remains effective in this activation-specific boundary case rather than requiring all activations to share the same regime structure. 
+
+Table 5: CLIP-ViT-B/16 transfer. Accuracy on seven image-classification datasets under the LoRA-Pro protocol. Method Cars DTD EuroSAT GTSRB RESISC45 SUN397 SVHN Average                                                                                 
+
+> Zero-shot 63.75 44.39 42.22 35.22 56.46 62.56 15.53 45.73 Full FT 84.23 ±0.06 77.44 ±0.19 98.09 ±0.03 94.31 ±0.28 93.95 ±0.00 75.35 ±0.10 93.04 ±0.18 88.06 LoRA 72.81 ±0.13 73.92 ±0.38 96.93 ±0.07 92.40 ±0.10 90.03 ±0.14 70.12 ±0.18 88.02 ±0.07 83.46 rsLoRA 82.38 ±0.20 78.03 ±0.76 98.06 ±0.08 95.04 ±0.11 93.96 ±0.18 75.38 ±0.24 92.74 ±0.18 87.94 LoRA+ 72.87 ±0.18 74.07 ±0.45 97.01 ±0.02 92.42 ±0.18 89.96 ±0.11 70.17 ±0.15 88.08 ±0.05 83.51 DoRA 73.72 ±0.06 73.72 ±0.33 96.95 ±0.01 92.38 ±0.17 90.03 ±0.08 70.20 ±0.19 88.23 ±0.05 83.48 LoRA-GA 85.18 ±0.41 77.50 ±0.12 98.05 ±0.27 95.28 ±0.10 94.43 ±0.19 75.44 ±0.06 93.68 ±0.35 88.51 LoRA-Pro 85.87 ±0.08 78.64 ±0.25 98.46 ±0.03 95.66 ±0.05 94.75 ±0.21 76.42 ±0.14 94.63 ±0.20 89.20 GoRA 85.76 ±0.19 78.17 ±0.32 98.77 ±0.35 96.66 ±0.36 95.16 ±0.26 76.46 ±0.08 95.32 ±0.13 89.47 NA-LoRA 85.28 ±0.20 78.26 ±0.77 98.96 ±0.04 96.14 ±0.46 95.57 ±0.11 75.84 ±0.16 97.14 ±0.04 89.60
+
+C NOTATION AND CONCEPTUAL MAPPING 
+
+This appendix summarizes the notation and formalizes the Multi-Criteria Decision Making (MCDM) mapping introduced in Section 3.1. C.1 STANDARD NOTATION 
+
+We denote input representations by x ∈ Rd. A standard Transformer FFN block (SwiGLU variant) is defined as: 
+
+u = Wux, z = Wg x, h = ϕ(z) ⊙ u, y = Wdh, (31) where ϕ(·) is a self-gated nonlinearity. We denote the LoRA rank by r and write a low-rank update as BA , absorbing the usual LoRA scaling factor into B or A for notational simplicity. 14 C.2 MCDM M APPING : V IEW VS . S ELECTION 
+
+As defined in Definition 3.1, we decompose the nonlinearity ϕ into a selection weight s(z) and the value z. Table 6 summarizes the terminology used by the main text. 
+
+Table 6: MCDM mapping used for the self-gated FFN notation. 
+
+FFN Component Symbol MCDM Interpretation 
+
+Input State x Context / Environment Linear Projection u = Wux Candidate Generation (The “View”) Gate Pre-activation z = Wg x Evaluation Score (Criteria) Nonlinearity si(z) = ϱ(zi) Decision Weighting (Selection Policy) Output h = ϕ(z) ⊙ u = ( s(z) ⊙ z) ⊙ u Reweighted Utility 
+
+This table fixes terminology used by the main text; the formal mismatch decomposition is proved next. 
+
+D PROOFS : E XACT SELECTION -M ISMATCH DECOMPOSITION 
+
+This section proves Proposition 3.3 and Corollary 3.4. D.1 PROOF OF PROPOSITION 3.3 
+
+Proof. Let star = s(ztar ) and slora = s(zlora ). By definition, 
+
+U(ztar , u tar ) − U (zlora , u lora ) = ϕ(ztar ) ⊙ utar − ϕ(zlora ) ⊙ ulora .
+
+Add and subtract ϕ(ztar ) ⊙ ulora :
+
+=  ϕ(ztar ) − ϕ(zlora ) ⊙ ulora + ϕ(ztar ) ⊙ (utar − ulora ).
+
+Using ϕ(z) = s(z) ⊙ z,
+
+ϕ(ztar ) − ϕ(zlora ) = star ⊙ ztar − slora ⊙ zlora = star ⊙ (ztar − zlora ) + ( star − slora ) ⊙ zlora .
+
+Substituting ∆z = ztar − zlora and ∆u = utar − ulora yields Eq. (6). D.2 PROOF OF COROLLARY 3.4 
+
+Proof. Apply triangle inequality to Eq. (6) and bound each Hadamard product by the corresponding infinity norm factor. D.3 PROOF OF PROPOSITION 3.5 
+
+Proof. For each channel c, apply the mean-value theorem to the scalar function s on the segment between zlora ,c and ztar ,c . There exists ¯zc on this segment such that 
+
+s(ztar ,c ) − s(zlora ,c ) = s′(¯ zc)( ztar ,c − zlora ,c ) = s′(¯ zc)∆ zc.
+
+Multiplying both sides by zlora ,c ulora ,c yields Eq. (8); squaring and summing over channels yields Eq. (9). D.4 WHY THE BOUND IS DATA -AWARE 
+
+Corollary 3.4 should not be read as claiming that every small matrix residual causes a large func-tional error. If inputs, utilities, and gate Lipschitz constants are uniformly bounded, then sufficiently small residuals also control selection change. The point is that any such statement is necessarily 
+
+data-aware : it depends on the directions Eg x, the local sensitivity of s, and the magnitudes of zlora 
+
+and ulora . Standard weight-space objectives control only Eg and therefore miss the channel-wise weighting appearing in Eq. (9). NA-LoRA is designed to estimate this missing weighting from the observed gate dynamics. 15 E LOCAL SCALING SENSITIVITY AND PRACTICAL PROXY 
+
+This section provides the proofs and implementation-level justification for the effective-homogeneity and sensitivity statistics used by NA-LoRA. E.1 PROOF OF PROPOSITION 3.7 
+
+Proof. Fix a channel and abbreviate z = zc(x) and u = uc(x). Along the scaling ray x 7 → αx , the linear projections satisfy zc(αx ) = αz and uc(αx ) = αu . Define 
+
+g(α) = hc(αx ) = ϕ(αz )( αu ).
+
+The logarithmic elasticity of g at α = 1 is 
+
+∂ log |g(α)|
+
+∂ log α α=1 
+
+= αg(α)
+
+∂g (α)
+
+∂α α=1 
+
+.
+
+Using the chain rule, 
+
+∂g (α)
+
+∂α = zϕ ′(αz )( αu ) + ϕ(αz )u. 
+
+Evaluating at α = 1 gives 
+
+1
+
+ϕ(z)u
+
+ zϕ ′(z)u + ϕ(z)u = 1 + zϕ ′(z)
+
+ϕ(z) .
+
+With the numerical regularizer in Definition 3.6, this is 1 + κϕ(z) = χϕ(z).E.2 ACTIVATION -SPECIFIC CHARACTERISTIC POINTS 
+
+The coarse regime statistic is derived from the activation’s effective-homogeneity curve rather than assigned as a universal constant. For SiLU, ϕ(z) = zσ (z) and, away from zero, 
+
+κϕ(z) = zϕ ′(z)
+
+ϕ(z) = 1 + z(1 − σ(z)) . (32) Solving κϕ(z) = 0 gives z ≈ − 1.27846 . The derivative of Eq. (32) is (1 − σ(z))(1 − zσ (z)) , so the positive stationary point satisfies zσ (z) = 1 , yielding z ≈ 1.27846 . These two characteristic points motivate the symmetric SwiGLU threshold τz = 1 .27846 used in the Llama regime statistic. For ReLU, ϕ(z) = zI(z > 0) has a hard gate with a single discontinuity at z = 0 ; the responsive interval collapses, so the three-way statistic in Eq. (26) is not used. For GELU in CLIP-ViT-B/16, the self-gate is smooth and sigmoid-like, and our coarse suppressive/positive boundaries are not finite. In both boundary cases, the experiments disable homogeneity-dynamics step scaling and use the temporal-importance mask only. These cases test whether nonlinearity-aware allocation remains useful without assuming a shared SiLU-style regime structure. E.3 PROOF OF PROPOSITION 3.9 
+
+Proof. Since χϕ(z) = 1 + κϕ(z), the assumed Lκ-Lipschitzness of κϕ implies 
+
+|χϕ(zt+1 ,c ) − χϕ(zt,c )| = |κϕ(zt+1 ,c ) − κϕ(zt,c )| ≤ Lκ|zt+1 ,c − zt,c |,
+
+which proves Eq. (15). For the second statement, locally linearize the change in the gate projection under one LoRA op-timization step. Let Gg,c,t denote the effective channel-wise gradient direction after accounting for the low-rank parameterization. If the update is masked and scaled, then the induced first-order change in the gate score has the form 
+
+δz t,c (x) ≈ − ηs tmt,c ⟨Gg,c,t , x ⟩.
+
+Thus 
+
+|δz t,c (x)|2 ≤ η2s2 
+
+> t
+
+m2
+
+> t,c
+
+∥Gg,c,t ∥2∥x∥2
+
+by Cauchy’s inequality. Combining this with the first part and taking expectation over x yields Eq. (16) up to the usual higher-order terms ignored by the local linearization. 16 E.4 WHY DERIVATIVE MAGNITUDE IS A PRACTICAL PROXY 
+
+The theoretical selection-mismatch term contains the derivative of the selection weight s. NA-LoRA uses k(z) = |ϕ′(z)| instead because it is the quantity that directly modulates actual FFN gradients. Consider a SwiGLU FFN channel 
+
+u = Wux, z = Wg x, h = ϕ(z) ⊙ u, y = Wdh, 
+
+and let δ = ∇y L be the upstream gradient. With g = W ⊤ 
+
+> d
+
+δ,
+
+∇uL = g ⊙ ϕ(z), ∇z L = g ⊙ u ⊙ ϕ′(z).
+
+Therefore 
+
+∇Wu L = ( g ⊙ ϕ(z)) x⊤, (33) 
+
+∇Wg L = ( g ⊙ u ⊙ ϕ′(z)) x⊤. (34) Equation (34) shows that the gate-projection update is directly gated by ϕ′(z). When |ϕ′(z)| is small, gate updates have little immediate effect; when it is large, a small score perturbation can materially change the reweighted channel utility. Using the self-gated decomposition ϕ(z) = s(z)z, we have 
+
+ϕ′(z) = s′(z)z + s(z).
+
+Thus ϕ′(z) combines both the change of the decision weight and the current decision weight itself. This is the relevant quantity for the FFN output because the model optimizes ϕ(z) ⊙ u, not s(z) in isolation. We therefore use 
+
+k(z) = |ϕ′(z)|, keff (c) = Eb,s [k(zb,s,c )] 
+
+as a stable, architecture-aligned proxy for constructing the temporal-importance mask. 
+
+F MARGIN -B ASED TEMPORAL BOUNDS 
+
+This appendix provides the local temporal bounds referenced in Section 3.4. These bounds jus-tify step scaling as a way to shape one-step movement; they do not imply that NA-LoRA should minimize cumulative raw gate movement. 
+
+Remark F.1 (Local sign preservation away from the boundary) . For continuous decision scores, sign changes cannot occur under sufficiently small perturbations when the current margin is bounded away from zero. F.1 PROOF OF PROPOSITION 3.10 
+
+Proof. If sign( Dt+1 (x)) ̸ = sign( Dt(x)) , then either |Dt(x)| ≤ τ or |Dt+1 (x) − Dt(x)| > τ .Otherwise, if both |Dt(x)| > τ and |Dt+1 (x) − Dt(x)| ≤ τ , then Dt+1 (x) cannot cross zero and must keep the same sign as Dt(x). Taking probabilities yields Eq. (17). F.2 PROOF OF COROLLARY 3.11 
+
+Proof. By local Lipschitzness of Dt(x) with respect to the LoRA parameters, 
+
+|Dt+1 (x) − Dt(x)| ≤ LD (x)∥θt+1 − θt∥.
+
+Using the update θt+1 = θt − ηs tgt gives 
+
+|Dt+1 (x) − Dt(x)| ≤ ηs tLD (x)∥gt∥.
+
+Applying Markov’s inequality to the squared nonnegative random variable η2s2 
+
+> t
+
+LD (x)2∥gt∥2 yields Eq. (18). 17 G IMPLEMENTATION DETAILS 
+
+G.1 NA-L ORA T RAINING -T IME PROCEDURE 
+
+Algorithm 1 summarizes the full training-time procedure of NA-LoRA for non-degenerate SwiGLU-style gates. It introduces no auxiliary objective and no inference-time modification; instead, it uses gate statistics observed during fine-tuning to improve how the low-rank update is allocated and scaled. When the activation yields a degenerate coarse statistic, the regime-statistic and scaling lines are skipped and all s⋆ are set to 1.
+
+Algorithm 1 NA-LoRA training-time procedure. 
+
+Input: gate pre-activations zt (per FFN block), keep ratio ρkeep , mask sharpness β, mask EMA 
+
+ηm, activation-specific regime specification τz when available (code argument t), positive-region penalty λpos , step-scale parameters {α⋆, s ⋆
+
+> min
+
+, s ⋆
+
+> max
+
+}⋆∈{ up ,gate ,down }, and scale EMA βs.
+
+State: mask buffer mt−1 and scale buffers {s⋆,t −1}.
+
+(1) Temporal-importance channel mask 
+
+Compute channel scores keff (c) = Eb,s [|ϕ′(zt,b,s,c )|] for c ∈ [dh].Set τk ← Quantile( keff , 1 − ρkeep ).
+
+mnew  
+
+> c
+
+← σ β(keff (c) − τk) for all c.Update EMA mask: mt ← ηmmt−1 + (1 − ηm)mnew .
+
+(2) Regime-aware statistics 
+
+psup ← E[I(zt < −τz )] ; pres ← E[I(|zt| ≤ τz )] ; ppos ← E[I(zt > τ z )] .
+
+a ← clamp( pres − λpos ppos , 0, 1) .
+
+(3) Projection-wise LoRA step scaling for ⋆ ∈ { up , gate , down } do 
+
+snew  
+
+> ⋆
+
+← clip(1 + α⋆(2 a − 1) , s ⋆
+
+> min
+
+, s ⋆
+
+> max
+
+).
+
+s⋆,t ← βss⋆,t −1 + (1 − βs)snew  
+
+> ⋆
+
+.Apply LoRA-only scaling: ∇θ⋆ ← s⋆,t ∇θ⋆.
+
+end for (4) Mask application 
+
+Apply mt along the output-channel dimension of gate-related LoRA gradients. 
+
+Output: masked and step-scaled LoRA gradients. This section supplements Algorithm 1 with specific implementation details for reproducibility. G.2 HOOK LOCATIONS AND GRADIENT MODIFICATION 
+
+NA-LoRA is implemented using PyTorch forward/backward hooks and does not require a custom optimizer. 
+
+1. Mask Application (Micro). The mask mt (Eq. 24) is calculated during the forward pass of the FFN block. It is applied to the gradient of the LoRA B matrix of the gate proj module. Let the LoRA adapter be W + BA .Hook on ∇Bgate : (∇Bgate )c, : ← mt,c (∇Bgate )c, :.
+
+Here we use the convention B ∈ Rdh×r and A ∈ Rr×d for the gate projection. If an implementation stores LoRA factors in transposed layout, the same channel-wise mask should be applied along the output-channel dimension. This effectively reallocates capacity away from low-responsiveness channels without modifying the pretrained weights. 
+
+2. Step Scaling (Macro). The scalars sup , s gate , s down are computed based on the regime statistics of the same forward pass . They are applied to the gradients of both A and B matrices of the corresponding LoRA modules. 
+
+∇A⋆ ← s⋆ · ∇ A⋆, ∇B⋆ ← s⋆ · ∇ B⋆.
+
+18 G.3 HYPERPARAMETERS 
+
+We report the default hyperparameters used in the Llama experiments, which correspond directly to the NALoRAController implementation. The parameters are grouped into (i) the Micro-level Mask , which governs channel-selection sparsity and temporal smoothness, and (ii) the Macro-level Step Scaling , which governs regime-based gradient modulation. Notable settings include a high sharpness ( β = 20 ) for the selection mask to approximate a binary gate, and distinct scaling bounds ( smin , s max ) for the gate , up , and down projections to respect their different roles in the FFN mechanism. Table 7 lists the default values used for Llama experi-ments. 
+
+Table 7: Default NA-LoRA hyperparameters for Llama experiments. 
+
+Component Parameter / Symbol Code Arg Value 
+
+Micro: Temporal-Importance Mask 
+
+Selection Keep Ratio ( ρkeep ) gate keep ratio 0.30 
+
+Sharpness ( β) gate beta 20 .0
+
+Mask EMA ( ηm) gate ema 0.90 
+
+Macro: Homogeneity-Dynamics Step Scaling 
+
+Regime Stats Regime Threshold ( τz ) t 1.27846 †
+
+Positive-region Penalty ( λpos ) lambda ov 1.0
+
+Scale EMA ( βs) beta s 0.95 
+
+Projection-Specific Sensitivity & Bounds 
+
+gate proj Sensitivity ( αgate ) alpha gate 0.40 
+
+Range [smin , s max ] smin/max gate [0 .80 , 1.50] 
+
+up proj Sensitivity ( αup ) alpha up 0.30 
+
+Range [smin , s max ] smin/max up [0 .80 , 1.40] 
+
+down proj Sensitivity ( αdown ) alpha down 0.20 
+
+Range [smin , s max ] smin/max down [0 .85 , 1.30]  
+
+> †
+
+The threshold is specific to SwiGLU and is derived from the characteristic points of 
+
+κϕ(z) = zϕ ′(z)/(ϕ(z) + ε); see Appendix E. For ReLU-FFN T5 and GELU-based CLIP-ViT, this coarse statistic degenerates and step scaling is disabled. The code argument remains t, while the paper uses τz to avoid confusion with the optimization step index. 
+
+G.4 COMPUTATIONAL OVERHEAD 
+
+NA-LoRA introduces negligible overhead. • Memory: Requires storing 3 scalars ( s⋆) and 1 vector ( mt) per layer. No Hessian or second-order states. • Compute: Calculation of keff and, when enabled, regime stats requires one pass over the gate activation tensor z, which is O(B · S · dh). This cost is small relative to the matrix multiplications in the FFN ( dh × d). 
+
+LLM U SAGE 
+
+ChatGPT was used to aid in polishing the writing. Specifically, it was employed to correct grammar, improve readability, and refine the clarity of the prose. 19

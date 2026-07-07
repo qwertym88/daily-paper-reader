@@ -6,65 +6,76 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-06
-- 运行时间：2026-07-06 21:51:30 UTC
+- 最新运行日期：2026-07-07
+- 运行时间：2026-07-07 21:25:30 UTC
 - 运行状态：成功
-- 本次总论文数：15
-- 精读区：3
+- 本次总论文数：18
+- 精读区：6
 - 速读区：12
 
 ### 今日简报（AI）
-今日共推荐15篇论文，精读2篇、速读3篇；最值得关注的是9.0分的《X-Morph》机器人形态迁移学习与8.0分的《Geometry-Aware KAN》几何感知网络；建议优先精读这两篇，再浏览速读中关于符号推理与多机器人规划的7分论文。
-- 详情：[/202607/06/README](/202607/06/README)
+今日聚焦物理交互的机器人控制，精读两篇高分论文（9.0/10）和速读三篇7.0分工作。  
+最值得看的是《ADP》提出的对抗性动力学先验和《Athena-WBC》的能力对齐专家策略，分别在鲁棒运动控制与长尾全身任务上表现突出。  
+建议普通读者优先精读这两篇，关注其提升人形机器人物理适应性和控制质量的核心机制。
+- 详情：[/202607/07/README](/202607/07/README)
 
 ### 精读区论文标签
-1. [X-Morph: Human Motion Priors for Scalable Robot Learning Across Morphologies](/202607/06/2606.30290v1-x-morph-human-motion-priors-for-scalable-robot-learning-across-morphologies)  
+1. [ADP: Adversarial Dynamics Priors for Physically Grounded Humanoid Locomotion](/202607/07/2607.03454v1-adp-adversarial-dynamics-priors-for-physically-grounded-humanoid-locomotion)  
    标签：评分：9.0/10、query:hum-ctrl
-   evidence：跨形态机器人学习的人类运动先验，直接涉及人形机器人运动生成
-2. [Geometry-Aware R-Structured Kolmogorov-Arnold Networks](/202607/06/2607.01449v1-geometry-aware-r-structured-kolmogorov-arnold-networks)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：新型混合神经网络架构GRS-KAN，融合几何约束，提升模型精度
-3. [Context-Triggered Robust MPC for Temporal Logic Specifications](/202607/06/2607.01515v1-context-triggered-robust-mpc-for-temporal-logic-specifications)  
+   evidence：人形机器人行走控制，对抗动力学先验
+2. [Athena-WBC: Capability-Aligned Policy Experts for Long-Tail Humanoid Whole-Body Control](/202607/07/2607.04837v1-athena-wbc-capability-aligned-policy-experts-for-long-tail-humanoid-whole-body-control)  
+   标签：评分：9.0/10、query:hum-ctrl
+   evidence：人形机器人全身运动控制策略专家
+3. [HiMe: Hierarchical Embodied Memory for Long-Horizon Vision-Language-Action Control](/202607/07/2607.03449v1-hime-hierarchical-embodied-memory-for-long-horizon-vision-language-action-control)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：鲁棒MPC用于上下文触发的时序逻辑规范
+   evidence：用于人形机器人长时域控制的分层具身记忆
+4. [Fast Asymptotically Optimal Kinodynamic Planning via Vectorization](/202607/07/2607.03987v1-fast-asymptotically-optimal-kinodynamic-planning-via-vectorization)  
+   标签：评分：8.0/10、query:hum-ctrl
+   evidence：通过GPU加速实现大规模并行运动动力学规划，直接对应机器人控制算法并行化
+5. [Lower Bound of Networked Control with Multiple Sensors and One Controller And The Application to Tracking Gaussian-Markov Source](/202607/07/2607.04172v1-lower-bound-of-networked-control-with-multiple-sensors-and-one-controller-and-the-application-to-tracking-gaussian-markov-source)  
+   标签：评分：8.0/10、query:hum-ctrl
+   evidence：建立了网络化控制系统的导向信息下界，与传统控制理论相关
+6. [Minimum Block Width for Universal Approximation by Residual Neural Networks with Inner Width One](/202607/07/2607.04597v1-minimum-block-width-for-universal-approximation-by-residual-neural-networks-with-inner-width-one)  
+   标签：评分：8.0/10、query:neural-arch
+   evidence：残差网络通用逼近的理论研究
 
 ### 速读区论文标签
-1. [Plan Right, Then Plan Tight: Symbolic RL for Efficient Embodied Reasoning](/202607/06/2606.31260v1-plan-right-then-plan-tight-symbolic-rl-for-efficient-embodied-reasoning)  
+1. [OpenSPM: An Environment-Transferable Robotic Key Spatial Pose Memory and Closed-Loop High-Frequency Flow-Matching Action Generation Model](/202607/07/2606.29936v2-openspm-an-environment-transferable-robotic-key-spatial-pose-memory-and-closed-loop-high-frequency-flow-matching-action-generation-model)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：用于具身任务规划的符号强化学习，通过仿真验证
-2. [Search-Based Spatiotemporal and Multi-Robot Motion Planning on Graphs of Space-Time Convex Sets](/202607/06/2607.00444v1-search-based-spatiotemporal-and-multi-robot-motion-planning-on-graphs-of-space-time-convex-sets)  
-   标签：评分：7.0/10、query:hum-ctrl
-   evidence：基于时空凸集图的搜索式多机器人运动规划
-3. [Technical Report: Asynchronous Distributed Trajectory Estimation of Multi-Robot Systems](/202607/06/2607.01106v1-technical-report-asynchronous-distributed-trajectory-estimation-of-multi-robot-systems)  
-   标签：评分：7.0/10、query:hum-ctrl
-   evidence：异步分布式轨迹估计算法，涉及机器人控制算法的并行化
-4. [Do Newer Lightweight CNNs Perform Better Under Resource Constraints? A Controlled Multigenerational Study of Architecture, Initialization, Training Budget, and Efficiency](/202607/06/2607.01984v1-do-newer-lightweight-cnns-perform-better-under-resource-constraints-a-controlled-multigenerational-study-of-architecture-initialization-training-budget-and-efficiency)  
+   evidence：空间持久记忆和流匹配动作生成，与运动大模型和运动控制相关
+2. [Separation Capacity of Scattering Networks](/202607/07/2606.30822v1-separation-capacity-of-scattering-networks)  
    标签：评分：7.0/10、query:neural-arch
-   evidence：轻量级CNN架构与效率的受控比较研究
-5. [Influence of Radial Basis Activation Functions on Intelligent Controller for Robotic Manipulators](/202607/06/2607.02167v1-influence-of-radial-basis-activation-functions-on-intelligent-controller-for-robotic-manipulators)  
+   evidence：对CNN架构（散射网络）的理论分析
+3. [Stage-Transition Dense Reward Modeling for Reinforcement Learning](/202607/07/2606.31377v1-stage-transition-dense-reward-modeling-for-reinforcement-learning)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：传统控制结合神经自适应用于机器人操作器
-6. [Embodied.cpp: A Portable Inference Runtime of Embodied AI Models on Heterogeneous Robots](/202607/06/2607.02501v1-embodiedcpp-a-portable-inference-runtime-of-embodied-ai-models-on-heterogeneous-robots)  
+   evidence：用于机器人操作的阶段转移密集奖励强化学习
+4. [NeHMO: Neural Hamilton-Jacobi Reachability Learning for Decentralized Safe Multi-Arm Motion Planning](/202607/07/2607.00326v1-nehmo-neural-hamilton-jacobi-reachability-learning-for-decentralized-safe-multi-arm-motion-planning)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：为异构机器人提供便携推理运行时，支持运动控制部署
-7. [RoamFlow: Reinforcement-Aligned One-Step Action MeanFlow Policy for Image-Goal Navigation](/202607/06/2606.29934v1-roamflow-reinforcement-aligned-one-step-action-meanflow-policy-for-image-goal-navigation)  
+   evidence：神经Hamilton-Jacobi可达域学习用于分散式多臂运动规划，与人形机器人运动控制技术相关
+5. [Function-Space Diffusion for Motion Planning](/202607/07/2607.02977v1-function-space-diffusion-for-motion-planning)  
+   标签：评分：7.0/10、query:hum-ctrl
+   evidence：函数空间扩散用于运动规划
+6. [High-Fidelity One-Step Generative Visuomotor Policy via Recursive Correction, Frequency Consistency, and Contrastive Flow Matching](/202607/07/2607.03865v1-high-fidelity-one-step-generative-visuomotor-policy-via-recursive-correction-frequency-consistency-and-contrastive-flow-matching)  
+   标签：评分：7.0/10、query:hum-ctrl
+   evidence：机器人视觉运动生成策略，一步加速
+7. [HUMEMBR: Learning Human Routines for Predictive Embodied Navigation](/202607/07/2606.30404v1-humembr-learning-human-routines-for-predictive-embodied-navigation)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：强化学习用于机器人导航
-8. [GPU Parallelization Strategies for Forward and Backward Propagation in Shallow Neural Networks: A CUDA-Based Comparative Study](/202607/06/2606.30497v1-gpu-parallelization-strategies-for-forward-and-backward-propagation-in-shallow-neural-networks-a-cuda-based-comparative-study)  
+   evidence：具身导航中的人类日常行为学习
+8. [A Modular Vision-Language-Action Robotics Framework for Indoor Environments](/202607/07/2606.31144v1-a-modular-vision-language-action-robotics-framework-for-indoor-environments)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：CUDA并行优化策略，可用于机器人控制算法加速
-9. [Separation Capacity of Scattering Networks](/202607/06/2606.30822v1-separation-capacity-of-scattering-networks)  
+   evidence：模块化VLA框架用于室内机器人导航
+9. [Nonlinearity-Aware LoRA: Structured Gate Adaptation under Low-Rank Constraints](/202607/07/2606.31717v1-nonlinearity-aware-lora-structured-gate-adaptation-under-low-rank-constraints)  
    标签：评分：6.0/10、query:neural-arch
-   evidence：散射网络架构的理论分析
-10. [Learning Locomotion on Discrete Terrain via Minimal Proximity Sensing](/202607/06/2606.31912v1-learning-locomotion-on-discrete-terrain-via-minimal-proximity-sensing)  
+   evidence：非线性感知的低秩适应优化门控FFN微调效率
+10. [3D Point World Models: Point Completion Enables More Accurate Dynamics Learning](/202607/07/2607.00148v1-3d-point-world-models-point-completion-enables-more-accurate-dynamics-learning)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：通过临近感知学习四足机器人在离散地形上的运动
-11. [Adapting Generalist Robot Policies with Semantic Reinforcement Learning](/202607/06/2606.31958v1-adapting-generalist-robot-policies-with-semantic-reinforcement-learning)  
+   evidence：基于三维点云的世界模型用于动力学学习
+11. [ABot-M0.5: Unified Mobility-and-Manipulation World Action Model](/202607/07/2607.00678v1-abot-m05-unified-mobility-and-manipulation-world-action-model)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：强化学习用于机器人策略适应
-12. [Approximate Attention Weighting for Sustainable FPGA-Based Vision Transformer Inference](/202607/06/2607.01798v1-approximate-attention-weighting-for-sustainable-fpga-based-vision-transformer-inference)  
-   标签：评分：6.0/10、query:neural-arch
-   evidence：近似注意力加权用于高效Transformer推理
+   evidence：统一移动操作世界动作模型，与人形机器人运动大模型相关
+12. [ABot-M0.5: Unified Mobility-and-Manipulation World Action Model](/202607/07/2607.00678v2-abot-m05-unified-mobility-and-manipulation-world-action-model)  
+   标签：评分：6.0/10、query:hum-ctrl
+   evidence：世界动作模型用于移动操作
 
 
 <div class="dpr-home-promo-card">
