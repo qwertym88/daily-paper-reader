@@ -6,77 +6,77 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-12
-- 运行时间：2026-07-12 21:26:25 UTC
+- 最新运行日期：2026-07-13
+- 运行时间：2026-07-13 21:28:07 UTC
 - 运行状态：成功
 - 本次总论文数：19
 - 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日共推荐19篇论文，精读7篇，亮点包括《Learning Robust Control Lyapunov Functions》与《Localized LoRA-MoE》。最值得关注的方向是鲁棒控制与低秩专家混合模型，安全强化学习也值得一读。建议读者优先阅读这两篇高分论文，并关注控制理论与高效Transformer架构的结合应用。
-- 详情：[/202607/12/README](/202607/12/README)
+今天精读7篇速读12篇，重点覆盖注意力架构与灵巧操作两大方向。最值得关注的是线性注意力机制与零样本到真实部署的灵巧抓取研究。建议优先阅读精读名单中的高分论文，深入理解跨层路由注意力设计与仿真到现实的迁移方法。
+- 详情：[/202607/13/README](/202607/13/README)
 
 ### 精读区论文标签
-1. [Learning Robust Control Lyapunov Functions through Lipschitz Neural Networks](/202607/12/2607.03713v1-learning-robust-control-lyapunov-functions-through-lipschitz-neural-networks)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：学习用于非线性系统的鲁棒控制李雅普诺夫函数
-2. [Localized LoRA-MoE: Block-wise Low-Rank Experts With Adaptive Routing](/202607/12/2607.05114v1-localized-lora-moe-block-wise-low-rank-experts-with-adaptive-routing)  
+1. [Linear Attention Architectures: Mechanisms, Trade-offs, and Cross-Layer Routing](/202607/13/2607.07953v1-linear-attention-architectures-mechanisms-trade-offs-and-cross-layer-routing)  
    标签：评分：9.0/10、query:neural-arch
-   evidence：创新的块级LoRA-MoE架构，结合自适应路由，有效提升微调网络性能
-3. [Dynamic Evaluation of Classical and Control-Aware Optimal Trajectory Planning in Robot Manipulators](/202607/12/2607.05544v2-dynamic-evaluation-of-classical-and-control-aware-optimal-trajectory-planning-in-robot-manipulators)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：结合经典动力学与控制感知的最优轨迹规划用于机器人操作臂
-4. [TriRoute: Unified Learned Routing for Joint Adaptive Attention, Experts, and KV-Cache Allocation](/202607/12/2607.06601v1-triroute-unified-learned-routing-for-joint-adaptive-attention-experts-and-kv-cache-allocation)  
-   标签：评分：9.0/10、query:neural-arch
-   evidence：新颖结构，联合学习注意力、专家和KV缓存的路由分配，提升网络效率与性能
-5. [Sparse Delta Memory: Scaling the State of Linear RNNs through Sparsity](/202607/12/2607.07386v1-sparse-delta-memory-scaling-the-state-of-linear-rnns-through-sparsity)  
-   标签：评分：9.0/10、query:neural-arch
-   evidence：新颖神经网络架构，使用稀疏内存扩展线性RNN隐藏状态
-6. [HALO-WA: Hybrid-Attention Latent-Guided Online Reinforcement Learning for World-Action Models](/202607/12/2607.04265v1-halo-wa-hybrid-attention-latent-guided-online-reinforcement-learning-for-world-action-models)  
+   evidence：线性注意力架构的比较研究
+2. [Closing the Reality Gap: Zero-Shot Sim-to-Real Deployment for Dexterous Force-Based Grasping and Manipulation](/202607/13/2607.04940v1-closing-the-reality-gap-zero-shot-sim-to-real-deployment-for-dexterous-force-based-grasping-and-manipulation)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：在机器人操作中应用在线强化学习于世界-动作模型并使用仿真器
-7. [Learning Stable Controlled Dynamical Systems via Input-Contraction Neural Differential Models](/202607/12/2607.05718v1-learning-stable-controlled-dynamical-systems-via-input-contraction-neural-differential-models)  
+   evidence：结合触觉仿真的仿真到现实强化学习用于灵巧抓取
+3. [RoboTALES: Learning Reasoning-Guided Robot Policies via Task-Aligned Simulated Futures](/202607/13/2607.06018v1-robotales-learning-reasoning-guided-robot-policies-via-task-aligned-simulated-futures)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：用于稳定受控动力系统的输入收缩神经微分模型
+   evidence：使用LLM规划子目标和VLM评估的机器人策略学习
+4. [SPECTRA: Context-Conditioned Spectral Movement Primitives for Robot Skill Generalization](/202607/13/2607.06978v1-spectra-context-conditioned-spectral-movement-primitives-for-robot-skill-generalization)  
+   标签：评分：8.0/10、query:hum-ctrl
+   evidence：频谱运动原语用于机器人运动生成
+5. [The Key to Going Linear: Analysis-Driven Transformer Linearization](/202607/13/2607.07706v1-the-key-to-going-linear-analysis-driven-transformer-linearization)  
+   标签：评分：8.0/10、query:neural-arch
+   evidence：分析驱动的Transformer线性化提升推理效率
+6. [FabriVLA: A Lightweight Vision-Language-Action Model for Precise Multi-Task Manipulation](/202607/13/2607.08575v1-fabrivla-a-lightweight-vision-language-action-model-for-precise-multi-task-manipulation)  
+   标签：评分：8.0/10、query:neural-arch
+   evidence：轻量级视觉-语言-动作模型，具有新颖架构
+7. [Learning Adaptive Solvers for Distributed Factor Graph Optimization on Matrix Lie Groups](/202607/13/2607.08735v1-learning-adaptive-solvers-for-distributed-factor-graph-optimization-on-matrix-lie-groups)  
+   标签：评分：8.0/10、query:hum-ctrl
+   evidence：分布式因子图优化中的并行计算用于机器人控制算法
 
 ### 速读区论文标签
-1. [On Preserving Geometrical Invariance for Superpixel Image Classification using Graph Transformer](/202607/12/2607.04262v1-on-preserving-geometrical-invariance-for-superpixel-image-classification-using-graph-transformer)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：新颖的图Transformer架构用于超像素图像分类，保持几何不变性并提升效率
-2. [Deep Neural Variation Spaces: A Unifying Perspective on Depth and Complexity](/202607/12/2607.05546v1-deep-neural-variation-spaces-a-unifying-perspective-on-depth-and-complexity)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：深度网络深度与复杂度的统一函数空间理论
-3. [Safe Reinforcement Learning using Ideas from Model Predictive Control](/202607/12/2607.07252v1-safe-reinforcement-learning-using-ideas-from-model-predictive-control)  
+1. [AgenticFocus: Object-Preserving Mixed Reality Synthesis from Human FPV Video for Dexterous Humanoid Learning](/202607/13/2607.08857v1-agenticfocus-object-preserving-mixed-reality-synthesis-from-human-fpv-video-for-dexterous-humanoid-learning)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：结合安全强化学习与模型预测控制，适用于人形机器人控制
-4. [Immersive Social Interaction with VR and LLM-Assisted Humanoids](/202607/12/2607.07430v1-immersive-social-interaction-with-vr-and-llm-assisted-humanoids)  
+   evidence：从人类视频合成人形机器人训练数据的混合现实流程
+2. [SafeExplorer: An Unbiased Policy Gradient for Reinforcement Learning with Recovery Interventions](/202607/13/2607.08925v1-safeexplorer-an-unbiased-policy-gradient-for-reinforcement-learning-with-recovery-interventions)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：基于VR和LLM的人形机器人全身控制遥操作
-5. [Mask2Real-WM: Segmentation Masks as a Sim-to-Real Bridge for Controllable Dexterous World Models](/202607/12/2607.04546v1-mask2real-wm-segmentation-masks-as-a-sim-to-real-bridge-for-controllable-dexterous-world-models)  
+   evidence：带恢复干预的无偏策略梯度RL方法，适用于机器人运动控制
+3. [Subtoken Vision Transformer for Fine-grained Recognition](/202607/13/2607.09086v1-subtoken-vision-transformer-for-fine-grained-recognition)  
+   标签：评分：8.0/10、query:neural-arch
+   evidence：使用子令牌的新型视觉Transformer架构用于细粒度识别
+4. [Fully Trainable Deep Differentiable Logic Gate Networks and Lookup Table Networks](/202607/13/2607.09399v1-fully-trainable-deep-differentiable-logic-gate-networks-and-lookup-table-networks)  
+   标签：评分：8.0/10、query:neural-arch
+   evidence：全可训练的可微逻辑门网络，支持连接优化
+5. [RoboDojo: A Unified Sim-and-Real Benchmark for Comprehensive Evaluation of Generalist Robot Manipulation Policies](/202607/13/2607.04434v3-robodojo-a-unified-sim-and-real-benchmark-for-comprehensive-evaluation-of-generalist-robot-manipulation-policies)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：机器人仿真与规划的世界模型
-6. [Spatial Attention: Adapting Execution Horizons for Diffusion Policies via Observation Sensitivity](/202607/12/2607.04739v1-spatial-attention-adapting-execution-horizons-for-diffusion-policies-via-observation-sensitivity)  
-   标签：评分：7.0/10、query:neural-arch
-   evidence：空间注意力用于扩散策略的自适应执行
-7. [Empirical Minimal-Realisation Compression of Deep Neural Networks via Controllability-Observability Tests](/202607/12/2607.05457v1-empirical-minimal-realisation-compression-of-deep-neural-networks-via-controllability-observability-tests)  
-   标签：评分：7.0/10、query:neural-arch
-   evidence：通过可控性可观性进行网络压缩，高效结构优化
-8. [RynnWorld-Teleop: An Action-Conditioned World Model for Digital Teleoperation](/202607/12/2607.06558v1-rynnworld-teleop-an-action-conditioned-world-model-for-digital-teleoperation)  
+   evidence：统一仿真与真实机器人操作基准，包含仿真环境
+6. [Diffusion-Guided Uncertainty-Aware Delayed Policy Optimization](/202607/13/2607.05064v1-diffusion-guided-uncertainty-aware-delayed-policy-optimization)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：使用世界模型的数字遥操作机器人数据收集
-9. [Occluding the Solution Space: Planner-Agnostic Adversarial Attacks on Tolerance-Aware Manipulation](/202607/12/2607.03758v1-occluding-the-solution-space-planner-agnostic-adversarial-attacks-on-tolerance-aware-manipulation)  
+   evidence：强化学习处理延迟反馈可应用于人形机器人运动
+7. [WAM-TTT: Steering World-Action Models by Watching Human Play at Test Time](/202607/13/2607.06988v2-wam-ttt-steering-world-action-models-by-watching-human-play-at-test-time)  
+   标签：评分：7.0/10、query:hum-ctrl
+   evidence：通过人类视频进行测试时训练引导机器人基础模型
+8. [When Prompts Ignore Structure: Graph-Based Attribute Reasoning for Calibrated VLMs](/202607/13/2607.07395v1-when-prompts-ignore-structure-graph-based-attribute-reasoning-for-calibrated-vlms)  
+   标签：评分：7.0/10、query:neural-arch
+   evidence：基于图的属性推理网络架构用于VLM
+9. [XS-VLA: Coupling Coarse-grained Spatial Distillation with Latent Flow Matching for Lightweight Robotic Control](/202607/13/2607.04171v1-xs-vla-coupling-coarse-grained-spatial-distillation-with-latent-flow-matching-for-lightweight-robotic-control)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：用于机器人运动规划鲁棒性评估的规划器无关对抗攻击
-10. [RoboDojo: A Unified Sim-and-Real Benchmark for Comprehensive Evaluation of Generalist Robot Manipulation Policies](/202607/12/2607.04434v1-robodojo-a-unified-sim-and-real-benchmark-for-comprehensive-evaluation-of-generalist-robot-manipulation-policies)  
+   evidence：通过空间蒸馏和流匹配实现轻量级机器人控制
+10. [CAC-VLA: Context-Gated Action Conditioning for Vision-Language-Action Models](/202607/13/2607.04816v1-cac-vla-context-gated-action-conditioning-for-vision-language-action-models)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：统一的仿真与真实机器人操作基准
-11. [RoboDojo: A Unified Sim-and-Real Benchmark for Comprehensive Evaluation of Generalist Robot Manipulation Policies](/202607/12/2607.04434v2-robodojo-a-unified-sim-and-real-benchmark-for-comprehensive-evaluation-of-generalist-robot-manipulation-policies)  
+   evidence：用于机器人操作VLA模型的上下文门控动作条件化
+11. [PRISM: Personalized Robotic Dataset Generation via Image-based Scene and Motion Synthesis](/202607/13/2607.04880v1-prism-personalized-robotic-dataset-generation-via-image-based-scene-and-motion-synthesis)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：统一的仿真与真实机器人操作基准
-12. [RoboDojo: A Unified Sim-and-Real Benchmark for Comprehensive Evaluation of Generalist Robot Manipulation Policies](/202607/12/2607.04434v3-robodojo-a-unified-sim-and-real-benchmark-for-comprehensive-evaluation-of-generalist-robot-manipulation-policies)  
+   evidence：基于仿真从单张图像和语言指令生成数据集
+12. [InternVLA-A1.5: Unifying Understanding, Latent Foresight, and Action for Compositional Generalization](/202607/13/2607.04988v1-internvla-a15-unifying-understanding-latent-foresight-and-action-for-compositional-generalization)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：统一的仿真-真实基准用于机器人操作，提供的仿真任务可改造用于人形机器人仿真
+   evidence：具有潜前瞻能力的统一VLA模型用于机器人操作
 
 
 <div class="dpr-home-promo-card">
