@@ -1,0 +1,2046 @@
+Title: Transforming Rank: How Architecture Navigates the Spectral Pathologies of Depth
+
+URL Source: https://arxiv.org/pdf/2607.14018v1
+
+Published Time: Thu, 16 Jul 2026 01:30:20 GMT
+
+Number of Pages: 40
+
+Markdown Content:
+# Transforming Rank: How Architecture Navigates the Spectral Pathologies of Depth 
+
+Katie Everett MIT CSAIL 
+
+everettk@csail.mit.edu 
+
+Abstract 
+
+We investigate how each component of the Transformer feedforward block architecture design determines how much rank survives across depth at initialization. We reinterpret skip connections and normalization, long understood as controlling magnitude, as mechanisms for preserving gradient rank across depth, since the very matrix multiplications and nonlinear activations that make the network expressive also reduce the rank. We show that skip connections trade off rank collapse against ensemble-like behavior, controlled by the relative scales of the branch and the skip: skip connections route the gradient around the residual branch, where rank is lost, rather than along the long gradient paths that encourage the layers to compose. The placement of the normalization layer controls this same tradeoff by setting the branch-to-skip ratio across depth, unifying much of the normalization placement and depth scaling literature, in particular why rank collapses for Post-Norm but plateaus for Pre-Norm. Other aspects of the architecture, like the two-matrix structure that expands and contracts the width, use additional parameters to preserve the representation or branch Jacobian rank. The second matrix decorrelates a coherent mean spike that would grow across blocks with a single matrix and uncentered activation, preventing the residual representation from collapsing. The width expansion between the two matrices keeps the branch Jacobian full rank: applying the rank-reducing activation in this expanded space leaves enough directions to span the original, at a width that follows a Marchenko–Pastur law. The initialization rank of the input–output Jacobian predicts which networks train on CIFAR-10. Taken together, we recast architecture design for deep networks as navigating an intrinsic tradeoff among rank collapse, ensemble-like behavior, and parameter count. Code is available at 
+
+https://github.com/everettk/transforming-rank-paper .
+
+# 1 Introduction 
+
+The modern Transformer feedforward block has a specific structure: each block normalizes the residual stream, expands the hidden dimension by a factor of roughly four through a pair of up- and down-projection matrices, applies an elementwise activation between them, and adds the result back to the residual stream, 
+
+hℓ = hℓ−1 + Wdown σ(Wup Norm( hℓ−1)) .
+
+The overall structure of this feedforward block is almost exactly what the original Transformer paper [Vaswani et al., 2017] proposed nearly a decade ago: what has changed in practice is the placement of the normalization layer, from Post-Norm to Pre-Norm [Nguyen and Salazar, 2019, Baevski and Auli, 2019], and the choice of activation, from ReLU through GELU [Hendrycks and Gimpel, 2016] to gated units [Shazeer, 2020]. Outside the feedforward block, there have been Transformer architecture innovations adopted widely in practice, including mixture-of-expert models [Shazeer et al., 2017, Fedus et al., 2022] and modifications of attention [Dao et al., 2022, Qiu et al., 2025]. However, the design of the feedforward block itself has been exceptionally stable over time even as frontier models have scaled up to hundreds of billions or more parameters. Even at these scales, the depth of frontier models remains on the order of a hundred layers [Llama Team, 2024, DeepSeek-AI, 2024]. Training deep Transformers has challenges with training stability [Bachlechner et al., 2021, Zhang et al., 2019], diminishing returns from additional layers [Fahim and Karim, 2026, Liu et al., 2026, Sun et al., 2025], and signal propagation across depth [Noci et al., 2022]. One form of signal degradation is rank collapse: 1arXiv:2607.14018v1 [cs.LG] 15 Jul 2026 the rank of the gradients and representations decreases through the layers, until they span only a small number of directions in a high-dimensional space [Feng et al., 2022]. In this work, we investigate how the architecture of the feedforward block determines the effective rank of the gradients and representations in deep networks. In a plain MLP, the input–output Jacobian, the gradient of the network output with respect to its input, is a product of matrices: each layer contributes a weight matrix and a diagonal matrix of activation derivatives. Since a product of matrices can only lose rank with each additional matrix multiplication, the Jacobian rank decreases monotonically with depth. The literature on dynamical isometry shows that the only way to avoid this rank loss in a plain MLP is for every per-layer Jacobian to have all singular values near one [Saxe et al., 2014, Pennington et al., 2017]: this requires that neither the weight matrices nor the activation derivatives reduce rank. In particular, the activation function trades off expressivity against rank: an activation that preserves rank must have a derivative near one in magnitude [Pennington et al., 2017]; therefore, a nonlinearity that makes the network expressive also reduces the Jacobian rank [Murray et al., 2022]. Outside of dynamical isometry, where typical neural networks operate, every layer of a plain MLP is a rank-reducing operation for the Jacobian. Skip connections [He et al., 2016a] and normalization layers [Ba et al., 2016, Zhang and Sennrich, 2019] are usually thought of as ways to keep the gradient and representation magnitudes from vanishing or exploding with depth, whereas we reinterpret them as mechanisms for bypassing rank loss in the gradient. We show that skip connections preserve rank by routing the gradient around the residual branch, where rank is lost, then restoring the rank through the identity path around the branch that is trivially full-rank. The branch scale and initialization control how much of the gradient flows through the residual branch versus around it, which comes with a tradeoff: at the extreme, if all the gradient flowed around the branch, the network would act like an ensemble of individual layers rather than a deep network whose layers compose. We further show that the placement of the normalization layers controls this same ratio between the branch and skip, and therefore the tradeoff between rank collapse and ensemble regimes; this perspective unifies many recent results on normalization placement and depth scaling. On the other hand, we show that the two-matrix structure in each feedforward block actually preserves the rank of the residual branch Jacobian. The branch expands the hidden dimension with its first matrix, applies the activation, and contracts back with the second matrix. Although the activation still reduces rank, applying it in this expanded space rather than the model dimension lets enough directions survive to keep the branch Jacobian full rank. In addition, the second matrix decorrelates the residual branch means, so the representation does not collapse onto a single direction. We argue there is a logical chain of architectural choices that navigate the rank tradeoff across depth, building up from a plain MLP to the modern feedforward block. We measure the effective rank at initialization of the input–output Jacobian, the residual stream representation, and the residual branch Jacobian, and show that the rank of the input–output Jacobian predicts which networks train on CIFAR-10. Our contributions are as follows: • We show that skip connections preserve rank by routing the gradient around the rank-reducing branch through the full-rank identity path, creating a tradeoff between rank collapse and ensemble-like behavior, controlled by the relative magnitudes of the branch and skip paths (Section 3). • We show that the normalization placement determines the rank by controlling this same branch-to-skip ratio across depth: Post-Norm holds it constant and the rank collapses, while Pre-Norm lets it decay so the rank plateaus at a moderate level, at the expense of its deep layers shifting back toward the ensemble regime. The projection terms in the normalization operation contribute negligible rank loss compared to the branch-to-skip ratio. This same ratio controls a √L depth factor in the initialization rank and unifies a range of results on normalization placement and depth scaling (Section 4). • We show the two-matrix structure in the feedforward block preserves residual representation rank. With a single matrix and an uncentered activation, the rank of the residual representation collapses through a coherent mean spike whose cross-layer alignment equals the activation moment ratio cℓ = E[σ]2/E[σ2]. The second matrix decorrelates this alignment to zero and prevents the collapse (Section 5). • We show the width expansion between the two matrices preserves rank in the branch Jacobian. The activation function reduces the rank by masking or attenuating directions; applying this operation in the expanded space means enough directions survive to span the original space. We derive from a Marchenko–Pastur law the threshold m/d = 1 /p (σ) at which the branch Jacobian becomes full rank, where p is the survival rate of the activation ( 1/2 for ReLU; p = E[σ′(z)2] for smooth activations; Section 6). 210 20 30 40         
+
+> Layer
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Effective rank / width
+> Skips restore rank
+> no skip
+> skip every 1
+> skip every 4
+> MLPs contract rank
+> skip restores 10 20 30 40
+> Layer
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Small preserves rank
+> = 1
+> = 1/ L10 20 30 40
+> Layer
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Width expansion slows rank loss
+> Width Expansion
+> 1 ×
+> 2 ×
+> 4 ×
+> 8 ×
+
+Figure 1: Skip connections restore the effective rank that each feedforward block contracts; the residual scale 
+
+β and the width expansion control how much survives with depth. Effective rank of the Jacobian ∂h ℓ/∂h 0
+
+up to each layer ℓ, normalized by the width (model dimension) d, for a Pre-Norm ReLU residual MLP ( L = 48 ,
+
+d = 256 , β = 1 , α = 1 , and 4× width expansion unless otherwise stated; mean over 12 seeds). Left: rank collapses without skips (gray); rank decays smoothly with a skip on every block (blue); spacing skips to every fourth block reveals the mechanism (green): rank contracts through the feedforward blocks and is restored at each skip. Center: 
+
+scaling the residual branch by β = 1 /√L reduces the magnitude of its contribution relative to the skip; since the skip (identity function) dominates, rank is preserved across depth, unlike at β = 1 . Right: residual branches with higher width expansion factors lose rank more slowly, raising the sawtooth troughs, a per-block conditioning effect analyzed in Section 6. In this work, we focus primarily on the initialization rank across depth in a network of feedforward blocks. Related work studies the rank collapse that occurs in attention layers [Dong et al., 2021, Noci et al., 2022] and how rank evolves throughout training [Martin and Mahoney, 2021, Galanti et al., 2025]. Even at initialization, the rank behavior across depth illustrates how the components of the feedforward block, though usually understood in other terms, together navigate an intrinsic tradeoff among rank collapse, ensemble-like behavior, and parameter count: skip connections and normalization route the gradient around the rank-reducing branch, trading off rank collapse against ensemble-like behavior, while the two-matrix structure and width expansion preserve the branch and representation rank at the cost of additional parameters. 
+
+# 2 Setup 
+
+We consider a residual network in which an input h0 ∈ Rd is transformed by L residual blocks into hL. Each residual block has the form 
+
+hℓ = hℓ−1 + β f (hℓ−1), ℓ = 1 , . . . , L, (1) with branch scale β. The branch f may itself include a normalization, an elementwise activation σ, and one or two weight matrices; we write M for the number of branch matrices. By default the branch is the two-matrix feedforward block, f (h) = Wdown σ(Wup Norm( h)) , with Wup ∈ Rm×d and Wdown ∈ Rd×m, where m/d is the expansion ratio. Unless stated otherwise, the activation is ReLU, the normalization is RMSNorm in the Pre-Norm placement, β=1 , and the weights are initialized as N (0 , α 2/fan-in ) with initialization scale α = 1 .We track the rank, across depth, of three objects. The first is the input–output Jacobian ∂h L/∂h 0, an ordered product over the L blocks, 
+
+∂h L
+
+∂h 0
+
+= ( I + βJ L)( I + βJ L−1) · · · (I + βJ 1), (2) where Jℓ := ∂f (hℓ−1)/∂h ℓ−1 is the branch Jacobian of block ℓ. The other two are the forward residual rep-resentation Zℓ (Section 5) and the branch Jacobian on its own, whose normalization-free core is written Jf
+
+(Section 6). We report two spectral measures of a matrix A with N singular values σ1 ≥ · · · ≥ σN . Our primary measure is the 310 0                      
+
+> Init scale
+> 0.0
+> 0.5
+> 1.0
+> Effective rank / width
+> Pre-Norm: rank depends
+> on and ...
+> = 1
+> = 1/ L
+> = 1/ L
+> 10 210 110 010 1
+> Branch-to-skip ratio M
+> ...only through M
+> = 1
+> = 1/ L
+> = 1/ L
+> 10 0
+> Init scale
+> 0.0
+> 0.5
+> 1.0
+> Effective rank / width
+> Post-Norm: rank depends
+> on and ...
+> = 1
+> = 1/ L
+> = 1/ L
+> 10 210 110 010 1
+> Branch-to-skip ratio M
+> ...only through M
+> = 1
+> = 1/ L
+> = 1/ L
+
+Figure 2: The effective rank at initialization depends on the branch scale β and the initialization scale 
+
+α only through the nominal branch-to-skip ratio βα M (M the number of branch matrices), for both normalization placements. Effective rank of the input–output Jacobian, normalized by the width, for a residual MLP at initialization ( d = 256 , L = 48 , two square d × d branch matrices, single seed). (a) Pre-Norm: the rank depends on both the initialization scale α and the branch scale β. (b) Plotted against βα M , the β-sweeps collapse onto a single curve. (c, d) The same holds for Post-Norm, but the rank collapses further at a given ratio. effective rank [Roy and Vetterli, 2007], the exponential of the spectral entropy, 
+
+erank( A) = exp 
+
+
+
+− P 
+
+> k
+
+pk ln pk
+
+
+
+, pk = σk
+
+ P  
+
+> j
+
+σj , (3) which we report normalized by the model dimension d as erank( ∂h L/∂h 0)/d ; it equals 1 when all singular values are equal and drops toward 0 as the spectrum collapses in a few directions. We also use the stable rank 
+
+st( A) = ∥A∥2 
+
+> F
+
+/∥A∥22, primarily in Section 5. Both measures are scale-invariant and lie in [1 , N ]. For Jacobian measurements taken at initialization, we sample a random Gaussian input and evaluate each branch Jacobian at the resulting forward activations, reporting means over independent samples of the weights and the input unless stated otherwise. 
+
+# 3 Skip Connections and Rank Restoration 
+
+A plain MLP loses effective rank with depth due to repeated matrix multiplications and nonlinearities: its per-layer Jacobians are each mildly deficient in effective rank, and composing them compounds the loss across depth. The only exception is networks satisfying the dynamical isometry condition, which requires every singular value of the input–output Jacobian to remain close to one, so that effective rank is preserved at any depth [Saxe et al., 2014]. However, dynamical isometry in neural networks is difficult to achieve in practice, requiring orthogonal initialization and precise choices of activation function and activation distribution maintained throughout training [Pennington et al., 2017, Murray et al., 2022]. Skip connections are often understood as an architectural solution to vanishing gradient magnitude across depth; we reinterpret them as a solution to vanishing gradient rank across depth. Gradients that flow through many MLP layers inevitably lose rank, because the matrix multiplications and nonlinearities that make the network expressive also reduce rank. Skip connections, in that sense, are a workaround to this intrinsic rank loss: they preserve rank because they route the gradient around the residual branch, where rank is lost, through an identity path that is trivially full rank. This creates a sawtooth pattern in the rank across depth if the skips are spaced across multiple layers, where rank decreases through the MLPs and is restored at each skip connection (Figure 1, left). In this section, we argue that the deep residual architecture navigates a fundamental tradeoff: if all of the gradient passed through the branch, the rank would collapse; if it all passed through the skips, the network would act like an ensemble of individual layers rather than a deep network whose layers compose. The standard residual block contains a scaled branch added to an identity skip connection, hℓ = hℓ−1 + βf (hℓ−1).When the residual stream passes through each block untouched, as it does under Pre-Norm (Appendix A), the skip term must be the identity: scaling it by λ multiplies its contribution by λL−ℓ, which explodes for λ > 1 and 40 10 20 30 40                              
+
+> Path order
+> 10 20
+> 10 17
+> 10 14
+> 10 11
+> 10 8
+> 10 5
+> 10 2
+> 10 1
+> Frobenius norm
+> Per-order Jacobian magnitude
+> = 1
+> = 1/ L
+> = 1/ L
+> 0.0 2.5 5.0 7.5 10.0
+> Path order
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Normalized magnitude
+> Smaller = shorter paths ( = 1)
+> = 1
+> = 1/ L
+> = 1/ L
+> 0.0 2.5 5.0 7.5 10.0
+> Path order
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> Normalized magnitude
+> Smaller = shorter paths ( = 1)
+> =0.3
+> =0.6
+> =1
+> =1.8
+> 10 210 110 010 1
+> Branch-to-skip ratio M
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> Mean path order  k
+> Path length depends only on M
+> = 1
+> = 1/ L
+> = 1/ L
+
+Figure 3: Short paths (mostly skip connections) dominate the input–output Jacobian magnitude; a smaller branch scale β or initialization scale α shifts it toward even shorter paths. The path lengths depend only on the nominal branch-to-skip ratio βα M . Path decomposition of a Pre-Norm residual MLP at initialization (d = 256 , L = 48 , 4× width expansion; mean over 8 seeds). (a) Per-order Jacobian magnitude: the Frobenius norm of the order-k paths, those through exactly k feedforward blocks and L − k skip connections; order 0 only travels through the skip. (b) The same magnitudes normalized to sum to one; a smaller branch scale β concentrates the magnitude on shorter paths. (c) A smaller initialization scale α also shifts the magnitude toward shorter paths. 
+
+(d) Mean path order ⟨k⟩, sweeping the initialization scale α at each of three branch scales β; ⟨k⟩ depends only on the branch-to-skip ratio βα M (M the number of branch matrices), so all points fall on a single curve. vanishes for λ < 1 [He et al., 2016b]. The branch has two parameters that control its scale, the branch scale β and the initialization scale α of its weight matrices. The Jacobian of a single block contains a skip term and a branch term; we define the branch-to-skip ratio rℓ for each layer as the ratio of their Frobenius norms: 
+
+∂h ℓ
+
+∂h ℓ−1
+
+= I|{z} 
+
+> skip
+
++ βJ ℓ
+
+|{z} 
+
+> branch
+
+, rℓ ≡ ∥βJ ℓ∥F
+
+∥I∥F
+
+. (4) At unit residual stream scale, rℓ = √p βα M : the branch Jacobian contributes one factor of α for each of the 
+
+M weight matrices, and a factor √p from the activation derivative, where p = E[σ′(z)2] (p = 1 /2 for ReLU; for activations whose derivative is zero or ±1, this is the survival rate in Section 6). We will analyze the depth dependence of rℓ in Section 4. For residual networks with positively homogeneous activations, there are equivalence classes over the initialization scale α and the branch scale β in which networks with the same value of 
+
+βα M compute the same function at initialization. This equivalence persists throughout training if the optimizer hyperparameters are rescaled accordingly for each matrix (Appendix A.4). In particular, we show that the effective rank at initialization depends on β and α only through βα M , for both Pre- and Post-Norm (Figure 2). A larger 
+
+βα M sends more of the gradient through the branch rather than the skip, so the rank collapses faster with depth. Prior work shows that deep residual networks behave like ensembles of shallow networks [Veit et al., 2016, Liu et al., 2026]. Veit et al. [2016] decompose a residual network forward pass into 2L paths that take either the skip or the branch at each block. We apply a similar expansion to the input–output Jacobian, where the skip contributes the identity and the branch contributes βJ ℓ to the product. Grouping the paths by their order k, the number of blocks at which a path takes the branch rather than the skip, gives 
+
+∂h L
+
+∂h 0
+
+=
+
+> L
+
+X
+
+> k=0
+
+βkSk, Sk = X 
+
+> 1≤ℓ1<··· <ℓ k≤L
+
+Jℓk · · · Jℓ1 , (5) where each order-k path carries weight (βα M )k. We say a path is short if it passes through few feedforward blocks (small k) and runs mostly through the skip connections; a long path (large k) passes through many feedforward blocks. Because the path weight is raised to the order k, small changes in β and α are amplified in the long paths. Small changes in the ratio therefore induce significant shifts in the distribution over path orders (Figure 3): at a small ratio the short paths dominate, which encourages the network to behave like an ensemble of shallow subnetworks more than a deep network whose layers compose. This same ratio also controls whether the rank 5shows a flat or a decaying sawtooth pattern: at β = 1 /√L each skip nearly restores the rank lost in the preceding block, whereas at β = 1 it restores only part and rank declines with depth (Figure 1, center). Our decomposition lets us reinterpret the downscaling of the residual branch, often recommended in the depth-scaling literature, as a way to bypass rank collapse but possibly at the expense of composition. Multiple theoretical perspectives all propose β = 1 /√L scaling, motivated by gradient stability and an expressive infinite-depth kernel [Hayou et al., 2021], feature learning and hyperparameter transfer [Yang et al., 2024, Bordelon et al., 2024], and preventing rank collapse across the sequence dimension [Noci et al., 2022]. Tarnowski et al. [2019] show that residual networks with any activation function achieve dynamical isometry when the branch is downscaled sufficiently. In practice, though, many frontier models keep β = 1 [Llama Team, 2024, DeepSeek-AI, 2024, Gemma Team, 2024, Qwen Team, 2025, OpenAI, 2025, Kimi Team, 2025] or similarly rescale the skip connection [MiniMax, 2025], suggesting the stronger branch contribution may bring empirical benefits on downstream tasks that downscaling would sacrifice. A network that does not downscale the branch needs normalization layers to control the growing magnitude of the residual stream; as the next section will show, the normalization placement also determines how the branch-to-skip ratio, and therefore the rank, evolves with depth. At β = 1 the stream grows because the branch contributions accumulate rather than cancel at initialization (Appendix A). Some methods avoid normalization entirely by initializing the branch near zero [Bachlechner et al., 2021, De and Smith, 2020, Zhang et al., 2019]: a small ratio limits the magnitude growth that normalization would otherwise control, at the same possible cost in composition as downscaling the residual branch with small β.
+
+# 4 Normalization Placement and the Branch-to-Skip Ratio 
+
+A normalization layer can be placed at three locations in a residual block: the branch input (Pre-Norm), the branch output (which we call Output-Norm), or the stream after the residual addition (Post-Norm) [Kim et al., 2025]. The original Transformer used Post-Norm [Vaswani et al., 2017], 
+
+hℓ = Norm  hℓ−1 + β f (hℓ−1), (6) but the canonical architecture today uses Pre-Norm [Llama Team, 2024, DeepSeek-AI, 2024]: 
+
+hℓ = hℓ−1 + β f (Norm( hℓ−1)) . (7) The optimal placement of normalization layers is still debated, with recent work proposing that Post-Norm can be viable in deep networks [Wang et al., 2024, Liu et al., 2024, Chen and Wei, 2026] or that normalization is beneficial at other locations, including several per block or different placements at different depths [Ding et al., 2021, Shleifer et al., 2021, Wang et al., 2023, Kim et al., 2025, Li et al., 2025, Gemma Team, 2024, 2025]. We consider normalization operations at each location that subtract the mean, rescale the root-mean-square of the input, or do both. 1 This section shows that the normalization placement and operation determine the effective rank through how the branch-to-skip ratio (Eq. 4) changes across depth: a post-residual rescaling holds the ratio constant and the rank collapses, whereas every other choice lets the ratio decay and the rank plateaus, provided a normalization fixes the scale of the branch. The rank measurements in this section use a single sample of the weights and the input, and the operations we compare share the same sample; each cell of the CIFAR heatmaps (Figure 6) trains one network per learning rate. We first rule out a potential explanation for why the normalization placement affects the rank: prior work observes the normalization Jacobian contains a projection term that removes directions from the gradient [Xu et al., 2019, Emadi, 2026]. Deep Post-Norm networks show collapsed input–output Jacobian spectra already at initialization [Bachlechner et al., 2021]. The mean subtraction operation removes the all-ones direction 1, and the rescaling operation removes the current stream direction ˆx = h/ ∥h∥ (with the normalization gain at its standard initialization 
+
+> 1This setup includes RMSNorm (which only rescales) and LayerNorm (which does both), but not BatchNorm, which normalizes across the batch rather than within a vector [Ioffe and Szegedy, 2015].
+
+612 24 48 96 192 384                 
+
+> Depth L
+> 0.0
+> 0.5
+> 1.0
+> Effective rank / width
+> Only the post-residual placement
+> collapses the rank
+> Pre-Norm
+> Output-Norm
+> Post-Norm
+> no normalization
+> 12 24 48 96 192 384
+> Depth L
+> 0.0
+> 0.5
+> 1.0
+> Effective rank / width
+> The collapse persists with
+> the projection removed
+> Post-residual op
+> none
+> mean sub
+> rescale
+> rescale, detached
+> 24 48 96 192 384
+> Depth L
+> 10 3
+> 10 2
+> 10 1
+> 10 0
+> Effective rank lost / width
+> Projection contributes
+> 0.4% of the full rank
+> lost to rescaling
+> lost to projection (worst )
+
+Figure 4: The projection terms in the normalization Jacobian are not the cause of the rank collapse. All panels: residual networks at initialization with a two-matrix ReLU branch (both matrices d × d, d=256 ), β=1 ;effective rank of the input–output Jacobian, normalized by width. Panels (a) and (b) fix α=1 . (a) Only the post-residual placement collapses rank. A normalization at either branch placement, the input (Pre-Norm) or the output (Output-Norm), keeps a floor; the post-residual placement (Post-Norm) collapses at the same rate as no normalization at all. (b) The collapse persists with the projection removed. A detached rescaling (fixes the scale, removes no direction) collapses identically to RMSNorm; mean subtraction (removes a direction, does not rescale) keeps a floor. Every configuration uses a Pre-RMSNorm; we vary only the post-residual operation, and the rescaling collapse does not depend on it (Figure 10). (c) The projection’s contribution to rank loss is negligible. The plot splits the rank a post-residual RMSNorm removes into a rescaling part and a projection part (Appendix B.2): the rescaling accounts for essentially all of it, the projection at most 0.4% of the full rank, across α ∈ { 0.5, 1, 2}.of one): 
+
+∂∂h 
+
+ h − μ(h)1 = I − 1 
+
+> d
+
+11 ⊤
+
+| {z } 
+
+> removes 1
+
+, ∂∂h h
+
+RMS( h) =
+
+√d
+
+∥h∥
+
+ I − ˆxˆx⊤| {z } 
+
+> removes ˆx
+
+. (8) The placement changes where the projection occurs relative to the identity. In the Post-Norm block Jacobian, 
+
+JNorm (I +βJ f ), every gradient path passes through the projection; in the Pre-Norm block Jacobian, I +βJ f JNorm ,the identity carries the gradient around it [Emadi, 2026]. If the projection removes directions from the gradient, and the identity bypass protects the rank in Pre-Norm, then the projection could explain why the rank collapses in Post-Norm, where no bypass exists. Our experiments present two pieces of evidence that rule out the projection as the cause of the rank collapse. Our first experiment is the placement comparison in Figure 4a: a normalization at the branch input or output keeps a rank floor, while Post-Norm loses rank at the same rate as a network with no normalization at all. A network with no normalization removes no directions, which indicates that the projection is not necessary to induce the collapse. Our second experiment is an ablation that removes the projection from the Jacobian while changing nothing else. The projection term in the RMSNorm Jacobian comes from differentiating through the stream scale. We stop the gradient through that scale to obtain a detached rescaling : the forward pass is unchanged, while the Jacobian becomes a multiple of the identity that removes no direction. This detached rescaling collapses the rank just like ordinary RMSNorm (Figure 4b). When we split the rank that a post-residual RMSNorm removes into a rescaling part and a projection part, the projection accounts for at most 0.4% of the full rank, across initialization scales (Figure 4c; Appendix B.2). From this, we conclude that the post-residual normalization does not itself remove rank from the gradient; the placement simply fails to preserve it the way that Pre-Norm does. 
+
+Instead, we show that the normalization placement controls how the branch-to-skip ratio changes across depth, which in turn determines the effective rank. For Pre-Norm and Post-Norm, with the branch scale β
+
+and initialization scale α fixed across layers, the branch-to-skip ratio varies with depth only through the scale of the residual stream. Throughout this section we track its nominal form ˜rℓ ≡ rℓ/√p, dropping the constant activation-derivative factor that is shared by every block and both placements (Section 3). In Pre-Norm, the branch 710 0 10 1 10 2              
+
+> Layer
+> 10 0
+> 10 1
+> Residual stream scale
+> Pre-Norm resid stream grows
+> (faster at larger init scale)
+> Pre, =0.5
+> Pre, =1
+> Pre, =2
+> Post
+> 10 010 110 2
+> Depth L
+> 10 0
+> 10 1
+> Accumulated branch / skip
+> Accumulated branch-to-skip ratio
+> grows for Post, flattens for Pre
+> Post-Norm
+> Pre-Norm
+> L
+> 10 2
+> Depth L
+> 0.1
+> 0.2
+> 0.5
+> Iso-rank contour for  M
+> Iso-rank contours
+> scale as 1/ L
+> Pre-Norm
+> Post-Norm
+> 10 010 110 2
+> Depth-scaled ML
+> 0.0
+> 0.5
+> 1.0
+> Effective rank / width
+> Rank depends only
+> on ML
+> Pre-Norm
+> Post-Norm
+> L=96
+> L=192
+> L=384
+
+Figure 5: The effective rank depends only on the product of the branch-to-skip ratio βα M (exact symmetry) and a √L depth factor (empirical). Post-Norm collapses to zero, while Pre-Norm plateaus at a moderate level. All panels at initialization with a two-matrix ReLU branch (both matrices d × d, d=256 ), β=1 ; βα M is the nominal branch-to-skip ratio ( M branch matrices). (a) The norm placement controls the branch-to-skip ratio at each depth. The Pre-Norm residual stream grows with depth, faster at larger initialization scale α, so the ratio decays; Post-Norm rescales the residual stream to unit scale, which holds the ratio constant. (b) The accumulated branch norm relative to the skip grows as √L for Post-Norm (a random walk of constant-magnitude increments) and flattens for Pre-Norm (a random walk of shrinking increments). At L=384 the accumulated branch norm reaches 14 × the skip for Post-Norm and 2.4× for Pre-Norm. (c) The rank is an approximate function of βα M √L:for both placements, the iso-rank contours (rank levels 0.4, 0.5, 0.6, lighter to darker) scale as 1/√L. (d) Plotted against βα M √L, the curves for all depths fall onto one curve per placement, confirming the rank depends on this combination alone. acts on a normalized input, so its Jacobian contains the factor √d/ ∥hℓ∥ from the normalization (Eq. 8), giving 
+
+˜rℓ = βα M √d/ ∥hℓ∥: the nominal ratio βα M divided by the stream scale rms( hℓ). The Pre-Norm stream grows with depth, since each block adds a branch output of roughly fixed magnitude that is nearly orthogonal to the stream. The scale grows as ∥hℓ∥ ∝ √ℓ (Figure 5a; Appendix B.3) and the ratio decays as 1/√ℓ. In Post-Norm, the rescaling resets the stream to unit scale at every block, and the ratio stays fixed at βα M . With no normalization at all, the ratio is also constant, but for a different reason: a degree-one homogeneous branch Jacobian does not depend on the scale of its input, so the growing stream leaves the ratio unchanged. To see why the branch-to-skip ratio determines the rank, recall from Section 3 that the operations that reduce rank are in the residual branch, and that the skip connection routes the gradient around them. Since the ratio controls how much of the gradient passes through these rank-reducing operations compared to the skip, the rank lost at each layer depends on this ratio. When the ratio decreases with depth, later blocks lose less and less rank, and the rank levels off. When the ratio is constant, every block keeps losing rank, and the rank collapses. This resolves the coincidence in Figure 4a: Post-Norm and no normalization lose rank at the same rate because both hold the branch-to-skip ratio constant across depth. We now measure how the effective rank depends on the branch-to-skip ratio and the depth together. Recall from Section 3 that networks with the same βα M compute the same function at initialization, and that the effective rank depends on β and α only through this quantity, for both Pre-Norm and Post-Norm (Figure 2). To measure the depth dependence, we extract iso-rank contours: at each depth L, the value of βα M that holds the effective rank at a fixed level. We find that the effective rank at initialization depends only on the product of the branch-to-skip ratio βα M and a √L depth factor: for both Pre-Norm and Post-Norm, the iso-rank contours scale as 1/√L
+
+(Figure 5c; measured slope −0.50 ). Plotted against βα M √L, the rank at every depth falls onto one curve for Pre-Norm and another for Post-Norm (Figure 5d): the Post-Norm curve collapses to zero, whereas the Pre-Norm curve approximately plateaus at a moderate level. We next give a heuristic scaling argument for the √L depth factor, using the path decomposition in Section 3 (Eq. 5). There are  Lk
+
+ paths of order k, one for each choice of the k blocks where the path passes through the 80.02 0.1 0.5 1 2 4                                                                                                                                       
+
+> Init scale
+> 12
+> 24
+> 48
+> 96
+> 192
+> 384
+> Depth  L
+> 1.00 1.00 0.92 0.60 0.40 0.34
+> 1.00 1.00 0.86 0.53 0.34 0.30
+> 1.00 1.00 0.79 0.46 0.30 0.28
+> 1.00 1.00 0.70 0.40 0.27 0.25
+> 1.00 1.00 0.61 0.36 0.25 0.23
+> 1.00 1.00 0.53 0.32 0.23 0.22
+> Pre-Norm: Init eff rank / width
+> 0.02 0.1 0.5 124
+> Init scale
+> 56 55 55 55 55 51
+> 55 56 56 56 54 52
+> 56 57 57 56 55 51
+> 56 57 56 56 55 51
+> 57 57 56 56 54 50
+> 56 57 56 55 53 50
+> Pre-Norm: CIFAR accuracy (%)
+> 0.02 0.1 0.5 124
+> Init scale
+> 1.00 1.00 0.90 0.36 0.11 0.09
+> 1.00 1.00 0.82 0.20 0.06 0.06
+> 1.00 1.00 0.68 0.10 0.03 0.03
+> 1.00 0.99 0.48 0.05 0.01 0.01
+> 1.00 0.99 0.29 0.02 0.01 0.01
+> 1.00 0.99 0.16 0.01 0.01 0.01
+> Post-Norm: Init eff rank / width
+> 0.02 0.1 0.5 124
+> Init scale
+> 54 55 55 53 54 53
+> 55 55 55 53 51 51
+> 55 56 55 53 46 47
+> 56 56 55 50 16 28
+> 55 56 54 18 10 10
+> 55 56 50 10 10 10
+> Post-Norm: CIFAR accuracy (%)
+
+Figure 6: The initialization effective rank predicts CIFAR-10 trainability. Heatmaps over initialization scale 
+
+α and depth L, for residual networks with a two-matrix ReLU branch (both matrices d × d, d=256 ) and β=1 .
+
+(a,c) Effective rank of the input–output Jacobian at initialization. (b,d) Best CIFAR-10 test accuracy over a learning-rate sweep with Adam. For Pre-Norm (a,b) , the rank stays above 0.2 and training succeeds across the entire grid. For Post-Norm (c,d) , the rank collapses at large α and depth, and accuracy falls to chance ( 10% ) in the same region. branch instead of the skip. For Post-Norm, each branch visit contributes a factor of βα M to a path’s norm relative to the skip (we drop the post-residual norm Jacobians, whose projections empirically contribute at most 0.4% of the full rank). At initialization, the branch Jacobians of different blocks are nearly independent, so the paths of each order add like a random walk, to norm 
+
+q Lk
+
+ (βα M )k ≈ (βα M √L)k/√k!. Each additional branch visit multiplies the number of available paths by roughly L, so one factor of √L comes with each factor of βα M . Every order of the expansion then depends on α, β, and L only through βα M √L. The effective rank is scale-invariant, so it is a function of this single variable, and the iso-rank contours scale as 1/√L.The order-one paths form the accumulated branch in Figure 5b, where L randomly oriented terms of magnitude 
+
+βα M add like a random walk to βα M √L for Post-Norm. For Pre-Norm the growing stream shrinks the per-layer ratios as 1/√ℓ, and each order of the expansion is again a function of βα M √L; the accumulated branch flattens instead of growing (Figure 5b). The rank begins to decrease where the branch orders reach the scale of the skip, around βα M √L ∼ 1 (the order-one line in Figure 5b). For a more detailed argument, see Appendix B.3, where we state the assumptions behind each step and validate them empirically, including on GPT-2 Small and Medium both at initialization and after training. This argument tells us that the rank depends on βα M √L, but not how; we measure the shape of each curve empirically (Figure 5d). For Post-Norm, the rank collapses to zero, since the accumulated branch grows as √L and dominates the skip. For Pre-Norm, the accumulated branch stays comparable to the skip, so the rank plateaus at a moderate level. The initialization rank predicts whether these networks train. We train on CIFAR-10 across a grid of initialization scale α and depth L for both placements at β=1 , taking the best test accuracy over an Adam learning-rate sweep (Figure 6). We note that CIFAR-10 is an easy task whose accuracy saturates even with a shallow network, so this serves as a coarse test of trainability: it tests whether a configuration trains at all, rather than how it benefits from depth. We see that the networks fail to train in the configurations where the initialization rank collapses: when the rank collapses all the way to 1–2% effective rank over width, the CIFAR accuracy drops toward chance, whereas more moderate rank collapse harms accuracy by several percentage points. Moreover, as depth increases, the learning-rate basin narrows: the maximum stable learning rate decreases with depth as rank collapse begins (Appendix B.4), whereas the CIFAR accuracy failures occur at larger depths once the rank has fully collapsed. In this sense, the narrowing learning-rate basin acts as an early signal of a trainability problem, before any harm to the final accuracy. We include results for Output-Norm in Appendix B.5, which are similar to Pre-Norm across the grid. 9Our results unify a variety of methods in the normalization placement literature by asking how each changes the branch-to-skip ratio across depth. The Jacobian rank collapse is specific to the post-residual placement. A branch-input or branch-output placement avoids normalizing the residual stream, so the skip remains an identity, the stream grows with depth, and the branch-to-skip ratio decays. Architectures whose per-block normalizations stay off the residual stream [Ding et al., 2021, Shleifer et al., 2021, Wang et al., 2023, Kim et al., 2025] avoid the problem. One line of work aims to revive Post-Norm at depth by up-scaling the skip inside the normalization and/or down-scaling the branch initialization [Wang et al., 2024, Chen and Wei, 2026]; this shrinks the branch relative to the skip, which in our notation reduces βα M and means a higher initialization rank at every depth (Figure 5d). Additional work reduces how many post-residual normalizations the gradient must pass through [Takase et al., 2023, Wang et al., 2026]. Finally, the 1/√L branch downscaling in Section 3 coincides with our measured iso-rank contours: β=1 /√L holds βα M √L constant, so it is precisely the scaling at which the initialization rank is depth-invariant, which may be part of why it works well. This section has shown that the normalization placement and operation determine the Jacobian effective rank at initialization through a single quantity, the branch-to-skip ratio across depth; the projection term in the normalization Jacobian contributes negligible rank loss. The placement determines whether the normalization rescales the residual stream: at the branch input or output, the skip stays an identity, the stream grows, and the ratio decays with depth. Among configurations where a normalization fixes the scale of the branch, the rank collapses only under a post-residual rescaling, the one combination where the branch-to-skip ratio stays constant across depth; every other placement and operation lets the ratio decay, and the rank keeps a floor. Quantitatively, the rank depends on the ratio and the depth only through βα M √L, and the initialization rank predicts which configurations train. Recall from Section 3 that explicitly downscaling the branch with small values of α or β preserves the rank at a possible cost in composition: short paths through primarily skip connections become dominant, and the network behaves more like an ensemble of shallow subnetworks. Pre-Norm applies this same downscaling implicitly: the stream grows while each branch output keeps a fixed magnitude, so the ratio decays as 1/√ℓ and the deep blocks become small perturbations of the identity. Post-Norm instead holds the ratio constant, so its blocks keep transforming the stream and keep losing rank. In Pre-Norm, the rank survives for the same reason the deep layers become ineffective: a near-identity block neither removes directions from the gradient nor adds computation beyond contributing its individual layer to the ensemble. In trained Pre-Norm language models, the deep layers indeed contribute little: they can be pruned individually with minimal performance loss, and their block Jacobians approach the identity [Sun et al., 2025]. In other words, the decaying branch-to-skip ratio suggests a mechanism for this ineffectiveness, but it also explains the benefit: the rank stays moderate, and the network still trains at depths where Post-Norm fails (Figure 6). 
+
+# 5 The Two-Matrix Branch and the Coherent Mean Spike 
+
+Transformer feedforward blocks place two weight matrices inside every residual branch. The previous sections might suggest the opposite design: if skip connections restore the rank that branches destroy (Section 3), then perhaps having a skip connection around one matrix per branch would be preferable. In this section, we consider a form of rank collapse in the forward residual stream at initialization that the two-matrix structure prevents. The mean of the residual stream over inputs is a running sum: each layer’s branch adds one term, μℓ = m1 + · · · + mℓ,where mk is the mean of layer k’s branch output. When this sum grows large, it creates a rank-1 mean spike that dominates the spectrum of the representation matrix Zℓ ∈ Rn×d, whose rows are the stream hℓ for n probe inputs, and the representations of all inputs converge to this single direction. When a single uncentered branch keeps these terms aligned across layers, the sum grows linearly with depth, and this spike collapses the rank at moderate depth (Figure 7). We show that two architectural choices prevent this collapse: a second branch matrix decorrelates the terms, or a centered activation avoids the mean spike in the first place. We measure the correlation between the branch means directly and show that it equals the activation moment ratio cℓ = E[σ]2/E[σ2], and find that a single criterion controls whether an architecture avoids this mean spike collapse: it must remove the aligned component of the branch means. We first consider the residual stream after a single layer, which Davis and Drusvyatskiy [2025] show contains a mean spike in the case of an uncentered activation function. At initialization, the branch adds a mean of predictable 10 10 0 10 1 10 2       
+
+> Layer
+> 0.2
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Branch mean alignment  (a) A single matrix aligns
+> the branch means
+> M=1 ReLU
+> M=2 ReLU
+> M=1 tanh 10 010 110 2
+> Layer
+> 10 1
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> Residual mean norm
+> (b) Coherent branch means
+> accumulate linearly
+> M=1 ReLU
+> M=2 ReLU
+> M=1 tanh 510 15
+> Singular value index
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Energy fraction
+> (c) Mean spike dominates
+> forward residual spectrum
+> M=1 ReLU
+> M=2 ReLU
+> M=1 tanh 10 010 110 2
+> Layer
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Effective rank / width
+> (d) A second matrix or centered
+> activation preserves rank
+> M=1 tanh
+> M=2 ReLU
+> M=1 ReLU
+
+Figure 7: A single uncentered branch matrix grows a mean spike that collapses the forward residual stream rank; a second matrix or a centered activation prevents the collapse. We track the residual stream representation 
+
+Zℓ, the matrix whose rows are the representations of n probe inputs at layer ℓ, in a depth-L network at initialization (Pre-RMSNorm, β=1 , d=256 , L=512 , 3 seeds). (a) The mean of Zℓ over inputs is the sum m1 + · · · + mℓ of the per-layer branch means; we plot the alignment cos( mℓ, m ℓ+1 ) of consecutive terms. A single uncentered matrix aligns them at the coherence constant cℓ (1/π for ReLU, dashed); a second matrix decorrelates them; tanh’s branch means are zero, so there is nothing to align. (b) The norm of that sum grows linearly when the terms align ( ∝ ℓ
+
+guide) and as a random walk when they do not ( ∝ √ℓ). tanh’s true mean is zero; its curve sits on the gray n-sample noise floor (Appendix C). (c) The spectrum of ZL at the final layer (top 16 of d=256 singular values): the top singular value carries the mean, with energy fraction 1.00 for M=1 ReLU (a rank-1 spike) and 0.70 for M=2 ReLU (a full tail remains); tanh has no spike, and its top direction holds only 0.08 , barely above the rest of its spectrum. (d) The effective rank of Zℓ collapses for M=1 ReLU and stays a finite fraction of the width for M=2 ReLU and tanh. size to the stream: the weights are isotropic and the Pre-Norm fixes the branch input scale, so each coordinate of the post-activation σ(W z ) has mean E[σ] and second moment E[σ2] over the Gaussian pre-activations. The mean direction therefore carries a fraction cℓ = E[σ]2/E[σ2] of the post-activation energy, where energy is the squared Frobenius norm. Davis and Drusvyatskiy [2025] prove that this creates a rank-1 mean spike in the branch-output spectrum for an uncentered activation, whereas a centered activation has zero mean and therefore no spike; sσ = 1 /c ℓ is an upper bound for the stable rank of the branch output, the ratio of total to top-direction energy. Our first contribution in this section is to show the bound is tight at initialization across a set of common pointwise activations: Table 1 lists the constants, and the measured stable rank matches sσ to within 6% in every case. Our main contribution in this section is to show what happens to this mean spike across layers: the spikes of successive layers can align and reinforce one another, or point in unrelated directions and average out. As such, this alignment controls the rate at which the mean spike grows across depth, and therefore the rate of rank collapse: the sum of aligned means grows linearly with ℓ, whereas the sum of uncorrelated means is a random walk and grows only as √ℓ. Since centered activations avoid this mean spike entirely, we focus on the setting with uncentered activations and consider what happens with one matrix per branch versus two matrices per branch. We find that with one matrix per branch, the correlation between the branch means of any two layers equals the activation moment ratio cℓ; with two matrices per branch, the second matrix decorrelates the branch means and prevents the rank collapse (Figure 7a; all layer pairs in Figure 14). Across all layer pairs, the measured correlation is 0.320 for ReLU ( 1/π ≈ 0.318 ) and 0.188 for GELU (predicted cℓ = 0 .187 ; Table 1) with one matrix, and zero within noise with two (Appendix C). To see why a geometric quantity relating two different layers should equal a scalar property of the activation function alone, consider where each layer’s mean comes from: with a single matrix the activation writes directly into the stream, and an uncentered activation has positive mean output in every coordinate, so every layer’s branch mean contains the same component along the all-ones direction, regardless of that layer’s weights. Each mean is this shared component, which carries a cℓ fraction of its energy, plus a weight-dependent remainder that is independent across layers; when the means of two layers are correlated, the remainders cancel and only the shared component survives, giving exactly cℓ. A second matrix removes the shared component: each layer’s W2 rotates its all-ones part to a different random direction, so the means of different layers share nothing and their correlation is zero. When we measure the mean magnitude across depth, we see the linear mean spike growth for the single-matrix branch (fitted exponent 0.99 ) and approximately √ℓ growth for the two-matrix branch (fitted exponent 0.56 ); as expected, the centered activation’s mean is within noise of zero (Figure 7b). 11 Table 1: Branch coherence cℓ determines the per-layer mean-spike rank, and the bound is tight at initializa-tion. For each pointwise activation σ, the coherence constant cℓ = E[σ]2/E[σ2] (standard Gaussian pre-activation) determines the per-layer stable-rank bound sσ = 1 /c ℓ of Davis and Drusvyatskiy [2025], who compute the ReLU case ( sσ = π). Uncentered activations ( cℓ > 0) carry a low-rank mean spike; the measured post-activation stable rank st( σ(W h )) at initialization ( d=256 , mean over 3 seeds) matches sσ to within 6% . Centered activations have 
+
+cℓ=0 : no mean spike ( sσ =∞) and the stable rank stays high. Activation σ Centered? Coherence 
+
+cℓ = E[σ]2/E[σ2]
+
+Spike bound 
+
+sσ = 1 /c ℓ
+
+Measured stable rank abs ✗ 2/π ≈ 0.637 π/ 2 ≈ 1.57 1.56 
+
+ReLU ✗ 1/π ≈ 0.318 π ≈ 3.14 3.09 
+
+GELU ✗ 0.187 5.35 5.16 
+
+SiLU ✗ 0.120 8.33 7.86 
+
+tanh ✓ 0 ∞ 50 .66 
+
+The consequence appears in the spectrum of the representation: by the final layer, the top singular value of the single-matrix branch carries essentially all of the energy ( 1.00 ), whereas the two-matrix branch has a bounded spike ( 0.70 ) and the centered activation has no spike at all ( 0.08 ; Figure 7c). What matters for the rank is the energy that remains outside the spike: the two-matrix branch’s remaining 0.30 spreads over hundreds of directions, and its effective rank stays near half the width, whereas the single-matrix branch retains essentially nothing and its rank collapses toward zero (Figure 7d). In Appendix C, we show that this rank collapse is similar across model widths. In Section 3, we show that skip connections preserve the Jacobian rank through their identity terms in the backward pass; the coherent mean spike instead collapses the rank of the forward residual representation, or the skip pathway itself. This is why the feedforward block needs its second matrix: the projection after the activation function decorrelates the means before they are added to the residual stream, preventing this mean spike mechanism for rank collapse. We note that the backward pass is also a residual stream: the gradient of the loss with respect to each layer’s representation accumulates as δℓ−1 = δℓ + β J ⊤ 
+
+> ℓ
+
+δℓ. One might expect a similar spike in the across-input mean of these gradients, but at initialization it does not form: across one matrix, two matrices, and a centered activation, the per-layer contributions are uncorrelated between layers and the gradient stream keeps its rank (Appendix C). The forward spike comes from the activation’s mean, a fixed direction added at every layer; the backward contribution instead applies the activation’s derivative as a mask and the transposed weights as a rotation, so no shared direction builds up. This decorrelation needs the layers’ weights to be independent, so whether it persists once training couples them is open. We next consider how normalization layers affect this mean spike, as it would seem that a normalization operation could subtract this mean and prevent the representation collapse. We note, however, that this mean is created by the activation function, so a Pre-Norm operation that centers the branch input does not remove the mean; it would require a normalization operation in the branch after the activation function, before the branch is added to the residual stream. We do find that mean subtraction in the Pre-Norm placement slows the rank collapse, as it breaks a feedback loop in which the stream’s accumulated mean re-enters the branch and reinforces itself. But the collapse still occurs because the activation re-creates the mean at the branch output regardless of its input. A normalization placed after the activation on the branch output can subtract the mean to remove the spike and preserve the rank. It is the mean subtraction in particular that is important here; a rescaling operation like RMSNorm leaves the rank collapse unchanged (Appendix C). Standard transformer blocks do not need this extra normalization, however, as the second matrix already removes the aligned component of the branch means. The mean spike could impair training in two ways: through the magnitude it adds to the residual stream, or through the rank it removes from the representation. We train the networks on CIFAR without normalization, and the single-matrix architecture fails to train by about depth 50 whereas the two-matrix architecture fails by about depth 100 (Figure 16). We measure the residual magnitude at initialization and find it grows exponentially with depth, twice as fast for the single-matrix architecture, suggesting its failure at half the depth is due to the faster magnitude growth. Adding Pre-RMSNorm to control the magnitude restores training for both architectures, which reach 12 1 2 3 4 5 6 8 10 12 16               
+
+> expansion ratio m/d
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> erank( Jf) /  d
+> (a) Effective rank rises with
+> the expansion ratio
+> ReLU
+> GELU
+> SiLU
+> abs 0510 15
+> =p(m/d)
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> erank( Jf) /  d
+> (b) ReLU and abs match the
+> Gaussian-product curve
+> Gaussian product
+> ReLU ( p= 0.5)
+> GELU ( p= 0.46)
+> SiLU ( p= 0.38)
+> abs ( p= 1) 0510 15 20
+> FFN block (depth)
+> 10 0
+> 10 1
+> coherence ratio
+> (c) Free bulk in trained
+> GPT-2 weights
+> Haar baseline
+> bulk
+> top-20 directions
+
+Figure 8: The branch Jacobian’s effective rank increases with the FFN expansion ratio, and a Gaussian-product law predicts it. (a) The normalized effective rank erank( Jf )/d increases with the expansion ratio m/d 
+
+for ReLU, GELU, SiLU, and abs, fastest for abs ( p = 1 ); GELU and SiLU reach a higher effective rank than ReLU at small expansion ratios despite their smaller p. (b) Plotted against γ = p (m/d ), ReLU and abs (with p
+
+the survival rate) fall on the effective-rank curve of a product of two Gaussian matrices, while GELU and SiLU (with p = E[σ′2]) approach it from above. (c) The prediction assumes Wup and Wdown are asymptotically free; in pretrained GPT-2 Medium their singular-vector coherence, averaged over all directions, stays close to the Haar baseline of 1 across the 24 FFN blocks (mean 0.96 ), so the assumption holds in a trained model. A few extreme directions (the top and bottom 20 ) are more aligned, but lie outside the bulk that determines the effective rank. 
+
+d = 256 , 40 seeds in (a,b); the Gaussian-product curve in (b) uses 20 seeds and spans γ ≤ 10 .similar best accuracy over the learning rate sweep (within a point at every depth up to 1000), even though the single-matrix representation has still collapsed to rank around two at initialization. Since CIFAR is a relatively easy task, whether the rank collapse impairs training at larger scale or on harder tasks remains open. The quantity that determines the representation spectrum at depth is the cross-layer correlation of the branch means. This section showed it equals a scalar property of the activation, cℓ = E[σ]2/E[σ2]. The per-layer stable-rank bound in [Davis and Drusvyatskiy, 2025] predicts the conditioning of the gradient, but no per-layer quantity can predict whether the rank survives with depth: a per-layer bound sees the singular values of one layer and not their directions, and the single-matrix and two-matrix branches carry the same per-layer spike and the same per-layer stable rank, diverging only in whether those spikes align across layers. The cross-layer correlation is a single scalar, cheap to measure, and it determines whether the branch means accumulate coherently or average out across depth. 
+
+# 6 Width Expansion and the Full-Rank Branch Threshold 
+
+The previous section illustrates why the Transformer feedforward block uses two weight matrices inside every residual branch. In practice, these two matrices have a particular structure: the first matrix expands the width before the activation function is applied, then the second matrix contracts back to the original width. In this section, we ask how this width expansion ratio between the feedforward dimension and model dimension affects the gradient along the residual branch. We write the branch as f (x) = Wdown σ(Wup x), with up-projection Wup ∈ Rm×d
+
+and down-projection Wdown ∈ Rd×m. We show that the width expansion factor m/d controls the rank of the branch Jacobian Jf through the ratio γ = p(σ) ( m/d ): the activation mask keeps a fraction p(σ) of the rows in the up-projection matrix, and the surviving submatrix (and hence Jf ) becomes full rank only once m/d reaches 
+
+1/p (σ). At this threshold the submatrix is full rank but badly conditioned, as its smallest singular value is near zero (Figure 9). For ReLU, the full-rank threshold is a 2× expansion, but the 4× expansion used in practice [Vaswani et al., 2017] is much better conditioned. We can differentiate the branch to write its Jacobian as follows, where D is a diagonal mask that keeps only the hidden units with nonzero derivative: 
+
+Jf = Wdown D W up , D = diag  σ′(Wup x). (9) Let p(σ) denote the expected fraction of the m rows that survive the mask D; at initialization p(σ) = Pr[ σ′(z)̸ = 0] 
+
+13 0 1 2 3 4                                         
+
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> density
+> = 0.99
+> ReLU
+> 2 × width expansion
+> MP (exact)
+> empirical
+> 0.0 0.5 1.0 1.5 2.0 2.5 3.0
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0 = 2.00
+> 4 × width expansion
+> 0.5 1.0 1.5 2.0
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> = 4.02
+> 8 × width expansion
+> 01234
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> density
+> = 0.91
+> GELU
+> MP (approx)
+> empirical
+> 0.0 0.5 1.0 1.5 2.0 2.5 3.0
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> = 1.82
+> 0.5 1.0 1.5 2.0
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0 = 3.65
+> 0.0 0.5 1.0 1.5 2.0 2.5 3.0
+> normalized eigenvalue
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> density
+> = 2.00
+> abs
+> MP (exact)
+> empirical
+> 0.5 1.0 1.5 2.0
+> normalized eigenvalue
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> = 4.00
+> 0.4 0.6 0.8 1.0 1.2 1.4 1.6 1.8
+> normalized eigenvalue
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 1.2 = 8.00
+
+Figure 9: The masked up-projection follows the Marchenko–Pastur law, and its conditioning improves as 
+
+m/d rises above 1/p . Eigenvalue histogram (filled) of the Gram matrix G = 1
+
+neff (D W up )⊤(D W up ) of the masked up-projection D W up against the Marchenko–Pastur density (line), for ReLU, GELU, and abs (rows) at width expansions m/d ∈ { 2, 4, 8} (columns). The mask D = diag( σ′(Wup x)) keeps a fraction p of the m rows, so the survivor count is neff = P
+
+i σ′(zi)2 and the aspect ratio is γ = neff /d . The eigenvalues of G then lie on the support [(1 − 1/√γ)2, (1 + 1 /√γ)2] (dotted edges). At γ = 1 (m/d = 1 /p , or 2× for ReLU) the lower edge of the spectrum is zero and D W up is badly conditioned; for γ > 1 the spectrum separates from zero. Since Wdown is full rank, this submatrix sets rank Jf . Exact for ReLU and abs (solid), approximate for GELU (dashed). Random Gaussian Wup with unit-variance entries, d = 512 , 40 seeds. See Appendix D for SiLU. for z ∼ N (0 , 1) , which is one half for ReLU and coincides with the constant p = E[σ′(z)2] in Section 3 for masking activations. The Gaussian submatrix formed by the pm of the m rows that survive the mask has Gram matrix 1
+
+pm (D W up )⊤(D W up ), whose eigenvalues follow the Marchenko–Pastur law with aspect ratio γ = pm/d ,in the proportional limit d, m → ∞ (Appendix D). Because Wdown is full-rank and independent of these rows at initialization, it does not reduce the rank of the submatrix, so rank Jf = rank( D W up ). The pm surviving rows span the d-dimensional input space only when pm ≥ d, that is γ ≥ 1. Because the mask fixes the fraction 
+
+p, widening the branch is the only way to push pm past d so that D W up , and therefore Jf , is full rank. The Marchenko–Pastur law gives the spectrum on [(1 − 1/√γ)2, (1 + 1 /√γ)2] (Figure 9), where the lower edge, the smallest eigenvalue, is zero at γ = 1 and separates from zero as γ increases. The measured spectra match this prediction exactly for ReLU and abs, and approximately for GELU and SiLU. Setting γ = 1 gives the threshold 
+
+m/d = 1 /p (σ), which corresponds to a 2× width expansion for ReLU. The threshold is correspondingly higher for the smooth activations, about 2.2× for GELU and 2.6× for SiLU, with p = E[σ′2] as explained below; at 
+
+m/d = 2 in Figure 9, their spectral lower edge has not separated from zero. The effective rank of the branch Jacobian increases with the expansion ratio m/d for all activations (Figure 8a). For activations whose derivative takes only the values 0 and ±1 (ReLU and abs), the masked up-projection D W up is exactly Gaussian, so Jf is a product of two Gaussian matrices and we can compute its effective rank as a function of γ = p (m/d ) (Figure 8b). For these two activations, p is the survival rate, 12 and 1. For GELU and SiLU, 14 σ′ reweights each coordinate instead of masking it, so p is instead E[σ′2], the average squared derivative ( 0.46 
+
+and 0.38 ); their curves approach the Gaussian-product curve from above (Appendix D). Because reweighting attenuates directions without removing them, the smooth activations retain more rank than masking at the same 
+
+p: at small expansion ratios, GELU and SiLU reach a higher effective rank than ReLU despite their smaller p.The Gaussian-product law assumes Wup and Wdown are free; we measure pretrained GPT-2 and show the bulk singular-vector coherence stays close to the Haar baseline across the 24 FFN blocks (Figure 8c). While the residual skip preserves the rank of the propagated gradient through its identity term, the feedforward width expansion is another architectural factor that controls the rank of the branch Jacobian itself. 
+
+# 7 Related Work 
+
+The literature on dynamical isometry, the condition where every singular value of the input–output Jacobian remains near one so that rank is preserved across depth, shows that narrow conditions on the initializations and activation functions must be satisfied. The Jacobian is a product of weight matrices and activation derivatives, and every factor must be a near-isometry, because the product compounds any spread in the singular values across depth. For the weights, this requires orthogonal initialization, since a matrix with all of its singular values equal to one is orthogonal [Saxe et al., 2014]. For the activations, the derivative must be near-constant in magnitude on the bulk of the preactivation distribution [Pennington et al., 2017], leaving only two categories. Nearly linear activations, with a large linear region around the origin, attain approximate isometry but lack expressivity; absolute-value-like activations achieve perfect isometry but collapse the forward-pass correlations, driving distinct inputs to the same representation [Murray et al., 2022]. In particular, ReLU has derivative zero on half of its inputs and cannot achieve dynamical isometry. Tarnowski et al. [2019] obtain dynamical isometry in residual networks for any activation function by downscaling the branch: this is one end of the tradeoff we study, where a skip-dominated network preserves rank but provides less gradient signal encouraging the layers to compose (Section 3). Outside these narrow conditions, Feng et al. [2022] prove that for layers that are smooth almost everywhere, the rank of the input–output Jacobian can only decrease with depth, and measure this decay in pretrained ResNets, MLP-mixers, and vision transformers. In their exact rank framework, skip connections are a complete fix, because a residual block with a small branch loses no rank at all. The effective rank we track instead degrades continuously through every block, and we quantify how the branch scale, initialization, normalization placement, and width determine how much survives. Another line of work studies rank collapse along the token dimension, where self-attention drives the representations of all tokens toward a common vector. Dong et al. [2021] prove that a network of pure self-attention layers collapses doubly exponentially toward this rank-one state, and that skip connections can counteract the collapse while MLPs only slow it. Noci et al. [2022] show that when the token representations collapse at initialization, the gradients of the queries and keys vanish, and they prevent the collapse by scaling the branches by 1/√L. Nait Saada et al. [2025] attribute the collapse to the spectral gap of the softmax attention matrix, and show that token representations also collapse as the context length grows. Whether the collapse occurs depends on the surrounding components: with LayerNorm the dynamics admit stable equilibria of every rank [Wu et al., 2024], and with skip connections the outcome is determined by the spectrum of the value and projection weights [Dovonon et al., 2025]. Even where skip connections do preserve the token rank, small weights leave the network equivalent to a single attention layer [Alman and Song, 2025]. The same phenomenon appears as over-smoothing in vision transformers and BERT [Wang et al., 2022, Shi et al., 2022]. These results concern the token dimension of attention layers; the rank we study is along the feature dimension, in the gradients and representations of the feedforward blocks. Baker et al. [2024] study gradient rank collapse in a third sense, the rank of the weight gradients accumulated over a batch, which is bounded by the narrowest layer width, the batch size, and the linearity of the activation. Deep residual networks have been shown to behave like ensembles of shallow subnetworks rather than deep networks whose layers compose. Veit et al. [2016] decompose the forward pass into 2L paths that take either the skip connection or the residual branch at each layer, and show that the gradient magnitude is carried mostly by the short paths, while deleting or reordering individual layers barely changes the output of a trained network. Dherin and Munn [2025] use a Taylor series expansion of the forward pass in the residual branch scale, so that a deeper network corresponds to a larger implicit ensemble, and show that controlling the magnitude growth of this 15 expansion by downscaling the branch enables training without normalization. Liu et al. [2026] find that the depth scaling exponent of language model loss matches what ensemble averaging would predict, and that the middle layers of trained models make similar, weakly correlated updates. Through a similar path decomposition on the input–output Jacobian, we measure how the gradient magnitude distributes over the path orders, where higher orders pass through more rank-reducing branch operations (Section 3). Ensemble behavior and rank collapse are then the two ends of a single tradeoff, and the branch-to-skip ratio determines where a network falls between them. The placement of normalization layers has been explored extensively as a design choice: architectures add normalizations at the branch input and output [Ding et al., 2021, Kim et al., 2025], inside the branch [Shleifer et al., 2021, Wang et al., 2023], on the branch alone [Liu et al., 2024], varying across depth [Li et al., 2025], or in combination [Zhuo et al., 2025]. The difficulty of training deep Post-Norm networks has been explained through magnitudes: Xiong et al. [2020] show that Post-Norm concentrates large gradients near the output at initialization, motivating warmup, and Wang et al. [2024] bound the update magnitude to train thousand-layer Post-Norm networks. From the parameterization perspective, Dey et al. [2025] tune the depth scaling so that hyperparameters transfer and every layer continues to learn features. Using signal propagation analyses, Noci et al. [2023] modify the attention to keep its covariance well-behaved at large depth, He et al. [2023] train deep transformers without skip connections or normalization, and He and Hofmann [2024] remove block components without losing training speed. These approaches design for the magnitude and stability of signals and updates; we show that the normalization placement also determines the effective rank, through the branch-to-skip ratio across depth (Section 4). Blake et al. [2025] prove that any Pre-Norm network is exactly equivalent to a network with unit-scale stream whose per-layer multipliers preserve the branch-to-skip scale ratio, and use this equivalence to hold activations at unit variance at every depth for low-precision training. We connect the same per-layer ratio, which decays as the Pre-Norm stream grows, to the Jacobian rank. 
+
+# 8 Discussion 
+
+Through the lens of preserving rank across depth, we have seen that the architectural components of the Transformer feedforward block act through two different mechanisms: the first routes much of the gradient around the residual branch through the skip connections, whereas the second increases the rank preserved in the residual branch itself. The two mechanisms act on three distinct rank objects: the first preserves the input–output Jacobian, whereas the second preserves the residual representation and the branch Jacobian. The first mechanism works around a rank loss that is intrinsic to deep networks: outside the narrow conditions of dynamical isometry [Saxe et al., 2014, Pennington et al., 2017], every matrix multiplication and activation reduces the rank, and the losses compound with depth. Adding skip connections to MLP layers does not avoid this intrinsic rank loss, since the branch operations remain rank-reducing; instead, the skip connections simply restore the rank periodically by carrying the loss gradient around the branch. Our analysis shows that the more of the gradient that travels through the skip rather than the branch, the more rank survives across depth. A small initialization or small branch scale both reduce the branch-to-skip ratio, routing more of the gradient around the rank-reducing operations. Normalization layers are usually understood as a way to keep the network magnitudes stable across depth; our analysis shows they also govern rank, by the same routing mechanism as the branch scale. A normalization placed along the residual branch, at the branch input or output, never rescales the residual stream, so the stream grows with depth while each branch adds an increment of fixed scale. The branch then contributes less to the stream in deeper layers, just as a smaller branch scale would, even with residual branch scale β = 1 . A post-residual rescaling does the opposite, renormalizing the stream at every block and holding its scale fixed, so the branch-to-skip ratio stays constant and the rank collapses with depth. The rank collapse is driven by the branch-to-skip ratio, not the projection terms that appear in the normalization gradient. This perspective on the first mechanism, the routing of the gradient between the branch and the skip, unifies the remedies proposed to prevent rank collapse [Noci et al., 2022], the conditions under which residual networks achieve dynamical isometry [Tarnowski et al., 2019], and depth-scaling prescriptions motivated by other goals [Yang et al., 2024, Bordelon et al., 2024]: each relies on a small branch-to-skip ratio, whether from a small branch scale or a small initialization. The second mechanism increases the rank the branch itself preserves, through the two-matrix structure of the 16 feedforward block where the first matrix expands the hidden dimension, the activation is applied in the expanded space, and the second matrix contracts back to the original dimension. The two-matrix structure alone, even without the width expansion, prevents the branch means across layers from accumulating coherently: the down-projection matrix decorrelates the branch means, so the mean spike stays bounded and the representation keeps its rank. The width expansion structure plays another important role: intuitively, the up-projection mixes the input directions, so that the elementwise activation that zeros or attenuates some of these mixed directions loses part of many input directions rather than collapsing any single one entirely. This allows the down-projection to recombine, in the original dimension, the directions that survive the activation; the wider the expansion, the higher the branch Jacobian’s effective rank (Section 6). These two mechanisms illustrate a fundamental tradeoff in architecture design for deep residual networks: even when the residual branch is designed to preserve as much rank as possible when applying matrix multiplications and activation functions, the gradient at each layer flows with some ratio through the rank-reducing operations in the residual branch compared to the rank-preserving identity in the skip connections. If the only objective were to preserve rank in the input–output Jacobian, the trivial solution would be to have all of the gradient flow through the skip connections; however, this makes the network act like an ensemble of layers rather than a deep neural network whose layers learn to compose. This tradeoff reframes the ensemble behavior that prior work observes in deep residual networks [Veit et al., 2016, Dherin and Munn, 2025]: the gradient magnitude concentrates on the short paths through few rank-reducing operations (Section 3), so the same routing that preserves rank is what makes the network behave like an ensemble; under this perspective, the ensemble regime is not simply a pathology but a real alternative to rank collapse. The second mechanism escapes this tradeoff, preserving rank inside the branch rather than routing the gradient around it, but pays for the rank with additional parameters. The feedforward block design then navigates a three-way tradeoff among rank collapse, ensemble-like behavior, and parameter count. Our perspective on the path decomposition of the input–output Jacobian shows us that the branch-to-skip ratio unifies how the architectural choices, including the initialization scale, residual branch scale, and normalization layers, affect this tradeoff. The choice of the initialization scale and residual branch scale directly control this ratio, but as shown in Section 4, the normalization layers also control the branch-to-skip ratio and therefore indirectly also control this tradeoff. In practice, many frontier models keep the residual branch scale β = 1 rather than scaling the branch down (Section 3); this suggests that shifting the gradient too much into the skip connections has empirical disadvantages, perhaps in the network’s ability to compose its layers. Liu et al. [2026] find that language model loss improves with depth at the exponent predicted for an ensemble of shallow subnetworks, rather than the faster exponent expected when the layers compose, suggesting that trained language models operate near the ensemble regime. This is consistent with the mechanism in Section 4: even at β = 1 , Pre-Norm lets the effective branch-to-skip ratio decay with depth, so the deeper layers receive increasingly skip-dominated gradients. On synthetic tasks that require multi-step reasoning, however, deeper transformers outperform shallower but wider models with equal or larger parameter counts [Ye et al., 2025]. Where a network should sit on this tradeoff is then likely task-dependent: next-token prediction appears well served by the ensemble regime, whereas reasoning requires the layers to compose. 
+
+# 9 Limitations and Future Work 
+
+Our analysis of rank focuses on the feedforward block at initialization, leaving questions about how attention layers and the training process affect the gradient and representation spectra. In principle, mixing across the sequence dimension could offset rank loss by combining representations across positions; in practice, prior work shows that self-attention layers can collapse the token representations toward rank one [Dong et al., 2021]. Tracking how these spectra evolve during training, and how the optimizer affects them, is a natural extension for future work. We show that the effective rank of the input–output Jacobian predicts CIFAR-10 trainability in Section 4, but as noted there, CIFAR-10 is an easy task that provides only a coarse signal of trainability. A more challenging task, in particular one that requires high-rank representations or sequential composition between layers, could show how the effective rank in the gradient and representation spectra matters in tasks where depth is more genuinely required. Our derivations explain how each component preserves rank, but leave several specific questions open. For normalization layers, our scaling heuristic argues that βα M √L controls the rank; we measure the shape of the 17 rank curve empirically. For the width expansion, our threshold m/d = 1 /p is exact only for activations whose derivative is 0 or ±1; our results are approximate for other pointwise activations and we leave gated activations as an open question. Both results could also be applied directly, to predict how deep a normalization placement can scale before its rank collapses and to choose the width-expansion factor that keeps the branch Jacobian full rank for a given activation. Any neural network architecture that scales depth faces intrinsic rank attenuation for gradients passing through long paths of rank-reducing operations; in deep residual networks, this appears as a tradeoff between rank collapse and ensemble-like behavior. This may induce fundamental limits on the depth-scaling exponents that each architecture family can attain, or possibly universal limits on scaling exponents for neural networks as a whole. At the same time, there may be advantages to mild or moderate amounts of rank loss: limitations on the rank of gradients or representations may provide implicit regularization and improve generalization [Arora et al., 2019, Huh et al., 2023], or act as a useful form of compression [Galanti et al., 2025]. Our path decomposition arguments about gradient signals give some intuition about why skip-dominated gradients may encourage ensemble behavior, but the training dynamics of layer composition are not well-understood. Intuitively, the gradient component through the residual branch tells the feedforward blocks how they should update so that they can cooperatively reduce the loss; in other words, the longer the path, the more the gradient encourages the layers to compose. At the extreme, a network that routes all of its gradient through the skip is a pure ensemble whose layers cannot learn to compose. However, even gradient signal through paths with only several MLP layers may still be sufficient for many layers to gradually learn to compose: if adjacent layers learn to cooperate and progressively pull in their neighbors, deep composition could assemble without gradients ever traversing particularly long paths. Moreover, our path decompositions consider the gradient magnitudes, but gradient signal with small magnitude need not be small in its effect on the function a network learns. Indeed, Zhang et al. [2024] find that transformers initialized below the typical scale, where the residual branches are weakest, are the ones that converge to compositional rather than memorized solutions, an effect they hypothesize stems from the low-complexity bias of small initializations. Characterizing the relationship between gradient path lengths and how networks actually learn to compose layers is a natural question for future work. Finally, future work building on our analysis could use spectral properties of the gradient and representation not just to understand how existing architectures work, but to design new architectures and predict how they scale and contend with these fundamental tradeoffs. The tradeoffs we describe likely take different forms in other architecture families, such as recurrent networks and state-space models. Understanding how each component affects these spectra is a step toward combining them into new architectures by design rather than by trial and error. 
+
+# 10 Conclusion 
+
+We have analyzed the modern feedforward block component by component and shown that each one helps preserve the rank of the signals the network propagates across depth: the skip connection routes the gradient around the rank-reducing branch, the placement of normalization sets the branch-to-skip ratio across depth, and with it how much rank survives, the second matrix keeps the representation from collapsing onto a coherent spike, and the width expansion keeps the branch Jacobian full rank. Each of these components was originally motivated by a different purpose — skip connections to prevent vanishing gradients, normalization to control representation magnitudes, the second matrix and width expansion to add capacity — but seen through the lens of rank preservation, they work together to keep the gradient and representation ranks from collapsing with depth. Our analysis is a step toward architecture design that navigates the tradeoff between rank preservation and layer composition as a first principle, and toward understanding fundamental limitations in scaling neural networks. 18 References 
+
+Josh Alman and Zhao Song. Only large weights (and not skip connections) can prevent the perils of rank collapse. 
+
+arXiv preprint arXiv:2505.16284 , 2025. Sanjeev Arora, Nadav Cohen, Wei Hu, and Yuping Luo. Implicit regularization in deep matrix factorization. 
+
+Advances in neural information processing systems , 32, 2019. Jimmy Lei Ba, Jamie Ryan Kiros, and Geoffrey E Hinton. Layer normalization. arXiv preprint arXiv:1607.06450 ,2016. Thomas Bachlechner, Bodhisattwa Prasad Majumder, Huanru Henry Mao, Garrison W. Cottrell, and Julian McAuley. ReZero is all you need: Fast convergence at large depth. In Uncertainty in Artificial Intelligence ,2021. Alexei Baevski and Michael Auli. Adaptive input representations for neural language modeling. In International Conference on Learning Representations (ICLR) , 2019. Bradley T. Baker, Barak A. Pearlmutter, Robyn Miller, Vince D. Calhoun, and Sergey M. Plis. Low-rank learning by design: the role of network architecture and activation linearity in gradient rank collapse. arXiv preprint arXiv:2402.06751 , 2024. Charlie Blake, Constantin Eichenberg, Josef Dean, Lukas Balles, Luke Y Prince, Björn Deiseroth, Andres Felipe Cruz-Salinas, Carlo Luschi, Samuel Weinbach, and Douglas Orr. u-μP: The unit-scaled maximal update parametrization. In International Conference on Learning Representations , 2025. Blake Bordelon, Lorenzo Noci, Mufan Bill Li, Boris Hanin, and Cengiz Pehlevan. Depthwise hyperparameter trans-fer in residual networks: Dynamics and scaling limit. In International Conference on Learning Representations ,2024. Chen Chen and Lai Wei. Post-LayerNorm is back: Stable, ExpressivE, and deep. arXiv preprint arXiv:2601.19895 ,2026. Hadi Daneshmand, Amir Joudaki, and Francis Bach. Batch normalization orthogonalizes representations in deep random networks. In Advances in Neural Information Processing Systems , 2021. Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, and Christopher Ré. FlashAttention: Fast and memory-efficient exact attention with IO-awareness. In Advances in Neural Information Processing Systems , 2022. Damek Davis and Dmitriy Drusvyatskiy. When do spectral gradient updates help in deep learning? arXiv preprint arXiv:2512.04299 , 2025. Soham De and Samuel L. Smith. Batch normalization biases residual blocks towards the identity function in deep networks. In Advances in Neural Information Processing Systems , volume 33, pages 19964–19975, 2020. DeepSeek-AI. DeepSeek-V3 technical report. arXiv preprint arXiv:2412.19437 , 2024. Nolan Dey, Bin Claire Zhang, Lorenzo Noci, Mufan Li, Blake Bordelon, Shane Bergsma, Cengiz Pehlevan, Boris Hanin, and Joel Hestness. Don’t be lazy: CompleteP enables compute-efficient deep transformers. In Advances in Neural Information Processing Systems , 2025. Benoit Dherin and Michael Munn. On residual network depth. arXiv preprint arXiv:2510.03470 , 2025. Ming Ding, Zhuoyi Yang, Wenyi Hong, Wendi Zheng, Chang Zhou, Da Yin, Junyang Lin, Xu Zou, Zhou Shao, Hongxia Yang, et al. CogView: Mastering text-to-image generation via transformers. Advances in Neural Information Processing Systems , 34:19822–19835, 2021. Yihe Dong, Jean-Baptiste Cordonnier, and Andreas Loukas. Attention is not all you need: Pure attention loses rank doubly exponentially with depth. In International conference on machine learning , pages 2793–2803. PMLR, 2021. 19 Gbètondji J-S Dovonon, Michael M. Bronstein, and Matt J. Kusner. Setting the record straight on transformer oversmoothing. Transactions on Machine Learning Research , 2025. Seyed Morteza Emadi. Exact attention sensitivity and the geometry of transformer stability. arXiv preprint arXiv:2602.18849 , 2026. Md Muhtasim Munif Fahim and Md Rezaul Karim. The depth delusion: Why transformers should be wider, not deeper. arXiv preprint arXiv:2601.20994 , 2026. William Fedus, Barret Zoph, and Noam Shazeer. Switch Transformers: Scaling to trillion parameter models with simple and efficient sparsity. Journal of Machine Learning Research , 23(120):1–39, 2022. Ruili Feng, Kecheng Zheng, Yukun Huang, Deli Zhao, Michael I. Jordan, and Zheng-Jun Zha. Rank diminishing in deep neural networks. In Advances in Neural Information Processing Systems (NeurIPS) , 2022. Tomer Galanti, Zachary S Siegel, Aparna Gupte, and Tomaso A Poggio. SGD with weight decay secretly minimizes the ranks of your neural networks. In The Second Conference on Parsimony and Learning (Proceedings Track) ,2025. Gemma Team. Gemma 2: Improving open language models at a practical size. arXiv preprint arXiv:2408.00118 ,2024. Gemma Team. Gemma 3 technical report. arXiv preprint arXiv:2503.19786 , 2025. Soufiane Hayou, Eugenio Clerico, Bobby He, George Deligiannidis, Arnaud Doucet, and Judith Rousseau. Stable ResNet. In International Conference on Artificial Intelligence and Statistics (AISTATS) , 2021. Bobby He and Thomas Hofmann. Simplifying transformer blocks. In International Conference on Learning Representations , 2024. Bobby He, James Martens, Guodong Zhang, Aleksandar Botev, Andrew Brock, Samuel L. Smith, and Yee Whye Teh. Deep transformers without shortcuts: Modifying self-attention for faithful signal propagation. In Interna-tional Conference on Learning Representations , 2023. Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image recognition. In 
+
+Proceedings of the IEEE conference on computer vision and pattern recognition , pages 770–778, 2016a. Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Identity mappings in deep residual networks. In 
+
+European conference on computer vision , pages 630–645. Springer, 2016b. Dan Hendrycks and Kevin Gimpel. Gaussian error linear units (GELUs). arXiv preprint arXiv:1606.08415 , 2016. Minyoung Huh, Hossein Mobahi, Richard Zhang, Brian Cheung, Pulkit Agrawal, and Phillip Isola. The low-rank simplicity bias in deep networks. Transactions on Machine Learning Research , 2023. Sergey Ioffe and Christian Szegedy. Batch normalization: Accelerating deep network training by reducing internal covariate shift. In International conference on machine learning , pages 448–456. pmlr, 2015. Jeonghoon Kim, Byeongchan Lee, Cheonbok Park, Yeontaek Oh, Beomjun Kim, Taehwan Yoo, Seongjin Shin, Dongyoon Han, Jinwoo Shin, and Kang Min Yoo. Peri-LN: Revisiting normalization layer in the transformer architecture. In International Conference on Machine Learning , pages 30400–30436. PMLR, 2025. Kimi Team. Kimi K2: Open agentic intelligence. arXiv preprint arXiv:2507.20534 , 2025. Pengxiang Li, Lu Yin, and Shiwei Liu. Mix-LN: Unleashing the power of deeper layers by combining Pre-LN and Post-LN. In International Conference on Learning Representations , 2025. Yijin Liu, Xianfeng Zeng, Fandong Meng, and Jie Zhou. BranchNorm: Robustly scaling extremely deep transformers. In Findings of the Association for Computational Linguistics: ACL 2024 , pages 11675–11687, 2024. 20 Yizhou Liu, Sara Kangaslahti, Ziming Liu, and Jeff Gore. Inverse depth scaling from most layers being similar. In 
+
+International Conference on Machine Learning , 2026. Llama Team. The Llama 3 herd of models. arXiv preprint arXiv:2407.21783 , 2024. V. A. Marchenko and L. A. Pastur. Distribution of eigenvalues for some sets of random matrices. Mathematics of the USSR-Sbornik , 1(4):457–483, 1967. Charles H Martin and Michael W Mahoney. Implicit self-regularization in deep neural networks: Evidence from random matrix theory and implications for learning. Journal of Machine Learning Research , 22(165):1–73, 2021. MiniMax. MiniMax-01: Scaling foundation models with lightning attention. arXiv preprint arXiv:2501.08313 ,2025. Michael Murray, Vinayak Abrol, and Jared Tanner. Activation function design for deep networks: linearity and effective initialisation. Applied and Computational Harmonic Analysis , 59:117–154, 2022. Thiziri Nait Saada, Alireza Naderi, and Jared Tanner. Mind the gap: a spectral analysis of rank collapse and signal propagation in attention layers. In International Conference on Machine Learning , 2025. Toan Q. Nguyen and Julian Salazar. Transformers without tears: Improving the normalization of self-attention. In 
+
+Proceedings of the 16th International Conference on Spoken Language Translation (IWSLT) , 2019. Lorenzo Noci, Sotiris Anagnostidis, Luca Biggio, Antonio Orvieto, Sidak Pal Singh, and Aurelien Lucchi. Signal propagation in transformers: Theoretical perspectives and the role of rank collapse. In Advances in Neural Information Processing Systems , volume 35, pages 27198–27211, 2022. Lorenzo Noci, Chuning Li, Mufan Bill Li, Bobby He, Thomas Hofmann, Chris J. Maddison, and Daniel M. Roy. The shaped transformer: Attention models in the infinite depth-and-width limit. In Advances in Neural Information Processing Systems , 2023. OpenAI. gpt-oss-120b & gpt-oss-20b model card. arXiv preprint arXiv:2508.10925 , 2025. Jeffrey Pennington and Pratik Worah. Nonlinear random matrix theory for deep learning. In Advances in Neural Information Processing Systems , 2017. Jeffrey Pennington, Samuel Schoenholz, and Surya Ganguli. Resurrecting the sigmoid in deep learning through dynamical isometry: theory and practice. Advances in neural information processing systems , 30, 2017. Zihan Qiu, Zekun Wang, Bo Zheng, Zeyu Huang, Kaiyue Wen, Songlin Yang, Rui Men, Le Yu, Fei Huang, Suozhi Huang, Dayiheng Liu, Jingren Zhou, and Junyang Lin. Gated attention for large language models: Non-linearity, sparsity, and attention-sink-free. In Advances in Neural Information Processing Systems , 2025. Qwen Team. Qwen3 technical report. arXiv preprint arXiv:2505.09388 , 2025. Olivier Roy and Martin Vetterli. The effective rank: A measure of effective dimensionality. In 15th European Signal Processing Conference (EUSIPCO) , pages 606–610. EURASIP, 2007. Andrew M. Saxe, James L. McClelland, and Surya Ganguli. Exact solutions to the nonlinear dynamics of learning in deep linear neural networks. In International Conference on Learning Representations , 2014. Noam Shazeer. GLU variants improve transformer. arXiv preprint arXiv:2002.05202 , 2020. Noam Shazeer, Azalia Mirhoseini, Krzysztof Maziarz, Andy Davis, Quoc Le, Geoffrey Hinton, and Jeff Dean. Outrageously large neural networks: The sparsely-gated mixture-of-experts layer. In International Conference on Learning Representations , 2017. Han Shi, Jiahui Gao, Hang Xu, Xiaodan Liang, Zhenguo Li, Lingpeng Kong, Stephen M. S. Lee, and James T. Kwok. Revisiting over-smoothing in BERT from the perspective of graph. In International Conference on Learning Representations , 2022. 21 Sam Shleifer, Jason Weston, and Myle Ott. Normformer: Improved transformer pretraining with extra normalization. 
+
+arXiv preprint arXiv:2110.09456 , 2021. Wenfang Sun, Xinyuan Song, Pengxiang Li, Lu Yin, Yefeng Zheng, and Shiwei Liu. The curse of depth in large language models. In Advances in Neural Information Processing Systems , 2025. Sho Takase, Shun Kiyono, Sosuke Kobayashi, and Jun Suzuki. B2T connection: Serving stability and performance in deep transformers. In Findings of the Association for Computational Linguistics: ACL 2023 , pages 3078–3095, 2023. Wojciech Tarnowski, Piotr Warchoł, Stanisław Jastrz˛ ebski, Jacek Tabor, and Maciej A. Nowak. Dynamical isometry is achieved in residual networks in a universal way for any activation function. In International Conference on Artificial Intelligence and Statistics (AISTATS) , 2019. Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Łukasz Kaiser, and Illia Polosukhin. Attention is all you need. In Advances in Neural Information Processing Systems , 2017. Andreas Veit, Michael J Wilber, and Serge Belongie. Residual networks behave like ensembles of relatively shallow networks. Advances in neural information processing systems , 29, 2016. Chao Wang, Bei Li, Jiaqi Zhang, Xinyu Liu, Yuchun Fan, Linkun Lyu, Xin Chen, Jingang Wang, Tong Xiao, Peng Pei, and Xunliang Cai. SpanNorm: Reconciling training stability and performance in deep transformers. arXiv preprint arXiv:2601.22580 , 2026. Hongyu Wang, Shuming Ma, Shaohan Huang, Li Dong, Wenhui Wang, Zhiliang Peng, Yu Wu, Payal Bajaj, Saksham Singhal, Alon Benhaim, et al. Magneto: A foundation transformer. In International conference on machine learning , volume 202, pages 36077–36092. PMLR, 2023. Hongyu Wang, Shuming Ma, Li Dong, Shaohan Huang, Dongdong Zhang, and Furu Wei. DeepNet: Scaling transformers to 1,000 layers. IEEE Transactions on Pattern Analysis and Machine Intelligence , 46(10):6761– 6774, 2024. Peihao Wang, Wenqing Zheng, Tianlong Chen, and Zhangyang Wang. Anti-oversmoothing in deep vision transformers via the fourier domain analysis: From theory to practice. In International Conference on Learning Representations , 2022. Xinyi Wu, Amir Ajorlou, Yifei Wang, Stefanie Jegelka, and Ali Jadbabaie. On the role of attention masks and LayerNorm in transformers. In Advances in Neural Information Processing Systems , 2024. Ruibin Xiong, Yunchang Yang, Di He, Kai Zheng, Shuxin Zheng, Chen Xing, Huishuai Zhang, Yanyan Lan, Liwei Wang, and Tieyan Liu. On layer normalization in the transformer architecture. In International conference on machine learning , pages 10524–10533. PMLR, 2020. Jingjing Xu, Xu Sun, Zhiyuan Zhang, Guangxiang Zhao, and Junyang Lin. Understanding and improving layer normalization. In Advances in Neural Information Processing Systems , volume 32, 2019. Greg Yang and Edward J Hu. Tensor programs IV: Feature learning in infinite-width neural networks. In 
+
+International Conference on Machine Learning , 2021. Greg Yang and Etai Littwin. Tensor programs IVb: Adaptive optimization in the infinite-width limit. arXiv preprint arXiv:2308.01814 , 2023. Greg Yang, Dingli Yu, Chen Zhu, and Soufiane Hayou. Tensor programs VI: Feature learning in infinite-depth neural networks. In International Conference on Learning Representations , 2024. Tian Ye, Zicheng Xu, Yuanzhi Li, and Zeyuan Allen-Zhu. Physics of language models: Part 2.1, grade-school math and the hidden reasoning process. In International Conference on Learning Representations , 2025. Biao Zhang and Rico Sennrich. Root mean square layer normalization. Advances in neural information processing systems , 32, 2019. 22 Hongyi Zhang, Yann N Dauphin, and Tengyu Ma. Fixup initialization: Residual learning without normalization. In International Conference on Learning Representations , 2019. Zhongwang Zhang, Pengxiao Lin, Zhiwei Wang, Yaoyu Zhang, and Zhi-Qin John Xu. Initialization is critical to whether transformers fit composite functions by reasoning or memorizing. In Advances in Neural Information Processing Systems , 2024. Zhijian Zhuo, Yutao Zeng, Ya Wang, Sijun Zhang, Jian Yang, Xiaoqing Li, Xun Zhou, and Jinwen Ma. HybridNorm: Towards stable and efficient transformer training via hybrid normalization. In Advances in Neural Information Processing Systems , 2025. 23 Acknowledgements 
+
+We thank Leslie Pack Kaelbling for valuable technical discussions. We are grateful to the Google TPU Research Cloud (TRC) program, MIT CSAIL, Phillip Isola, and Kaiming He for providing the compute resources that made this work possible. 
+
+# A Skip Connections and the Path Decomposition: Derivations 
+
+This appendix collects the derivations behind Section 3: the path decomposition of the input–output Jacobian (Eq. 5), the per-order magnitudes in Figure 3, the recurrence and numerical check behind them, and the argument that the skip must be the identity. 
+
+A.1 The path decomposition 
+
+The chain rule turns the residual recurrence hℓ = hℓ−1 + βf (hℓ−1) into an ordered product over the L blocks, 
+
+∂h L
+
+∂h 0
+
+= ( I + βJ L)( I + βJ L−1) · · · (I + βJ 1), Jℓ := ∂f ∂h hℓ−1
+
+. (10) Each Jℓ is the branch Jacobian at the forward activation hℓ−1, so the product is evaluated along one forward pass and holds for any differentiable branch. Distributing the product gives one term per subset A ⊆ { 1, . . . , L }: each factor contributes either I or βJ ℓ, and A
+
+records which blocks contribute the branch. This expands the Jacobian into 2L paths. A subset of size |A| = k carries a factor βk and a product of k branch Jacobians. Grouping the 2L paths by k
+
+defines the order-k sum 
+
+Sk := X 
+
+> 1≤ℓ1<··· <ℓ k≤L
+
+Jℓk · · · Jℓ1 , ∂h L
+
+∂h 0
+
+=
+
+> L
+
+X
+
+> k=0
+
+βkSk, (11) which is Eq. 5. The order k counts the feedforward blocks a path passes through, from S0 = I (the pure skip) to SL = JL · · · J1 (every branch). Each Sk multiplies k branch Jacobians, so it inherits the rank deficiency of a 
+
+k-fold branch composition, weighted by βk.The order-k component βkSk is the part of the Jacobian built from paths through exactly k feedforward blocks. We measure its size by the Frobenius norm μk := ∥βkSk∥F = pP  
+
+> i
+
+σ2 
+
+> i
+
+. The components sum to the Jacobian, P 
+
+> k
+
+βkSk = ∂h L/∂h 0, but their norms do not, so each μk reports one order on its own. Normalizing the μk to sum to one gives the profile in Figure 3, whose peak (the order of largest magnitude) sits at order three for β = 1 
+
+and at the order-0 skip for β = 1 /√L and β = 1 /L .To efficiently compute the order-k sum with  Lk
+
+ terms, we use a dynamic programming algorithm over the blocks. Let S(m) 
+
+> k
+
+be the sum of order-k paths through the first m blocks, so Sk = S(L) 
+
+> k
+
+. An order-k path through the first 
+
+m blocks either takes the skip at block m, leaving an order-k path through the first m − 1 blocks, or takes the branch, extending an order-(k − 1) path through the first m − 1 blocks by the factor Jm. Block m has the highest index of the first m blocks, so the descending-order product puts Jm on the left: 
+
+S(m) 
+
+> k
+
+= S(m−1)  
+
+> k
+
++ Jm S(m−1)  
+
+> k−1
+
+, S(m)0 = I, S(0)  
+
+> k
+
+= 0 ( k ≥ 1) . (12) Filling the table for m = 1 , . . . , L and k = 0 , . . . , L computes every Sk in O(L2) matrix multiplications, one per 
+
+(m, k ) cell. For numerical verification of the recurrence, we draw a random Gaussian input and random weights, compute the Jacobian both by the reconstruction P 
+
+> k
+
+βkSk and by automatic differentiation of the forward pass, and confirm the two agree to a relative Frobenius error of order 10 −15 . Because the masses μk span many orders of magnitude, 24 we store each Sk as a unit-Frobenius matrix and a log-norm scalar and accumulate in log-sum-exp form. Figure 3 reports the μk and their normalized profile, averaged over 8 seeds, where each seed has its own weight initialization and random Gaussian input; for the initialization-scale panels, the draws are independent at every (β, α ) grid point. 
+
+A.2 Why the skip must be the identity under Pre-Norm 
+
+We reproduce the argument of He et al. [2016b] that the skip connection should be the identity, through the path decomposition above. Consider a residual network where the skip is scaled by a constant λ, so that each block is 
+
+hℓ = λh ℓ−1 + βf (hℓ−1) and the Jacobian factor becomes λI + βJ ℓ:
+
+∂h L
+
+∂h 0
+
+= ( λI + βJ L)( λI + βJ L−1) · · · (λI + βJ 1). (13) This argument needs the residual stream to pass through each block untouched, which is satisfied by Pre-Norm (but not Post-Norm). Distributing as before, each factor contributes either λI or βJ ℓ, so a path of order k carries 
+
+λL−kβk, and the order-0 path that stays on the skip at every block is λLI. This skip path passes through no weights, so its scale λL is independent of the network’s weights, at initialization or anywhere in training. The same factor governs both passes: from block ℓ, the skip reaches the output through L − ℓ scaled steps, contributing λL−ℓhℓ to the forward signal hL and λL−ℓI to the backward Jacobian ∂h L/∂h ℓ. Because λL−ℓ is exponential in depth, any 
+
+λ̸ = 1 makes the skip path explode ( λ > 1) or vanish ( λ < 1), and β cannot correct it because the skip path carries no factor of β. Only λ = 1 holds the skip contribution at O(1) across depth, which is why the standard residual block fixes the skip to the identity and leaves β as the only free scale. 
+
+A.3 Magnitude growth 
+
+Squaring the block hℓ = hℓ−1 + βf (hℓ−1) gives the magnitude recurrence 
+
+∥hℓ∥2 = ∥hℓ−1∥2 + 2 β ⟨hℓ−1, f (hℓ−1)⟩ + β2∥f (hℓ−1)∥2. (14) Let gℓ = ∥f (hℓ−1)∥/∥hℓ−1∥ be the branch gain and ρℓ = ⟨hℓ−1, f (hℓ−1)⟩/(∥hℓ−1∥ ∥ f (hℓ−1)∥) the alignment between the branch output and the stream. Then 
+
+∥hℓ∥2 = ∥hℓ−1∥2 (1 + 2 βρ ℓgℓ + β2g2 
+
+> ℓ
+
+). (15) At initialization the two-matrix branch output is roughly uncorrelated with the stream, so ρℓ ≈ 0 and the factor is 
+
+1 + β2g2 
+
+> ℓ
+
+≥ 1: the magnitude grows at every block, fastest at β = 1 and not at all as β → 0. Whether the growth is additive or multiplicative depends on the gain. Without normalization the branch output scales with its input, 
+
+gℓ = O(1) , and the factor compounds to exponential growth in depth. A normalization on the branch input fixes the branch output scale, so gℓ = ∥f ∥/∥hℓ−1∥ shrinks as the stream grows; the increment β2∥f ∥2 is then roughly constant and the stream grows additively, ∥hL∥2 ≈ ∥ h0∥2 + β2 P
+
+> ℓ
+
+∥f ∥2 = O(L).
+
+A.4 The branch-scale symmetry 
+
+We show that for residual networks with positively homogeneous activations and biasless branches, networks with the same βα M compute the same function at initialization. Write the branch weights as Wi = α ¯Wi, for arbitrary matrices ¯Wi. Positive homogeneity gives σ(αz ) = α σ (z) for α > 0; applying this identity at each activation, together with the linearity of the matrices, factors the weight scale out of the branch, 
+
+βf (x; α ¯W1, . . . , α ¯WM ) = βα M f (x; ¯W1, . . . , ¯WM ). (16) Two configurations of (α, β ) with the same product βα M therefore compute the same network function, with the same input–output Jacobian and effective rank (Figure 2). In Pre-Norm the normalization acts on the branch input, before the first branch matrix, and in Post-Norm it acts on the stream after the residual addition; in both cases the branch itself is a product of matrices and activations, so the argument applies to either placement. 25 The equivalence persists throughout training if the optimizer hyperparameters are rescaled accordingly for each matrix. To see why, rescale α ← λα and β ← β/λ M for some λ > 0, which preserves βα M . The forward pass is unchanged, but each branch matrix is λ times larger and its gradient is λ times smaller: the gradient with respect to one matrix carries the branch scale β/λ M and the other M −1 matrices, which contribute λM −1. For the rescaled network to follow the same trajectory, its matrices must remain λ times larger after every update, so the learning rate must be rescaled in accordance with how the gradient changed: η ← λ2η for SGD, whose update is proportional to the gradient, and η ← λη for Adam, whose update is invariant to the gradient scale. Similar symmetries were observed for MLP layers in Yang and Hu [2021], Yang and Littwin [2023] and for the Pre-Norm residual stream in Blake et al. [2025]. The rescaling must extend to other optimizer hyperparameters, including ϵ
+
+in Adam, weight decay, and gradient clipping [Yang and Littwin, 2023]. This equivalence holds exactly only in infinite precision and infinite dynamic range. 
+
+# B Normalization Placement: Additional Results and Derivations 
+
+B.1 Block Jacobians and the normalization projection 
+
+We consider a residual block that may contain a normalization operation in each of three locations [Kim et al., 2025]: the branch input ( P ), the branch output ( B), and the residual stream after the addition ( R). With branch f ,the block maps 
+
+hℓ = R hℓ−1 + β B (f (P (hℓ−1))) . (17) By the chain rule its Jacobian factorizes as 
+
+∂h ℓ
+
+∂h ℓ−1
+
+= JR
+
+ I + β J B Jf JP
+
+, (18) where each J is the Jacobian of its operation at the relevant point. The placement determines where a normalization Jacobian lands: a branch operation ( P or B) sits inside the β-scaled branch term, multiplied by the small ratio, whereas the post-residual operation R multiplies the entire sum, the skip included. This is the structural reason placement matters — only R applies its Jacobian to the identity path. 
+
+The RMSNorm Jacobian is a scaled projection. With its gain at the standard initialization of one, RMSNorm is N (x) = √d x/ ∥x∥, and 
+
+JN = ∂N ∂x =
+
+√d
+
+∥x∥
+
+ I − ˆxˆx⊤, ˆx = x
+
+∥x∥ . (19) The factor √d/ ∥x∥ is the inverse stream scale (the root-mean-square of x is ∥x∥/√d); the projection I − ˆxˆx⊤
+
+removes the current stream direction ˆx.
+
+The detached rescaling separates the scale from the projection. To separate the effect of the projection term from the effect of the scalar rescaling, we define a detached rescaling that divides by the stream scale exactly as RMSNorm does but stops the gradient through that scale: it computes x/ sg(rms( x)) , where sg is the stop-gradient. The forward pass is identical to RMSNorm, but the scale is now a constant, so the Jacobian is 
+
+Jdetach =
+
+√d
+
+∥x∥ I, (20) the same inverse scale with no projection. It rescales the stream but removes no direction, which is what makes it the control that isolates the rescaling from the projection (Appendix B.2). 26 The four post-residual operations. In Table 2 we summarize the four operations we use in the post-residual placement. They let us vary the two factors of a normalization Jacobian independently: the scalar rescaling √d/ ∥x∥, which normalizes the stream to unit scale, and the projection I − (·)( ·)⊤, which removes a direction. RMSNorm does both; the detached rescaling keeps only the rescaling; mean subtraction keeps only the projection, of a fixed direction and without rescaling; LayerNorm adds mean removal to RMSNorm. Comparing them isolates the contribution of each factor (Appendix B.2). Table 2: Jacobians of the post-residual operations at gain one. ˆx = x/ ∥x∥; ˆxc is the unit centered vector; 1 is the all-ones direction.                                
+
+> operation Jacobian rescales? removes RMSNorm √d
+> ∥x∥
+>  I−ˆxˆx⊤yes radial ˆx
+> detached rescale √d
+> ∥x∥Iyes nothing mean subtraction I−1
+> d11 ⊤no fixed 1
+> LayerNorm √d
+> ∥x−μ∥
+>  I−ˆxcˆx⊤
+> c
+>   I−1
+> d11 ⊤yes radial +1
+
+B.2 The projection is not the primary cause of rank loss 
+
+In Section 4 we observed that the Jacobians of the normalization operations contain projection terms that remove a direction from the gradient: mean subtraction removes the all-ones direction 1, and rescaling removes the current stream direction ˆx = h/ ∥h∥,
+
+∂∂h 
+
+ h − μ(h)1 = I − 1 
+
+> d
+
+11 ⊤, ∂∂h h
+
+RMS( h) =
+
+√d
+
+∥h∥
+
+ I − ˆxˆx⊤
+
+(Eq. 8). Composed over L layers, these projections could in principle compound into a low-rank Jacobian, which makes the projection terms a natural candidate for explaining the rank collapse [Emadi, 2026]. Here we expand on the main-text argument that the projection terms instead have a negligible effect on the rank, and that the branch-to-skip ratio is the primary factor governing the rate of rank loss: we show that the projection is neither necessary nor sufficient for the collapse. 
+
+The projection is not necessary for rank collapse. We use the detached rescaling operation to ablate the projection term (Eq. 20), which lets us test whether the projection is necessary for the rank collapse to occur. Even with the projection removed, the detached rescaling collapses the rank just like ordinary RMSNorm. Across 
+
+α ∈ { 0.5, 1, 2}, L ∈ { 48 , . . . , 384 }, and β ∈ { 1, 1/√L}, with and without the Pre-RMSNorm, the detached and ordinary ranks differ by at most 0.4% of the full rank (largest 0.0039 , at α=0 .5 and β=1 /√L, where the rank is near full). Figure 4b overlays the detached and ordinary curves across depth. The projection is therefore not necessary for the collapse. 
+
+The projection is not sufficient for rank collapse. Now, to simulate what a projection term without the rescaling would do, we form the product Q
+
+> ℓ
+
+(I − xℓx⊤ 
+
+> ℓ
+
+) of rank-one projections, where xℓ follows an independent random walk on the sphere with step angle ϵ, so each layer removes a different, uncorrelated direction — the worst case for compounding. The effective rank does not collapse: it stays at 0.996 of the width across step sizes ϵ ∈ [0 .01 , 0.6] 
+
+and depths L ∈ [48 , 384] , falling only to 0.98 at the largest step and depth (Table 3). Because each removed direction is an independent random vector, it generically does not lie in the range of the accumulated product, so it removes no new dimension and only attenuates the smallest singular values: the product keeps rank d − 1 at every depth instead of losing a dimension per layer. Mean subtraction is the opposite extreme, removing the same fixed direction at every layer, which can cost at most one dimension. Direction removal collapses the rank at neither extreme: not when each layer removes an independent direction, and not when every layer removes the same one. The collapse is therefore governed by the rescaling, not the projection: keeping the rescaling without the projection still shows rank collapse, whereas applying the projection without the rescaling does not induce the rank collapse. 27 Table 3: Effective rank over width of a product of L rank-one projections along an independent random walk of step angle ϵ (d=256 , mean over 2 seeds). The rank does not collapse, so removing a direction per layer is not by itself the cause. 
+
+ϵ L=48 L=96 L=192 L=384 0.01 0.996 0.996 0.996 0.996 0.15 0.996 0.996 0.996 0.996 0.30 0.996 0.996 0.995 0.995 0.60 0.994 0.992 0.988 0.980 
+
+Isolating the post-residual operation. Figure 4b adds a Pre-RMSNorm to every configuration so that the four post-residual operations are compared on a normalized branch input, varying only the operation. Without a Pre-RMSNorm to control the magnitude, the configurations with no post-residual operation or with mean subtraction have no normalization on the branch at all: their branch-to-skip ratio stays constant, so they collapse at nearly the rate of the rescaling operations and the four become indistinguishable (Figure 10a). To show that this Pre-RMSNorm does not confound our results, Figure 10b shows that with or without it the post-RMSNorm and post-LayerNorm curves coincide. 12 24 48 96 192 384        
+
+> Depth L
+> 0.0
+> 0.5
+> 1.0
+> Effective rank / width
+> Without the Pre-RMSNorm control,
+> all four operations lose rank
+> Post-residual op
+> None
+> Mean sub
+> RMSNorm
+> LayerNorm
+> 12 24 48 96 192 384
+> Depth L
+> 0.0
+> 0.5
+> 1.0
+> The rescaling collapse does not
+> depend on the Pre-RMSNorm
+> Post-RMSNorm, with Pre-Norm
+> Post-RMSNorm, without Pre-Norm
+> Post-LayerNorm, with Pre-Norm
+> Post-LayerNorm, without Pre-Norm
+
+Figure 10: Without the Pre-RMSNorm control, the unnormalized configurations collapse and mask the operation comparison. Effective rank of the input–output Jacobian across depth at α=β=1 , as in Figure 4b but with no Pre-RMSNorm. (a) With no operation or mean subtraction alone, there is no normalization on the branch: the branch-to-skip ratio stays constant and the rank collapses at nearly the rate of the rescaling operations, so the four operations are indistinguishable. (b) The rescaling collapse does not depend on the control: the post-RMSNorm and post-LayerNorm curves with and without the Pre-RMSNorm coincide. 
+
+B.3 The depth law: the ratio across depth, contour extraction, and width independence 
+
+The branch-to-skip ratio. The branch-to-skip ratio (Eq. 4) is the Frobenius norm of the branch term in the block Jacobian (Eq. 18) relative to that of the identity skip. At initialization the branch term β J B Jf JP collects three factors: the explicit branch scale β; a factor αM from the M branch weight matrices, each initialized at scale α, so the branch Jacobian Jf scales as αM ; and the inverse stream scale √d/ ∥hℓ∥ contributed by the branch normalization (Eq. 19), from the branch-input normalization in Pre-Norm or, for a homogeneous branch, equivalently from the branch-output normalization. Their product is 
+
+˜rℓ = βα M √d
+
+∥hℓ∥ = βα M
+
+∥hℓ∥/√d , (21) 28 the nominal ratio βα M divided by the stream scale rms( hℓ) = ∥hℓ∥/√d. As in the main text, we track the nominal form ˜rℓ = rℓ/√p, dropping the constant activation-derivative factor √p (Section 3), which is shared by every block and both placements. The nominal ratio βα M is ˜rℓ at unit stream scale ( ∥hℓ∥ = √d); the per-layer ratio scales inversely with how far the stream has grown. All of the depth dependence enters through ∥hℓ∥: a post-residual rescaling resets it to √d at every block, whereas the branch normalizations leave the stream to grow with depth. 
+
+Residual stream growth. When the skip connection is an identity (which occurs whenever there is no post-residual normalization), the residual stream is a running sum hℓ = hℓ−1 + βu ℓ of branch outputs uℓ. The branch input is normalized, so each uℓ has roughly fixed magnitude and, at initialization, is nearly orthogonal to the accumulated stream (two generic vectors in d dimensions have normalized inner product O(1 /√d)). Expanding, 
+
+∥hℓ∥2 = ∥hℓ−1∥2 + 2 β⟨hℓ−1, u ℓ⟩ + β2∥uℓ∥2,
+
+the cross term vanishes exactly in expectation, since Wdown is zero-mean and independent of the rest of the branch, and the increment β2∥uℓ∥2 is constant in expectation. The squared length therefore grows linearly (the magnitude recurrence in Appendix A): ∥hℓ∥2 = d (1 + κ(βα M )2ℓ). The coefficient is κ = E[σ(z)2], the second moment of the activation values on a unit-variance input, equal to 12 exactly for ReLU. Block ℓ’s branch sees the stream hℓ−1,so the branch-to-skip ratio is 
+
+˜rℓ = βα M
+
+p1 + κ(βα M )2(ℓ − 1) , (22) which starts near βα M and decays as 1/√ℓ as the stream grows, whereas a post-residual rescaling resets ∥hℓ∥ = √d
+
+every block and holds the ratio constant at βα M . The measured value, κ ≈ 0.51 for a ReLU branch, matches the derivation: rms( hℓ)2 − 1 collapses onto a single line in (βα M )2ℓ (Figure 11). κ is a moment of the activation values σ(z), which determine the branch outputs accumulating on the stream. The branch Jacobians are controlled by the derivatives moment p = E[σ′(z)2] (Section 3). For ReLU both moments equal 12 , by the Gaussian identity 
+
+E[z21(z > 0)] = P (z > 0) . At L=384 , α=β=1 , the stream reaches rms( hL) ≈ 14 .5 for the Pre-Norm input and 
+
+≈ 19 .7 for a unit-increment branch-output normalization, versus 1.00 for the post-residual placement. 10 0 10 1 10 2 10 3              
+
+> depth
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> rms( h )2
+> Pre-Norm stream growth: data (solid) vs 1 + 4(dashed)
+> =0.4
+> =0.6
+> =0.8
+> =1.0
+> =1.3
+> =1.6
+> 10 110 010 110 210 3
+> 4= ( M)2
+> 10 2
+> 10 1
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> rms( h )2 1
+> Collapse: every on one line of slope
+> =0.4
+> =0.6
+> =0.8
+> =1.0
+> =1.3
+> =1.6
+> 4,=0.51
+
+Figure 11: At initialization, rms( hℓ)2 grows like 1 + κ(βα M )2ℓ with κ = E[σ2] = 12 for ReLU; the measured 
+
+κ ≈ 0.51 agrees at every initialization scale. (a) rms( hℓ)2 versus depth for a Pre-Norm two-matrix ReLU branch (both matrices d × d, d=256 ; β=1 ), shown as the measured stream (solid) against the fit (dashed); the stream grows faster at larger α. (b) Plotted against (βα M )2ℓ, rms( hℓ)2 − 1 collapses onto a single line of slope κ ≈ 0.51 
+
+for all α, confirming ∥hℓ∥2 = d(1 + κ(βα M )2ℓ).
+
+Networks with post-residual rescaling behave like networks with no normalization. For a degree-1 positively-homogeneous activation such as ReLU, f (ch ) = cf (h) for c > 0, so the branch Jacobian is scale-invariant: 29 Jf (ch ) = Jf (h). This has two consequences. First, a network with no normalization keeps the same stream 
+
+direction as Post-Norm: by induction, if hnone  
+
+> ℓ−1
+
+= sℓ−1 ˆhpost  
+
+> ℓ−1
+
+for a positive scalar sℓ−1, homogeneity makes the branch outputs match up to sℓ−1, so hnone  
+
+> ℓ
+
+is again a scalar multiple of the Post-Norm sum. The two placements feed their branches the same direction, hence the same Jf . Second, the detached rescaling is the no-norm Jacobian up to a per-layer scalar: its block Jacobian is √d 
+
+> ∥·∥
+
+(I + βJ f ) (Eq. 20), a scalar times the no-norm block Jacobian 
+
+I + βJ f . The scalars factor out of the product and do not affect the rank, so the detached rescaling and no normalization have identical Jacobian effective rank. Ordinary Post-Norm adds the projection I − ˆxˆx⊤ to each block (Eq. 19), the only difference from the detached and no-norm cases. Removing that projection (the detached rescaling, Appendix B.2) changes the effective rank by at most 0.4% of the width, so the no-norm, detached, and Post-Norm ranks all coincide to within that margin, and the branch-to-skip ratio is constant βα M for all three. The degree-1 homogeneity is essential: a degree-2 activation would make Jf scale as ∥h∥, so the no-norm ratio would grow with depth instead of staying constant. 
+
+The √L depth factor from path counting. The path decomposition in Section 3 (Eq. 5) writes the input–output Jacobian as a sum over path orders, where the order-k paths pass through the branch at k blocks and through the skip everywhere else. For Pre-Norm the decomposition applies directly; for Post-Norm we first drop the post-residual norm Jacobians, whose scalar factors do not change the effective rank and whose projections empirically contribute at most 0.4% of the width (Appendix B.2). Relative to the Frobenius norm √d of the identity skip, a path that visits the branch at blocks ℓ1 < · · · < ℓ k has Frobenius norm rℓ1 · · · rℓk , the product of the branch-to-skip ratios at the visited blocks, up to an order-one constant per factor that is the same for every α, β, and L.At initialization, the branch Jacobians at different blocks are independent, so distinct paths point in nearly uncorrelated directions and their squared norms add. The order-k path sum then has relative Frobenius norm 
+
+ X
+
+> ℓ1<··· <ℓ k
+
+r2 
+
+> ℓ1
+
+· · · r2
+
+> ℓk
+
+1/2
+
+≈
+
+  P  
+
+> ℓ
+
+˜r2
+
+> ℓ
+
+k/ 2
+
+√k! , (23) where the approximation holds when the individual ˜r2 
+
+> ℓ
+
+are small. For Post-Norm, ˜rℓ = βα M at every block, so 
+
+P 
+
+> ℓ
+
+˜r2 
+
+> ℓ
+
+= ( βα M )2L and the order-k sum has norm (βα M √L)k/√k!. Each branch visit multiplies a path’s norm by βα M and multiplies the number of available paths by roughly L; a sum of N randomly oriented terms of equal norm grows as √N times that norm, so each visit contributes one factor of βα M √L. For Pre-Norm, the ratios decay following Eq. 22, so 
+
+> L
+
+X
+
+> ℓ=1
+
+˜r2 
+
+> ℓ
+
+≈
+
+Z L
+
+> 0
+
+(βα M )2
+
+1 + κ(βα M )2ℓ dℓ = 1
+
+κ log  1 + κ(βα M )2L, (24) again a function of βα M √L alone, since (βα M )2L = ( βα M √L)2. In the Frobenius ratio rℓ = √p ˜rℓ, each order carries an additional factor (√p)k and Eq. 24 a prefactor p/κ ; these shift the collapse onset by the constant 1/√p,identically for both placements. Under three assumptions, which we state below along with measurements that validate them, every order of the expansion depends on (α, β, L ) only through βα M √L; since the effective rank is scale-invariant, it is then a function of this single variable for each placement, and the iso-rank contours scale as βα M ∝ 1/√L. First, the count  Lk
+
+ ≈ Lk/k ! requires k ≪ L; near the transition at βα M √L ∼ 1 the contributing orders are small, so this condition is mild. Second, distinct paths are treated as uncorrelated. Each branch Jacobian ends in a zero-mean output matrix, which suppresses correlations between paths, but the activation masks depend on the shared stream, so weak correlations remain; the measured exponents test the net effect, since coherently adding paths would grow the order-k sum as (βα M L)k/k ! and give iso-rank contours scaling as 1/L , whereas the measured contour slope is 
+
+−0.50 (Figure 5c) and the order-one sum grows with log–log slope 0.50 (Figure 5b), matching the uncorrelated prediction. Third, the Frobenius norms of the path sums do not by themselves determine the rank: we additionally assume that the path sums, normalized by their Frobenius norms, have distributions that do not otherwise depend on 
+
+α, β, or L (their spectra and their alignments with one another and with the identity). For homogeneous activations like ReLU, α and β enter each path exactly as the overall factor (βα M )k, so this assumption concerns the depth 30 dependence alone for Post-Norm, and the profile of the decaying ratios for Pre-Norm; the collapse of the measured rank curves onto a single function of βα M √L (Figure 5d) empirically validates that no further dependence on α,
+
+β, or L remains. We do not attempt a closed form for the shape of the rank curve: a simple independent-increment model of the spectrum does not match the measurements, with the log-singular-value spread growing faster with depth than the leading order predicts. 
+
+The assumptions on a real transformer, before and after training. We test these assumptions on GPT-2 Small and GPT-2 Medium, computing the FFN branch Jacobians analytically along the residual stream of a fixed prompt, both at random initialization and with the pretrained weights (Figure 12). At initialization, every assumption holds exactly: the pairwise cosine similarities between blocks sit at the random-direction baseline of ≈1/d , and the accumulated branch norm equals the uncorrelated prediction ( 1.00 × at k=L for both models). Training induces weak, uniformly positive correlations between blocks (off-diagonal mean 0.18 for GPT-2 Small and 0.15 for GPT-2 Medium). The accumulated branch reaches 1.78 × and 2.23 × the uncorrelated prediction, against 3.26 × and 
+
+4.59 × for fully coherent addition: roughly half of the fully coherent value in both models. The stream growth and the ratio decay persist in direction after training, but the trained stream grows faster, with the growth concentrated in the final blocks. Sun et al. [2025] measure the same concentration during pretraining of a 12-layer model, and bound the Pre-LN stream variance between Θ( L) and Θ(exp L) under Gaussian independence assumptions; our initialization-versus-trained comparison locates the two ends of this range empirically, with the initialized stream at the linear lower bound, which under their assumptions corresponds to an uncorrelated branch and stream. A faster growing stream suppresses the branch-to-skip ratio further, pushing the deep layers toward the skip-dominated regime rather than toward rank collapse. Two caveats: GPT-2 uses GELU and its stream includes the attention sublayers, so these are measurements of the assumptions rather than of our exact ReLU setting; and the trained per-block profiles vary with the probe token position, whereas the correlation and accumulation measurements do not. We measure the depth law in Figure 5 as follows. The branch-scale symmetry (Figure 2) lets us vary a single quantity: we fix β = 1 and sweep the initialization scale α, so that βα M = αM . At each depth L and each rank level r⋆, we extract the iso-rank contour — the value of βα M at which the effective rank equals r⋆ — by interpolating log βα M against the measured rank. Fitting log βα M against log L then gives the contour’s power-law exponent. The exponent is close to − 12 across rank levels and both placements (Table 4), the 1/√L scaling reported in the main text. The Post-Norm contours are the cleanest, with slopes between −0.49 and −0.52 ; the Pre-Norm contours are noisier because the rank plateaus near its floor, which flattens the rank– α curve and makes the crossing harder to locate, but they remain near −0.5.A wider branch does not change the exponent. Repeating the fit with a 4× width expansion (a hidden dimension four times the model dimension, both branches having M = 2 matrices) leaves the slopes near −0.5 (Table 4, 4×). The width raises the rank floor at every depth — the per-block conditioning effect in Section 6 — but the depth scaling is unchanged, so the √L factor is a property of depth rather than of the per-block branch. Table 4: Fitted exponent s of the iso-rank contour βα M ∝ Ls, for both placements, three rank levels r⋆, and two width expansions ( 1×, the two-matrix branch used throughout; 4×, a four-times-wider hidden dimension). All are near s = − 12 .placement width r⋆=0 .4 r⋆=0 .5 r⋆=0 .6
+
+Pre-Norm 1× −0.46 −0.50 −0.52 
+
+Pre-Norm 4× −0.57 −0.47 −0.48 
+
+Post-Norm 1× −0.51 −0.50 −0.49 
+
+Post-Norm 4× −0.52 −0.50 −0.50 
+
+31 0 4 8
+
+Block j
+
+0
+
+4
+
+8
+
+> Block  i
+
+(a) GPT-2 Small init: branch Jacobians of 
+
+different blocks are uncorrelated 
+
+2 4 8 12 
+
+Blocks summed ( k)
+
+10 2
+
+2 × 10 1
+
+3 × 10 1
+
+4 × 10 1
+
+6 × 10 1
+
+> Accumulated norm
+
+(b) GPT-2 Small init: accumulated branch 
+
+matches random walk exactly 
+
+accumulated branch 
+
+random walk 
+
+2 4 8 12 
+
+Block 
+
+10 0
+
+10 1
+
+> Frobenius norm /  d
+
+(c) GPT-2 Small init: 
+
+the stream grows 
+
+and the ratio decays 
+
+stream scale 
+
+per-block ratio 
+
+0 4 8
+
+Block j
+
+0
+
+4
+
+8
+
+> Block  i
+
+(d) GPT-2 Small trained: weak positive correlations 
+
+across all blocks 
+
+2 4 8 12 
+
+Blocks summed ( k)
+
+10 2
+
+2 × 10 1
+
+3 × 10 1
+
+4 × 10 1
+
+6 × 10 1
+
+> Accumulated norm
+
+(e) GPT-2 Small trained: accumulated branch 
+
+moderately exceeds random walk 
+
+accumulated branch 
+
+random walk 
+
+2 4 8 12 
+
+Block 
+
+10 0
+
+10 1
+
+> Frobenius norm /  d
+
+(f) GPT-2 Small trained: 
+
+the stream grows faster, 
+
+the ratio decays more slowly 
+
+stream scale 
+
+per-block ratio 
+
+0 8 16 
+
+Block j
+
+0
+
+8
+
+16 
+
+> Block  i
+
+(g) GPT-2 Medium init: branch Jacobians of 
+
+different blocks are uncorrelated 
+
+2 6 12 24 
+
+Blocks summed ( k)
+
+10 2
+
+3 × 10 1
+
+4 × 10 1
+
+6 × 10 1
+
+> Accumulated norm
+
+(h) GPT-2 Medium init: accumulated branch 
+
+matches random walk exactly 
+
+accumulated branch 
+
+random walk 
+
+2 6 12 24 
+
+Block 
+
+10 0
+
+10 1
+
+> Frobenius norm /  d
+
+(i) GPT-2 Medium init: 
+
+the stream grows 
+
+and the ratio decays 
+
+stream scale 
+
+per-block ratio 
+
+0 8 16 
+
+Block j
+
+0
+
+8
+
+16 
+
+> Block  i
+
+(j) GPT-2 Medium trained: weak positive correlations 
+
+across all blocks 
+
+2 6 12 24 
+
+Blocks summed ( k)
+
+10 2
+
+3 × 10 1
+
+4 × 10 1
+
+6 × 10 1
+
+> Accumulated norm
+
+(k) GPT-2 Medium trained: accumulated branch 
+
+moderately exceeds random walk 
+
+accumulated branch 
+
+random walk 
+
+2 6 12 24 
+
+Block 
+
+10 0
+
+10 1
+
+> Frobenius norm /  d
+
+(l) GPT-2 Medium trained: 
+
+the stream grows faster, 
+
+the ratio decays more slowly 
+
+stream scale 
+
+per-block ratio 
+
+> 0.4
+> 0.2
+> 0.0
+> 0.2
+> 0.4
+> 0.4
+> 0.2
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.4
+> 0.2
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.6
+> 0.4
+> 0.2
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+
+Figure 12: The assumptions behind the √L depth factor hold exactly in GPT-2 at initialization; after training, the path decorrelation is mildly violated and the stream grows faster. The path-counting argument assumes that the FFN branch Jacobians of different blocks are uncorrelated, so that the path sums of Eq. 23 accumulate as random walks, and the Pre-Norm argument depends on the residual stream growing while the branch-to-skip ratio decays (Eq. 22). All panels: FFN branch Jacobians Jℓ computed analytically along the residual stream of a fixed prompt, at random initialization and with the pretrained weights, for GPT-2 Small ( d=768 , L=12 , rows one and two) and GPT-2 Medium ( d=1024 , L=24 , rows three and four). Block 1 is omitted from the curve panels: its small incoming stream inflates ∥J1∥ through the normalization Jacobian. (a,d,g,j) Pairwise cosine similarities ⟨Ji, J j ⟩/∥Ji∥∥ Jj ∥ between blocks; the random-direction baseline is ≈1/d . (b,e,h,k) The accumulated branch norm ∥ P
+
+ℓ≤k Jℓ∥F as blocks are summed, against the prediction for uncorrelated blocks, (P
+
+ℓ≤k ∥Jℓ∥2)1/2,computed from the measured per-block norms (dashed): equal at initialization, moderately exceeded after training. 
+
+(c,f,i,l) The stream scale rms( hℓ) and the per-block ratio rℓ = ∥Jℓ∥F /√d (the Frobenius ratio in Eq. 4): the stream grows and the ratio decays in both cases, with the trained growth concentrated in the final blocks. 32 B.4 Trainability: the learning-rate basin 
+
+The trainability grid in Figure 6 reports the best CIFAR-10 test accuracy over an Adam learning-rate sweep ( η
+
+from 3 × 10 −5 to 10 −2) at each initialization scale α and depth L. We also define the maximum stable learning rate as the largest η at which the network still trains, which we take to be a test accuracy of at least 0.4 against a chance level of 0.1. Table 5 reports the maximum stable learning rate across depth. Pre-Norm is able to train with all learning rate values in our sweep (up to η = 10 −2) at every depth and every α,consistent with its rank floor. The stable learning rate range for Post-Norm instead narrows with depth, and faster at larger α (Table 5). The narrowing basin is an early signal of the trainability failure. At α = 0 .5 the maximum stable learning rate falls by more than two orders of magnitude across depth (from 10 −2 to 3 × 10 −5), yet the best accuracy over the sweep stays at 0.50 or above at every depth: the network still trains at a small enough learning rate. At α = 1 the maximum stable learning rate falls thirtyfold by depth 96, and the best accuracy first drops at depth 192 ( 0.18 ), reaching chance at depth 384. The learning-rate basin therefore narrows at a smaller depth than the depth where a loss of accuracy on CIFAR first appears. Table 5: log 10 of the maximum stable Adam learning rate (the largest η with CIFAR-10 test accuracy ≥ 0.4; chance is 0.1) versus depth, at β = 1 , from the sweep behind Figure 6. Pre-Norm stays at the top of the sweep at every depth; Post-Norm’s stable range narrows with depth, faster at larger α. A dash marks a configuration that does not reach 0.4 at any learning rate in the sweep ( 3 × 10 −5 to 10 −2). placement α L=12 24 48 96 192 384 
+
+Pre-Norm all −2 −2 −2 −2 −2 −2
+
+Post-Norm 0.5 −2 −2 −2.5 −3 −3.5 −4.5
+
+Post-Norm 1 −2.5 −3 −3.5 −4 — —Post-Norm 2 −2.5 −3.5 −4 — — —Post-Norm 4 −2 −3 −4 — — —
+
+B.5 Trainability of Output-Norm 
+
+Figure 4a shows that both branch placements — a normalization at the branch input (Pre-Norm) or the branch output — keep a rank floor, while only the post-residual placement collapses. Output-Norm sits at a marginally lower floor than Pre-Norm, visible in Figure 4a where its curve runs just below Pre-Norm’s: a branch-output normalization fixes every branch increment to unit scale, whereas Pre-Norm’s branch-input normalization feeds the branch a unit input and the ReLU branch contracts it slightly, to a root-mean-square of about 0.74 . Output-Norm therefore adds a slightly larger increment at each block and runs at a marginally larger branch-to-skip ratio, which lowers its floor. Output-Norm still maintains rank above the threshold where it would harm CIFAR accuracy: across the same grid of initialization scale and depth, its CIFAR-10 accuracy stays near 55% everywhere, similar to Pre-Norm (Figure 13), unlike Post-Norm, which fails at large α and depth (Figure 6). A branch-output normalization can still destabilize the residual-stream magnitude at large depth [Kim et al., 2025], but that is a magnitude effect, separate from the rank-driven failure studied here. 
+
+# C Branch Coherence: Derivations and Measurements 
+
+The cross-layer correlation equals cℓ (spiked regime). We derive the main-text identity cos( mℓ, m ℓ′ ) = cℓ for a deep network at initialization, in the regime where the mean spike dominates the residual stream. The branch mean at layer ℓ is mℓ = Ex[σ(Wℓz)] , the average of the branch output over inputs, with z the Pre-Normed branch input and Wℓ isotropic. Once the spike dominates, the representations of all inputs have collapsed onto its direction, which is the all-ones direction 1: an uncentered activation gives every coordinate of the branch output the same 33 0.02 0.1 0.5 1 2 4
+
+Init scale                                    
+
+> 12
+> 24
+> 48
+> 96
+> 192
+> 384
+> Depth  L
+> 0.80 0.52 0.52 0.52 0.52 0.52
+> 0.67 0.46 0.46 0.46 0.46 0.46
+> 0.52 0.40 0.40 0.40 0.40 0.40
+> 0.41 0.35 0.35 0.35 0.35 0.35
+> 0.34 0.31 0.31 0.31 0.31 0.31
+> 0.30 0.28 0.28 0.28 0.28 0.28
+> Init eff rank / width
+> 0.02 0.1 0.5 124
+
+Init scale                               
+
+> 54 55 55 54 55 54
+> 54 55 56 55 55 54
+> 55 55 56 55 56 55
+> 54 55 55 55 55 56
+> 54 55 55 55 55 55
+> 54 54 55 55 55 55
+> CIFAR accuracy (%)
+
+Figure 13: Output-Norm trains across the grid, like Pre-Norm. Initialization effective rank over width (left) and best CIFAR-10 test accuracy over an Adam learning-rate sweep (right) for a normalization at the branch output (β=1 ), over the same grid as Figure 6. The rank stays above collapse and the accuracy stays near 55% at every initialization scale α and depth L, matching Pre-Norm (Figure 6a,b). positive mean, so each branch mean carries a 1-component, and these accumulate until cos( μℓ, 1) → 1 (verified below). After the Pre-Norm every input then has z ≈ 1, independent of x, so the pre-activation of coordinate i is 
+
+(Wℓz)i ≈ (Wℓ1)i =: g(ℓ) 
+
+> i
+
+.
+
+The rows of Wℓ are independent and the Pre-Norm fixes the scale, so the g(ℓ) 
+
+> i
+
+are i.i.d. standard Gaussian and independent across layers. The average over inputs has collapsed — the pre-activation no longer depends on x – so each branch mean is a deterministic function of that layer’s weights, mℓ[i] ≈ σ(g(ℓ) 
+
+> i
+
+). The dot product and the norms then concentrate over the d coordinates, and because g(ℓ) and g(ℓ′) are independent for ℓ̸ = ℓ′,
+
+mℓ · mℓ′ = X
+
+> i
+
+σ(g(ℓ) 
+
+> i
+
+) σ(g(ℓ′) 
+
+> i
+
+) → d E[σ]2, ∥mℓ∥2 = X
+
+> i
+
+σ(g(ℓ) 
+
+> i
+
+)2 → d E[σ2],
+
+with E[σ], E[σ2] the moments of σ under a standard Gaussian. Hence 
+
+cos( mℓ, m ℓ′ ) → E[σ]2
+
+E[σ2] = cℓ.
+
+The cross term factors into E[σ]2 because the two layers’ pre-activations are independent: only the part common to every weight draw — the all-ones component, with per-coordinate value E[σ] — survives the product, and it carries a fraction cℓ of the energy E[σ2]. This is the same cℓ that bounds the per-layer stable rank, sσ = 1 /c ℓ (Table 1): the per-layer spike and the cross-layer alignment are one quantity. The collapse z ≈ 1 and the concentration of the sums are leading-order statements, exact as the spike grows and d → ∞ .
+
+Anchor checks. The decomposition mℓ = E[σ] 1 + εℓ, with εℓ a zero-mean remainder independent across layers, makes two predictions we confirm at initialization ( d=256 , L=512 , n=4096 , 3 seeds). Each branch mean aligns with the all-ones direction at cos( mℓ, 1) → √cℓ as depth grows, measured 0.565 for ReLU and 0.433 for GELU against p1/π = 0 .564 and √0.187 = 0 .432 ; the 1-component therefore carries a cos 2 = cℓ fraction of the energy. The accumulated mean then aligns fully, cos( μℓ, 1) → 1, as its 1-part grows ∝ ℓ while the remainder grows only 
+
+∝ √ℓ. The cross-layer cosine matches cℓ directly in Figure 14. 34 0 256 512            
+
+> Layer
+> 0
+> 256
+> 512
+> Layer  ′
+> (a) M= 1 ReLU
+> 0256 512
+> Layer
+> 0
+> 256
+> 512
+> (b) M= 2 ReLU
+> 0256 512
+> Layer
+> 0
+> 256
+> 512
+> (c) M= 1 tanh
+> 0.35
+> 0
+> cl= 1/
+> cos( m , m ′)
+
+Figure 14: The branch-mean correlation is the same for every pair of layers, not only neighbors. Pairwise cosine cos( mℓ, m ℓ′ ) of the branch means at initialization (Pre-RMSNorm, β=1 , d=256 , L=512 , n=4096 , 3 seeds; the matrix samples the depth-512 network every 8 layers). (a) A single uncentered matrix aligns every pair at the coherence constant cℓ = 1 /π (off-diagonal mean 0.320 ); the field is uniform, so the alignment does not decay with layer separation. (b) A second matrix decorrelates the means, leaving every off-diagonal pair at zero (mean 0.002 ). 
+
+(c) A centered activation has no mean to align (mean −0.000 ). The diagonal is trivially 1.
+
+No backward analogue. The forward spike grows because each branch mean contains the weight-independent component E[σ] 1, the same direction at every layer. The backward injection has no such component. For a single matrix the branch Jacobian is J = diag( σ′(W ˆz)) W J norm , so the per-layer backward contribution is 
+
+nℓ = Ex
+
+J⊤δℓ
+
+ = J⊤ 
+
+> norm
+
+W ⊤ 
+
+> ℓ
+
+Ex
+
+σ′(Wℓ ˆz) ⊙ δℓ
+
+.
+
+Every term passes through W ⊤ 
+
+> ℓ
+
+, the layer’s own weight matrix, so for two layers nℓ and nℓ′ carry W ⊤ 
+
+> ℓ
+
+and W ⊤
+
+> ℓ′
+
+from independent weights: E[n⊤ 
+
+> ℓ
+
+nℓ′ ] = 0 and cos( nℓ, n ℓ′ ) = O(1 /√d) → 0. With no weight-independent shared component, the injections of different layers are mutually random. (Two matrices add a further rotation W ⊤ 
+
+> 2
+
+; a centered activation has no mean to rotate.) The asymmetry is between the mean of σ, a fixed direction that is added, and the gain σ′, a mask that only scales. We confirm this at initialization ( d=256 , L=512 , n=512 , 3 seeds). We start the backward recursion from two choices of δL, the gradient of the loss with respect to the final representation: a random Gaussian vector per input, in place of any particular loss, and the exact gradient of a softmax cross-entropy loss with a random ten-class head and random labels. In the three branch configurations (one matrix, two matrices, and a centered activation), the cosine similarity cos( nℓ, n ℓ′ ) between the backward contributions of two layers averages 0.00 over the layer pairs, and its root-mean-square is 0.063 , which matches the random baseline 1/√d = 0 .0625 ; the forward branch means mℓ of the one-matrix ReLU branch align at cℓ = 0 .32 . Under the random δL, the n × d matrix of gradients 
+
+δℓ preserves its rank ( erank /d ≥ 0.72 , ≈ 0.9 for one-matrix ReLU) and grows no mean spike (mean fraction 
+
+≈ 0.002 ; the forward mean fraction reaches 1.0). Under the cross-entropy loss, δL lies in the row space of the ten-class head, so the gradient matrix is effectively rank ten before any layer acts on it. This independence of the per-layer weights is a property of initialization; we do not analyze the trained network. 
+
+Pairwise alignment across all layer pairs (Figure 14). The headline result reports the correlation between the branch means of any two layers, while the consecutive-layer panel of Figure 7a shows only neighbors. Figure 14 plots the full matrix cos( mℓ, m ℓ′ ), which is flat: for a single uncentered matrix every pair correlates at cℓ (off-diagonal mean 0.320 for ReLU against 1/π = 0 .318 ), and for two matrices or a centered activation every pair sits at zero (off-diagonal mean 0.002 and −0.000 respectively). The correlation does not fall off with the layer separation |ℓ − ℓ′| because it is carried by one shared direction common to every layer rather than by a chain of layer-to-layer dependences: the all-ones component sits in each branch mean regardless of that layer’s weights, so the alignment is the same at every separation. The main text therefore treats the cross-layer correlation as a single constant cℓ.35 Table 6: The rank collapse is not a narrow-network artifact. Effective rank as a fraction of width, erank( Zℓ)/d ,for M=1 ReLU at initialization (Pre-RMSNorm, β=1 , mean over 3 seeds, n = max(1024 , 2d) probe inputs). The collapse occurs at every width. Layer ℓ
+
+Width d 32 64 128 256 512 128 0.216 0.097 0.044 0.023 0.015 256 0.229 0.100 0.040 0.018 0.010 512 0.250 0.109 0.040 0.015 0.007 1024 0.296 0.136 0.047 0.015 0.006 
+
+Mean-growth exponents and the probe-size control (Figure 7b). The dashed guides are power laws ∥μℓ∥ ∝ ℓq
+
+anchored at the ℓ=1 value of each curve, with q=1 for the coherent single uncentered branch and q= 12 otherwise. A finite probe of n inputs estimates a zero mean only up to sampling noise: for a zero-mean process the expected measured value is pE∥zℓ∥2/n (the gray noise floor in the figure), which random-walks across layers at any n
+
+and shrinks only as 1/√n; we therefore vary n to separate real means from noise. Fitted over ℓ ∈ [50 , 512] , M=1 ReLU ( q=0 .99 , ∝ ℓ) and M=2 ReLU ( q=0 .56 , ∝ √ℓ) are n-independent, hence real. SwiGLU likewise has a small but n-independent mean ( q≈0.5): a gate decorrelates the mean into a random walk rather than removing it. tanh’s apparent √ℓ instead scales as 1/√n and vanishes as n→∞ , confirming that a truly centered activation has zero mean; in the figure its curve coincides with the floor. Probe sizes in Figure 7: the mean-magnitude panel uses n=32768 so the small real means sit well above the floor; the alignment panel uses n=4096 ; the rank and spectrum panels are n-independent for n>d and use n=512 .
+
+Width independence (Table 6). We confirm the collapse is not specific to narrow networks. Table 6 reports the effective rank erank( Zℓ)/d for M=1 ReLU at four widths from 128 to 1024 : the trajectory is nearly width-independent, falling to a few percent of the width by depth 128 at every width, and the mean fraction reaches 1.00 
+
+by the same depth. 
+
+Normalization placement (Figure 15). To understand how normalization placement interacts with this mean spike, we measure the effective rank of the representation under a Pre-Norm and under a branch-output normaliza-tion, and find that only a branch-output normalization that subtracts the mean prevents the collapse (Figure 15). In the Pre-Norm placement the rank collapses regardless of the normalizer (panel a): centering the branch input with LayerNorm slows the collapse relative to RMSNorm, because it breaks the feedback loop by which the stream’s accumulated mean re-enters the branch, but the rank still collapses because the activation re-creates the mean at its output. At the branch output, after the activation, the rank is preserved only if the normalization subtracts the mean (panel b): mean subtraction and LayerNorm hold it high, while RMSNorm, which only rescales, collapses identically to no normalization. Peri-LN [Kim et al., 2025] proposes a normalization at the branch-output placement in addition to the Pre-Norm. Their experiments use two matrices per branch, so they do not encounter this single-matrix spike. 
+
+Training scope: the magnitude and rank channels (Figure 16). We train single-matrix ( M =1 ) and two-matrix (M =2 ) ReLU networks on CIFAR-10 with Adam for 5000 steps (width 256 , batch 256 , β=1 ), sweeping the learning rate over six values from 3×10 −5 to 10 −2 (the two largest omitted at depths 500 and 1000 , where the optimal rate is smaller) and reporting the best test accuracy over the sweep. The one systematic difference is at the smallest learning rate tested ( 3×10 −5, well below the optimum of 10 −3), where the single-matrix architecture trains 4–5 points higher at depths ≥100 ; this is consistent with an artifact of the fixed step budget, since the single-matrix network has half as many weight matrices to train at a learning rate this small. The initialization magnitude in panel (b) is the accumulated log 10 of the residual RMS; the per-layer renormalization that keeps it finite at large depth is exact for ReLU, so the two slopes are measured rather than fit. 36 10 0 10 1 10 2
+
+Layer   
+
+> 10 2
+> 10 1
+> 10 0
+> Effective rank / width
+
+(a) Pre-norm placement   
+
+> Pre-RMSNorm
+> Pre-LayerNorm
+> 10 010 110 2
+
+Layer    
+
+> 10 2
+> 10 1
+> 10 0
+
+(b) Branch-output placement 
+
+> mean-sub
+> LayerNorm
+> none (Pre-RMS)
+> RMSNorm
+
+Figure 15: Pre-Norm cannot remove the mean spike; a branch-output normalization can, but only by subtracting the mean. Effective rank erank( Zℓ)/d for M=1 ReLU at initialization ( β=1 , d=256 , 3 seeds). (a) In the Pre-Norm placement both normalizers collapse: Pre-LayerNorm, which centers the branch input, reaches 0.078 
+
+by depth 512 against 0.009 for Pre-RMSNorm — roughly eightfold slower, but still collapsed. (b) At the branch output (Pre-RMSNorm fixed), mean subtraction and LayerNorm preserve the rank ( 0.745 ), while RMSNorm and no branch normalization collapse ( 0.008 and 0.009 ): the centering matters, the rescaling does not. 10 1 10 2 10 3
+
+Depth        
+
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> CIFAR test accuracy
+> chance
+> (a) No normalization
+> M= 1
+> M= 2
+> 0100 200 300 400 500
+
+Depth     
+
+> 0
+> 20
+> 40
+> 60
+> 80
+> log 10  h at init
+> 0.17/layer
+> 0.087/layer
+> (b) Magnitude at initialization
+> M= 1
+> M= 2
+> 10 110 210 3
+
+Depth   
+
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> CIFAR test accuracy
+> chance
+> (c) Pre-RMSNorm
+> M= 1
+> M= 2
+
+Figure 16: Without normalization the coherent mean spike halves the trainable depth; with normalization the rank collapse it causes does not impair CIFAR training. All ReLU, β=1 , width 256 . (a) Without normalization, the single-matrix architecture ( M =1 ) fails by about depth 50 and the two-matrix architecture ( M =2 ) by about depth 100 (best test accuracy over the learning-rate sweep; CIFAR chance accuracy 0.1). (b) The residual magnitude at initialization grows exponentially with depth, twice as fast for the single-matrix architecture ( 0.17 versus 0.087 
+
+decades per layer), so it reaches a given magnitude at half the depth. (c) With Pre-RMSNorm the magnitudes are controlled and the two architectures reach similar best accuracy over the learning rate sweep (within a point at every depth up to 1000 ), even though the single-matrix representation has collapsed to rank ≈ 2 at initialization (Figure 7d). 
+
+# D Width Expansion: Full Marchenko–Pastur Derivation 
+
+This appendix derives the results used in Section 6. Sections D.1–D.3 treat the exact case: we factorize the branch Jacobian, reduce the surviving submatrix to a Marchenko–Pastur ensemble for ReLU and absolute value, and read off the rank threshold m/d = 1 /p (σ) and its conditioning. The later subsections cover smooth activations, the freeness assumption and its validation in trained models, the measured spectra of all four activations, the branch Jacobian’s own conditioning, and the Gaussian-product reference curve of Figure 8. 37 D.1 Jacobian factorization and the survival rate 
+
+The feedforward branch f (x) = Wdown σ(Wup x), with Wup ∈ Rm×d and Wdown ∈ Rd×m, has Jacobian 
+
+Jf (x) = Wdown D(x) Wup , D(x) = diag  σ′(Wup x). (25) The mask D(x) is diagonal, so it can only lower rank: rank Jf ≤ #{i : σ′(( Wup x)i)̸ = 0 }. We call the expected fraction of units with nonzero derivative the survival rate, p(σ) = Pr z∼N (0 ,1) [σ′(z)̸ = 0] . ReLU has σ′ = 1[z > 0] 
+
+and p = 12 ; absolute value has σ′ = sign( z) and p = 1 . At initialization the pre-activations are i.i.d. and mean-zero, so D keeps pm rows of Wup in expectation. 
+
+D.2 The surviving submatrix 
+
+For ReLU and absolute value the derivative takes only the values 0 and ±1, so D either drops a row of Wup or keeps it at unit magnitude; it never rescales the surviving rows, which is what makes these two activations exact. For absolute value, D = diag(sign( Wup x)) flips the signs of some rows, and the signs cancel in the Gram, 
+
+(D W up )⊤(D W up ) = W ⊤
+
+> up
+
+Wup . The surviving submatrix has exactly the spectrum of the full Gaussian Wup ,with aspect ratio γ = m/d .For ReLU the surviving rows {wi : w⊤ 
+
+> i
+
+x > 0} are Gaussian rows restricted to a half-space. The conditioning gives each a mean p2/π ˆx along ˆx = x/ ∥x∥ and shrinks its variance there from 1 to 1 − 2 
+
+> π
+
+, while the other d − 1
+
+directions stay standard Gaussian. What Marchenko–Pastur needs is only the matrix the Gram converges to, the second moment E[wiw⊤ 
+
+> i
+
+| w⊤ 
+
+> i
+
+x > 0] , and there the reduced variance and the squared mean cancel along ˆx:
+
+Ewiw⊤ 
+
+> i
+
+| w⊤ 
+
+> i
+
+x > 0 =  I − 2 
+
+> π
+
+ˆxˆx⊤| {z }
+
+> covariance
+
++ 2 
+
+> π
+
+ˆxˆx⊤
+
+| {z } 
+
+> (mean )( mean )⊤
+
+= I. (26) The Gram therefore converges to the identity, and the surviving submatrix is an i.i.d. ensemble with second moment 
+
+I and aspect ratio γ = pm/d = 12 (m/d ).
+
+D.3 Marchenko–Pastur law and the full-rank threshold 
+
+In the proportional limit d, pm → ∞ with γ = pm/d fixed, the eigenvalues of 1 
+
+> pm
+
+(D W up )⊤(D W up ) converge to the Marchenko–Pastur law [Marchenko and Pastur, 1967] on [λ−, λ +] with λ± = (1 ± 1/√γ)2. The lower edge 
+
+λ− is zero at γ = 1 and positive for γ > 1, so the submatrix is full rank if and only if γ ≥ 1, i.e. m/d ≥ 1/p (σ).This threshold m/d = 1 /p equals 2 for ReLU and 1 for absolute value. At the threshold the submatrix is full rank but its smallest eigenvalue reaches zero, so it is badly conditioned; for γ > 1 the spectrum separates from zero and the condition number σmax /σ min = (1 + 1 /√γ)/(1 − 1/√γ) is finite, falling from ∞ at γ = 1 to 5.8 at γ = 2 
+
+and 3.0 at γ = 4 (the ReLU row of Figure 9, at m/d = 2 , 4, 8). The branch Jacobian inherits this rank. Because Wdown ∈ Rd×m with m ≥ d is full rank and independent of D W up at initialization, the column space of D W up (of dimension rank( D W up ) ≤ d) meets the (m − d)-dimensional null space of Wdown only at the origin, so rank Jf = rank( D W up ). The width threshold for the branch Jacobian is the same as for the surviving submatrix. 
+
+D.4 Smooth activations 
+
+For GELU and SiLU the derivative is never exactly zero, so D = diag( σ′(Wup x)) rescales every row rather than dropping any. The Gram becomes 1 
+
+> neff
+
+W ⊤
+
+> up
+
+Λ Wup with Λ = diag( σ′(Wup x)2) and neff = P 
+
+> i
+
+σ′(zi)2: a Gaussian matrix with a per-row variance profile, not the masked submatrix in Section D.2. This neff is the effective number of surviving rows, equal to the count pm when σ′2 ∈ { 0, 1}. The aspect ratio is then γ = neff /d → E[σ′2] ( m/d ), so the effective survival rate is the mean squared derivative E[σ′2]: p for ReLU and absolute value, 0.46 and 0.38 for GELU and SiLU. 38 The spectrum is no longer exactly Marchenko–Pastur: a variance profile deforms the law by the whole distribution of σ′2, not its mean alone [Pennington and Worah, 2017]. Standard Marchenko–Pastur at γ = E[σ′2] ( m/d )
+
+matches the scale but not the deformation, a close but inexact fit, and no single scalar survival rate reproduces the spectrum exactly. We use E[σ′2], the mean of the weight distribution and the one available in closed form. 
+
+D.5 Free-bulk assumption and trained weights 
+
+The effective-rank prediction in Figure 8 composes the spectrum of D W up with Wdown , which requires the two matrices to be asymptotically free: their singular bases in the shared m-dimensional hidden space should show no systematic alignment. This holds exactly at initialization, where the two are independent Gaussians. In pretrained GPT-2 Medium we measure the coherence between these bases, normalized so that free bases give 1
+
+(Figure 8c). Averaged over all directions it stays close to free across the 24 FFN blocks, with a mean of 0.96 ; the first two blocks are higher ( 1.6 and 1.3) and the rest fall between 0.78 and 1.02 . The most- and least-aligned twenty directions deviate more (a low-rank trained signal, with coherence near 5 at the top and 3 at the bottom), but they are a small fraction of the 1024 directions and leave the bulk that determines the effective rank approximately free. Daneshmand et al. [2021] prove an analogous orthogonalization for BatchNorm; whether it extends to LayerNorm is open, and these measurements are direct evidence that the bulk is close to free in a trained transformer. 
+
+D.6 Spectra for all four activations 
+
+Figure 17 overlays the measured Gram eigenvalues on the Marchenko–Pastur density for all four activations at 
+
+m/d ∈ { 2, 4, 8}. The fit is exact for ReLU and absolute value (solid) and approximate for GELU and SiLU (dashed), as Sections D.2–D.4 predict. SiLU, deferred from Figure 9, follows the GELU pattern. The smooth-activation deformation in Section D.4 is visible at small m/d , largest for SiLU at m/d = 2 , and shrinks as m/d 
+
+grows. At m/d = 2 the smooth activations sit below the full-rank threshold ( γ = p (m/d ) < 1), so the Gram spectrum carries a point mass at zero of weight ≈ 1 − γ, visible as the spike in the first histogram bins, which the continuous Marchenko–Pastur overlay does not include. 
+
+D.7 Conditioning of the branch Jacobian itself 
+
+Above the threshold the submatrix is well-conditioned, but the branch Jacobian Jf = Wdown (D W up ) is not. Restricted to the d-dimensional column space of D W up , Wdown acts as a square d × d Gaussian, which is poorly conditioned; widening the branch enlarges m but leaves this d × d map unchanged. The submatrix conditioning improves with width (Figure 9) but the conditioning of the Jacobian Jf does not: for ReLU at d = 512 (weights at the default 1/fan-in variance), as γ grows from 2 to 16 the submatrix’s smallest Gram eigenvalue rises from 0.09 to 0.57 , while Jf ’s stays near 10 −6 even where Jf is full rank. The effective rank of Jf , however, does improve with width, and the residual skip connection keeps the propagated gradient full rank. 
+
+D.8 The Gaussian-product reference curve 
+
+The reference curve in Figure 8b is the effective rank per dimension, erank( Jf )/d , of a product of two Gaussian matrices ( Wup and Wdown both Gaussian, with no activation) as a function of γ. We compute it numerically: at each γ we draw the two factors, form the product, and average erank( Jf )/d over seeds ( d = 256 ). The curve rises with γ and reaches ≈ 0.80 over the plotted range. It sits below the surviving submatrix’s effective rank at every γ because the product spreads the spectrum (the same structure behind Jf ’s poor conditioning in Section D.7), so the branch Jacobian never reaches the effective rank of a single Gaussian matrix, even where it is full rank. 39 0 1 2 3 4
+
+0
+
+5
+
+10 
+
+15 
+
+20 
+
+25 
+
+> density
+
+= 0.99 
+
+> ReLU
+
+2 × width expansion 
+
+> MP (exact)
+> empirical
+
+0.0 0.5 1.0 1.5 2.0 2.5 3.0 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 = 2.00 
+
+4 × width expansion 
+
+0.5 1.0 1.5 2.0 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+= 4.02 
+
+8 × width expansion 
+
+0 1 2 3 4
+
+0.0 
+
+0.5 
+
+1.0 
+
+1.5 
+
+2.0 
+
+2.5 
+
+> density
+
+= 0.91 
+
+> GELU
+> MP (approx)
+> empirical
+
+0.0 0.5 1.0 1.5 2.0 2.5 3.0 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+= 1.82 
+
+0.5 1.0 1.5 2.0 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 = 3.65 
+
+0 1 2 3 4
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00 
+
+1.25 
+
+1.50 
+
+1.75 
+
+> density
+
+= 0.76 
+
+> SiLU
+> MP (approx)
+> empirical
+
+0.0 0.5 1.0 1.5 2.0 2.5 3.0 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+1.2 = 1.51 
+
+0.5 1.0 1.5 2.0 2.5 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 = 3.03 
+
+0.0 0.5 1.0 1.5 2.0 2.5 3.0 
+
+normalized eigenvalue 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> density
+
+= 2.00 
+
+> abs
+> MP (exact)
+> empirical
+
+0.5 1.0 1.5 2.0 
+
+normalized eigenvalue 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+= 4.00 
+
+0.4 0.6 0.8 1.0 1.2 1.4 1.6 1.8 
+
+normalized eigenvalue 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+1.2 = 8.00 Figure 17: Submatrix spectra for all four activations. Measured Gram eigenvalue histograms (filled) of D W up 
+
+against the Marchenko–Pastur density (line), for ReLU, GELU, SiLU, and abs (rows) at width expansions m/d ∈{2, 4, 8} (columns). Exact (solid) for ReLU and abs, approximate (dashed) for GELU and SiLU. Companion to Figure 9, which omits SiLU. Random Gaussian Wup at initialization, d = 512 , 40 seeds. 40
