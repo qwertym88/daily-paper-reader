@@ -1,0 +1,806 @@
+Title: Similarity-Guided Curriculum Fine-Tuning of LLMs for Neural Architecture Synthesis
+
+URL Source: https://arxiv.org/pdf/2607.11591v1
+
+Published Time: Tue, 14 Jul 2026 03:18:00 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# Similarity-Guided Curriculum Fine-Tuning of LLMs for Neural Architecture Synthesis 
+
+Anujaya Vijayakumar ∗
+
+, Radu Timofte, Dmitry Ignatov 
+
+Computer Vision Lab, CAIDAS & IFI, University of W¨ urzburg, Germany 
+
+## Abstract 
+
+We introduce a MinHash-based similarity scheduling framework that constructs a progressive curriculum over neural architecture code for LLM-based neural architecture search (NAS). Using 128-permutation MinHash signatures over normalised 7-gram source code shingles, we partition the reference pool into similarity bands and present them in increasing archi-tectural heterogeneity, with the best LoRA adapter from each stage merged cumulatively into the back-bone. We evaluate the framework on OlympicCoder-7B within the LEMUR benchmark on CIFAR-10 im-age classification, generating N =15 candidate archi-tectures per epoch across six progressive fine-tuning steps. The curriculum achieves 60% peak success rate at the high-similarity level without post-processing repair. A 2 ×2 ablation at the most diverse level curriculum versus base model, with versus without partial interface repair reveals that without repair the base model (47% peak SR) substantially outper-forms the curriculum model (7% SR), while adding partial repair brings both to 53% SR. This pattern is consistent with merge-level weight drift progressively erasing evaluator-interface priors, and suggests that interface repair and curriculum scheduling target dis-tinct failure modes. We further report a cross-dataset transfer observation on SVHN, where direct base-model generation without curriculum warmup yields 27% peak SR at substantially lower accuracy (60 .5%) than the CIFAR-10 equivalent, consistent with the in-creased synthesis difficulty of the unq -family anchor   
+
+> ∗Corresponding author: anujaya.vijayakumar@stud-mail.uni-wuerzburg.de
+
+architecture. 
+
+## 1 Introduction 
+
+Large language models (LLMs) have emerged as a vi-able alternative to classical neural architecture search (NAS) by reframing architecture design as a program synthesis problem. Instead of searching over prede-fined graph templates, an LLM can directly generate executable Python implementations of complete neu-ral network classes. Frameworks such as NNGPT [1] and LEMUR [2, 3] have demonstrated this feasibility: when conditioned on prior successful architectures, a code-generating LLM can iteratively propose can-didate models compiled, trained, and scored by an external evaluator. A question that has received little attention in LLM-based NAS is how the reference architectures should be ordered during fine-tuning . Existing pipelines treat the reference pool as an unordered collection. Neural architecture code differs not only in downstream accuracy but also in module compo-sition, parameter routing, residual connectivity, and tensor-shape conventions. Exposing all such struc-tural variations simultaneously may destabilise the internal code priors the LLM must build to generate evaluator-compatible designs reliably. We investigate whether ordering references by structural similarity during fine-tuning affects gen-eration reliability. We introduce a MinHash-based similarity scheduling framework that partitions the reference pool into bands of increasing architec-tural heterogeneity and presents them progressively, with sequential LoRA adapter merging to preserve 1arXiv:2607.11591v1 [cs.CV] 13 Jul 2026 coding conventions across stages. A 2 ×2 ablation examines how progressive ordering interacts with post-generation interface repair, revealing that the two components address distinct failure modes in evaluator-compatible code generation. This paper makes three contributions: 1. A code-level structural similarity pipeline imple-menting MinHash signature computation over normalised 7-gram source code shingles, inte-grated into the LEMUR database, enabling sub-second pairwise similarity retrieval across 13,023 CIFAR-10 neural architecture implementations. 2. A MinHash-based curriculum scheduling frame-work that uses these signatures to partition the reference pool into similarity bands of increasing architectural heterogeneity, with a systematic vi-ability analysis across six LEMUR datasets. 3. A 2 ×2 ablation characterising the interaction be-tween interface repair and curriculum warmup in evaluator-compatible neural architecture gener-ation. We note upfront that the single-seed, single-model, single-dataset experimental scope limits the general-ity of our conclusions. The findings reported here are preliminary empirical observations rather than sta-tistically validated claims, and we treat them as such throughout. 
+
+## 2 Related Work 
+
+2.1 LLM-Based Neural Architecture Search 
+
+Recent work combines LLMs with automated model design in two broad directions. Optimization by Prompting (OPRO) [4] uses a frozen LLM as anatural-language optimiser iteratively refining candi-dates via scalar feedback; FunSearch [5] extends this to program discovery. These approaches use the LLM as a proposal engine without fine-tuning and do not address reference scheduling. EvoPrompting [6] formulates NAS as source-code generation with the LLM as a mutation operator. ReEvo [7] incorporates reflection-based refinement. The NNGPT and LEMUR pipelines demonstrate that repeated fine-tuning on successful generations gradually improves architectural quality. LLMatic [8] and GPT-NAS [9] explore structured prompting strategies. None of these systems explicitly control the structural difficulty of the supervision signal over time, which is the focus of this work. 
+
+2.2 Curriculum Learning 
+
+Bengio et al. [10] showed that presenting training samples in meaningful order can improve optimisa-tion and generalisation. Self-paced learning [11] and automatic curriculum generation [12] followed; anti-curriculum studies show the benefit of ordering is task-dependent [13]. In code generation, curricula have mostly been ap-plied to programming-task complexity or staged rea-soning supervision. The present setting differs: dif-ficulty lies in the architectural heterogeneity of tar-get code rather than task complexity, motivating a similarity-based difficulty measure over source code structure. 
+
+2.3 Code Similarity and Retrieval 
+
+MinHash and Jaccard-based hashing provide efficient large-scale near-duplicate detection [14]. Alterna-tive measures include token-level edit distance, AST-based structural comparison [15], and neural code embeddings such as CodeBERT [16]. We compare these strategies in Section 3.2 and justify the Min-Hash choice for the curriculum context. 
+
+2.4 Parameter-Efficient Continual Tuning 
+
+LoRA-based fine-tuning [17] has become standard for updating large code models under limited GPU budgets. Sequential adapter merging, as employed here, is related to model merging literature model soups [18], TIES-merging [19], and DARE [20] but serves curriculum-continuity rather than ensemble combination. 23 Methodology 
+
+3.1 Problem Formulation 
+
+Let D = {(ci, a i)}|D|  
+
+> i=1
+
+denote the LEMUR reposi-tory, where ci is the executable Python implemen-tation of model i and ai its observed validation ac-curacy. Given a pre-trained code LLM M0, we seek an adapted generator M ∗ whose outputs: (1) are ac-cepted by the LEMUR evaluator without structural failure, and (2) achieve competitive downstream ac-curacy. At curriculum stage t, a subset Rt ⊂ D of structurally related references is embedded into the prompt context. The current model Mt generates 
+
+N =15 candidates evaluated through the LEMUR API. Evaluator-valid generations become supervised fine-tuning examples from which a LoRA adapter ∆ t
+
+is learned. After convergence, ∆ t is merged into the backbone to form Mt+1 .
+
+3.2 MinHash-Based Reference Re-trieval 
+
+Retrieval strategy. Three reference retrieval approaches are relevant for LLM-based NAS. 
+
+Accuracy-based retrieval selects references by performance rank; the top-k by accuracy may all be-long to the same architectural family, providing no structural diversity signal. Embedding-based re-trieval (e.g., CodeBERT) offers richer structural dis-crimination but requires an encoder inference pass per candidate computationally prohibitive at the 13,023-architecture corpus scale across repeated cur-riculum epochs. MinHash-based retrieval ap-proximates Jaccard similarity over normalised 7-gram code token sets using 128-permutation signa-tures computed once during corpus preprocessing. 
+
+3.2.1 Signature Computation and Storage 
+
+Source code is first tokenised using a regex-based lexer that extracts alphanumeric identi-fiers and punctuation tokens. From the token sequence, overlapping 7-gram shingles are con-structed and encoded as UTF-8 strings. A128-permutation MinHash signature is computed from these shingles using the datasketch library (NNAnalysisSimilarity.py ) and stored in the LEMUR database at model registration time. Each signature is serialised to a compact 512-byte binary BLOB using struct.pack(‘<128I’, *hashvalues) 
+
+and written to the nn minhash table: 
+
+CREATE TABLE nn_minhash ( nn TEXT PRIMARY KEY, hashvalues BLOB NOT NULL, -- 512-byte struct-packed num_perm INTEGER NOT NULL, -- 128 shingle_n INTEGER NOT NULL, -- 7 created_at TEXT NOT NULL )
+
+Signatures are batch-upserted at corpus inges-tion time via upsert minhash batch() and individ-ually upserted for each newly evaluated model via 
+
+upsert minhash() . This design means similarity computation incurs zero overhead during fine-tuning epochs, all vectors are pre-computed and stored. The 
+
+nn similarity table defined in the schema is not populated during curriculum runs.So no O(N 2) pre-computation of pairwise similarities is performed. 
+
+3.2.2 On-Demand Similarity via SQLite Scalar UDF 
+
+A critical architectural decision distinguishes this im-plementation from the standard datasketch Min-HashLSH workflow: no Python-side LSH index is constructed at query time . Instead, Jaccard sim-ilarity is computed entirely within the SQLite engine via a registered scalar user-defined function (UDF), 
+
+jaccard blobs , registered on the connection at ini-tialisation. The UDF takes two stored BLOBs, deserialises each into its 128-permutation hashvalue vector, and returns the MinHash Jaccard estimate as the fraction of matching permutation values: ˆJ(A, B ) = 1128 
+
+> 128
+
+X
+
+> i=1
+
+1[hi(A) = hi(B)] (1) where hi(A) is the i-th permutation hashvalue of architecture A, stored as a uint32 in the BLOB. The 3returned value is the MinHash approximation to the true Jaccard coefficient J(SA, S B ) = |SA ∩ SB |/|SA ∪
+
+SB |, where SA and SB are the 7-gram shingle sets of architectures A and B respectively. This is an approximation throughout the pipeline the 128-permutation estimator has expected variance Var 
+
+h ˆJ
+
+i
+
+= J(1 − J)128 , (2) which is below 0 .002 at all band boundaries used in this work. The Jaccard coefficient over normalised code to-kens has a direct structural interpretation: J = 0 .95 indicates that 95% of 7-gram token sequences are shared between two implementations, corresponding to near-identical module compositions. This inter-pretability distinguishes MinHash from learned em-bedding distances (e.g. CodeBERT) for curriculum band construction the band boundaries carry a ver-ifiable structural meaning rather than being defined in an opaque latent space. 
+
+3.2.3 Anchor-Band Retrieval Query 
+
+Band-constrained retrieval is implemented in 
+
+anchor band db() (Query.py ) as a single SQL pass. The anchor architecture’s BLOB is extracted from a materialised temporary candidate table ( prepare anchor candidates() ), and the UDF is called per candidate row within a CTE. The candidate table is a temporary table created per query session, joining stat with nn minhash and retaining only the best epoch per unique NN. Band filtering is therefore a SQL predicate rather than a post-processing step, and the SQLite query planner applies it inline during the CTE scan. This archi-tecture achieves sub-second retrieval across the full stored corpus without any Python-side index con-struction overhead. 
+
+3.3 Dataset viability. 
+
+MinHash curriculum construction requires a struc-turally dense reference database with models span-ning multiple similarity bands. Table 1 reports this analysis across LEMUR datasets.                             
+
+> Dataset Models Best acc. Max JViable
+> CIFAR-10 13,023 0.9717 0.98 ✓
+> SVHN 4,568 0.9651 0.82 ‡✗
+> CelebA-Gender 3,719 0.9847 0.99 †✗
+> MNIST 3,315 0.9976 0.23 ✗
+> CIFAR-100 3,170 0.7286 ✗
+> ImageNette 2,804 0.9720 0.15 ✗
+
+Table 1: Dataset viability for MinHash curriculum construction. Viable = all three curriculum bands achievable ( ≥2 unique models each). †CelebA’s 166 high-J models are repeated evaluations of a single architecture ( ga-352 ). ‡SVHN reaches J=0 .82 with a 
+
+unq -family anchor but lacks high and medium bands; only L3-equivalent generation is possible. CIFAR-10 is the only fully viable dataset: its 13,023 procedurally generated rl-bb-init architec-tures span J=0 .30–0 .98, enabling all three curricu-lum bands. These are properties of the current database state, not of the method itself. 
+
+3.3.1 Band Construction and Curriculum Schedule 
+
+Similarity bands are defined as named ranges in 
+
+SIM BANDS (Query.py ) and enforced directly in the SQL WHERE clause via the jaccard blobs UDF. Five bands are defined; the intermediate low band (J = 0 .60–0 .85) is merged with the very-low-near band to form a unified Level 3 band spanning [0 .30 , 0.85), providing a richer retrieval pool without requiring extreme structural contrasts: 
+
+• L1 — High similarity: J ∈ [0 .95 , 0.98), k = 2 
+
+• L2 — Medium similarity: J ∈ [0 .85 , 0.95), 
+
+k = 2 then k = 3 
+
+• L3 — Merged low / very-low-near: J ∈
+
+[0 .30 , 0.85), k = 2, k = 3, and k = 4 
+
+3.3.2 Automatic Anchor Selection 
+
+With 13,000+ models it is impractical to sup-ply anchor nn manually. resolve anchor() 
+
+4(Query.py ) selects the anchor automatically: it it-erates candidate architectures in descending accu-racy order and selects the first model that has at least k neighbours in the requested similar-ity band, verified by running the jaccard blobs 
+
+UDF via a COUNT subquery. The anchor nn pa-rameter in JoinConf is therefore optional; when absent, the auto-selected anchor is recorded in 
+
+curriculum meta alongside auto anchor: true for reproducibility. All curriculum experiments use an-chor rl-bb-init-9afa16ef , selected automatically as the highest-accuracy CIFAR-10 architecture with sufficient neighbours across all three similarity bands. 
+
+3.4 Prompt Design Across Curricu-lum Levels 
+
+Generation uses a constrained XML-style interface with three mandatory output regions: neural ar-chitecture code, hyperparameter specification, and data transform definition. Prompts are constructed by NNGenPromptCurriculum.py in TALL selection mode: the prompt contains the anchor architecture as primary reference and k nearest neighbours re-trieved via the anchor-band UDF query. Constraints are tightened across levels in response to observed failure modes: 
+
+• Level 1 prompts emphasise stable module scaf-folding and forward-pass structure, addressing the dominant L1 failure of incorrect constructor declarations. 
+
+• Level 2 prompts add backbone usage restric-tions and variable naming consistency. 
+
+• Level 3 prompts add dimension-inference and feature-map routing constraints to address ten-sor shape mismatches that first appear at this diversity level. Proven CIFAR-10 prompts are stored as JSON configuration files (Curriculum L*.json ) and adapted for cross-dataset experiments by substitut-ing only the dataset name, transform, input size, and architecture-specific constraints. The anchor selection and band-filtered reference retrieval operate identically across datasets. 
+
+3.5 Sequential Adapter Merging 
+
+For level t, we select the best epoch by composite score: 
+
+St = |Vt|
+
+N × max 
+
+> i∈Vt
+
+ai,
+
+where Vt is the evaluator-valid generation set. We then merge the corresponding adapter into the back-bone before the next level. 
+
+Quantization and precision. OlympicCoder-7B is loaded in 4-bit NF4 during generation and fine-tuning; adapters are maintained in bfloat16. At each merge step, base weights are dequantized to float16, the adapter is applied as Wmerged = Wbase + ∆ W ,and the result saved as float16. Subsequent levels re-quantize to NF4 on load. This dequantize–merge– requantize cycle introduces ≈0.1–0 .3% relative quan-tization error per step. The procedure is identical across all experimental conditions. Direct weight-space comparison between the 4-bit base and float16 merged model is uninformative due to the format difference; behavioural evidence evalu-ator acceptance rates across levels serves as the pri-mary indicator of whether earlier coding conventions are retained. 
+
+## 4 Experiments 
+
+4.1 Experimental Setup 
+
+All experiments were conducted on a single NVIDIA GeForce RTX 4090 (24 GB VRAM). Both LLM adap-tation and CNN evaluation share the GPU, motivat-ing the sequential evaluation design. 
+
+Base language model. OlympicCoder-7B [21]: Qwen2-based, 7B parameters, 32k context window. Loaded in 4-bit NF4; fine-tuning in bfloat16. 
+
+LoRA configuration. Rank r=32, α=32, dropout 0.05, applied to all attention and MLP projections across transformer layers 0–23. paged adamw 8bit ,learning rate 10 −6, batch size 1, gradient accumula-tion 4 steps, cosine scheduling. 5Generation. N =15 candidates per epoch; temper-ature 1 .0, top-k=50, top-p=0 .9, maximum 16,384 de-coding tokens. Candidates are submitted directly to the LEMUR evaluator. Primary experiments use no post-processing repair; the 2 ×2 ablation addition-ally tests a two-step partial repair (injecting missing 
+
+supported hyperparameters() and train setup() 
+
+declarations when absent). 
+
+Evaluator-side training. CIFAR-10 classification under norm 256 flip , one training epoch, SGD with LLM-proposed hyperparameters, batch size capped at 16, 8-minute execution limit per candidate. We retain the sequential NNEval.py path over the multi-processing worker-pool, which introduced GPU mem-ory conflicts on a single RTX 4090. 
+
+4.2 Evaluation Criteria 
+
+Composite score. 
+
+S = |V |
+
+N × max  
+
+> i∈V
+
+ai, S=0 if V =∅. (3) This jointly captures search efficiency (via SR = 
+
+|V |/N ) and architectural quality (via peak accuracy). We additionally report mean accuracy of valid gen-erations. With N =15, differences in composite score below 0 .05 are treated as within-noise given the small sample size. Wilson 95% confidence intervals are re-ported for SR; sliding-window t-distribution CIs for composite scores and accuracy trajectories. 
+
+Statistical scope. All curriculum results are from a single experimental seed (seed 2). We do not report multi-seed means or significance tests, as the compu-tational budget permits only one trajectory per con-dition. Results should be interpreted as single-run observations rather than statistically validated find-ings. 
+
+## 5 Results 
+
+5.1 Curriculum Progression on CIFAR-10 
+
+Table 2 reports best-epoch results per curriculum level; per-epoch trajectories are shown in Figures 1–3. 
+
+Level 1. With references constrained to 
+
+J∈[0 .95 , 0.98), both references belong to the same rl-bb-init family. The L1 prompt em-phasises evaluator interface internalisation correct hyperparameter declaration and learn() structure rather than architectural diversity. Without any repair, we observe 60% SR at epoch A1 (score 0.578, accuracy 96 .30%) and 40% mean SR across 9 epochs. This establishes that evaluator-compatible generation from high-similarity references is feasible without post-processing intervention. 
+
+Level 2. Moving to J∈[0 .85 , 0.95) after the L1 merge, the prompt adds backbone usage restrictions. At k=2, SR is 33% best and 23% mean over 9 epochs. At k=3, we observe 40% best SR at A1 (score 0 .388, accuracy 96 .97%) with 27% mean SR over 7 epochs. Accuracy of valid generations at both k values (96 .2– 96 .97%) remains high relative to the reference ac-curacy ceiling (97 .17%), suggesting L1 coding priors persist into the medium-diversity stage. 
+
+Level 3. At L3 the curriculum first encounters the 
+
+rl-back-init architecture family, which uses qual-itatively different training loop conventions. With-out repair, the first three L3 k=2 epochs produce 7% SR (1 /15 valid per epoch). Error analysis of epoch A1 shows that 40% of the 14 failures per epoch are interface-level missing train setup or ab-sent supported hyperparameters consistent with progressive forgetting of L1 boilerplate across merge steps, though alternative explanations (prompt ambi-guity, reference family shift) cannot be excluded from behavioural evidence alone. The k=3 and k=4 configurations, run without re-pair from the merged model, stabilise at 27–33% SR (best scores 0 .322 and 0 .321). The k=4 run shows 6Level Band k Epochs Best ep. Best acc. Best SR Mean SR Score 
+
+L1 High (0 .95–0 .98) 2 9 A1 0.9630 60% 40% 0.578 L2 Medium (0 .85–0 .95) 2 9 A1 0.9676 33% 23% 0.323 L2 Medium (0 .85–0 .95) 3 7 A1 0.9697 40% 27% 0.388 L3 Low/VL-near (0 .30–0 .85) 2 4 A1 ∗ 0.9673 53% 37% 0.516 L3 Low/VL-near (0 .30–0 .85) 3 8 A2/A6 0.9673 33% 25% 0.322 L3 Low/VL-near (0 .30–0 .85) 4 8 A4 0.9643 33% 20% 0.321 
+
+Table 2: Best-epoch results per curriculum level on CIFAR-10, N =15, single seed, no post-processing repair unless noted. ∗L3 k=2 uses two-step partial repair (Section 5.2). Score = SR × best accuracy (Eq. 3). Adapters merged cumulatively from OlympicCoder-7B. 0.92 
+
+0.93 
+
+0.94 
+
+0.95 
+
+0.96 
+
+0.97 
+
+0.98 
+
+> Best accuracy
+
+A1: 0.9630 
+
+> best epoch
+> A1
+> 95% CI (sliding window, t-dist.)
+> Best accuracy (valid models)
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+> Composite score
+
+A1: 0.5778 
+
+> Score = SR × best accuracy
+
+A1 A2 A3 A4 A5 A6 A7 A8 A9 
+
+Training epoch 
+
+0
+
+20 
+
+40 
+
+60 
+
+80 
+
+100  
+
+> Success rate (%)
+> 60%
+> 33%
+> 40% 40%
+> 47%
+> 53%
+> 27%
+> 33%
+> 27%
+> Success rate
+
+Level 1 High similarity band (k = 2, J [0.95, 0.98]) 
+
+> Dashed vertical line = best epoch A1 selected for adapter merge (score 0.5778, acc 0.9630).
+> CI (panels 1 2): 95% t-distribution on ±2-epoch sliding window. CI (panel 3): Wilson interval, n = 15 generations per epoch.
+
+0.9575 
+
+0.9600 
+
+0.9625 
+
+0.9650 
+
+0.9675 
+
+0.9700 
+
+0.9725 
+
+0.9750 
+
+> Best accuracy
+
+A1: 0.9676 best epoch 
+
+> A1
+> 95% CI (sliding window, t-dist.)
+> Best accuracy (valid models)
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+> Composite score
+
+A1: 0.3225 
+
+> Score = SR × best accuracy
+
+A1 A2 A3 A4 A5 A6 A7 A8 A9 
+
+Training epoch 
+
+0
+
+20 
+
+40 
+
+60 
+
+80 
+
+100  
+
+> Success rate (%)
+> 33% 33%
+> 7%
+> 13%
+> 27%
+> 20%
+> 13%
+> 33%
+> 27%
+> Success rate
+
+Level 2 Medium similarity band (k = 2, J [0.85, 0.95]) 
+
+> Dashed vertical line = best epoch A1 selected for adapter merge (score 0.3225, acc 0.9676).
+> CI (panels 1 2): 95% t-distribution on ±2-epoch sliding window. CI (panel 3): Wilson interval, n = 15 generations per epoch.
+
+Figure 1: Level 1 k=2 (left) and Level 2 k=2 (right) per-epoch trajectories. Top: accuracy with 95% CI. Middle: SR with Wilson 95% CI. Bottom: composite score with sliding-window CI. Dashed vertical line = epoch selected for adapter merge. a collapse at epoch A3 (accuracy 77 .6%, SR 7%) at-tributable to a pathologically misconfigured hyper-parameter generation, before recovering to 33% SR at A4. The scores at k=3 and k=4 are statistically indistinguishable given N =15. 
+
+5.2 Repair–Curriculum Interaction 
+
+Table 3 presents the 2 ×2 ablation at Level 3 k=2. All conditions use the same reference pool, prompts, and generation budget ( N =15, single seed per condition). 70.9600 
+
+0.9625 
+
+0.9650 
+
+0.9675 
+
+0.9700 
+
+0.9725 
+
+0.9750 
+
+0.9775  
+
+> Best accuracy
+> A1: 0.9697 best epoch
+> A1
+> 95% CI (sliding window, t-dist.)
+> Best accuracy (valid models)
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+> Composite score
+> A1: 0.3879
+> Score = SR × best accuracy
+
+A1 A2 A3 A4 A5 A6 A7 
+
+Training epoch 
+
+0
+
+20 
+
+40 
+
+60 
+
+80 
+
+100  
+
+> Success rate (%)
+> 40%
+> 20%
+> 27%
+> 33%
+> 13% 13%
+> 40%
+> Success rate
+
+Level 2 Medium similarity band (k = 3, J [0.85, 0.95]) 
+
+> Dashed vertical line = best epoch A1 selected for adapter merge (score 0.3879, acc 0.9697).
+> CI (panels 1 2): 95% t-distribution on ±2-epoch sliding window. CI (panel 3): Wilson interval, n = 15 generations per epoch.
+
+0.9600 
+
+0.9625 
+
+0.9650 
+
+0.9675 
+
+0.9700 
+
+0.9725  
+
+> Best accuracy  A1: 0.9673 best epoch
+> A1
+> 95% CI (sliding window, t-dist.)
+> Best accuracy (valid models)
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+> Composite score
+> A1: 0.5159
+> Score = SR × best accuracy
+
+A1 A2 A3 A4 A5 
+
+Training epoch 
+
+0
+
+20 
+
+40 
+
+60 
+
+80 
+
+100 
+
+> Success rate (%)
+> 53%
+> 27%
+> 40%
+> 27%
+> 33%
+> Success rate
+
+Level 3 Very-low-near band (k = 2, J [0.30, 0.60]) [partial repair] 
+
+> Dashed vertical line = best epoch A1 selected for adapter merge (score 0.5159, acc 0.9673).
+> CI (panels 1 2): 95% t-distribution on ±2-epoch sliding window. CI (panel 3): Wilson interval, n = 15 generations per epoch.
+
+Figure 2: Level 2 k=3 (left) and Level 3 k=2 (right). L3 k=2 uses partial repair; dashed vertical line = merge epoch. 
+
+Model Repair Best SR Mean SR Score 
+
+Base ✗ 47% 26% 0.450 Curriculum ✗ 7% 7% 0.064 Base ✓ 53% – 0.516 Curriculum ✓ 53% 37% 0.516 
+
+Table 3: 2×2 ablation at Level 3 k=2 on CIFAR-10. Repair = two-step partial fix param usage . All conditions: N =15, identical references, single seed. Mean SR for Base+repair is not reported (single epoch observed). Without repair, the base model (47% best SR, 26% mean SR) substantially outperforms the curriculum model (7% SR across all epochs). This pattern is consistent with merge-level drift: the three sequen-tial merge steps preceding L3 may shift backbone weights away from the evaluator interface patterns learned at L1. The base model, whose weights have not undergone this drift, retains the original interface knowledge. These observations are behavioural; the underlying weight-space changes cannot be directly measured due to the 4-bit NF4/float16 format differ-ence between base and merged models. With partial repair, both conditions reach 53% best SR and score 0 .516. Repair equalises the two models in this single-seed comparison. The finding that curriculum and base model perform equivalently under repair suggests that, within this configuration, the accumulated L1/L2 architectural priors provide no measurable advantage at Level 3 once the in-terface problem is addressed. Whether this holds across seeds, different diversity levels, or different base LLMs is an open question that multi-seed ex-80.958 
+
+0.960 
+
+0.962 
+
+0.964 
+
+0.966 
+
+0.968 
+
+0.970  
+
+> Best accuracy
+> A6: 0.9673 best epoch
+> A6
+> 95% CI (sliding window, t-dist.)
+> Best accuracy (valid models)
+
+0.10 
+
+0.15 
+
+0.20 
+
+0.25 
+
+0.30 
+
+0.35 
+
+0.40 
+
+> Composite score  A6: 0.3224
+> Score = SR × best accuracy
+
+A1 A2 A3 A4 A5 A6 A7 
+
+Training epoch 
+
+0
+
+20 
+
+40 
+
+60 
+
+80 
+
+100  
+
+> Success rate (%)
+> 27%
+> 33%
+> 20%
+> 27% 27%
+> 33%
+> 27%
+> Success rate
+
+Level 3 Very-low-near band (k = 3, J [0.30, 0.60]) [no repair] 
+
+> Dashed vertical line = best epoch A6 selected for adapter merge (score 0.3224, acc 0.9673).
+> CI (panels 1 2): 95% t-distribution on ±2-epoch sliding window. CI (panel 3): Wilson interval, n = 15 generations per epoch.
+
+0.7 
+
+0.8 
+
+0.9 
+
+1.0 
+
+1.1 
+
+1.2 
+
+> Best accuracy
+> A4: 0.9643
+> best epoch
+> A4
+> 95% CI (sliding window, t-dist.)
+> Best accuracy (valid models)
+
+0.1 
+
+0.0 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+> Composite score
+> A4: 0.3214
+> Score = SR × best accuracy
+
+A1 A2 A3 A4 A5 A6 A7 A8 
+
+Training epoch 
+
+0
+
+20 
+
+40 
+
+60 
+
+80 
+
+100 
+
+> Success rate (%)
+> 13%
+> 27%
+> 7%
+> 33%
+> 13%
+> 20%
+> 27%
+> 20%
+> Success rate
+
+Level 3 Very-low-near band (k = 4, J [0.30, 0.60]) [no repair] 
+
+> Dashed vertical line = best epoch A4 selected for adapter merge (score 0.3214, acc 0.9643).
+> CI (panels 1 2): 95% t-distribution on ±2-epoch sliding window. CI (panel 3): Wilson interval, n = 15 generations per epoch.
+
+Figure 3: Level 3 k=3 (left) and Level 3 k=4 (right). Both without repair; dashed vertical line = merge epoch. periments would need to address. 
+
+5.3 Structural Similarity Between Generated and Reference Archi-tectures 
+
+To examine whether the curriculum produces genuine architectural synthesis rather than direct reference reproduction, the structural similarity between each generated model and the fixed anchor architecture is measured. The anchor, rl-bb-init-9afa16ef ,is the same highest-accuracy CIFAR-10 architecture used to define the similarity bands throughout cur-riculum construction, providing a stable structural reference frame across all levels. Similarity is computed using the same MinHash representation employed during curriculum construc-tion: 128-permutation signatures over 7-gram shin-gles extracted from tokenised source code. Using a consistent representation for both curriculum defini-tion and post-training analysis allows the generated architectures to be evaluated within the same struc-tural space used to organise the curriculum. Table 4 summarises the mean and maximum Jaccard simi-larity between generated models and the anchor, to-gether with the mean downstream accuracy at each curriculum level. 
+
+Generated architectures remain structurally distinct from the anchor, and increasingly so as the curriculum progresses. At Level 1, where training references are drawn from the high-similarity band relative to the anchor, generated architectures achieve a mean similarity of 0 .513 to the anchor itself. 9This indicates that the model does not simply repro-duce the anchor architecture even when trained on its closest neighbours; instead, generated architectures occupy a related but structurally distinct position. A similar pattern holds at Level 2, where medium-band training yields generations with mean anchor similarity of 0 .461 ( k=2) and 0 .450 ( k=3). 
+
+Similarity to the anchor decreases across the curriculum. Mean similarity between generated architectures and the anchor decreases from 0 .513 at Level 1 to between 0 .236 and 0 .266 at Level 3. The largest reduction occurs during the transition from the medium-similarity stage to the very-low-near stage (0 .450 → 0.266), corresponding to the point at which the curriculum introduces structurally distant reference families. Within Level 3 itself, sim-ilarity to the anchor is essentially flat across k=2, 
+
+k=3, and k=4 (0 .266, 0 .236, 0 .236), indicating that once the curriculum reaches the very-low-near band, further increases in reference-set diversity ( k) do not produce additional anchor-relative divergence in the generations themselves. The overall decline from Level 1 to Level 3 is nonetheless substantially steeper than the corresponding gap between training refer-ences at each band, suggesting that the curriculum does not merely cause generations to mirror the di-versity already present in the reference set, but ac-tively shifts the generator toward progressively less anchor-dependent outputs as training references di-versify. 
+
+Structural novelty does not reduce down-stream performance. The lowest similarity val-ues are observed at Level 3, where mean accuracy remains high and stable: 94 .97% at k=2, 93 .19% at k=3, and 94 .18% at k=4. Despite producing the most structurally distinct generations relative to the anchor, with mean similarity less than half that of Level 1, Level 3 models match or exceed the mean accuracy achieved at Levels 1 and 2 (93 .40% and 94 .27–94 .58% respectively). This indicates that the curriculum does not force a trade-off between archi-tectural novelty and evaluator performance: as the curriculum progresses, the model generates architec-tures that diverge substantially from the anchor while still preserving the structural properties necessary for strong CIFAR-10 performance. 
+
+Consistent anchor selection across curricu-lum levels. All curriculum stages use the same anchor model, rl-bb-init-9afa16ef , selected auto-matically by the retrieval procedure as the highest-accuracy CIFAR-10 architecture in the LEMUR database with sufficient neighbours across all simi-larity bands. Using a fixed anchor across levels pro-vides a stable structural reference frame throughout the curriculum, so changes in similarity statistics re-flect differences in reference diversity and generator behaviour rather than changes in the local neighbour-hood of the anchor itself. 
+
+Case study: anchor reference and gener-ated architecture. Figure 4 compares the anchor reference model, rl-bb-init-9afa16ef , with the highest-scoring architecture generated at Level 3 with 
+
+k=4, l3-k4-46846dc6 (epoch A8, score 0 .581, accu-racy 96 .79%). The generated model achieves a mean MinHash Jaccard similarity of ¯ j = 0 .545 relative to its reference set, placing it within the intended very-low-near band. The two architectures share several high-level de-sign elements associated with the rl-bb-init fam-ily: both combine a FractalNet-style module with pretrained TorchVision backbones and merge the re-sulting feature streams through concatenation before the final classifier. They also retain common im-plementation patterns, including the FractalUnit 
+
+structure, MaxPool2d(2,2) downsampling, adaptive pooling and flattening utilities, gradient clipping at 3.0, and the required LEMUR interface functions. The generated model introduces four structural changes not present in the training references. First, whereas the reference uses a three-branch parallel fusion design, the generated architecture adopts a partially sequential topology: features extracted by 
+
+backbone b (EfficientNet-B1) are passed into the FractalNet module rather than processed indepen-dently. Second, the convolutional blocks differ: the reference uses a single convolution layer with 10 Level Band k Mean j Max j Mean Acc. N
+
+L1 High 2 0.513 0.648 93.40% 110 L2 Medium 2 0.461 0.484 94.27% 85 L2 Medium 3 0.450 0.484 94.58% 84 L3 Very-low-near 2 0.266 0.484 94.97% 225 L3 Very-low-near 3 0.236 0.258 93.19% 62 L3 Very-low-near 4 0.236 0.250 94.18% 67 Table 4: Mean and maximum Jaccard similarity between generated architectures and the fixed anchor model, together with mean generation accuracy and the number of evaluated generations ( N ) per level. Similarity is computed using 128-permutation MinHash signatures over 7-gram code shingles. The anchor model is 
+
+rl-bb-init-9afa16ef across all curriculum levels. GELU, dropout, and ReLU, while the generated model employs three consecutive convolution lay-ers followed by GELU and dropout without ReLU. Third, ShuffleNet-V2-x2.0 is replaced by a sec-ond EfficientNet-B1 branch, creating a homogeneous backbone pairing. Fourth, an explicit spatial resizing step using F.interpolate to enforce a minimum fea-ture resolution of 14 ×14 is introduced — a robustness mechanism absent from all training references. Overall, the generated architecture preserves the broader design vocabulary of the reference fam-ily while introducing nontrivial changes in topol-ogy, backbone selection, and feature routing. The model recombines learned architectural components into new configurations rather than reproducing the training references directly. 
+
+5.4 Cross-Dataset Transfer: SVHN 
+
+To probe whether base-model generation reliability transfers across datasets, we run one single-level gen-eration experiment on SVHN using the unq -family anchor ( unq-af2a3d5f ), which achieves J=0 .31–0 .82 similarity coverage within the SVHN database suffi-cient for L3-equivalent generation but not for a full curriculum (Table 1). SVHN generation yields substantially lower SR (27% best, 10% mean) and best accuracy (60 .5%) compared to the CIFAR-10 base-model condition (47% best SR, 96 .5% accuracy). Three collapse epochs (SR = 0%) suggest the unq architecture             
+
+> Dataset Model Best SR Mean SR Best acc.
+> CIFAR-10 Base, no repair 47% 26% 0.9651 SVHN Base, no repair 27% 10% 0.6045
+
+Table 5: Cross-dataset comparison at L3-equivalent generation. CIFAR-10: rl-bb-init anchor, 7epochs. SVHN: unq -family anchor, 9 epochs. Datasets, anchor families, and reference distribu-tions differ; this comparison is observational, not con-trolled. family presents a harder synthesis target than 
+
+rl-bb-init . Since the two conditions differ in dataset, anchor family, and reference distribution, we cannot attribute the difference to any single factor; we report this as a preliminary cross-dataset transfer observation rather than a controlled finding. 
+
+5.5 Ordering vs. Random Baseline 
+
+To directly examine whether ordering is the active variable, Table 6 compares the curriculum against a randomised ordering of the identical reference pool, the same base model, the same prompts, and the same sequential merging strategy. For seed 42, the curriculum steps were executed in the randomised or-der L3 k=4, L2 k=2, L3 k=2, L2 k=3, L3 k=3, with each step fine-tuning from the model produced by the previous step exactly as in the curriculum runs. 11 Input [B, 3, H, W]                               
+
+> (CIFAR-10: 32×32)
+> Stream 1
+> (Fractal)
+> Stream 2
+> (Backbone A)
+> Stream 3
+> (Backbone B)
+> FractalNet Stream
+> (Raw input)
+> N=3 Units
+> 3 Columns/block
+> 4 levels/unit
+> Ch: 3 64 128 256
+> MaxPool2d(2,2)
+> Conv block:
+> GELU Drop Conv3×3 ReLU
+> (single conv per path)
+> EfficientNet-B3
+> (pretrained)
+> DEFAULT weights
+> adaptive_avg_pool
+> flatten d_a
+> ShuffleNet-V2-x2.0
+> (pretrained)
+> DEFAULT weights
+> adaptive_avg_pool
+> flatten d_b
+> Concatenate [ fractal_out f_a f_b ]
+> dim_base + d_a + d_b
+> Linear(dim_total num_classes)
+> Output logits
+> MinHash Jaccard to generated L3-k4:
+> mean j = 0.545 |max j = 0.591
+> Reference: rl-bb-init-9afa16ef
+> (Anchor model L1/L2/L3 training reference)
+> Input [B, 3, H, W]
+> (CIFAR-10: 32×32)
+> Stream A
+> (Backbone A)
+> Stream B
+> (Backbone B
+> Fractal)
+> EfficientNet-B3
+> (pretrained)
+> DEFAULT weights
+> adaptive_avg_pool f_a
+> EfficientNet-B1
+> (pretrained, DEFAULT)
+> adaptive x_bf [B, 1280, ...]
+> F.interpolate (14,14)
+> [if spatial dim < 14]
+> (novel adaptation)
+> FractalNet
+> (on backbone_b output)
+> N=2 Units, 2 Columns
+> Ch: 1280 64 128
+> MaxPool2d(2,2)
+> Conv block (NOVEL):
+> Conv3×3 Conv3×3 Conv3×3
+> GELU Dropout
+> (triple conv, no ReLU)
+> Concatenate [ f_a fractal(backbone_b) ]
+> 2-way fusion (vs 3-way in reference)
+> Linear(dim_fused num_classes)
+> Output logits
+> Key novelties: chained Fractal-on-Backbone · triple-conv block · 2-way fusion · EfficientNet pair · spatial adapter
+> Generated: l3-k4-46846dc6
+> (Best L3 k=4 model epoch A8, score=0.5807, acc=96.79%)
+> Architecture comparison: anchor reference vs best generated L3 k=4 model
+> MinHash Jaccard similarity: mean=0.545, max=0.591 (very-low-near band as designed)
+
+Figure 4: Architecture comparison between the an-chor reference model (left) and the best generated model at Level 3 k=4 (right). Both share the Frac-talNet motif and pretrained backbone integration, but differ in fusion topology (3-way parallel vs. 2-way chained), conv block design (single vs. triple convolu-tion), backbone pair selection, and spatial resolution adaptation. MinHash Jaccard: ¯ j = 0 .545 (very-low-near band). 
+
+Random ordering matches curriculum peak performance at most steps. At three of five steps, the best-epoch score under random ordering is statistically indistinguishable from the correspond-ing curriculum result: L3 k=2 reaches 0 .516 un-der random ordering versus 0 .516 under the curricu-lum, L2 k=3 reaches 0 .387 versus 0 .388, and L3 k=3 reaches 0 .387 versus 0 .322, with random ordering exceeding the curriculum result at this step. Only L2 k=2 shows a clear curriculum advantage at peak performance, with the curriculum reaching a best score of 0 .322 against 0 .258 for random ordering, a relative improvement of approximately 25%. 
+
+Random ordering is markedly less stable across epochs. While peak performance is com-parable, the per-epoch trajectories under random or-dering show substantially higher variance and, in one case, complete collapse. At L2 k=2 under random or-dering, epoch 7 produced zero successful models out of fifteen generations, a total failure not observed at any epoch in any curriculum run. Mean scores across all epochs of each step reflect this instability: random ordering’s mean score at L2 k=2 is 0 .142, compared to a curriculum mean of 0 .215 at the same step, even though the gap in best-epoch score alone (0 .258 vs. 0.322) understates the difference once full-epoch reli-ability is taken into account. 
+
+Ordering affects reliability more than peak ca-pability. Taken together, these results suggest that the active benefit of progressive similarity-based or-dering is not primarily an increase in the best archi-tecture the model can reach within a step, since ran-dom ordering reaches comparable peaks at most steps tested. Instead, the curriculum’s main advantage ap-pears to be a reduction in epoch-to-epoch volatility and a lower risk of catastrophic single-epoch failure, particularly at the medium-similarity band. This re-frames the curriculum’s contribution from “enables better generations” to “produces a more reliable fine-tuning trajectory,” a distinction that matters for any practical deployment where a single bad epoch can-not simply be discarded after the fact. 
+
+Limitations of this comparison. This compari-son covers a single randomised ordering (seed 42) of the same five steps used in the curriculum; seeds 7 and 99 were not run due to time constraints, so the variance across different random orderings remains unquantified. A single seed cannot rule out the pos-sibility that this particular random sequence was un-usually favourable or unfavourable at any given step. The comparison also does not test alternative pro-gressive orderings beyond the one used in the curricu-lum, such as interleaving k values within each simi-larity level rather than completing all k values at one level before advancing; whether such an alternative ordering would outperform either the curriculum or this random baseline remains an open question for future work. 
+
+5.6 Qualitative Comparison with Re-lated Systems 
+
+We are the only system in this family combining cur-riculum LLM fine-tuning, single-GPU feasibility, and 12 Step Best score Mean score Best Acc. (rand.) Curriculum Random Curriculum Random L2 k=2 0.322 0.258 0.215 0.142 0.9675 L2 k=3 0.388 0.387 0.265 0.282 0.9676 L3 k=2 0.516 0.516 0.368 0.322 0.9683 L3 k=3 0.322 0.387 0.254 0.287 0.9680 L3 k=4 0.33 0.387 0.20 0.161 0.9678 Table 6: Best-epoch and mean-epoch composite score under curriculum ordering versus a single randomised ordering (seed 42) of the same five steps. Mean accuracy at the best epoch is also reported. Random ordering at L2 k=2 includes one epoch with zero successful generations (accuracy undefined), which is reflected in its lower mean score.                                    
+
+> Method FT Curr. Repair 1-GPU NAS
+> OPRO [4] ✗✗✗✓✗
+> FunSearch [5] ✗✗✗✗✗
+> EvoPrompting [6] ✗✗✗✓✓
+> ReEvo [7] ✗✗✗✗✗
+> NNGPT / LEMUR ✓✗✗✓✓
+> This work ✓✓✓✓✓
+
+Table 7: Qualitative comparison. FT = LLM fine-tuning; Curr. = similarity-scheduled curriculum; 1-GPU = feasible on one consumer GPU; NAS = targets architecture search. NAS targeting. A quantitative comparison against a no-curriculum single-stage baseline and the LEMUR-database best architecture is an important missing piece; this is deferred to future work alongside multi-seed runs. 
+
+5.7 Limitations 
+
+Statistical scope. All curriculum results are single-seed, single-model, single-anchor observations with N =15 generations per epoch. No significance tests are reported because the sample sizes and num-ber of trajectories do not support them. Differences in composite score < 0.05 should not be interpreted as meaningful. Multi-seed experiments with N ≥30 and paired significance testing (e.g., Wilcoxon signed-rank) are required to validate the observed trends. 
+
+Single base model and anchor. All results use OlympicCoder-7B and anchor 
+
+rl-bb-init-9afa16ef . Generalisation to other base LLMs (e.g., Qwen2.5-Coder, DeepSeek-Coder) and other anchors is entirely open. The curricu-lum effect observed here may be specific to this model–anchor combination. 
+
+Repair confound at Level 3. The 
+
+fix param usage repair module has a larger ef-fect on generation reliability than any curriculum manipulation at Level 3 (lifting SR from 7% to 53% for the curriculum model, and from 47% to 53% for the base model). A complete characterisation requires reporting the fraction of accepted genera-tions that required non-trivial repair, and running a repair-only baseline on a random generator. 
+
+Random baseline incomplete. The central claim that ordering is the active ingredient rests on Table 6, which compares best-epoch and mean-epoch composite scores under curriculum ordering against a single randomised ordering (seed 42) of the same five steps. Because random ordering matches curriculum 13 peak performance at most steps tested, running ran-dom ordering under two to three additional seeds is necessary before the variance claim can be considered statistically supported. 
+
+Evaluation budget. The 8-minute, single-epoch evaluation limit favours architectures converging rapidly and limits conclusions about absolute accu-racy. Best-epoch model selection on the evaluation set inflates reported scores; a held-out test set for final reporting would be preferable. 
+
+Dataset scope. CIFAR-10 is the only viable LEMUR dataset for full curriculum construction (Ta-ble 1). The SVHN cross-dataset experiment is obser-vational and not directly comparable to the CIFAR-10 conditions. The framework is dataset-agnostic and will extend naturally as LEMUR database coverage grows. 
+
+Missing quantitative baseline. We do not re-port the accuracy of the best architecture in the LEMUR database, a random-search baseline over the database, or the unmodified OlympicCoder-7B with-out any fine-tuning, against which our results should ultimately be positioned. 
+
+## 6 Conclusion 
+
+We have introduced a MinHash-based curriculum scheduling framework for LLM-based neural archi-tecture synthesis and reported four empirical obser-vations on CIFAR-10 with OlympicCoder-7B. First, progressive similarity scheduling achieves 60% peak SR at the high-similarity level and 33–53% at the most diverse level in single-seed runs with N =15. Second, a 2 ×2 ablation at Level 3 shows that without repair the base model (47% SR) substantially out-performs the curriculum model (7% SR), while with partial repair both reach 53% SR a pattern consistent with merge-level drift progressively erasing interface priors. Third, structural similarity analysis relative to the fixed anchor architecture shows that generated models grow progressively less similar to the anchor as the curriculum advances (mean Jaccard j=0 .513 at Level 1 to j=0 .236–0 .266 at Level 3), while down-stream accuracy remains stable or improves, indi-cating that the curriculum drives genuine architec-tural divergence from the anchor without sacrificing evaluator performance. Fourth, SVHN base-model generation yields substantially lower SR and accu-racy than the CIFAR-10 equivalent, suggesting that cross-dataset transfer of interface knowledge is im-perfect and that the unq architecture family presents a harder synthesis target. These findings are preliminary: they rest on single-seed trajectories with small generation batches, and the random-ordering comparison that would directly validate the curriculum hypothesis is not yet com-plete. Future work should address multi-seed statisti-cal validation, extension to additional base LLMs and anchors, completion of the random-ordering baseline, and replacement of rule-based interface repair with a learned correction mechanism. 
+
+## References                 
+
+> [1] R. Kochnev, W. Khalid, T. A. Uzun, X. Zhang, Y. S. Dhameliya, F. Qin, C. Vysyaraju, R. Duvvuri, A. Goyal, D. Ignatov, and R. Timofte, “NNGPT: Rethinking AutoML with large language models,” in
+> Proceedings of the IEEE/CVF Conference on Com-puter Vision and Pattern Recognition Workshops (CVPRW) , 2026, to appear. 1 [2] A. T. Goodarzi, R. Kochnev, W. Khalid, F. Qin, T. A. Uzun, Y. S. Dhameliya, Y. K. Kathiriya, Z. A. Bentyn, D. Ignatov, and R. Timofte, “LEMUR neu-ral network dataset: Towards seamless AutoML,”
+> arXiv preprint , vol. arXiv:2504.10552, 2025. 1 [3] T. A. Uzun, W. Khalid, S. U. Din, S. R. Mulukuledu, A. Singh, C. Vysyaraju, R. Duvvuri, A. Goyal, Y. R. Lukhi, A. Hussain, K. Jesani, U. Shrestha, Y. Mittal, R. Kochnev, P. Kadam, M. Ikram, H. R. Moradiya, A. Arslanian, D. Ignatov, and R. Timofte, “LEMUR 2: Unlocking neural network diversity for AI,” in
+> Proceedings of the IEEE/CVF Conference on Com-puter Vision and Pattern Recognition Workshops (CVPRW) , 2026, to appear. 1 [4] C. Yang, X. Wang, Y. Lu, H. Liu, Q. V. Le, D. Zhou, and X. Chen, “Large language models as optimiz-ers,” arXiv preprint arXiv:2309.03409 , 2023. 2, 13
+
+14 [5] B. Romera-Paredes, M. Barekatain, A. Novikov, M. Balog, M. P. Kumar, E. Dupont, F. J. R. Ruiz, J. S. Ellenberg, P. Wang, O. Fawzi, P. Kohli, and A. Fawzi, “Mathematical discoveries from program search with large language models,” Nature , vol. 625, pp. 468–475, 2024. 2, 13 [6] A. Chen, D. Dohan, and D. So, “EvoPrompting: Language models for code-level neural architecture search,” in Advances in Neural Information Process-ing Systems (NeurIPS) , vol. 36, 2023. 2, 13 [7] H. Ye, J. Wang, Z. Cao, F. Berto, C. Hua, H. Kim, J. Park, and G. Song, “ReEvo: Large language models as hyper-heuristics with reflective evolution,” 
+
+arXiv preprint arXiv:2402.01145 , 2024. 2, 13 [8] M. Zheng, X. Peng, and M. Alber, “LLMatic: Neural architecture search via large language models and quality-diversity optimization,” in Proceedings of the Genetic and Evolutionary Computation Conference (GECCO) , 2024. 2 [9] M. U. Nasir, J. Wan, M. Rashid, S. Khan, and F. Chollet, “GPTNAS: Large language models as neural architecture searchers,” arXiv preprint arXiv:2405.18143 , 2024. 2 [10] Y. Bengio, J. Louradour, R. Collobert, and J. We-ston, “Curriculum learning,” in Proceedings of the 26th International Conference on Machine Learning (ICML) , 2009, pp. 41–48. 2 [11] M. P. Kumar, B. Packer, and D. Koller, “Self-paced learning for latent variable models,” in Advances in Neural Information Processing Systems (NeurIPS) ,vol. 23, 2010. 2 [12] A. Graves, M. G. Bellemare, J. Menick, R. Munos, and K. Kavukcuoglu, “Automated curriculum learn-ing for neural networks,” in Proceedings of the 34th International Conference on Machine Learning (ICML) , 2017, pp. 1311–1320. 2 [13] G. Hacohen and D. Weinshall, “On the power of curriculum learning in training deep networks,” in 
+
+Proceedings of the 36th International Conference on Machine Learning (ICML) , 2019, pp. 2535–2544. 2 [14] A. Z. Broder, “On the resemblance and containment of documents,” in Proceedings of the Compression and Complexity of Sequences , 1997, pp. 21–29. 2 [15] J. Zhang, X. Wang, H. Zhang, H. Sun, K. Wang, and X. Liu, “A novel neural source code representation based on abstract syntax tree,” in Proceedings of the 41st International Conference on Software Engineer-ing (ICSE) , 2019, pp. 783–794. 2 [16] Z. Feng, D. Guo, D. Tang, N. Duan, X. Feng, M. Gong, L. Shou, B. Qin, T. Liu, D. Jiang, and M. Zhou, “CodeBERT: A pre-trained model for programming and natural languages,” in Find-ings of the Association for Computational Linguis-tics (EMNLP) , 2020, pp. 1536–1547. 2 [17] E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, and W. Chen, “LoRA: Low-rank adaptation of large language models,” arXiv preprint arXiv:2106.09685 , 2021. 2 [18] G. Ilharco, M. T. Ribeiro, M. Wortsman, L. Schmidt, H. Hajishirzi, and A. Farhadi, “Editing models with task arithmetic,” in International Conference on Learning Representations (ICLR) , 2023. 2 [19] P. Yadav, D. Tam, L. Choshen, C. Raffel, and M. Bansal, “TIES-merging: Resolving interference when merging models,” in Advances in Neural Infor-mation Processing Systems (NeurIPS) , vol. 36, 2023. 2[20] L. Yu, B. Yu, H. Yu, F. Huang, and Y. Li, “Language models are super Mario: Absorbing abilities from homologous models as a free lunch,” arXiv preprint arXiv:2311.03099 , 2023. 2 [21] Open-Reasoner Team, “OlympicCoder: A chal-lenging benchmark for code generation with com-petitive programming problems,” arXiv preprint arXiv:2503.14941 , 2025. [Online]. Available: https: //huggingface.co/open-r1/OlympicCoder-7B 5 
+
+15
