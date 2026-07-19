@@ -1,0 +1,255 @@
+Title: VAMP-MR: Vector-Accelerated Motion Planning and Execution for Multi-Robot-Arms
+
+URL Source: https://arxiv.org/pdf/2607.13478v1
+
+Published Time: Thu, 16 Jul 2026 01:12:19 GMT
+
+Number of Pages: 8
+
+Markdown Content:
+# VAMP-MR: Vector-Accelerated Motion Planning and Execution for Multi-Robot-Arms 
+
+Philip Huang 1, Chenrui Gao 2, Jiaoyang Li 1
+
+Abstract — Multi-robot-arm motion planning is a key chal-lenge in deploying multiple manipulators for industrial tasks such as manufacturing. Existing search-based and sampling-based solvers often require significant computation time to produce collision-free, high-quality motions suitable for safe real-world execution. In this work, we introduce a new suite of multi-robot-arm motion planners capable of near real-time motion generation, combining classical planning algorithms with state-of-the-art vectorized collision-checking techniques. Based on CPU SIMD instructions, our new planners accelerate their primary bottleneck, collision checking, and achieve up to two orders of magnitude speedup in both motion planning and execution postprocessing for multi-arm manipulation tasks. We also release our implementation to lower the barrier for research and development of multi-robot-arm planning and manipulation problems. Code is available at https: //vamp-mr.github.io/vamp-mr 
+
+I. I NTRODUCTION 
+
+Robotic systems have the potential to transform industries such as construction and manufacturing by automating haz-ardous and physically demanding tasks. In theory, deploying multiple robots within a shared workcell (such as Fig. 1) can greatly enhance efficiency and throughput through collaboration and parallelization for tasks such as assembly. In practice, however, coordinating teams of robot arms to operate safely, efficiently, and robustly is highly challenging, and most multi-robot setups still require extensive manual programming that is difficult to adapt when tasks or envi-ronments change. In this work, we target a key computational bottleneck shared by nearly all multi-robot-arm motion planning (M-RAMP) methods—collision checking. As we discuss in Sec. II, collision checking dominates the runtime of almost every stage of a multi-robot-arm planning and execution pipeline: constructing roadmaps, validating sampled mo-tions, detecting inter-robot collisions, shortcutting trajecto-ries, and coordinating safe execution. Our approach builds upon Vector-Accelerated Motion Planning (VAMP) [1], a high-performance single-robot-arm motion planner featuring forward kinematics and collision checking vectorized with CPU SIMD (Single Instruction, Multiple Data) instructions, which process a batch of robot configurations in parallel (Sec. II-D); we extend it to multi-robot settings. As shown in Fig. 2, we introduce a general-purpose vectorized collision-checking module for multiple robot arms with flexible input definitions for base transforms, robot count, attachments,        
+
+> 1Philip Huang and Jiaoyang Li is with the Robotics Institute, Carnegie Mellon University, Pittsburgh, PA 15213, USA. Corresponding email:
+
+philiphuang@cmu.edu 
+
+> 2Chenrui Gao is with the University of Michigan, Ann Arbor.
+
+(a) Planning Time: 0.157s, Shortcut Time: 1s 
+
+(b) Planning Time: 0.162s, Shortcut Time: 1s 
+
+Fig. 1: Examples of multi-robot-arm trajectories planned with our vector-accelerated motion planner. We use compos-ite RRT-Connect [4] and postprocess the trajectories with 1s of randomized shortcutting [5]. obstacles, and configurations. It serves as a drop-in replace-ment for collision-checking frameworks such as FCL [2] and Bullet [3], achieving up to 100× speedups in both motion planning and postprocessing without any other algorithmic changes. Our experiments demonstrate that standard planning and postprocessing pipelines can generate the motion for four robot arms in under a second on average, and that existing multi-agent pathfinding (MAPF) algorithms perform well even with minimal adaptation to robot arms. II. B ACKGROUND 
+
+A. Problem Definition 
+
+Multi-Robot-Arm Motion Planning (M-RAMP) is the problem of centrally coordinating the motion of multiple robot arms in tight, cluttered environments. We are given 
+
+N robot arms, where robot i ∈ { 1, . . . , N } has a fixed base transform wTi ∈ SE (3) in the world frame and a configuration space Ci ⊆ RDoF i
+
+, where DoF i is the number of degrees of freedom of robot i, and all robots share an en-vironment with static obstacles wO. To model manipulation, each robot may rigidly hold attachments Ai (e.g., grasped arXiv:2607.13478v1 [cs.RO] 15 Jul 2026 Configurations 
+
+> Vectorized on CPU
+> Geometry
+> (& Attachments)
+> Base Transforms
+> Environment Obstacles
+> Self-Collision
+> Transform Obstacles Env-Collision
+> Transform Robot
+> Input
+> If Collision Free
+> If Collision Free
+> Robot-Robot Collision
+> For all pairs of robots
+> Repeat for each robot
+> Collides or Collision Free
+> Vectorized on CPU
+
+(a) Workflow of our VAMP-MR Procedure Original Spherized 
+
+# 148x   
+
+> Collision-Check Vectorized
+> Collision-Check
+
+(b) Speedup on Panda Four Arms 
+
+Fig. 2: Description of our multi-robot-arm collision checking primitive. Given environment geometries and a batch of multi-robot configurations, VAMP-MR can determine if any collisions exist within the batch up to two orders of magnitude faster than FCL-based methods. The key is to use spherized geometries and leverage SIMD instructions to parallelize over the batch, along with a structured arrangement of self, robot-environment, or robot-robot checks for early collision detection. objects or tools) that move with its end effector, and a set of allowed contacts Wallow specifies robot-obstacle pairs that are intentionally permitted to touch (e.g., a gripper grasping an object) and are ignored during collision checking. A compos-ite configuration (C1, . . . , C N ), one configuration per robot, is collision-free if every robot, including its attachments, has no self-collision, no collision with obstacles except the allowed contacts in Wallow , and no collision with other robots. The objective of M-RAMP is to find a set of collision-free trajectories τ = {τ 1, τ 2, . . . τ N } from each robot’s start configuration Ci 
+
+> start
+
+to its goal configuration Ci
+
+> goal
+
+. Each trajectory τ i is represented as a sequence of waypoint configurations [Ci
+
+> 1
+
+, C i
+
+> 2
+
+, . . . ] discretized at a fixed timestep, with linear interpolation between consecutive waypoints. We measure solution quality by makespan , the total execution time until the last robot reaches its goal; for execution on real robots under timing uncertainties, plans are often converted into a temporal plan graph (TPG; Sec. II-C). 
+
+B. Multi-Robot-Arm Motion Planning 
+
+A straightforward approach to M-RAMP is to treat all robots as a single composite system whose configuration space is the Cartesian product of the individual configuration spaces, and to apply a single-robot planner such as RRT-Connect [4] or graph-of-convex-sets planning [6]; however, this can be computationally prohibitive as the dimensionality of the composite space grows with the number of robots. To address scalability, researchers have adapted multi-agent pathfinding (MAPF) techniques [7]—originally developed for 2D discrete grid worlds—to the high-dimensional con-figuration spaces of robot arms. A prominent example is conflict-based search (CBS) [8], a complete and optimal two-level algorithm: the low level plans a path for each agent independently, and the high level resolves collisions between agents by expanding a binary constraint tree, whose child nodes each force one of the two colliding agents to avoid the collision and replan. Applying MAPF to robot arms requires discretizing each arm’s configuration space into a graph, e.g., a probabilistic roadmap (PRM) [9]. CBS-MP [10] runs CBS over the individual roadmaps of each arm, and follow-up work accelerates the search with experience reuse [11], [12], retaining completeness and optimality guarantees with respect to the roadmaps. Alternatively, prioritized planning [13], [14] plans arms sequentially while treating previously planned arms as moving obstacles—often fast in practice but without the guarantees of CBS-style solvers. Learning-based approaches such as RoboBallet [15] instead train centralized neural networks with reinforcement learning to control synchronized multi-arm motion. Across all these planning paradigms, collision checking is a dominant computational bottleneck that appears in every part of the pipeline: roadmap construction validates every sampled configuration and candidate edge against self-collisions and environment obstacles; sampling-based planners spend most of their runtime validating sampled con-figurations and the motions connecting them [16], [1]; and CBS-style solvers must detect, and often count, inter-robot collisions between arm trajectories to select collisions [10]. Moreover, because planners rarely return optimal solutions in continuous spaces given finite time, their trajectories are commonly postprocessed by shortcutting [17], [5], which re-peatedly attempts to replace trajectory segments with shorter collision-free connections—a process consisting almost en-tirely of collision checking. Our method is complementary to all these works: it accelerates the collision checking shared by sampling- and search-based planners, plus the feature and reward evaluations of learning-based training. 
+
+C. Multi-Robot-Arm Manipulation Planning and Execution 
+
+Long-horizon manipulation tasks, such as collaborative assembly [14], [18], further magnify the cost of collision checking: in the dual-arm LEGO assembly tasks of APEX-MR [18], for example, hundreds of pick, transit, and place motions must be planned sequentially, each in a different 
+
+mode of the environment—with different objects attached to the grippers and different obstacle geometry as placed objects accumulate—so the cost of collision checking increases with longer task horizons. Executing such plans in the real world must additionally address uncertainties due to controller and sensor delays, since a robot that falls behind its planned timing may collide with another robot that proceeds on schedule. One solution is the temporal plan graph (TPG) [19], [18], a directed acyclic graph in which nodes represent waypoints along each robot’s trajectory and directed edges encode precedence constraints: intra-robot edges connect consecutive waypoints of the same robot, while inter-robot edges require one robot to pass a waypoint before another robot may enter a region that would otherwise collide with it. During execution, a scheduler dispatches a node only after all its predecessors are completed, preserving safety regardless of delays. APEX-MR [18] extends the TPG to multi-modal manipulation plans and further reduces the execution makespan with randomized TPG shortcutting. Here, too, collision checking dominates: identifying inter-robot dependencies during TPG construc-tion requires collision checks between all pairs of trajectory waypoints from different robots—the number of checks scales quadratically with both the number of robots and the trajectory length—and TPG shortcutting must validate every candidate shortcut. 
+
+D. Accelerated Motion Planning 
+
+Numerous strategies have been proposed to reduce the burden of collision checking (CC) in motion planning [16], [20], [1]: lazy evaluation delays collision checking until necessary (e.g., LazyPRM [21]); experience-based methods exploit past search data [11]; learning-based approaches train approximate collision detectors [22] or signed distance fields [23]; and neural motion planners such as MPNet [24] amortize planning cost through large-scale training. Our work aligns with approaches that directly parallelize collision checking itself on multi-core CPUs [25], GPUs [16], or robot-specific FPGA circuits [20]. Offloading to a GPU or FPGA, however, introduces nontrivial communica-tion overhead: a planner running on the CPU must repeatedly query the device for motion feasibility, and the accumulated data-transfer latency can negate much of the speedup. An alternative is to exploit the data parallelism within a single CPU core: SIMD instructions apply one arithmetic operation simultaneously to a short vector of values packed in a wide register—e.g., 256-bit AVX2 instructions process 8 single-precision floating-point values, referred to as 8 SIMD 
+
+lanes , in one instruction—without any device communication overhead. We build upon VAMP [1], which batches multiple configurations into the SIMD lanes to evaluate forward kinematics and collision checking for all of them in parallel. 
+
+E. Vector-Accelerated Motion Planning (VAMP) 
+
+Traditional collision checkers such as FCL [2] and Bul-let [3] are primarily designed for single-threaded execution: each collision object is represented by a bounding volume hierarchy (BVH) over its geometric primitives, and checking proceeds in two stages—a broad-phase filter that identifies potentially overlapping bounding volumes, followed by a narrow-phase test (e.g., GJK [26]) for exact intersections. While widely adopted, this design is inherently difficult to parallelize: the recursive BVH traversal introduces significant conditional branching and irregular memory access, and the bandwidth to fetch BVH transforms and geometry often becomes limiting. VAMP [1] overcomes these challenges by fusing forward kinematics (FK), which computes the poses of a robot’s links and geometry from a configuration, and CC into a single op-timized kernel implemented as a C++ header. It reorganizes a batch of joint-space configurations—one configuration per SIMD lane—into a struct-of-arrays memory layout for data parallelism. Robot geometries are approximated by sets of spheres [27], and obstacles by simple primitives (spheres, cubes, cylinders, or capsules). FK is unrolled via a custom tracing compiler that computes the positions of these spheres directly, minimizing branching and data dependencies, and self-collision checks are interleaved with FK for early termination. Computing FK and CC for each sphere is fully parallelized over the batch, and if any configuration collides, the entire batch is rejected. With batching, VAMP discards traditional broad-phase CC and instead opts for a “rake” strategy that evaluates a set of uniformly distanced configurations along an edge in one batch, maximizing the likelihood of detecting collisions early for that edge. VAMP’s vectorized routines integrate with search- or sampling-based planners for millisecond-level planning. However, each VAMP kernel is compiled for a single, fixed robot (Sec. III). We therefore bring these ideas to VAMP-MR, a vectorized multi-robot-arm collision checker that accelerates multiple stages of the pipeline, including motion planning, trajectory shortcutting, and safe execution. III. V ECTORIZED MULTI -R OBOT COLLISION CHECKING 
+
+A. Method 
+
+Motivated by the pervasive cost of collision checking across the multi-robot planning and execution stack (Sec. II), our core contribution is a vectorized multi-robot collision checking routine that is efficient , flexible , and easy to use . It is efficient because, like VAMP, it fuses FK and CC over a SIMD batch of configurations with approximate sphere-based robot modeling. It is flexible because it distinguishes self-, robot-environment, and robot-robot collisions and sup-ports attachments and environment obstacles, matching the diverse collision queries required by the planners in Sec. II. It is easy to use because collision pairs can be added or disabled and base transforms recalibrated at runtime without kernel recompilation. These properties do not come for free: a naive adaptation of VAMP to multi-robot planning would merge all DoFs across robots into a single composite system and generate a corresponding monolithic kernel, which cannot separate collision types (e.g., for roadmap generation), count inter-robot collisions between selected robot pairs (e.g., in CBS-style planning and TPG construction), or update wTi, Ai,and Wallow (Sec. II-A) without recompilation. To support these capabilities, we design a new rou-tine, FK CC M ULTI , outlined in Alg. 1 and illustrated in Fig. 2a. Its input is a batch of v composite configurations 
+
+{(C1 
+
+> j
+
+, . . . , C Nj )}vj=1 , where v is the SIMD batch size; we use the subscript 1: v to denote a batch, e.g., Ci 
+
+> 1: v
+
+= [ Ci
+
+> 1
+
+, . . . , C iv ]Algorithm 1 FK CC M ULTI : Vectorized FK and Collision Checking for Multiple Robots                                                                               
+
+> Require: For each robot i: base transform wTi, batch of configurations
+> {Cij}vj=1 , optional attachments Ai; environment obstacles wO; al-lowed contacts Wallow
+> 1: for each robot ido
+> 2: iS1: v←FK (Ci
+> 1: v,Ai)▷spheres in robot-iframe 3: if SELF CC (iS1: v)detects collision then
+> 4: return Invalid
+> 5: end if
+> 6: iO ← (wTi)−1◦wO▷obstacles in robot-iframe 7: if ENV CC (iS1: v,iO,Wallow )detects collision then
+> 8: return Invalid
+> 9: end if
+> 10: wSi
+> 1: v←wTi◦iS1: v▷spheres in world frame 11: end for
+> 12: for each robot pair (i, k ), i < k do
+> 13: if INTER CC (wSi
+> 1: v,wSk
+> 1: v)detects collision then
+> 14: return Invalid
+> 15: end if
+> 16: end for
+> 17: return Valid ▷all vcomposite configurations in the batch are collision-free
+
+Fig. 3: Multi-robot motion planning environments. is the batch of v configurations of robot i. FK CC M ULTI 
+
+computes forward kinematics and checks collisions in one call over the whole batch, and its returned validity flag is Valid if and only if all v composite configurations in the batch are collision-free. Each robot first passes through the single-robot vectorized FK routine, which computes the robot’s collision spheres in its base frame, followed by a self-collision check (Lines 2-3). If a collision is detected, the whole batch is immediately rejected. Next, environment obstacles wO are transformed into the robot’s base frame and checked against the robot’s spheres, ignoring any allowed contacts in Wallow (Lines 6-7). In practice, we cache the transformed obstacles in each robot’s base frame since base transforms and obstacles often remain fixed during planning. Then, each robot’s spheres are transformed to the world frame based on its base transform wTi (Line 10). Finally, the sphere representations of all robots are compared pairwise to detect robot-robot collisions (Lines 12-13). 
+
+B. Evaluation of Collision Checking and Motion Validation 
+
+To evaluate the runtime improvement of our new collision checking method, we test on three challenging multi-robot-arm environments—Panda Two Rod, Panda Four, and Panda Four Bins (see Fig. 3)—introduced in [5]. Each Panda arm has 7 DoF, and the 59-sphere approximation in Fig. 2b is generated with the tool in [27]. Panda Two Rod adds a rod attachment to each arm, and Panda Four Bins adds bins as environment obstacles that each arm must reach into. Table I reports the speedup of our vectorized collision-checking primitives over 10,000 random samples for both (1) collision checking of a single composite configuration (i.e., TABLE I: Average collision checking runtime and speedup over 10,000 random samples. Our method is compared against FCL with the same approximated spherized geome-tries to ensure consistency.                       
+
+> Check Environment FCL (μs) Ours (μs) Speedup
+> Single Panda Two Rod 100.99 8.60 11.7x
+> Panda Four 206.53 15.01 13.7x
+> Panda Four Bins 382.63 13.70 27.9x
+> Motion Panda Two Rod 3936.13 36.03 109.2x
+> Panda Four 4836.50 32.61 148.3x
+> Panda Four Bins 930.03 14.23 65.4x
+
+v = 1 ) and (2) motion validation between a pair of composite configurations, where the interpolated configurations along the motion fill the SIMD batch ( v = 8 ). For motion vali-dation, the collision checking resolution, defined as the L1
+
+distance between two consecutive interpolated configurations along the motion, is set to 0.1 radian. We compare against FCL [2], the default collision checker of the widely used MoveIt framework [28] and of prior multi-arm planning systems [18], [10]; Bullet [3] follows a similar BVH-based, single-query design, so we expect similar trends. To ensure consistent modeling, we use the same simplified spherized robot geometry representation in FCL. All experiments run on an AMD 7840HS laptop CPU, with C++ compiled with GCC 9 and 256-bit AVX2 instructions (-march=native, -mavx2, -O3), giving a SIMD batch size of 8 with single-precision floats. We use AVX2 rather than the wider AVX-512 because, as observed by the authors of VAMP [1], 512-bit instructions can lower the CPU clock frequency due to power and thermal limits, making AVX2 the better balance. Our method achieves 11-27x speedup for single-configuration collision checking, and up to 148x speedup for motion validation between two random configurations. For motion validation, the runtime speedup sometimes exceeds the single-check speedup by more than 8 times (i.e., the number of SIMD lanes), which we attribute to the combined effect of vectorization, good cache utilization, and the “rake”-style scan over discretized configurations. We also observe less runtime variance across environments than FCL, which invalidates the mostly colliding random motions in obstacle-rich Panda Four Bins much faster than elsewhere. IV. A PPLICATIONS OF VECTOR -A CCELERATED 
+
+COLLISION CHECKING 
+
+A. Vectorized Multi-Robot-Arm Planning 
+
+We integrate our vectorized collision-checking framework into two multi-robot-arm motion planners. Our first planner is composite RRT-Connect [4], which combines the DoFs from all robots and treats them as a single robot for the RRT-Connect algorithm. Our FK CC M ULTI routine accel-erates the validation of randomly sampled configurations and motions during tree expansion. Our second planner is based on CBS-MP [10], which applies CBS to robot arms, each planning on its own PRM and resolving inter-robot collisions through the high-level constraint tree with avoidance constraints (Sec. II-B). Fig. 4: Planning time comparison between FCL-based and our VAMP-based motion planners. Boxplots show the distribution of planning times over solved instances. The speedup reported for each environment is the ratio between the median planning times of the FCL-based and VAMP-based planners over their respective solved instances, and is up to 150x. TABLE II: Cache behavior comparison between FCL-based and our VAMP-based motion planners. We report the cache miss rate and cache misses per 1,000 instructions (MPKI).                                  
+
+> Environment Planner Cache Miss (%) MPKI
+> FCL Ours FCL Ours Panda Two Rod CBS 4.45 0.79 0.83 0.38
+> RRT 4.11 7.49 0.85 2.08 Panda Four CBS 5.49 1.86 0.83 0.65
+> RRT 7.92 2.43 1.49 0.55
+> Panda Four Bins CBS 8.94 2.13 1.50 0.83
+> RRT 13.81 1.72 2.62 0.51
+
+However, the original avoidance constraint used in CBS-MP is incomplete, as discussed in [11]. To ensure theoretical completeness of CBS on the roadmaps, we adopt an asym-metric constraint scheme inspired by [29]. Specifically, when a collision occurs at time t between robot i and robot j,we create two mutually exclusive constraints during high-level CBS expansion: one forbidding robot i from occupying any volume of robot j’s volume at time t, and the other forbidding robot j from taking the same configuration at that time. Our SIMD-accelerated FK CC M ULTI routine reduces the computational overhead of all three collision-related components of CBS-MP: (1) roadmap construction, which requires only self- and robot-environment collision checks when validating each arm’s sampled configurations and edges; (2) conflict detection, which checks robot-robot collisions between the trajectories of different arms to iden-tify collisions to resolve; and (3) constraint evaluation in the low-level search, which checks a robot’s motion against the constrained volumes of other robots. 
+
+Results To evaluate how VAMP-MR can improve plan-ning time and analyze its algorithmic implications, we create 110, 132, and 132 unique pairs of start and goal poses as different planning instances in Panda Two Rod, Panda Four, and Panda Four Bins, as in [5]. We evaluate both the composite RRT-Connect and CBS-MP motion planner (abbreviated as RRT and CBS in figures and tables). We sample 5,000 nodes for each robot’s PRM before planning in CBS-MP and run both planners with a one-minute timeout. Roadmap construction, which also benefits from vectoriza-tion, is performed once per environment and excluded from the reported planning time; its speedup is not evaluated. Fig. 4 shows the planning time before and after vector acceleration for all three environments. Our results show that vectorization provides at least an order-of-magnitude speedup for both planners, with even greater improvement for CBS-MP. Table II compares the cache behavior of FCL and our VAMP collision checker across CBS-MP and RRT-Connect. Except for RRT-Connect in Panda Two Rod, VAMP-MR achieves substantially lower cache miss rates, in-dicating improved memory locality during frequent collision queries. For RRT-Connect, the runtime acceleration correlates closely with the motion validation speedup reported in Table I, as motion validation dominates the computational cost. However, CBS-MP exhibits the largest performance gain in Panda Four Bins, reaching a 100% success rate, whereas some instances in Panda Four remain unsolved due to the coordination requirements of the tasks: in Panda Four, several target poses (e.g., the one in Fig. 2b) require precise sequencing between robot arms and thus thousands of high-level CBS expansions, whereas Panda Four Bins requires little coordination as long as each robot can navigate around obstacles independently. Thus, our vectorized CBS-MP outperforms vectorized RRT-Connect in Panda Four Bins, as it can quickly deconflict agents and find collision-free solutions. We also noticed that vectorization significantly increases the number of constraint tree (CT) nodes that CBS-MP can expand within the time limit: our vectorized CBS-MP can solve an instance with 5,303 expanded CT nodes on Panda Four, compared to a maximum of 53 expanded CT nodes among solved Panda Four instances with FCL under the same one-minute time limit. These results demonstrate that our vectorized frame-work substantially alleviates the primary bottleneck in motion planning—motion validation and collision detec-tion—enabling CBS-based methods to scale to more com-plex setups. Nevertheless, even after acceleration, collision checking remains the largest cost, accounting for 90.2% of planning time for RRT-Connect and 64.6% for CBS-MP in Panda Four. Since this remaining cost scales with the number of search expansions, MAPF techniques that guide the search to expand fewer nodes—and hence perform Fig. 5: Average makespan improvement over time of multi-robot shortcutting across three environments, using DTS [5]. The performance-runtime curves are averaged across all instances in each environment. Our method achieves the same level of makespan improvement within one second and is up to 50 times faster than FCL. fewer collision checks—such as symmetry reasoning [30], enhanced bounded-suboptimal search [31], and fast subop-timal planners [32], are promising complements to further reduce the planning time of multi-robot-arm systems. 
+
+B. Vectorized Multi-Robot Shortcutting 
+
+Shortcutting (Sec. II-B) is a widely used postprocessing technique for improving the smoothness and optimality of planned trajectories in multi-robot-arm motion planning [11], [13]: given finite time, sampling-based planners are only probabilistically complete and asymptotically optimal, and CBS is only resolution-complete and resolution-optimal given the roadmap, so solution quality can usually be im-proved further with postprocessing. We define a shortcut as a linear interpolation between two configurations whose endpoints are randomly sampled along the current trajectory; depending on the shortcutting strategy described below, the two configurations may be composite configurations of all robots or configurations of a single robot. After sampling a shortcut, we check whether replacing the original segment with the shortcut introduces any self-collisions or collisions with other robots or obstacles. If the shortcut is collision-free, the trajectory is updated, and this process repeats until a time limit is reached. Since collision checking dominates the cost of shortcutting, it is highly compatible with our vectorized routine. We adopt the Dynamic Thompson Shortcutting (DTS) algorithm from [5], an anytime shortcutting framework that adaptively combines three complementary strategies: a com-posite shortcut is sampled in the composite configuration space and jointly modifies all robot trajectories; a prioritized shortcut modifies a single robot’s trajectory and shifts the waypoints after the shortcut to earlier timesteps, shortening that robot’s trajectory in time; and a path shortcut also modifies a single robot’s trajectory but preserves the original timing. DTS formulates the strategy selection as a multi-armed bandit problem and uses Thompson sampling to bal-ance rapid early improvement against final trajectory quality. 
+
+Results We evaluate the performance improvement of DTS, as shown in Fig. 5, using initial trajectories generated by RRT-Connect and CBS-MP. Without any other modifi-cations, integrating a vectorized collision checking routine reduces the time required to converge to final shortcut tra-jectories by up to 50x, with substantial improvement within 0.1s and full convergence within 1s. 
+
+C. Vectorized Safe Execution Framework 
+
+Safe real-world execution of multi-robot manipulation plans, such as object rearrangement or collaborative as-sembly, must account for uncertainties such as kinematic inaccuracies and unpredictable physical interactions; many tasks also use closed-loop control or learned policies whose execution times cannot be predicted in advance. We build upon the multi-modal Temporal Plan Graph (TPG) framework of APEX-MR [18], introduced in Sec. II-C, which systematically postprocesses a given multi-robot task and motion plan to enable safe, asynchronous execution under such uncertainties. A multi-modal TPG G = ( V, E )
+
+extends the TPG in Sec. II-C to capture kinematic transitions, changes in the environment due to objects being moved, and inter-robot task and motion dependencies. Each node vin is either a pose node that corresponds to a target configuration 
+
+Cin for robot i or a skill node that corresponds to a manipu-lation skill, i.e., a set of object-centric motions executed by a feedback controller; we assume each skill has a reference robot trajectory for the purpose of TPG computation. Each edge vin → vi′ 
+
+> n′
+
+encodes a precedence constraint: edges between nodes of the same robot connect every consecutive node, and inter-robot edges are added for task dependencies or motion dependencies to prevent executing two spatially colliding nodes simultaneously. Constructing a TPG from a sequential or synchronous task and motion plan requires finding all inter-robot motion dependencies with quadratically many pairwise collision checks (Sec. II-C). Because consecutive pose nodes are densely discretized from the trajectories at the collision (b) Cliff (c) Vessel    
+
+> (d) Fish (e) Chair
+> 11 36
+> 47 258
+> (a) Robot Environment
+
+Fig. 6: Dual-arm LEGO assembly environment in (a) and assembly tasks in (b)-(e). Numbers in (b)-(e) indicate the number of assembly steps (LEGO bricks). checking resolution, checking pairs of node configurations from two robots also covers the motions between them. While Huang et al. [18] used CPU multithreading to paral-lelize this computation, our vectorized routine is even better suited to accelerate TPG construction with less commu-nication overhead. However, the original TPG formulation requires identifying all colliding pairs of configurations, whereas our vectorized collision checker FK CC M ULTI 
+
+terminates early if any configuration in the batch collides. To effectively leverage SIMD parallelism, we propose a modified grouping strategy. For a group of k consecutive pose nodes [vin, . . . v in+k−1]
+
+of the TPG, we merge them to a larger transit node vin
+
+that represents a short path segment [Cin, . . . C in+k−1]. We then perform collision checks between every pair of transit nodes from different robots. If any part of the path segment of a transit node vin collides with that of another transit node vi′ 
+
+> n′
+
+, we insert an inter-robot edge vin → vi′ 
+
+> n′
+
+from the earlier node to the later node ( n < n ′) that prevents collision in execution. In this formulation, we only need to determine whether any part of the two path segments of two transit nodes vin and vi′ 
+
+> n′
+
+collide, without identifying which individual configurations collide, so the early-terminating batched checks of FK CC M ULTI can be applied directly. This grouping makes the precedence constraints coarser than in the original TPG formulation: a robot must now wait for another robot to complete an entire transit node ( k pose nodes) rather than a single pose node, which can introduce additional waiting during execution and thereby increase the makespan. Empirically, however, we find this makespan difference to be negligible. As a result, our approach achieves much faster TPG construction for complex assembly tasks. 
+
+Results We evaluate four long-horizon dual-arm LEGO assembly tasks (see Fig. 6) from APEX-MR [18], which involve up to 258 assembled parts. For each task, we measure the runtime across all stages of the pipeline, including task assignment, motion planning, and TPG construction. We follow the experimental setup of [18]: given a sequential assembly plan, an integer-linear program assigns robot, grasping, and support pose targets for each assembly step; the motion of each transit task and manipulation skill is planned sequentially with single-agent RRT-Connect and smoothed by a vectorized single-agent shortcutter for 0.1s [17]; and the resulting sequential task and motion plan is converted into an asynchronous TPG with TPG shortcutting as in [18]. TABLE III: Runtime and makespan of dual-arm LEGO assembly plans generated following the procedure in APEX-MR [18], with and without vector acceleration. Results are averaged over 4 random seeds. Note that FCL uses 16 CPU threads to parallelize TPG construction, whereas our collision checker is single-threaded.                                                     
+
+> Metric Cliff Vessel Fish Chair
+> TPG Shortcut Time (s) 1.0 1.0 1.0 5.0
+> FCL-Based
+> Task Assignment (s) 0.60 4.90 5.81 13.0 Motion Planning (s) 0.63 0.76 4.91 9.98 TPG Construction (s) 9.88 25.6 66.0 817.2
+> Total Time (s) 12.1 32.2 71.5 845.2 Final Makespan (s) 185 397 549 2180
+> Ours
+> Task Assignment (s) 0.55 4.68 5.45 10.2 Motion Planning (s) 0.42 0.15 1.96 0.88 TPG Construction (s) 1.42 2.55 3.11 43.22
+> Total Time (s) 3.39 8.38 11.8 59.3 Final Makespan (s) 159 340 489 2146
+> # of Bricks 11 36 29 258
+
+Unlike the original APEX-MR implementation, which plans with the MoveIt framework [28], we implement the RRT-Connect algorithm directly for sequential motion planning for both the FCL-based baseline and our vector-accelerated planner. The FCL baseline uses the original robot meshes for collision checking, which we found faster than the spherized geometry; our RRT-Connect implementation is also significantly faster than reported in [18]. Table III summarizes the runtime of each planning step and the final makespan after shortcutting. Motion planning is accelerated by 1.25-11.3x and TPG construction by 6.9-21x. In particular, the FCL-based TPG construction uses 16 CPU threads, whereas our vectorized TPG construction uses a sin-gle thread—multi-core parallelization is largely unnecessary with vectorization due to its communication overhead. Our accelerated planner also produces higher-quality solutions after TPG shortcutting: with the same one-second time limit, vectorization achieves more than 10% lower makespan for cliff, vessel, and fish, while the improvement for chair is minimal due to the large overhead of modifying obstacle positions when evaluating random shortcuts. Finally, task assignment improves little, as our acceleration affects only the verification of collision-free grasp and support poses; the integer-linear program computing optimal assignments can itself be a significant bottleneck in the overall pipeline. V. R EAL ROBOT DEPLOYMENT 
+
+We deploy our vector-accelerated multi-robot-arm motion planner and anytime shortcutter on three Kinova arms in the real world, as shown in Fig. 1, consecutively planning and executing motions through 11 complex, highly entangled configurations. We use the composite RRT-Connect planner to generate an initial trajectory, post-process it with our anytime shortcutter for 1 s, and time-parameterize it with TOPPRA [33] in the composite space to satisfy the arms’ acceleration limits. Since the controller delay is minimal in the absence of contact or manipulation policies, the robots execute the planned trajectories synchronously without re-quiring a TPG. Across 11 planning calls, the median planning time is 0.16 s with a sample standard deviation of 0.70 s; the large standard deviation is due to two difficult instances that required 2.36 s and 1.06 s to solve. The entire demonstration takes about 85 s, of which all planning combined accounts for only 4.7 s ( ∼6%), with the executed motions averaging about 7 s each (see the supplementary video). VI. C ONCLUSION 
+
+We present VAMP-MR, a CPU-accelerated collision checking framework tightly integrated with multi-robot-arm motion planning algorithms. We deliver 10 to 100x speedup across diverse planning and shortcutting benchmarks without requiring any algorithmic changes, and further accelerate asynchronous planning and execution for long-horizon, dual-arm LEGO assembly tasks. We believe this work lowers the barrier to developing efficient multi-robot-arm planning algorithms; future directions include integrating advanced MAPF techniques into manipulation and exploring real-time, online planning for long-horizon tasks. ACKNOWLEDGMENTS 
+
+This work was partially supported by the National Science Foundation under grant numbers # 2328671 and # 2441629 .We thank Zachary Kingston and Wil Thomason for open-sourcing VAMP and for helpful discussions. REFERENCES [1] W. Thomason, Z. Kingston, and L. E. Kavraki, “Motions in mi-croseconds via vectorized sampling-based planning,” in Proceedings of the IEEE International Conference on Robotics and Automation ,pp. 8749–8756, 2024. [2] J. Pan, S. Chitta, and D. Manocha, “FCL: A general purpose library for collision and proximity queries,” in Proceedings of the IEEE International Conference on Robotics and Automation , pp. 3859–3866, 2012. [3] E. Coumans and Y. Bai, “PyBullet, a python module for physics simulation for games, robotics and machine learning.” http:// pybullet.org , 2021. [4] J. J. Kuffner and S. M. LaValle, “RRT-connect: An efficient approach to single-query path planning,” in Proceedings of the IEEE Interna-tional Conference on Robotics and Automation , pp. 995–1001, 2000. [5] P. Huang, Y. Shaoul, and J. Li, “Benchmarking shortcutting techniques for multi-robot arm motion planning,” in Proceedings of the IEEE In-ternational Conference on Intelligent Robots and Systems , pp. 13258– 13265, 2025. [6] T. Marcucci, M. Petersen, D. von Wrangel, and R. Tedrake, “Mo-tion planning around obstacles with convex optimization,” Science Robotics , vol. 8, no. 84, p. eadf7843, 2023. [7] R. Stern, N. Sturtevant, A. Felner, S. Koenig, H. Ma, T. Walker, J. Li, D. Atzmon, L. Cohen, T. Kumar, et al. , “Multi-agent pathfinding: Defi-nitions, variants, and benchmarks,” in Proceedings of the International Symposium on Combinatorial Search , pp. 151–158, 2019. [8] G. Sharon, R. Stern, A. Felner, and N. R. Sturtevant, “Conflict-based search for optimal multi-agent pathfinding,” Artificial Intelligence ,vol. 219, pp. 40–66, 2015. [9] L. Kavraki, P. Svestka, J.-C. Latombe, and M. Overmars, “Probabilistic roadmaps for path planning in high-dimensional configuration spaces,” 
+
+IEEE Transactions on Robotics and Automation , vol. 12, no. 4, pp. 566–580, 1996. [10] I. Solis, J. Motes, R. Sandstr¨ om, and N. M. Amato, “Representation-optimal multi-robot motion planning using conflict-based search,” 
+
+IEEE Robotics and Automation Letters , pp. 4608–4615, 2021. [11] Y. Shaoul, I. Mishani, M. Likhachev, and J. Li, “Accelerating search-based planning for multi-robot manipulation by leveraging online-generated experiences,” in Proceedings of the International Conference on Automated Planning and Scheduling , pp. 523–531, 2024. [12] Y. Shaoul, R. Veerapaneni, M. Likhachev, and J. Li, “Unconstraining multi-robot manipulation: Enabling arbitrary constraints in ECBS with bounded sub-optimality,” in Proceedings of the International Symposium on Combinatorial Search , pp. 109–117, 2024. [13] V. N. Hartmann, A. Orthey, D. Driess, O. S. Oguz, and M. Toussaint, “Long-horizon multi-robot rearrangement planning for construction assembly,” IEEE Transactions on Robotics , pp. 239–252, 2023. [14] J. Chen, J. Li, Y. Huang, C. Garrett, D. Sun, C. Fan, A. Hof-mann, C. Mueller, S. Koenig, and B. C. Williams, “Cooperative task and motion planning for multi-arm assembly systems,” 2022. arXiv:2203.02475. [15] M. Lai, K. Go, Z. Li, T. Kr¨ oger, S. Schaal, K. Allen, and J. Scholz, “RoboBallet: Planning for multirobot reaching with graph neural networks and reinforcement learning,” Science Robotics , vol. 10, no. 106, p. eads1204, 2025. [16] J. Bialkowski, S. Karaman, and E. Frazzoli, “Massively parallelizing the RRT and the RRT*,” in Proceedings of the IEEE International Conference on Intelligent Robots and Systems , pp. 3513–3518, 2011. [17] H. Choset, K. M. Lynch, S. Hutchinson, G. A. Kantor, and W. Burgard, 
+
+Principles of Robot Motion: Theory, Algorithms, and Implementations .MIT Press, 2005. [18] P. Huang, R. Liu, C. Liu, and J. Li, “APEX-MR: Multi-robot asynchronous planning and execution for cooperative assembly,” in 
+
+Proceedings of Robotics: Science and Systems , 2025. [19] W. Honig, S. Kiesel, A. Tinka, J. W. Durham, and N. Ayanian, “Persistent and robust execution of MAPF schedules in warehouses,” 
+
+IEEE Robotics and Automation Letters , vol. 4, no. 2, pp. 1125–1131, 2019. [20] S. Murray, W. Floyd-Jones, Y. Qi, D. J. Sorin, and G. Konidaris, “Robot motion planning on a chip,” in Proceedings of Robotics: Science and Systems , 2016. [21] R. Bohlin and L. E. Kavraki, “Path planning using lazy PRM,” in 
+
+Proceedings of the IEEE International Conference on Robotics and Automation , pp. 521–528, 2000. [22] N. Das and M. Yip, “Learning-based proxy collision detection for robot motion planning applications,” IEEE Transactions on Robotics ,vol. 36, no. 4, pp. 1096–1114, 2020. [23] M. Koptev, N. Figueroa, and A. Billard, “Neural joint space implicit signed distance functions for reactive robot manipulator control,” IEEE Robotics and Automation Letters , vol. 8, no. 2, pp. 480–487, 2023. [24] A. H. Qureshi, Y. Miao, A. Simeonov, and M. C. Yip, “Motion planning networks: Bridging the gap between learning-based and classical motion planners,” IEEE Transactions on Robotics , vol. 37, no. 1, pp. 48–66, 2021. [25] J. Ichnowski and R. Alterovitz, “Scalable multicore motion planning using lock-free concurrency,” IEEE Transactions on Robotics , vol. 30, no. 5, pp. 1123–1136, 2014. [26] E. G. Gilbert, D. W. Johnson, and S. S. Keerthi, “A fast procedure for computing the distance between complex objects in three-dimensional space,” IEEE Journal on Robotics and Automation , vol. 4, no. 2, pp. 193–203, 1988. [27] S. Coumar, G. Chang, N. Kodkani, and Z. Kingston, “FOAM: A tool for spherical approximation of robot geometry,” 2025. arXiv:2503.13704. [28] D. Coleman, I. Sucan, S. Chitta, and N. Correll, “Reducing the barrier to entry of complex robotic software: a MoveIt! case study,” 2014. [29] J. Li, P. Surynek, A. Felner, H. Ma, T. S. Kumar, and S. Koenig, “Multi-agent path finding for large agents,” in Proceedings of the AAAI Conference on Artificial Intelligence , pp. 7627–7634, 2019. [30] J. Li, D. Harabor, P. J. Stuckey, H. Ma, G. Gange, and S. Koenig, “Pairwise symmetry reasoning for multi-agent path finding search,” 
+
+Artificial Intelligence , vol. 301, p. 103574, 2021. [31] J. Li, W. Ruml, and S. Koenig, “EECBS: A bounded-suboptimal search for multi-agent path finding,” in Proceedings of the AAAI Conference on Artificial Intelligence , pp. 12353–12362, 2021. [32] J. Li, Z. Chen, D. Harabor, P. J. Stuckey, and S. Koenig, “MAPF-LNS2: Fast repairing for multi-agent path finding via large neighbor-hood search,” in Proceedings of the AAAI Conference on Artificial Intelligence , pp. 10256–10265, 2022. [33] H. Pham and Q.-C. Pham, “A new approach to time-optimal path parameterization based on reachability analysis,” IEEE Transactions on Robotics , vol. 34, no. 3, pp. 645–659, 2018.

@@ -1,0 +1,720 @@
+Title: Sparse Inter-Layer Dependencies of Transformer FFN Neurons
+
+URL Source: https://arxiv.org/pdf/2607.11990v1
+
+Published Time: Wed, 15 Jul 2026 11:57:39 GMT
+
+Number of Pages: 14
+
+Markdown Content:
+# Sparse Inter-Layer Dependencies of Transformer FFN Neurons 
+
+Johannes Knittel 1 Hanspeter Pfister 1
+
+Abstract 
+
+Feedforward network (FFN) blocks account for a large fraction of the parameters and computa-tion in Transformer architectures, yet their inter-nal structure remains difficult to interpret due to the additive superposition induced by the resid-ual stream. We examine whether the activation of an FFN neuron can be explained by a sparse set of preceding neuron activations and attention outputs. We introduce a training-free attribution method that estimates the relative influence of up-stream neurons and attention outputs on a target neuron’s activation. Empirically, across models and layers, we find that small subsets of preceding activations and attention outputs suffice to pre-serve neuron activations with high fidelity when all remaining inputs are masked with their aver-age values. Effective sparsity is even greater when accounting for the inherent activation sparsity of upstream layers. Moreover, applying the neuron-specific masks in all layers simultaneously, such that the induced deviations propagate through the network, leaves model perplexity largely un-changed at moderate sparsity levels. These results demonstrate that, despite dense parameterization, FFNs exhibit sparse and structured inter-layer de-pendencies at the neuron level. Our method pro-vides a practical, scalable tool for circuit-level in-terpretability and identifies candidate sparse path-ways with potential implications for efficient in-ference. 
+
+1. Introduction 
+
+Feedforward network (FFN) blocks constitute the dom-inant parametric component of Transformer architec-tures (Vaswani et al., 2017), typically accounting for two-thirds of model parameters, and they drive the majority of inference-time computation except for long sequences, where the quadratic complexity of the attention mecha- 
+
+> 1Harvard University. Correspondence to: Johannes Knittel
+> <jknittel@seas.harvard.edu >.
+
+nism takes over. Beyond their quantitative dominance, FFN blocks have been shown to serve as associative memories that store and retrieve factual knowledge and linguistic pat-terns (Geva et al., 2021; 2022). Yet despite their central role, the internal dynamics governing FFN activations remain poorly understood: given the complex, superposed inputs arriving via the residual stream, what determines whether a particular neuron fires? The residual stream architecture poses a fundamental chal-lenge to answering this question. By design, every attention head and FFN block writes its output to a shared, high-dimensional representation through additive connections. While essential for gradient flow and training stability, this architectural choice induces superposition (Elhage et al., 2022): the input to any FFN neuron is a dense linear combi-nation of all preceding computations. From the perspective of a single neuron, disentangling this mixture to identify the specific upstream components that trigger its activation appears intractable without additional structure. Existing approaches to this challenge fall into two broad categories, each with significant limitations. Mechanistic interpretability methods employ causal interventions such as activation patching (Meng et al., 2022) to trace information flow, but their computational cost scales poorly and typically requires task-specific prompts, making neuron-level analysis across entire models impractical. Alternatively, Sparse Au-toencoders (SAEs) (Bricken et al., 2023) learn disentangled feature bases from residual stream activations, revealing interpretable structure hidden within superposed representa-tions. However, SAEs require substantial training overhead and operate on learned features rather than the model’s na-tive neurons, leaving open the question of whether sparsity exists at the level of direct neuron-to-neuron connectivity. In this paper, we ask whether sparse structure is intrinsic to FFN computation itself. Specifically, we hypothesize that despite dense parameterization, each FFN neuron depends on only a small subset of upstream neurons and attention outputs, and that the seemingly monolithic connectivity of Transformers masks a sparse computation graph operating at the neuron level. If true, this would suggest that the functional pathways of language models are highly selective, even without learned feature-extraction frameworks. To test this hypothesis, we introduce a training-free attribu-1Sparse Inter-Layer Dependencies of Transformer FFN Neurons 
+
+tion method that decomposes the pre-activation of any FFN neuron into contributions from all preceding components: upstream neuron outputs, attention outputs, and embed-dings. By combining weight-based alignment—measuring how strongly each upstream output vector projects onto a neuron’s input weights—with the empirical variance of upstream activations, we derive relevance scores that rank the influence of every potential upstream contributor. This decomposition requires no additional training, operates di-rectly on model weights, and scales to all neurons in a model. Our empirical evaluation across the GPT-2 family (Radford et al., 2019) and Qwen2.5 (Yang et al., 2024) reveals strik-ing sparsity in inter-layer dependencies. We find that small subsets of upstream components suffice to preserve FFN activation patterns with high fidelity under mean-ablation of all remaining components. These sparse dependencies also support the computation of the model as a whole: when the neuron-specific masks are applied in all layers simulta-neously, so that the induced deviations propagate through the entire network, perplexity remains close to that of the unmodified model at moderate sparsity levels. Moreover, effective sparsity compounds when accounting for inherent activation sparsity: since only a fraction of upstream neu-rons are themselves active for any given input, the number of components that actively influence a downstream neuron is smaller still. We also observe structured patterns in de-pendency graphs, including locality (stronger dependence on adjacent layers) and systematic variation in layer-wise importance, with certain layers contributing more strongly than others. These findings have several implications. For mechanistic interpretability, sparse dependency graphs provide a prac-tical starting point for circuit-level analysis, identifying candidate pathways at a complexity amenable to human inspection. For architectural design, the observation that dense FFN layers operate via sparse functional pathways suggests opportunities for sparse-by-construction models that encode this structure directly. Furthermore, the iden-tified dependency patterns could guide the distillation of specialized models: by pruning or freezing components outside the sparse support for a given task or domain, one could derive compact architectures that exploit the under-lying sparsity for faster inference without retraining from scratch. More broadly, our results extend the evidence for linear representations in the residual stream to the compu-tation itself: FFN neurons appear to operate on directions, reading from the superposed stream through the selective alignment of their input weights with the output directions of a few upstream components. This view of Transformers as implementing selective, structured information flow may inform both interpretability research and efficiency-oriented model development. 
+
+2. Related Work 
+
+This work investigates the sparse inter-layer dependencies governing Transformer FFN activations. Our research inter-sects with the functional role of FFNs, the theory of superpo-sition, mechanistic circuit discovery, and attribution-based analysis of information flow. 
+
+Functional Role of FFNs as Memory. A foundational per-spective treats FFN layers as key–value memories (Geva et al., 2021), where input weights act as keys that retrieve and combine output-value vectors. Subsequent work demon-strated that FFNs build predictions by promoting inter-pretable concepts into the residual stream (Geva et al., 2022). At the level of individual neurons, FFN units have further been linked to the expression of specific facts (Dai et al., 2022) and to discrete features such as tokens, n-grams, and positions (Voita et al., 2024). While these studies examine the semantics of neurons, our work focuses on the mechan-ics of triggering : identifying the sparse upstream compo-nents that act as the activation signals for these memories. 
+
+Superposition vs. Native Neuron Sparsity. The residual stream is often characterized as a communication channel under superposition, representing more features than its physical dimensionality (Elhage et al., 2022). To disen-tangle these features, Sparse Autoencoders (SAEs) have become a dominant tool for recovering monosemantic fea-ture bases (Bricken et al., 2023; Huben et al., 2024), and transcoders extend this idea by learning sparsely activating approximations of entire FFN sublayers (Dunefsky et al., 2024). However, these approaches operate in learned latent spaces and require significant computational overhead for training. Our work explores a more fundamental hypothesis: that sparsity is not just a property of hidden features, but a structural reality of the model’s native neuron-to-neuron connectivity. We shift the focus from discovering features to identifying the sparse ”wiring” already present in the dense architecture. 
+
+Mechanistic Circuit Discovery. Mechanistic interpretabil-ity seeks to identify circuits, i.e., subgraphs of neurons and heads that perform specific tasks (Elhage et al., 2021; Cam-marata et al., 2020). Causal methods like activation patching (Meng et al., 2022) and path patching (Wang et al., 2023) provide rigorous evidence for these circuits but are often too computationally intensive for global, model-wide anal-ysis. Gradient-based approximations substantially reduce this cost (Kram ´ar et al., 2024), and automated discovery methods scale circuit identification to entire behaviors, oper-ating on model components (Conmy et al., 2023) or learned SAE features (Marks et al., 2025); nevertheless, these ap-proaches remain tied to task- or behavior-specific prompts. Our training-free attribution method provides a scalable, global characterization of dependencies without requiring specific behavioral probes. 2Sparse Inter-Layer Dependencies of Transformer FFN Neurons 
+
+Linear Representation Hypothesis. Our analysis is in-formed by the Linear Representation Hypothesis (LRH), which posits that many semantic or functional properties of a model correspond to approximately linear directions in activation space (Mikolov et al., 2013; Alain & Bengio, 2017; Park et al., 2024; Knittel et al., 2024). This hypoth-esis underlies linear probing (Alain & Bengio, 2017), acti-vation steering (Subramani et al., 2022), and recent work formalizing concept intervention via causal inner products (Park et al., 2024). Rather than testing whether concepts themselves are linearly encoded, we adopt a structural per-spective: if meaningful information is linearly accessible, then the mechanisms that gate and transmit this informa-tion (such as FFN input weights) should exhibit selective linear alignment with upstream components. By decompos-ing FFN pre-activations into weight-aligned contributions, we study whether FFN keys are sparsely aligned with the values produced by earlier layers, providing a mechanistic extension of the LRH from representational geometry to inter-layer connectivity. 
+
+Attribution and Sparse Computation Graphs. Our ap-proach relates to attribution frameworks such as Integrated Gradients (Sundararajan et al., 2017) and Layer-wise Rele-vance Propagation (LRP) (Shrikumar et al., 2017; Achtibat et al., 2024). Ferrando & Voita (2024) use attribution to view Transformers as sparse information-flow graphs during prediction. Similarly, Geva et al. (2023) trace how informa-tion is refined across layers via ”logic chains.” We extend this line of inquiry by providing a systematic analysis of 
+
+inter-layer dependency sparsity across all neurons. Unlike methods that focus on end-to-end token predictions, we iso-late the internal connectivity of FFN blocks, demonstrating that even ”dense” layers operate via highly selective, sparse pathways. 
+
+Activation and Structural Sparsity. That neural activa-tions are sparse is a well-documented phenomenon, particu-larly in ReLU-based models (Nair & Hinton, 2010; Glorot et al., 2011). In Transformers, sparse activations have been leveraged for inference efficiency (Li et al., 2023; Voita et al., 2019; Mirzadeh et al., 2024), for instance by predicting input-dependent subsets of attention heads and FFN neurons on the fly (Liu et al., 2023) or by regrouping FFN neurons into sparsely activated experts (Zhang et al., 2022). Fur-thermore, the Lottery Ticket Hypothesis (Frankle & Carbin, 2019) and weight pruning studies (Han et al., 2016) sug-gest that dense networks contain highly effective sparse subnetworks. Our work bridges these two concepts, activa-tion sparsity and structural pruning, by showing that FFN neurons are not only sparsely active but are also sparsely 
+
+triggered by their predecessors. 
+
+3. Problem Formulation and Notation 
+
+Transformer architectures interleave multi-head self-attention with position-wise feedforward network (FFN) blocks, both operating on a shared residual stream. Given an input sequence of hidden states X ∈ RT ×dmodel , each Transformer layer applies these blocks independently at each token position, while preserving information through residual connections. In GPT-like pre-normalization Transformers, the feedfor-ward block takes the form 
+
+FFN( X) = X + W2 σ(W1 LN( X)) , (1) where LN( ·) denotes layer normalization, W1 ∈ Rdff ×dmodel 
+
+and W2 ∈ Rdmodel ×dff are learned weight matrices, and σ(·)
+
+is an elementwise nonlinearity such as GELU. The inter-mediate dimensionality dff is typically several times larger than dmodel , causing FFN blocks to dominate the parameter count of the model. LayerNorm plays a central role by cen-tering and normalizing the residual stream prior to the linear transformation. RMSNorm can be seen as a simplification of this step that omits centering. The FFN can be viewed as a collection of dff neurons, each computing an activation 
+
+ai = σ w⊤ 
+
+> i
+
+LN( xt) , (2) where w⊤ 
+
+> i
+
+denotes the i-th row of W1. These activations are linearly combined and added to the residual stream via 
+
+W2. The magnitude of ai determines the contribution of the corresponding column W2i to the residual update. Under the key–value memory interpretation of FFNs (Geva et al., 2021), each row wi of W1 acts as a key that reads from the residual stream, detecting how strongly the current represen-tation matches a learned pattern, and the resulting activation 
+
+ai determines how strongly the associated concept direction, the column W2i, is written back. The FFN block as a whole can thus be seen as retrieving and linearly combining the concept vectors whose keys match the input. Since the terms key and value are already reserved for the projections of the attention mechanism, we refer to W2i as the output vector 
+
+of neuron i. Due to the additive residual connection, FFN outputs are superposed with the incoming representation, complicating direct attribution of downstream behavior to individual FFN neurons. A similar reading–writing interpretation applies to the at-tention block, although it should not be conflated with the Query–Key–Value projections of the attention mechanism itself. For each token, the attention weights average the Value-projected representations of the attended positions, yielding, after concatenation across heads, an aggregated vector v ∈ Rdmodel that is mapped to the residual stream by 3Sparse Inter-Layer Dependencies of Transformer FFN Neurons 
+
+the output projection matrix WO . Analogous to FFN neu-rons, each dimension vi of this aggregated representation acts as a scalar activation that determines how strongly the corresponding column WO i is added to the residual stream. In this view, the attention weights and the Value projection govern which signals are read, while the columns of WO
+
+define the concept directions written back; the key differ-ence from FFNs is that reading spans the representations of multiple token positions rather than the current position alone. We refer to vi as the attention activation of attention dimension i ∈ { 1, . . . , d model }, and call WO i the output vector of attention dimension i. As in the FFN case, the residual addition entangles these contributions with the ex-isting representation, complicating the attribution of model behavior to individual attention components. In this paper, we investigate the connectivity between neural activations within a given layer and both neural and atten-tion activations in preceding layers. More specifically, we examine whether the activation a(l) 
+
+> i
+
+of neuron i in layer l
+
+is determined by a sparse subset of neural activations and attention activations from earlier layers. 
+
+4. Sparse Subset Analysis of FFNs 
+
+To investigate the sparsity of neural dependencies on earlier neurons and attention activations, we decompose FFN pre-activations into additive contributions from embeddings, attention outputs, and neuron outputs, define a relevance score that quantifies the influence of these components, and causally test, via mean-ablation activation patching, whether a small subset of high-relevance components suffices to determine FFN activations. 
+
+4.1. Decomposing Neural Activations 
+
+The input to the FFN block at layer l is given by the residual stream, which aggregates multiple additive contributions. For token position t, we write the residual stream as 
+
+x(l) 
+
+> t
+
+= X
+
+> s∈S (l)
+
+cs us, (3) where S(l) indexes all contributing components up to layer 
+
+l, including the token embedding and positional embedding as well as FFN neuron outputs, attention outputs, and bi-ases from preceding layers. Each us ∈ Rdmodel denotes a centered output vector (i.e., 1⊤us = 0 ), and cs ∈ R is the corresponding scalar activation: the neuron activation ai for FFN outputs, the attention activation vi for attention outputs, and a constant of one for embeddings and bias terms. Since the centering performed by layer normalization is linear, it distributes over the sum, allowing us to work directly with centered output vectors. We absorb the affine transformation induced by layer nor-malization into the parameters of the subsequent layer and treat the normalization step itself as centering and normal-ization only, following Elhage et al. (2021). Under this convention, the pre-activation of neuron i in layer l can be written as 
+
+z(l) 
+
+> i
+
+= ˜w(l)⊤ 
+
+> i
+
+ˆx(l) 
+
+> t
+
++ ˜b(l) 
+
+> i
+
+, (4) where ˆx(l) 
+
+> t
+
+denotes the normalized residual stream, ˜w(l) 
+
+> i
+
+is the effective input weight vector after absorbing the layer normalization parameters, and ˜b(l) 
+
+> i
+
+is the corresponding ef-fective bias. This bias term subsumes both the original FFN bias and the shift introduced by layer normalization. Substituting Eq. (3) into Eq. (4) and using the linearity of the dot product yields 
+
+z(l) 
+
+> i
+
+=
+
+P 
+
+> s∈S (l)
+
+cs ⟨ ˜w(l) 
+
+> i
+
+, u s⟩
+
+Z + ˜b(l) 
+
+> i
+
+, (5) where Z denotes the normalization denominator induced by layer normalization, given by the standard deviation of the pre-normalized residual stream, 
+
+Z =
+
+vuut 1
+
+> dd
+
+X
+
+> j=1
+
+ x(l) 
+
+> t,j
+
+− μ(l)
+
+> t
+
+2 + ϵ, 
+
+with residual stream dimension d and mean μ(l) 
+
+> t
+
+; we sup-press the dependence of Z on the token position and layer for readability. This decomposition formalizes the FFN pre-activation as an aggregate of individual component-to-neuron interactions from all preceding neural and attention activations, along with the initial token embedding, positional embedding, and bias terms. In a geometric view (Park et al., 2024), the FFN neuron acts as a linear probe that selectively filters the su-perposed information within the residual stream. Each con-tribution depends on both the activation magnitude cs and the alignment between the neuron’s input weights and the corresponding centered output vector, as quantified by their dot product. Large pre-activations arise when highly active upstream components are well aligned with the neuron’s input weights, whereas components with negative alignment inhibit activation. 
+
+4.2. Relevance Scoring 
+
+An important empirical observation is that the majority of dot products between neuron input weights and output vec-tors from preceding layers are close to zero. This sparsity can be exploited to identify a small subset of neurons and attention dimensions that are potentially most relevant for a given target neuron. Since these dot products depend solely on the learned weights, they can be pre-computed independently of any specific input and serve as a first, 4Sparse Inter-Layer Dependencies of Transformer FFN Neurons 
+
+architecture-level indicator of potential influence. While the dot product defines the architectural alignment between components, it does not account for the dynamic intensity of these signals during inference. To bridge the gap between static weight geometry and functional importance, we adopt a variance-based relevance score: since the pre-activation in Eq. (5) is a sum of per-component contributions, we quan-tify the influence of a component on the target neuron by the variance of its contribution across inputs. Let ˆcs = cs/Z denote the LayerNorm-normalized activation of component s, so that its contribution to the pre-activation of neuron i in layer l is ˆcs ⟨ ˜w(l) 
+
+> i
+
+, u s⟩, where us is the com-ponent’s centered output vector and ˜w(l) 
+
+> i
+
+the effective input weight vector of the target neuron. Because the dot product is a constant factor for a given component–neuron pair, the variance of this contribution factorizes as 
+
+R(l) 
+
+> s→i
+
+= Var 
+
+
+
+ˆcs ⟨ ˜w(l) 
+
+> i
+
+, u s⟩
+
+
+
+= ⟨ ˜w(l) 
+
+> i
+
+, u s⟩2 Var(ˆ cs). (6) The activation variance Var(ˆ cs) is independent of any partic-ular target neuron and can be estimated once per component from sample activations, so scoring all component–neuron pairs reduces to multiplying the squared dot product by a pre-computed scalar. Unlike threshold-based notions of activity, the variance treats strongly positive and strongly negative deviations symmetrically, which is important for attention dimensions whose contributions may take either sign. The resulting ranking is thus determined by two factors: the magnitude of the dot product, capturing the geomet-ric alignment between the component’s output vector and the neuron’s input weights, and the standard deviation of the normalized activation, capturing jointly how strongly and how often the component activates. Components that are either geometrically orthogonal to the target neuron (⟨ ˜wi, u s⟩ ≈ 0) or whose activations rarely deviate from their mean ( Var(ˆ cs) ≈ 0) are assigned low relevance. For token and positional embeddings, we consider only their alignment with the input weights, as their contributions to the residual stream are either present with unit activation or absent. This score allows us to rank the communication channels within the residual stream, identifying the sparse subset of upstream pathways that effectively dominate the activation of a given FFN neuron. 
+
+4.3. Causal Analysis via Activation Patching 
+
+To assess whether the highest-ranked components indeed determine a neuron’s activation, we perform a causal in-tervention in the style of activation patching with mean ablation. Concretely, for a target neuron i in layer l, we select a subset S(l) 
+
+> K
+
+⊂ S (l) consisting of the top-K neurons and attention dimensions ranked by R(l)
+
+> s→i
+
+, together with  
+
+> Table 1. Model variants and core architectural parameters.
+
+Model Layers dmodel dff Params GPT-2 S 12 768 3072 124M GPT-2 M 24 1024 4096 355M GPT-2 L 36 1280 5120 774M GPT-2 XL 48 1600 6400 1.5B Qwen2.5-0.5B 24 896 4864 490M the token embedding and, where applicable, the positional embedding. We then mask the direct contributions of all re-maining components by replacing their activations with the empirical mean ¯cs = E[cs], while the selected components retain their actual activations. The patched pre-activation is given by 
+
+ˇz(l) 
+
+> i
+
+=
+
+P
+
+> s∈S (l)
+> K
+
+cs ⟨ ˜w(l) 
+
+> i
+
+, u s⟩ + P
+
+> s / ∈S (l)
+> K
+
+¯cs ⟨ ˜w(l) 
+
+> i
+
+, u s⟩
+
+Z + ˜b(l) 
+
+> i
+
+.
+
+(7) The mask is specific to each target neuron and applies only to the direct contributions entering the neuron’s dot product; the intervention is not propagated through the network. The normalization denominator Z is taken from the actual, un-patched forward pass, so the intervention affects only the component activations, and the mean activations ¯cs are pre-computed from sample data. If the patched pre-activations closely track the actual ones, the selected sparse subset suf-fices to determine the neuron’s activation, with all remaining direct inputs reduced to their average effect. 
+
+5. Experiments 
+
+5.1. Setup 
+
+We evaluate our sparse activation-patching analysis across several GPT-2 (Radford et al., 2019) variants, as well as on Qwen2.5-0.5B (Yang et al., 2024), a more recent architec-ture incorporating rotary embeddings, RMSNorm, and the SiLU activation function. Table 1 summarizes the models and their key architectural parameters. For each model, we apply our method to all FFN neurons across all layers and analyze the fidelity of patched pre-activations under varying sparsity levels. To compute relevance scores and the average activation values used for masking, we rely on empirical activation statistics collected from a subset of the MiniPile (Kaddour, 2023) training dataset. These statistics are used exclusively to estimate the activation variances and means of upstream components. To mitigate overfitting to specific activation patterns, all patching experiments and evaluations are per-formed on a disjoint subset of the MiniPile test dataset. The MiniPile dataset is a diverse, deduplicated subset of the Pile (Gao et al., 2020), drawing from a wide range of 5Sparse Inter-Layer Dependencies of Transformer FFN Neurons .5 .25 .15 .1 .05 0
+
+Sparsity Level 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Correlation
+
+GPT-2 S 
+
+.5 .25 .15 .1 .05 0
+
+Sparsity Level 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Correlation
+
+GPT-2 M 
+
+.5 .25 .15 .1 .05 0
+
+Sparsity Level 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Correlation
+
+GPT-2 L 
+
+.5 .25 .15 .1 .05 0
+
+Sparsity Level 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Correlation
+
+GPT-2 XL 
+
+.5 .25 .15 .1 .05 0
+
+Sparsity Level 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Correlation
+
+Qwen2.5 0.5B 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+> Relative layer depth (0 = first, 1 = last)
+
+Figure 1. Layer-wise fidelity of FFN neuron pre-activations when all upstream components (neurons and attention dimensions) outside the selected sparse subset are mean-ablated, as a function of the sparsity level (the fraction of retained upstream components). Values show the average Pearson correlation between actual and patched pre-activations. .5 .25 .15 .1 .05 0
+
+Sparsity Level 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+0.9 
+
+1.0 
+
+> AUROC@0.5
+
+GPT-2 S 
+
+.5 .25 .15 .1 .05 0
+
+Sparsity Level 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+0.9 
+
+1.0 
+
+> AUROC@0.5
+
+GPT-2 M 
+
+.5 .25 .15 .1 .05 0
+
+Sparsity Level 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+0.9 
+
+1.0 
+
+> AUROC@0.5
+
+GPT-2 L 
+
+.5 .25 .15 .1 .05 0
+
+Sparsity Level 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+0.9 
+
+1.0 
+
+> AUROC@0.5
+
+GPT-2 XL 
+
+.5 .25 .15 .1 .05 0
+
+Sparsity Level 
+
+0.5 
+
+0.6 
+
+0.7 
+
+0.8 
+
+0.9 
+
+1.0 
+
+> AUROC@0.5
+
+Qwen2.5 0.5B 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+> Relative layer depth (0 = first, 1 = last)
+
+Figure 2. Layer-wise fidelity of FFN neuron pre-activations under the same intervention as in Figure 1. Values show the AUROC for predicting meaningfully active neurons from patched pre-activations. 
+
+6Sparse Inter-Layer Dependencies of Transformer FFN Neurons 
+
+sources that span multiple domains and language styles. For a given neuron and sparsity level, we compute its patched pre-activation with the neuron-specific mask in place, as described in Section 4.3. We then evaluate the fi-delity of the intervention using two complementary metrics. First, we compute the Pearson correlation between the ac-tual and patched pre-activation values of each neuron across evaluation tokens, and report the average over all neurons of a layer. Second, we report the area under the receiver op-erating characteristic curve (AUROC) for predicting mean-ingfully active neurons, defined by a post-activation value greater than 0.5, from the patched pre-activations. The AU-ROC contextualizes the absolute deviations captured by the correlation, measuring whether the intervention preserves the distinction between active and inactive neurons. 
+
+5.2. Main Results 
+
+Figures 1 and 2 summarize the fidelity of patched pre-activations across layers and model sizes, where the sparsity level denotes the fraction of upstream components retained. Across all evaluated models, we observe consistently strong correlations and high AUROC scores, particularly at spar-sity levels of 10% and above. Even at 5% sparsity, most layers maintain AUROC scores above 0.9, indicating that the selected sparse subsets of upstream components suf-fice to preserve the activation patterns of FFN neurons with high fidelity. Fidelity varies more strongly across layers in Qwen2.5-0.5B than in the GPT-2 family, with early and late layers reaching notably higher fidelity than middle lay-ers. These results suggest that a relatively small fraction of upstream neurons and attention dimensions suffices to deter-mine FFN activations, even when the direct contributions of all remaining components are reduced to their average effect, consistent with substantial functional sparsity in inter-layer dependencies. This degree of sparsity is somewhat unexpected in light of the common characterization of the residual stream as a highly superposed representation, where information from many features is distributed across dimensions. Under such a view, one might anticipate FFN neurons to depend on more broadly distributed upstream signals. The reported sparsity levels should be interpreted as upper bounds on the number of upstream components required to determine a neuron’s activation, rather than as minimal dependency sets. More expressive relevance measures or input-conditional selection strategies may further reduce the number of required components without sacrificing fidelity. The first Transformer layer constitutes a notable exception: fidelity degrades only mildly even when as little as 1% 
+
+of upstream components are retained. In this layer, FFN pre-activations appear to be dominated by contributions from token (and positional) embeddings, with comparatively limited influence from early attention outputs. Importantly, the number of upstream components that ac-tively influence a neuron is even smaller than the nominal sparsity levels suggest. For a given input, only a subset of neurons and attention dimensions in each layer are active. For example, at a sparsity level of 10% , if approximately 
+
+5% of neurons in a layer are active, then only about 0.5% 
+
+of all possible neuron outputs contribute meaningfully to the activation of a given neuron. This compounding effect underscores the highly selective nature of inter-layer com-munication in FFNs and suggests that neural dependencies in Transformers are both sparse and structured. Figure 3 visualizes where the relevant upstream components originate, showing for each target layer the fraction of neu-rons and attention dimensions selected from each preceding layer at a sparsity level of 15%. Several patterns emerge. First, we observe locality: layers immediately preceding the target layer typically contribute a disproportionately large share of the relevant components, suggesting that adjacent computations exert stronger influence on downstream neu-rons. Second, we observe layer-wise variability: certain layers consistently contribute more relevant components than others, with distinct patterns for FFN neurons and at-tention outputs. In the GPT-2 family, layers in the upper half of the model tend to play a broader role, whereas lower layers are more localized. This suggests that some lay-ers serve as broader information hubs, while others play more specialized or localized roles. For Qwen2.5-0.5B, sub-sequent MLP blocks generally place greater emphasis on attention layers, particularly in the early and middle parts of the model. Another noteworthy observation is that in some models, including GPT-2 M, GPT-2 XL, and Qwen2.5-0.5B, the first attention layer does not appear to contribute to the computation of subsequent FFN neurons, as almost none of its components are selected. This complements the earlier finding that the first FFN layer is dominated by token and positional embeddings. 
+
+5.3. Model-Level Intervention 
+
+The preceding analysis evaluates each target neuron in iso-lation. To assess whether the identified sparse dependencies support the computation of the model as a whole, we ap-ply the neuron-specific masks in all FFN blocks across all layers simultaneously and measure the resulting perplexity on the disjoint MiniPile test subset under tightening spar-sity levels. We compare three selection modes. In the first, components are selected per target neuron according to our relevance scores. The second mode ranks components solely by the variance of their activations, Var(ˆ cs), independent of any target neuron; this corresponds to a network pruning baseline (Han et al., 2016) in which only the neurons and 7Sparse Inter-Layer Dependencies of Transformer FFN Neurons 0 1 2 3 4 5 6 7 8 9 10 11 
+
+> Target Layer
+> L11 mlp
+> L11 attn
+> L10 mlp
+> L10 attn
+> L9 mlp
+> L9 attn
+> L8 mlp
+> L8 attn
+> L7 mlp
+> L7 attn
+> L6 mlp
+> L6 attn
+> L5 mlp
+> L5 attn
+> L4 mlp
+> L4 attn
+> L3 mlp
+> L3 attn
+> L2 mlp
+> L2 attn
+> L1 mlp
+> L1 attn
+> L0 mlp
+> L0 attn
+> Source Layer (MLP/Attn)
+> GPT-2 S
+> Target Layer
+> Source Layer (MLP/Attn)
+> GPT-2 M
+> Target Layer
+> Source Layer (MLP/Attn)
+> GPT-2 L
+> Target Layer
+> Source Layer (MLP/Attn)
+> GPT-2 XL
+> Target Layer
+> Source Layer (MLP/Attn)
+> Qwen2.5 0.5B
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> Fraction of connections kept
+
+Figure 3. Layer-wise origin of selected upstream components (neurons and attention dimensions; y-axis) for each target layer (x-axis), computed at a sparsity level of 15% . Values indicate the fraction of each source layer’s components that are retained in the selected subsets, averaged over the target layer’s neurons. 
+
+attention dimensions with the highest activation variance are retained and the rest are pruned, i.e., mean-ablated. We also evaluate this target-independent ranking at the neuron level in our ablation studies (Figure 5). The third mode selects components uniformly at random. This is a challenging setup: mean-ablation inevitably in-troduces small deviations in every patched pre-activation, and with the intervention active in every layer, these errors multiply across depth. The perplexity gap to the unmodified model is therefore expected to widen as sparsity tightens. The more informative signal is where this degradation ac-celerates and the distance to the activation-variance-only curve narrows, marking the sparsity regime in which tar-geted, neuron-specific selection loses its advantage over target-independent pruning. As shown in Figure 4, this tran-sition occurs between 10% and 5% sparsity for GPT-2 S and GPT-2 M, around 15% for GPT-2 L and GPT-2 XL, and between 25% and 15% for Qwen2.5-0.5B. For Qwen2.5-0.5B, the intervention is particularly demanding: owing to the gated FFN design, each logical neuron combines the nonlinear gating activation with the output of a parallel lin-ear transformation of the residual stream (cf. Appendix A), and we ablate the upstream contributions of both pathways. Also of note is the contrast at moderate sparsity: with ran-dom selection, masking only 25% of the incoming con-nections on average already leads to a notable degradation, whereas relevance-based selection leaves perplexity barely changed, despite the numerical deviations that the interven-tion necessarily introduces in every layer. 
+
+5.4. Ablation Studies 
+
+We conduct ablation studies to disentangle the contributions of the two factors of our relevance score, weight alignment and activation variance, and to quantify the compound spar-sity effect described in Section 5.2. Figure 5 reports AUROC scores for the middle layer of each model. 
+
+Contribution of the scoring components. To isolate the two factors of the relevance score, we compare the full method against baselines that rank upstream components by weight alignment alone, i.e., the magnitude of the dot product between neuron input weights and upstream out-put vectors, by activation variance alone, i.e., the target-independent, pruning-style ranking of Section 5.3, and by uniform random selection. Weight alignment alone already yields strong selections for several models, with AUROC scores close to the full relevance score for GPT-2 S, GPT-2 L, and GPT-2 XL. In contrast, GPT-2 M and Qwen2.5-0.5B benefit visibly from incorporating activation statistics, par-ticularly at lower sparsity levels. This suggests that the empirical variances of upstream activations are spread less uniformly in these models: where components differ little in how strongly their normalized activations fluctuate, geo-metric alignment alone determines the ranking, whereas a broader spread of activation variances makes the activation statistics informative. The variance-only ranking achieves markedly lower fidelity than the full relevance score through-out, confirming that geometric alignment carries the bulk of the target-specific signal. Random selection, finally, de-grades quickly even at modest sparsity levels, with AUROC scores dropping to roughly 0.7–0.86 across models when only 25% of upstream components are retained, underscor-ing that the fidelity achieved by relevance-based selection reflects genuinely selective dependencies rather than mere redundancy. 
+
+Compound sparsity under upstream activation mask-ing. To quantify the compound sparsity effect, we evaluate the full relevance score under constrained upstream activa-tion. Specifically, activations from all preceding layers are masked to their average non-firing value whenever they fall below the 85th or 95th percentile of the layer-wise activa-tion distribution, retaining contributions only from the top 15% or top 5% of neurons, respectively. Ground-truth target activations are computed from the unmodified inputs. Despite these severe constraints, the resulting curves nearly 8Sparse Inter-Layer Dependencies of Transformer FFN Neurons .75 .5 .25 .15 .1 .05 0                             
+
+> Sparsity Level
+> 0
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> 10 6
+> Perplexity
+> GPT-2 S (orig PPL = 23.69)
+> .75 .5 .25 .15 .1 .05 0
+> Sparsity Level
+> 0
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> 10 6
+> 10 7
+> 10 8
+> Perplexity
+> GPT-2 M (orig PPL = 16.56)
+> .75 .5 .25 .15 .1 .05 0
+> Sparsity Level
+> 0
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> 10 6
+> Perplexity
+> GPT-2 L (orig PPL = 15.89)
+> .75 .5 .25 .15 .1 .05 0
+> Sparsity Level
+> 0
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> 10 6
+> 10 7
+> 10 8
+> 10 9
+> 10 10
+> 10 11
+> 10 12
+> 10 13
+> 10 14
+> 10 15
+> Perplexity
+> GPT-2 XL (orig PPL = 14.51)
+> .75 .5 .25 .15 .1 .05 0
+> Sparsity Level
+> 0
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> Perplexity
+> Qwen2.5 0.5B (orig PPL = 11.30)
+> Relevance Score (Variance)
+> Activation Variance (no DPs)
+> Random Baseline
+
+Figure 4. Perplexity delta on the MiniPile test subset when the neuron-specific masks are applied simultaneously in all layers, plotted against the sparsity level. Each panel corresponds to one model; curves compare our relevance scoring, an activation-variance-only ranking corresponding to a network pruning approach, and a random selection baseline. 
+
+coincide with the unconstrained relevance score. This con-firms that of the meaningfully active upstream neurons, only a fraction is relevant for a particular target neuron: the ef-fective fan-in (the number of upstream components that are both active and influential) is substantially smaller than the nominal subset size K selected by our relevance scoring. Hence, activation sparsity in upstream layers compounds with dependency sparsity, yielding highly selective inter-layer communication in practice. 
+
+5.5. Limitations 
+
+Our study provides an empirical, descriptive analysis of sparse inter-layer dependencies in FFN neurons. The fol-lowing limitations clarify the scope and interpretation of our results. First, our relevance scores identify subsets of upstream com-ponents that are sufficient to preserve FFN neuron activa-tions under mean-ablation of the remaining components, but they do not guarantee minimal or optimal dependency sets. Reported sparsity levels should therefore be interpreted as upper bounds on functional dependency size. More com-pact supports may be recoverable using alternative or input-conditional relevance criteria. Second, the mean-ablation intervention in our neuron-level analysis applies only to the direct contributions entering the target neuron; the induced deviations are not propagated through intermediate layers. The model-level intervention of Section 5.3 complements this local analysis by activating the neuron-specific masks in all layers simultaneously, so that deviations carry through the entire network and com-pound across depth, and the modest perplexity degradation at moderate sparsity provides propagated, model-wide evi-dence for the identified dependencies. However, perplexity is an aggregate measure and may mask behavioral changes on specific tasks or inputs. Moreover, both analyses es-tablish the sufficiency of sparse pathways rather than their causal necessity. Third, our evaluation covers models of up to 1.5B param-eters and relies on a single, albeit diverse, corpus for esti-mating activation statistics and evaluating fidelity. Whether the observed degree of dependency sparsity persists in sub-stantially larger or instruction-tuned models remains to be verified. Finally, although our findings suggest opportunities for in-ference optimizations that exploit sparse neuron-to-neuron interactions, realizing such improvements would require additional systems-level and hardware-aware development. 
+
+6. Conclusion 
+
+We investigated whether the dense parameterization of Transformer FFN blocks conceals sparse functional depen-dencies at the neuron level. To this end, we developed a 9Sparse Inter-Layer Dependencies of Transformer FFN Neurons .5 .25 .15 .1 .05 0                         
+
+> Sparsity Level
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> AUROC@0.5
+> GPT-2 S (layer 6)
+> .5 .25 .15 .1 .05 0
+> Sparsity Level
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> AUROC@0.5
+> GPT-2 M (layer 12)
+> .5 .25 .15 .1 .05 0
+> Sparsity Level
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> AUROC@0.5
+> GPT-2 L (layer 18)
+> .5 .25 .15 .1 .05 0
+> Sparsity Level
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> AUROC@0.5
+> GPT-2 XL (layer 24)
+> .5 .25 .15 .1 .05 0
+> Sparsity Level
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> AUROC@0.5
+> Qwen2.5 0.5B (layer 12)
+> Relevance Score (Variance)
+> Relevance Score (85% ablated)
+> Relevance Score (95% ablated)
+> Activation Variance (no DPs)
+> Alignment (DPs only)
+> Random Baseline
+
+Figure 5. Ablation results for the middle layer of each model, showing the AUROC for predicting meaningfully active FFN neurons from patched pre-activations. We compare the full relevance score against rankings based on weight alignment only (dot products), activation variance only, and random selection, as well as two runs of the full score in which upstream activations below the 85th and 95th percentile of each layer’s activation distribution are ablated. 
+
+training-free attribution method that decomposes neuron pre-activations into contributions from upstream neurons and attention outputs, combining weight-based alignment with empirical activation statistics. A deliberate design choice was to rely as directly as possible on the model’s native weights, avoiding learned feature extractors and requiring only efficiently computable activation statistics. Our exper-iments across GPT-2 and Qwen2.5 demonstrate that FFN neuron activations are faithfully preserved when all but a small subset of upstream contributions are replaced by their average values, with effective sparsity compounding when accounting for the inherent activation sparsity of preceding layers. These findings carry several implications. First, the obser-vation that neurons depend on sparse, structured subsets of earlier computations suggests that information flow in Transformers is more selective than dense weight matrices would imply, potentially informing the design of sparse-by-construction architectures. Second, by identifying candidate sparse pathways, our method provides a practical tool for circuit-level interpretability, complementing fine-grained causal tracing and feature-based decomposition. Third, the identified dependency structure could guide model distilla-tion: pruning components outside the sparse support for spe-cific tasks may yield compact, efficient architectures without full retraining. Finally, the success of our decomposition, which treats neuron output vectors as directional units of contribution to the residual stream, provides empirical sup-port for the linear representation hypothesis, corroborating the view that Transformers operate via linear superposition of directional features. Several directions remain for future work: extending the analysis to attention heads, disentangling how attention ag-gregates information across positions before writing to the residual stream, and leveraging sparse dependency structure for practical efficiency gains through specialized computa-tion kernels or conditional execution. 
+
+References 
+
+Achtibat, R., Hatefi, S. M. V., Dreyer, M., Jain, A., Wiegand, T., Lapuschkin, S., and Samek, W. AttnLRP: attention-aware layer-wise relevance propagation for transformers. In Proceedings of the 41st International Conference on Machine Learning , volume 235 of ICML’24 , pp. 135–168, Vienna, Austria, July 2024. JMLR.org. Alain, G. and Bengio, Y. Understanding intermediate layers using linear classifier probes, 2017. Bricken, T., Templeton, A., Batson, J., Chen, B., Jermyn, A., Conerly, T., Turner, N., Anil, C., Denison, C., Askell, A., Lasenby, R., Wu, Y., Kravec, S., Schiefer, N., Maxwell, 10 Sparse Inter-Layer Dependencies of Transformer FFN Neurons 
+
+T., Joseph, N., Hatfield-Dodds, Z., Tamkin, A., Nguyen, K., McLean, B., Burke, J. E., Hume, T., Carter, S., Henighan, T., and Olah, C. Towards monosemanticity: Decomposing language models with dictionary learning. 
+
+Transformer Circuits Thread , 2023. Cammarata, N., Carter, S., Goh, G., Olah, C., Petrov, M., Schubert, L., Voss, C., Egan, B., and Lim, S. K. Thread: Circuits. Distill , 2020. doi: 10.23915/distill.00024. Conmy, A., Mavor-Parker, A. N., Lynch, A., Heimersheim, S., and Garriga-Alonso, A. Towards automated circuit discovery for mechanistic interpretability. In Proceedings of the 37th International Conference on Neural Informa-tion Processing Systems , NIPS ’23, pp. 16318–16352, Red Hook, NY, USA, December 2023. Curran Associates Inc. Dai, D., Dong, L., Hao, Y., Sui, Z., Chang, B., and Wei, F. Knowledge neurons in pretrained transformers. In Mure-san, S., Nakov, P., and Villavicencio, A. (eds.), Proceed-ings of the 60th annual meeting of the association for com-putational linguistics (volume 1: Long papers) , pp. 8493– 8502, Dublin, Ireland, May 2022. Association for Compu-tational Linguistics. doi: 10.18653/v1/2022.acl-long.581. Dunefsky, J., Chlenski, P., and Nanda, N. Transcoders find interpretable LLM feature circuits. In Globerson, A., Mackey, L., Belgrave, D., Fan, A., Paquet, U., Tomczak, J., and Zhang, C. (eds.), Advances in neural information processing systems , volume 37, pp. 24375–24410. Curran Associates, Inc., 2024. doi: 10.52202/079017-0768. Elhage, N., Nanda, N., Olsson, C., Henighan, T., Joseph, N., Mann, B., Askell, A., Bai, Y., Chen, A., Conerly, T., DasSarma, N., Drain, D., Ganguli, D., Hatfield-Dodds, Z., Hernandez, D., Jones, A., Kernion, J., Lovitt, L., Ndousse, K., Amodei, D., Brown, T., Clark, J., Kaplan, J., McCandlish, S., and Olah, C. A mathematical framework for transformer circuits. Transformer Circuits Thread ,2021. Elhage, N., Hume, T., Olsson, C., Schiefer, N., Henighan, T., Kravec, S., Hatfield-Dodds, Z., Lasenby, R., Drain, D., Chen, C., Grosse, R., McCandlish, S., Kaplan, J., Amodei, D., Wattenberg, M., and Olah, C. Toy models of superposition. Transformer Circuits Thread , 2022. Ferrando, J. and Voita, E. Information flow routes: Au-tomatically interpreting language models at scale. In Al-Onaizan, Y., Bansal, M., and Chen, Y.-N. (eds.), Pro-ceedings of the 2024 conference on empirical methods in natural language processing , pp. 17432–17445, Miami, Florida, USA, November 2024. Association for Compu-tational Linguistics. doi: 10.18653/v1/2024.emnlp-main. 965. Frankle, J. and Carbin, M. The lottery ticket hypothesis: Finding sparse, trainable neural networks. In Interna-tional conference on learning representations , 2019. Gao, L., Biderman, S., Black, S., Golding, L., Hoppe, T., Foster, C., Phang, J., He, H., Thite, A., Nabeshima, N., Presser, S., and Leahy, C. The Pile: An 800GB Dataset of Diverse Text for Language Modeling, December 2020. arXiv:2101.00027 [cs]. Geva, M., Schuster, R., Berant, J., and Levy, O. Transformer feed-forward layers are key-value memories. In Empirical methods in natural language processing (EMNLP) , 2021. Geva, M., Caciularu, A., Wang, K., and Goldberg, Y. Trans-former feed-forward layers build predictions by promot-ing concepts in the vocabulary space. In Goldberg, Y., Kozareva, Z., and Zhang, Y. (eds.), Proceedings of the 2022 conference on empirical methods in natural lan-guage processing , pp. 30–45, Abu Dhabi, United Arab Emirates, December 2022. Association for Computa-tional Linguistics. doi: 10.18653/v1/2022.emnlp-main.3. Geva, M., Bastings, J., Filippova, K., and Globerson, A. Dis-secting recall of factual associations in auto-regressive language models. In Bouamor, H., Pino, J., and Bali, K. (eds.), Proceedings of the 2023 conference on em-pirical methods in natural language processing , pp. 12216–12235, Singapore, December 2023. Association for Computational Linguistics. doi: 10.18653/v1/2023. emnlp-main.751. Glorot, X., Bordes, A., and Bengio, Y. Deep sparse rectifier neural networks. In Gordon, G., Dunson, D., and Dud ´ık, M. (eds.), Proceedings of the fourteenth international conference on artificial intelligence and statistics , vol-ume 15 of Proceedings of machine learning research , pp. 315–323, Fort Lauderdale, FL, USA, April 2011. PMLR. Han, S., Mao, H., and Dally, W. J. Deep compression: Com-pressing deep neural network with pruning, trained quan-tization and huffman coding. In ICLR , 2016. tex.cdate: 1451606400000. Huben, R., Cunningham, H., Smith, L. R., Ewart, A., and Sharkey, L. Sparse autoencoders find highly interpretable features in language models. In The twelfth international conference on learning representations , 2024. Kaddour, J. The MiniPile Challenge for Data-Efficient Language Models, April 2023. arXiv:2304.08442 [cs]. Knittel, J., Gangavarapu, T., Strobelt, H., and Pfister, H. GPT-2 through the lens of vector symbolic architectures. 
+
+arXiv preprint arXiv:2412.07947 , 2024. 11 Sparse Inter-Layer Dependencies of Transformer FFN Neurons 
+
+Kram ´ar, J., Lieberum, T., Shah, R., and Nanda, N. AtP*: An efficient and scalable method for localizing LLM be-haviour to components, March 2024. arXiv:2403.00745 [cs.LG]. Li, Z., You, C., Bhojanapalli, S., Li, D., Rawat, A. S., Reddi, S. J., Ye, K., Chern, F., Yu, F., Guo, R., and Kumar, S. The lazy neuron phenomenon: On emergence of activation sparsity in transformers. In The eleventh international conference on learning representations , 2023. Liu, Z., Wang, J., Dao, T., Zhou, T., Yuan, B., Song, Z., Shri-vastava, A., Zhang, C., Tian, Y., Re, C., and Chen, B. Deja Vu: Contextual Sparsity for Efficient LLMs at Inference Time. In Proceedings of the 40th International Confer-ence on Machine Learning , pp. 22137–22176. PMLR, July 2023. Marks, S., Rager, C., Michaud, E. J., Belinkov, Y., Bau, D., and Mueller, A. Sparse Feature Circuits: Discovering and Editing Interpretable Causal Graphs in Language Models. In The Thirteenth International Conference on Learning Representations , 2025. Meng, K., Bau, D., Andonian, A., and Belinkov, Y. Locating and editing factual associations in GPT. In Proceedings of the 36th International Conference on Neural Information Processing Systems , NIPS ’22, pp. 17359–17372, Red Hook, NY, USA, November 2022. Curran Associates Inc. ISBN 978-1-7138-7108-8. Mikolov, T., Chen, K., Corrado, G., and Dean, J. Efficient estimation of word representations in vector space. arXiv preprint arXiv:1301.3781 , 2013. Mirzadeh, S. I., Alizadeh-Vahid, K., Mehta, S., Mundo, C. C. d., Tuzel, O., Samei, G., Rastegari, M., and Farajtabar, M. ReLU Strikes Back: Exploiting Activation Sparsity in Large Language Models. In The Twelfth International Conference on Learning Representations (ICLR) , 2024. Nair, V. and Hinton, G. E. Rectified linear units improve restricted boltzmann machines. In Proceedings of the 27th International Conference on International Conference on Machine Learning , ICML’10, pp. 807–814, Madison, WI, USA, June 2010. Omnipress. ISBN 978-1-60558-907-7. Park, K., Choe, Y. J., and Veitch, V. The linear represen-tation hypothesis and the geometry of large language models. In Proceedings of the 41st International Confer-ence on Machine Learning , volume 235 of ICML’24 , pp. 39643–39666, Vienna, Austria, July 2024. JMLR.org. Radford, A., Wu, J., Child, R., Luan, D., Amodei, D., and Sutskever, I. Language models are unsupervised multitask learners. OpenAI blog , 1(8), 2019. Shrikumar, A., Greenside, P., and Kundaje, A. Learning important features through propagating activation differ-ences. In Proceedings of the 34th International Con-ference on Machine Learning - Volume 70 , ICML’17, pp. 3145–3153, Sydney, NSW, Australia, August 2017. JMLR.org. Subramani, N., Suresh, N., and Peters, M. Extracting La-tent Steering Vectors from Pretrained Language Mod-els. In Muresan, S., Nakov, P., and Villavicencio, A. (eds.), Findings of the Association for Computational Lin-guistics: ACL 2022 , pp. 566–581, Dublin, Ireland, May 2022. Association for Computational Linguistics. doi: 10.18653/v1/2022.findings-acl.48. Sundararajan, M., Taly, A., and Yan, Q. Axiomatic attri-bution for deep networks. In Proceedings of the 34th International Conference on Machine Learning - Volume 70 , ICML’17, pp. 3319–3328, Sydney, NSW, Australia, August 2017. JMLR.org. Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, L., and Polosukhin, I. Attention is all you need. In Proceedings of the 31st International Conference on Neural Information Processing Systems ,NIPS’17, pp. 6000–6010, Red Hook, NY, USA, Decem-ber 2017. Curran Associates Inc. ISBN 978-1-5108-6096-4. Voita, E., Talbot, D., Moiseev, F., Sennrich, R., and Titov, I. Analyzing multi-head self-attention: Specialized heads do the heavy lifting, the rest can be pruned. In Korhonen, A., Traum, D., and M `arquez, L. (eds.), Proceedings of the 57th annual meeting of the association for computa-tional linguistics , pp. 5797–5808, Florence, Italy, July 2019. Association for Computational Linguistics. doi: 10.18653/v1/P19-1580. Voita, E., Ferrando, J., and Nalmpantis, C. Neurons in Large Language Models: Dead, N-gram, Positional. In Ku, L.-W., Martins, A., and Srikumar, V. (eds.), Find-ings of the Association for Computational Linguistics: ACL 2024 , pp. 1288–1301, Bangkok, Thailand, August 2024. Association for Computational Linguistics. doi: 10.18653/v1/2024.findings-acl.75. Wang, K. R., Variengien, A., Conmy, A., Shlegeris, B., and Steinhardt, J. Interpretability in the wild: a circuit for indirect object identification in GPT-2 small. In The eleventh international conference on learning representa-tions , 2023. Yang, A., Yang, B., Zhang, B., Hui, B., Zheng, B., Yu, B., Li, C., Liu, D., Huang, F., Wei, H., Lin, H., Yang, J., Tu, J., Zhang, J., Yang, J., Yang, J., Zhou, J., Lin, J., Dang, K., Lu, K., Bao, K., Yang, K., Yu, L., Li, M., Xue, M., Zhang, P., Zhu, Q., Men, R., Lin, R., Li, T., Tang, T., Xia, T., 12 Sparse Inter-Layer Dependencies of Transformer FFN Neurons 
+
+Ren, X., Ren, X., Fan, Y., Su, Y., Zhang, Y., Wan, Y., Liu, Y., Cui, Z., Zhang, Z., and Qiu, Z. Qwen2.5 Technical Report, December 2024. arXiv:2412.15115 [cs]. Zhang, Z., Lin, Y., Liu, Z., Li, P., Sun, M., and Zhou, J. MoEfication: Transformer Feed-forward Layers are Mix-tures of Experts. In Muresan, S., Nakov, P., and Villav-icencio, A. (eds.), Findings of the Association for Com-putational Linguistics: ACL 2022 , pp. 877–890, Dublin, Ireland, May 2022. Association for Computational Lin-guistics. doi: 10.18653/v1/2022.findings-acl.71. 13 Sparse Inter-Layer Dependencies of Transformer FFN Neurons 
+
+A. Adaptations for Recent Architectures 
+
+For clarity and conciseness, the main text focuses on a standard GPT-style Transformer architecture. However, many recent models such as Llama and Qwen introduce several architectural modifications that require minor adaptations of our analysis. First, these models commonly employ rotary positional embeddings applied within each attention block, rather than adding absolute positional embeddings to the residual stream. This change does not affect our method, as positional information is already incorporated into the attention outputs that enter the residual stream. Second, LayerNorm is often replaced with RMSNorm, which omits centering and normalizes activations using only the root-mean-square statistic. Our decomposition readily extends to RMSNorm by adjusting the normalization term accordingly. The most significant difference concerns the FFN activation function. Modern architectures frequently replace standard elementwise nonlinearities with gated mechanisms, in which a nonlinear gating function is multiplied by a second term obtained via a linear projection of the residual stream. For the layer-wise analysis in Section 5.2, we focus on the activation of the gating component itself, treating it as the effective nonlinear neuron. This enables direct comparison with standard ReLU/GELU neurons across architectures and reflects the role of the gating activation as the primary source of nonlinearity. For determining the relevance of upstream components, we use the combined output of the neuron (the gating activation multiplied by the corresponding linear projection) as the effective scalar activation, since it is this product that scales the associated output vector added to the residual stream. For the model-level intervention of Section 5.3, however, we additionally apply the same relevance-based sparsity intervention to the linear branch of the gated FFN. Specifically, for each neuron we also mask the upstream contributions to the parallel linear projection, retaining only the top-K components by relevance score. This ensures that both multiplicative factors of the gated output are subject to the sparsity constraint, reflecting the full impact of the intervention. 14

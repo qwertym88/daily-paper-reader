@@ -6,77 +6,65 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-18
-- 运行时间：2026-07-18 21:09:23 UTC
+- 最新运行日期：2026-07-19
+- 运行时间：2026-07-19 21:28:48 UTC
 - 运行状态：成功
-- 本次总论文数：19
-- 精读区：7
+- 本次总论文数：15
+- 精读区：3
 - 速读区：12
 
 ### 今日简报（AI）
-今日聚焦人形机器人基础模型与自我进化机制。最值得看满分人形机器人行为基础模型及9分四项人体地形穿越演示。建议关注自改进与无反向传播的时序模型前沿进展。
-- 详情：[/202607/18/README](/202607/18/README)
+今日推荐15篇论文，精读3篇聚焦非线性动力学逆控制与人群感知导航。最值得关注《Robustly Invertible Nonlinear Dynamics and the BiLipREN》的生成轨迹建模，以及《Navigating the Crowd》的社交力MPC方法。建议优先精读这两篇，学习如何将逆控制与社交力模型用于机器人导航。
+- 详情：[/202607/19/README](/202607/19/README)
 
 ### 精读区论文标签
-1. [Scaling Behavior Foundation Model for Humanoid Robots](/202607/18/2607.15163v1-scaling-behavior-foundation-model-for-humanoid-robots)  
-   标签：评分：10.0/10、query:hum-ctrl
-   evidence：面向人形机器人的行为基础模型，属于大运动模型
-2. [EgoHTR: Egocentric 4D Demonstrations of Human Terrain Traversal](/202607/18/2607.13472v1-egohtr-egocentric-4d-demonstrations-of-human-terrain-traversal)  
-   标签：评分：9.0/10、query:hum-ctrl
-   evidence：人形机器人非结构化地形运动利用人类先验
-3. [GNet: A scalable and flexible Gaussian process network with nonparametric neurons](/202607/18/2607.10735v1-gnet-a-scalable-and-flexible-gaussian-process-network-with-nonparametric-neurons)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：提出GNet，一种带非参数神经元的高斯过程网络新颖架构
-4. [PAKE: Learning Whole-Body Loco-Manipulation with Partial Kinematic Embeddings](/202607/18/2607.11041v1-pake-learning-whole-body-loco-manipulation-with-partial-kinematic-embeddings)  
+1. [Robustly Invertible Nonlinear Dynamics and the BiLipREN: From Inversion-Based Control to Generative Trajectory Modelling](/202607/19/2607.10026v1-robustly-invertible-nonlinear-dynamics-and-the-bilipren-from-inversion-based-control-to-generative-trajectory-modelling)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：全身控制框架用于运动-操作
-5. [Towards Predictive, Aligned, and Scalable Robot Learning](/202607/18/2607.11270v1-towards-predictive-aligned-and-scalable-robot-learning)  
+   evidence：用于控制的鲁棒可逆动力学
+2. [Navigating the Crowd: Non-linear MPC with Social Forces Dynamics for Human-Aware Robot Navigation](/202607/19/2607.10374v1-navigating-the-crowd-non-linear-mpc-with-social-forces-dynamics-for-human-aware-robot-navigation)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：潜在世界-动作模型用于机器人学习
-6. [AVQ-Attention: Adaptive Vector-Quantized Attention](/202607/18/2607.12789v1-avq-attention-adaptive-vector-quantized-attention)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：自适应向量量化注意力，动态分配码本容量
-7. [Safe Execution of RL Policies Via Acceleration-Based CBF-QP Constraint Enforcement for Real-World Robotic Deployments](/202607/18/2607.14488v1-safe-execution-of-rl-policies-via-acceleration-based-cbf-qp-constraint-enforcement-for-real-world-robotic-deployments)  
+   evidence：基于社会力模型的非线性模型预测控制，属于传统控制理论
+3. [GigaWorld-Policy-0.5: A Faster and Stronger WAM Empowered by AutoResearch](/202607/19/2607.13960v2-gigaworld-policy-05-a-faster-and-stronger-wam-empowered-by-autoresearch)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：基于加速度的控制障碍函数QP安全滤波器应用于腿式机器人RL策略
+   evidence：世界动作模型用于机器人策略学习
 
 ### 速读区论文标签
-1. [Self-Improving is Often Sudden: Enlightenment-style Finetuning for Large-Scale Models](/202607/18/2607.13395v1-self-improving-is-often-sudden-enlightenment-style-finetuning-for-large-scale-models)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：无训练的后调优范式，修改层捷径
-2. [NeuronSoup: Evolving Asynchronous, Shared-Neuron Temporal Graphs without Backpropagation](/202607/18/2607.15217v1-neuronsoup-evolving-asynchronous-shared-neuron-temporal-graphs-without-backpropagation)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：无需反向传播的新型神经网络架构
-3. [Energy-guided Recursive Model](/202607/18/2607.10128v1-energy-guided-recursive-model)  
+1. [Mixture of Frames Policy: Multi-Frame Action Denoising for Bimanual Mobile Manipulation](/202607/19/2607.11884v1-mixture-of-frames-policy-multi-frame-action-denoising-for-bimanual-mobile-manipulation)  
+   标签：评分：7.0/10、query:hum-ctrl
+   evidence：多帧动作去噪扩散策略，用于双臂移动操作的运动控制
+2. [Directional Constraints for Efficient Exploration in Safe Reinforcement Learning](/202607/19/2607.12784v1-directional-constraints-for-efficient-exploration-in-safe-reinforcement-learning)  
+   标签：评分：7.0/10、query:hum-ctrl
+   evidence：采用方向约束的安全强化学习，用于机器人技能的高效探索
+3. [Self-Improving is Often Sudden: Enlightenment-style Finetuning for Large-Scale Models](/202607/19/2607.13395v1-self-improving-is-often-sudden-enlightenment-style-finetuning-for-large-scale-models)  
    标签：评分：7.0/10、query:neural-arch
-   evidence：提出能量引导的递归神经网络模型，利用Hopfield记忆进行选择
-4. [VINE: Taming Generative Control Policies for Reinforcement Learning](/202607/18/2607.10369v1-vine-taming-generative-control-policies-for-reinforcement-learning)  
+   evidence：新颖的训练后微调范式，修改大规模模型中的捷径连接
+4. [Lyapunov Guidance: A Unified Framework for Stabilizing Generative Flows](/202607/19/2607.14272v1-lyapunov-guidance-a-unified-framework-for-stabilizing-generative-flows)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：流匹配策略用于强化学习，解决训练不稳定
-5. [A Single Diffusion-Policy Controller for Multi-Task Block Pushing with Zero-Shot Sim-to-Real Transfer](/202607/18/2607.10892v1-a-single-diffusion-policy-controller-for-multi-task-block-pushing-with-zero-shot-sim-to-real-transfer)  
+   evidence：Lyapunov控制理论用于稳定生成流
+5. [ConFlow: Constraints-Guided Learning with Flow Matching for Motion Generation](/202607/19/2607.14424v1-conflow-constraints-guided-learning-with-flow-matching-for-motion-generation)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：使用强化学习训练扩散策略，实现多任务操作和零样本仿真到真实迁移
-6. [Model-Based Diffusion Optimal Control for Multi-Robot Motion Planning](/202607/18/2607.12423v1-model-based-diffusion-optimal-control-for-multi-robot-motion-planning)  
+   evidence：约束引导流匹配用于机器人运动生成
+6. [Reflex: Real-Time VLA Control through Streaming Inference](/202607/19/2607.14695v1-reflex-real-time-vla-control-through-streaming-inference)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：基于模型的扩散最优控制用于多机器人运动规划
-7. [U-shaped Multi-granularity Learning for Vision-Language Models](/202607/18/2607.14966v1-u-shaped-multi-granularity-learning-for-vision-language-models)  
-   标签：评分：7.0/10、query:neural-arch
-   evidence：受U-Net启发的U形多粒度提示学习框架
-8. [Robot Trajectron V3: A Probabilistic Shared Control Framework for SE(3) Manipulation](/202607/18/2607.09315v1-robot-trajectron-v3-a-probabilistic-shared-control-framework-for-se3-manipulation)  
+   evidence：机器人中流匹配VLA策略的实时流式推理
+7. [BridgeFlow: Fast and Robust SE(2)-Equivariant Motion Planning with Flow Matching](/202607/19/2607.14725v1-bridgeflow-fast-and-robust-se2-equivariant-motion-planning-with-flow-matching)  
+   标签：评分：7.0/10、query:hum-ctrl
+   evidence：机器人运动规划方法，适用于人形机器人运动控制
+8. [SUREFlow: State-space Uncertainty-aware REsidual Flow Matching for Robust Robot Manipulation](/202607/19/2607.10504v1-sureflow-state-space-uncertainty-aware-residual-flow-matching-for-robust-robot-manipulation)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：面向SE(3)操作的概率共享控制
-9. [Dual-Process Atomic Skill Learning: Decoupling Semantic Reasoning and Real-Time Control](/202607/18/2607.10625v1-dual-process-atomic-skill-learning-decoupling-semantic-reasoning-and-real-time-control)  
-   标签：评分：6.0/10、query:hum-ctrl
-   evidence：解耦语义推理与实时控制的机器人模仿学习框架
-10. [SegDiff: Segmented Trajectory Diffusion for Consistent and Adaptive Robot Manipulation](/202607/18/2607.11027v1-segdiff-segmented-trajectory-diffusion-for-consistent-and-adaptive-robot-manipulation)  
-   标签：评分：6.0/10、query:hum-ctrl
-   evidence：分割轨迹扩散用于一致的机器人操作
-11. [Structure-Feature Aligned Graph Learning via Alternating Constrained Optimization](/202607/18/2607.11577v1-structure-feature-aligned-graph-learning-via-alternating-constrained-optimization)  
+   evidence：不确定性感知残差流匹配用于鲁棒机器人操作
+9. [Sparse Inter-Layer Dependencies of Transformer FFN Neurons](/202607/19/2607.11990v1-sparse-inter-layer-dependencies-of-transformer-ffn-neurons)  
    标签：评分：6.0/10、query:neural-arch
-   evidence：图神经网络架构与约束优化
-12. [Reducing Temporal Redundancy for Efficient Vision-Language-Action Inference](/202607/18/2607.12287v1-reducing-temporal-redundancy-for-efficient-vision-language-action-inference)  
+   evidence：分析Transformer FFN神经元稀疏层间依赖，涉及残差流
+10. [VAMP-MR: Vector-Accelerated Motion Planning and Execution for Multi-Robot-Arms](/202607/19/2607.13478v1-vamp-mr-vector-accelerated-motion-planning-and-execution-for-multi-robot-arms)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：减少VLA推理中的时间冗余
+   evidence：基于SIMD向量化加速的多机械臂运动规划
+11. [GigaWorld-Policy-0.5: A Faster and Stronger WAM Empowered by AutoResearch](/202607/19/2607.13960v1-gigaworld-policy-05-a-faster-and-stronger-wam-empowered-by-autoresearch)  
+   标签：评分：6.0/10、query:hum-ctrl
+   evidence：以动作为中心的世界动作模型用于高效机器人控制，与运动生成相关
+12. [An offline approach to fNIRS-guided reinforcement learning for robot behavior](/202607/19/2607.14393v1-an-offline-approach-to-fnirs-guided-reinforcement-learning-for-robot-behavior)  
+   标签：评分：6.0/10、query:hum-ctrl
+   evidence：使用强化学习和仿真训练机器人行为
 
 
 <div class="dpr-home-promo-card">
