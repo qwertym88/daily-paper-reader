@@ -6,71 +6,77 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-20
-- 运行时间：2026-07-20 21:38:33 UTC
+- 最新运行日期：2026-07-21
+- 运行时间：2026-07-21 21:42:04 UTC
 - 运行状态：成功
-- 本次总论文数：17
-- 精读区：5
+- 本次总论文数：19
+- 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日阅读17篇论文，精读5篇，涵盖LLM驱动AutoML、人形机器人导航与图学习等方向。最值得关注的是GPT-5等大模型驱动的跨语言手写OCR自动搜索，以及强化自适应可见性图规划的人形机器人避碰控制。建议优先精读这两篇高分论文，并结合实际场景探索自动化机器学习与机器人感知控制的交叉应用。
-- 详情：[/202607/20/README](/202607/20/README)
+今日处理19篇论文，精读7篇，最高分聚焦人形机器人闭环操作与灵巧手技术。最推荐关注《Closing the Loop in Humanoid VLA》提出的持久3D物体令牌用于可验证的移动操作，以及《Handroid》在灵巧手与人形结合上的突破。普通读者可优先精读这两篇，深入理解人形机器人感知-控制闭环和灵巧手设计的最新进展。
+- 详情：[/202607/21/README](/202607/21/README)
 
 ### 精读区论文标签
-1. [LLM-Driven AutoML for Cross-Lingual Handwritten OCR: Closed-Loop Neural Architecture Search with GPT-5, GPT-4o, and Claude Sonnet 4](/202607/20/2607.15509v1-llm-driven-automl-for-cross-lingual-handwritten-ocr-closed-loop-neural-architecture-search-with-gpt-5-gpt-4o-and-claude-sonnet-4)  
-   标签：评分：10.0/10、query:neural-arch
-   evidence：使用LLM作为神经架构设计器实现闭环神经架构搜索
-2. [RAVEN: Reinforcement-Adaptive Visibility-Graph Planning for Robust Humanoid Navigation with Collision-Free MPC](/202607/20/2607.15701v1-raven-reinforcement-adaptive-visibility-graph-planning-for-robust-humanoid-navigation-with-collision-free-mpc)  
+1. [Closing the Loop in Humanoid VLA: Persistent 3D Object Tokens for Verifiable Loco-Manipulation](/202607/21/2607.18016v1-closing-the-loop-in-humanoid-vla-persistent-3d-object-tokens-for-verifiable-loco-manipulation)  
+   标签：评分：10.0/10、query:hum-ctrl
+   evidence：持久化3D物体令牌用于人形机器人行走-操作
+2. [Handroid: Bridging Dexterous Hand and Humanoid](/202607/21/2607.16187v1-handroid-bridging-dexterous-hand-and-humanoid)  
    标签：评分：9.0/10、query:hum-ctrl
-   evidence：人形机器人导航结合强化学习和模型预测控制
-3. [Kolmogorov--Arnold Networks for Small Language Models](/202607/20/2607.15525v1-kolmogorov--arnold-networks-for-small-language-models)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：新颖神经网络架构，使用可学习边缘函数
-4. [Physics-enhanced reinforcement learning for real-time optimal control of dynamical systems](/202607/20/2607.16177v1-physics-enhanced-reinforcement-learning-for-real-time-optimal-control-of-dynamical-systems)  
+   evidence：人形机器人双形态设计
+3. [Searching for Task-Specific Vision Paths: Evolutionary Block Pruning Across Vision-Language Models](/202607/21/2607.17052v1-searching-for-task-specific-vision-paths-evolutionary-block-pruning-across-vision-language-models)  
+   标签：评分：9.0/10、query:neural-arch
+   evidence：进化块修剪搜索视觉编码器路径
+4. [HCPG-Flow:Hierarchical Contact-Progress Guidance for Flow-Policy Robot Manipulation](/202607/21/2607.17651v1-hcpg-flowhierarchical-contact-progress-guidance-for-flow-policy-robot-manipulation)  
+   标签：评分：9.0/10、query:hum-ctrl
+   evidence：分层接触-进度引导的流策略机器人操作
+5. [Optimization of sim-to-real transfer in the humanoid robot NICO](/202607/21/2607.18210v1-optimization-of-sim-to-real-transfer-in-the-humanoid-robot-nico)  
+   标签：评分：9.0/10、query:hum-ctrl
+   evidence：针对人形机器人NICO的仿真到现实迁移优化
+6. [Jetson-PI: Towards Onboard Real-Time Robot Control via Foresight-Aligned Asynchronous Inference](/202607/21/2607.12659v3-jetson-pi-towards-onboard-real-time-robot-control-via-foresight-aligned-asynchronous-inference)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：物理增强强化学习桥接RL与传统最优控制
-5. [Handroid: Bridging Dexterous Hand and Humanoid](/202607/20/2607.16187v1-handroid-bridging-dexterous-hand-and-humanoid)  
+   evidence：异步推理实现机器人控制算法并行化
+7. [ConFlow: Constraints-Guided Learning with Flow Matching for Motion Generation](/202607/21/2607.14424v1-conflow-constraints-guided-learning-with-flow-matching-for-motion-generation)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：双态机器人平台融合灵巧手与人形，是人形机器人主题的核心
+   evidence：流匹配在机器人运动控制中的应用
 
 ### 速读区论文标签
-1. [WALA Learning Executable Latent Actions from Action-Labeled Demonstrations and Action-Free Videos](/202607/20/2607.11397v1-wala-learning-executable-latent-actions-from-action-labeled-demonstrations-and-action-free-videos)  
-   标签：评分：7.0/10、query:hum-ctrl
-   evidence：从视频中学习隐式动作用于机器人运动控制
-2. [Structure-Feature Aligned Graph Learning via Alternating Constrained Optimization](/202607/20/2607.11577v1-structure-feature-aligned-graph-learning-via-alternating-constrained-optimization)  
-   标签：评分：7.0/10、query:neural-arch
-   evidence：提出具有自适应门控机制的新颖图神经网络架构
-3. [Jetson-PI: Towards Onboard Real-Time Robot Control via Foresight-Aligned Asynchronous Inference](/202607/20/2607.12659v2-jetson-pi-towards-onboard-real-time-robot-control-via-foresight-aligned-asynchronous-inference)  
-   标签：评分：7.0/10、query:hum-ctrl
-   evidence：通过异步推理和并行执行实现实时机器人控制
-4. [Semantic Anchoring for Robotic Action Representations](/202607/20/2607.13597v1-semantic-anchoring-for-robotic-action-representations)  
+1. [EA-RMENet -- Path Loss Prediction in Urban Environments using Deep Learning](/202607/21/2607.16449v1-ea-rmenet----path-loss-prediction-in-urban-environments-using-deep-learning)  
+   标签：评分：8.0/10、query:neural-arch
+   evidence：在U-Net中使用注意力门控跳跃连接进行路径损耗预测
+2. [User-Driven Learning from Demonstration: A Trajectory and Impedance Learning Method](/202607/21/2607.16998v1-user-driven-learning-from-demonstration-a-trajectory-and-impedance-learning-method)  
+   标签：评分：8.0/10、query:hum-ctrl
+   evidence：用户驱动的轨迹和阻抗学习演示
+3. [Retriever: Composing Closed-Loop Asynchronous Robot Programs](/202607/21/2607.17213v1-retriever-composing-closed-loop-asynchronous-robot-programs)  
+   标签：评分：8.0/10、query:hum-ctrl
+   evidence：机器人控制算法的并行计算
+4. [From Sign Language Generation to Humanoid Execution: Vision-Language Guided Retargeting with Collision Mitigation](/202607/21/2607.17769v1-from-sign-language-generation-to-humanoid-execution-vision-language-guided-retargeting-with-collision-mitigation)  
+   标签：评分：8.0/10、query:hum-ctrl
+   evidence：人形机器人运动重定向与碰撞缓解
+5. [Semantic Anchoring for Robotic Action Representations](/202607/21/2607.13597v2-semantic-anchoring-for-robotic-action-representations)  
    标签：评分：7.0/10、query:hum-ctrl
    evidence：VLA模型中机器人动作表示的语义锚定
-5. [GigaWorld-Policy-0.5: A Faster and Stronger WAM Empowered by AutoResearch](/202607/20/2607.13960v2-gigaworld-policy-05-a-faster-and-stronger-wam-empowered-by-autoresearch)  
+6. [BridgeFlow: Fast and Robust SE(2)-Equivariant Motion Planning with Flow Matching](/202607/21/2607.14725v1-bridgeflow-fast-and-robust-se2-equivariant-motion-planning-with-flow-matching)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：世界行动模型用于高效机器人控制，适用于结合模拟器的运动控制
-6. [GigaWorld-Policy-0.5: A Faster and Stronger WAM Empowered by AutoResearch](/202607/20/2607.13960v3-gigaworld-policy-05-a-faster-and-stronger-wam-empowered-by-autoresearch)  
+   evidence：利用流匹配实现快速SE(2)等变运动规划
+7. [RoboTTT: Context Scaling for Robot Policies](/202607/21/2607.15275v1-robottt-context-scaling-for-robot-policies)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：世界行动模型用于高效机器人控制，适用于结合模拟器的运动控制
-7. [SUREFlow: State-space Uncertainty-aware REsidual Flow Matching for Robust Robot Manipulation](/202607/20/2607.10504v1-sureflow-state-space-uncertainty-aware-residual-flow-matching-for-robust-robot-manipulation)  
+   evidence：机器人策略的上下文缩放，支持一次性模仿和动态改进，可应用于人形运动
+8. [Which Hyperparameters Matter? A Game-Theoretic Framework for Interpretable Hyperparameter Sensitivity Analysis](/202607/21/2607.15884v1-which-hyperparameters-matter-a-game-theoretic-framework-for-interpretable-hyperparameter-sensitivity-analysis)  
+   标签：评分：7.0/10、query:neural-arch
+   evidence：超参数敏感性分析用于网络优化
+9. [EDAR: Learning Environment-Dependent Action Representations for Robotic Manipulation](/202607/21/2607.11427v1-edar-learning-environment-dependent-action-representations-for-robotic-manipulation)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：用于鲁棒机器人操作的不确定性感知残差流匹配
-8. [Directional Constraints for Efficient Exploration in Safe Reinforcement Learning](/202607/20/2607.12784v1-directional-constraints-for-efficient-exploration-in-safe-reinforcement-learning)  
+   evidence：环境依赖的动作表示用于机器人操作
+10. [DenseReward: Dense Reward Learning via Failure Synthesis for Robotic Manipulation](/202607/21/2607.13033v1-densereward-dense-reward-learning-via-failure-synthesis-for-robotic-manipulation)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：安全强化学习方法在仿真中高效探索，可应用于人形机器人运动控制
-9. [ExToken: Structured Exploration for Efficient Vision-Language-Action Reinforcement Fine-tuning](/202607/20/2607.12931v1-extoken-structured-exploration-for-efficient-vision-language-action-reinforcement-fine-tuning)  
+   evidence：通过失败合成学习密集奖励用于强化学习
+11. [Exploratory, Communicative, and Deployable: Vision-Driven Embodied Agents for Open-World Mobile Manipulation](/202607/21/2607.13653v1-exploratory-communicative-and-deployable-vision-driven-embodied-agents-for-open-world-mobile-manipulation)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：使用强化学习和结构化探索令牌改进VLA策略微调，与机器人运动控制的RL相关
-10. [Learning Robust Execution in Robotic Manipulation with Agentic Reinforcement Learning](/202607/20/2607.13818v1-learning-robust-execution-in-robotic-manipulation-with-agentic-reinforcement-learning)  
+   evidence：面向移动操作代理的强化学习与仿真到现实迁移
+12. [DriftWorld: Fast World Modeling through Drifting](/202607/21/2607.15065v1-driftworld-fast-world-modeling-through-drifting)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：用于机器人操作的智能体强化学习
-11. [GigaWorld-Policy-0.5: A Faster and Stronger WAM Empowered by AutoResearch](/202607/20/2607.13960v1-gigaworld-policy-05-a-faster-and-stronger-wam-empowered-by-autoresearch)  
-   标签：评分：6.0/10、query:hum-ctrl
-   evidence：提出动作中心的世界动作模型以实现高效机器人控制，与运动控制技术相关
-12. [Motion Planning with Model-Based Diffusion via Constraint Optimization and Adaptive Scheduling](/202607/20/2607.14455v1-motion-planning-with-model-based-diffusion-via-constraint-optimization-and-adaptive-scheduling)  
-   标签：评分：6.0/10、query:hum-ctrl
-   evidence：基于模型的扩散运动规划方法适用于人形机器人运动控制
+   evidence：用于机器人导航和控制的世界模型
 
 
 <div class="dpr-home-promo-card">
