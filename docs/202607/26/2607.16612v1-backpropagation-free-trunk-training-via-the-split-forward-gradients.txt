@@ -1,0 +1,1031 @@
+Title: Backpropagation-Free Trunk Training via the Split Forward Gradients
+
+URL Source: https://arxiv.org/pdf/2607.16612v1
+
+Published Time: Tue, 21 Jul 2026 00:28:41 GMT
+
+Number of Pages: 25
+
+Markdown Content:
+Preprint 
+
+# BACKPROPAGATION -F REE TRUNK TRAINING VIA THE 
+
+# SPLIT FORWARD GRADIENTS 
+
+Tian Qin 
+
+Math department Lehigh University Bethlehem, PA 18015, USA 
+
+{tiq218 }@lehigh.edu 
+
+Wei-Min Huang 
+
+Math department Lehigh University Bethlehem, PA 18015, USA 
+
+{wh02 }@lehigh.edu 
+
+## ABSTRACT 
+
+Backpropagation makes training deep networks memory intensive because it must store intermediate activations. Forward-mode methods avoid this cost, but their gradient estimates become increasingly noisy as the number of trained parameters grows. We introduce Split Forward Gradient (Split-FG), which splits a network at an intermediate representation: it computes the output head gradient exactly and estimates only the trunk gradient with a Jacobian–vector product. This re-duces estimator variance and requires no backward pass through the trunk, while retaining an Adam-style convergence guarantee. Our experiments reveal an im-portant practical failure mode. On WikiText-103, naive forward-gradient train-ing of the trunk performs worse than leaving a randomly initialized trunk frozen, likely because Adam updates every noisy, under-determined trunk coordinate too aggressively. Simply using a much smaller learning rate for the trunk reverses this result: a 16 M-parameter GPT-2-style model reaches validation perplexity 387 ,compared with 668 for the frozen-trunk control and 2,885 for a matched pure forward-gradient baseline (backpropagation reaches 150 ). Split-FG also produces the strongest backprop-free results on our tabular benchmarks and reaches 60 .5% 
+
+on CIFAR-10 and 35 .2% on CIFAR-100 with a heavy-head design. It reduces peak memory by up to 35% relative to matched backpropagation, although the performance gap widens as the forward-mode trunk grows. 
+
+## 1 INTRODUCTION 
+
+The computational cost of training deep neural networks is dominated by backpropagation (Rumel-hart et al., 1986): the reverse-mode differentiation of a loss through the entire network via the chain rule. This requires storing the full computational graph and all intermediate activations in mem-ory—a cost that scales linearly with network depth and sequence length: at roughly 16 dmodel bytes per token per layer (half precision), a 32 -layer, dmodel =4096 model at sequence length 4096 and batch size 8 holds ≈69 GB of activations alone, beyond a single 80 GB accelerator once weights and optimizer state are added. These requirements are obstacles for deployment on resource-constrained hardware, for continual learning systems that update parameters online, and for models of biological learning, where symmetric backward error transport through deep stacks is considered implausible (though our own exact head still uses weight transport at its single readout layer). A sharper case than cost is hardware where the backward pass is not merely expensive but unavailable: optical and analog accelerators run the forward pass natively at very low energy (Shen et al., 2017), but backpropagating through them requires the adjoint method—reverse field propagation with in-situ measurement, or an accurate digital twin (Hughes et al., 2018). What such hardware admits is gradient information from forward evaluations alone, directional derivatives obtained by perturb-and-measure, with no reverse pass through the physical stack-, which is precisely the regime the method developed for backpropagation-free targets. Prior work on backpropagation-free training has demonstrated promising results on small-scale tasks. Forward gradients via JVP (Baydin et al., 2022) and evolution strategies (Salimans et al., 2017; Wierstra et al., 2014) provide unbiased gradient estimates but suffer from variance that scales linearly with parameter count. Zeroth-order methods such as MeZO (Malladi et al., 2023) can 1arXiv:2607.16612v1 [stat.ML] 18 Jul 2026 Preprint fine-tune pretrained language models but struggle with pretraining from scratch. Equilibrium prop-agation (Scellier & Bengio, 2017; Laborieux et al., 2021) and predictive coding (Whittington & Bogacz, 2017; Millidge et al., 2022; Salvatori et al., 2021) match backpropagation on shallow net-works through local energy minimisation, but require iterative settling phases that multiply per-step cost. The Forward-Forward algorithm (Hinton, 2022) replaces the backward pass with contrastive positive/negative phases per layer, though it has only been validated on small classifiers. Direct feedback alignment (Nøkland, 2016) and local learning rules (Ren et al., 2023) reduce inter-layer dependence but introduce bias through fixed random projections or surrogate losses. Despite this breadth, a persistent gap remains: these methods degrade when scaled to transformers, need a pre-trained initialisation, or introduce systematic bias through approximate objectives. In this paper we show that decomposing the gradient computation at an intermediate representation substantially reduces forward-gradient variance and recovers part of the gap to backpropagation, with no backward pass through the trunk. The strict, unclipped estimator is unbiased; our runs apply global gradient clipping, and the GPT runs additionally train the tied vocabulary table through a readout-only surrogate (Appendices D and G.7). We call the estimator Split Forward Gradient 
+
+(Split-FG) and make the following contributions. 1. The Split-FG estimator. We decompose the forward gradient at any intermediate repre-sentation h, compute the head-side gradient ∂L/∂h in closed form (or estimate it in low dimension), and restrict the stochastic forward gradient to the trunk. The directional deriva-tive is exact with respect to the head, so only the trunk contributes noise. We evaluate the Split-FG estimator on tabular, image, and language tasks and shows its superiority over many backpropagation free baselines. 2. A measured variance analysis. We show that the Split-FG estimator enables per-coordinate estimator variance to drop from ∥∇ θ L∥ 2 to ∥∇ θtrunk L∥ 2, and we measure this factor rather than assuming it. On our GPT configuration, where the vocabulary readout holds 80% of the parameters, the trunk carries 0.74 of the gradient energy at initialisation, giving a 1.35 × per-coordinate and 6.8× total variance reduction (Section 2.2). The exact head gradients are available in closed form for linear cross-entropy and MSE heads, and for a factored two-linear head, so the pipeline uses no reverse-mode automatic differentiation. 3. An empirical failure mode and its fix. Using a frozen-trunk control that trains only the exact head over a fixed random trunk, we find that naive forward-gradient training of the trunk is worse than not training it at all ( 1733 versus 668 perplexity on WikiText-103). We attribute this to Adam, which steps every noisy, under-determined trunk coordinate at full length. Scaling the trunk step down by a factor ρ = 0 .03 removes the failure: a 16 M-parameter GPT-2-style transformer trained from scratch reaches perplexity 387 , which is 
+
+42% below the frozen control and 7.5× below a pure forward-gradient baseline matched in tangent count and tuning ( 2,885 at K=4 ). In these validation runs it uses 35% less peak memory than the same-architecture Adam backpropagation reference (which reaches 150 ), but takes 3.2× longer per step. The remainder of the paper is organized as follows. Section 2 develops Split-FG and its variance analysis; Section 3 gives a convergence guarantee for a predictable-preconditioner idealisation of the split estimator. Section 4 compares Split-FG with backpropagation and no-trunk-backward baselines across tabular, image, and GPT-style language-modelling tasks, where a frozen-trunk control isolates the trunk’s contribution and motivates the trunk-step fix (Section 4.4; Appendix G.2), followed by ablation studies. Section 5 discusses limitations and future directions. Code for all experiments is provided in the supplementary material. 
+
+## 2 PRELIMINARIES 
+
+2.1 FORWARD GRADIENT 
+
+Consider a neural network parameterised by θ ∈ RP with scalar loss L(θ). For a direction vector 
+
+v ∈ RP , the directional derivative is the scalar 
+
+d = ∇θ L(θ) · v =
+
+> P
+
+X
+
+> j=1
+
+∂L
+
+∂θ j
+
+vj . (1) 2Preprint This can be computed exactly, without a backward pass, via a Jacobian-vector product (JVP) using forward-mode automatic differentiation (Griewank & Walther, 2008). The JVP augments each in-termediate variable with a tangent and propagates both jointly through the computation graph via dual-number arithmetic; initialising the tangent of θ to v yields the pair (L, d ) in a single pass. The computational cost is comparable to one forward evaluation; crucially, no activations need to be stored for a backward pass. Writing g := ∇θ L(θ) with coordinates gi, Baydin et al. (2022) observe that if v ∼ N (0 , I P ), the product d · v is an unbiased estimate of the full gradient: 
+
+ˆg = d · v , E[ˆ g] = g . (2) Unbiasedness is immediate from E[v v ⊤] = I; the per-coordinate computation appears in Ap-pendix B. With K independent samples {vk}Kk=1 , the averaged estimator 
+
+ˆg(K) = 1
+
+K
+
+> K
+
+X
+
+> k=1
+
+dk vk (3) retains unbiasedness. Its per-coordinate variance follows from Isserlis’ theorem (Isserlis, 1918) on fourth-order Gaussian moments: since E[vj vk vi vi] = δjk + 2 δji δki , we obtain 
+
+Var ˆg(K)
+
+> i
+
+ = 1
+
+K
+
+
+
+∥g∥2 + g2
+
+> i
+
+
+
+. (4) The dominant term ∥g∥2 = PPj=1 g2 
+
+> j
+
+sums over all P parameters, yielding a signal-to-noise ratio for i-th coordinate: 
+
+SNR i = g2
+
+> i
+
+∥g∥2 ≈ 1
+
+P . (5) For a model with P = 10 7 parameters, each coordinate’s signal is overwhelmed by noise from the remaining P −1 coordinates. This linear scaling of variance with parameter count is the fundamental barrier to applying forward gradients at scale, and motivates the decomposition we introduce in Section 2.2. 2.2 SPLIT FORWARD GRADIENT 
+
+The core identity underlying Split-FG is easiest to read as an algorithmic “push–score–estimate” chain rule at an intermediate representation h = f (x; θtrunk ) ∈ Rdh . Algorithm 1 spells out the estimator. For each random direction in trunk-parameter space, we first push the direction to the representation space, score the resulting representation perturbation by the loss gradient at h, and then place that scalar back on the same random direction. The standard forward gradient draws v ∈ RPtotal and estimates all parameters from one noisy scalar; Split-FG restricts the random directions to the trunk subspace and computes the head gradient ex-actly. The chain-rule equality in the score step of Algorithm 1 is the justification only: the imple-mentation computes each dk from u = ∂L/∂h and ∆hk, so no backward pass through the trunk ever occurs. Appendix B shows the estimator in Algorithm 1 yields a per-coordinate variance reduction of 
+
+Var ˆg split 
+
+> i
+
+
+
+Var ˆg standard 
+
+> i
+
+ ≈ ∇θtrunk L 2
+
+∇θ L 2 ≈ Ptrunk 
+
+Ptotal 
+
+(6) where the first relation is leading-order (it drops the O(g2 
+
+> i
+
+) diagonal terms; the exact per-coordinate identities are derived in Appendix B) and the final approximation holds when gradient magnitudes are approximately uniform across parameters. The trunk and head parameters partition the network, 
+
+Ptotal = Ptrunk + Phead , so the ratio Ptrunk /P total = Ptrunk /(Ptrunk + Phead ) is small precisely when the head holds most of the weights. Equation equation 6 exposes the single lever that governs Split-FG: the estimator is effective pre-cisely when the forward-mode trunk holds few parameters relative to the exactly differentiated head (Ptrunk ≪ Phead ). Language models satisfy this for free through their large vocabulary readouts. The same lever separates Split-FG from the closest prior variance-reduction program: Ren et al. (2023) also shrink the perturbed dimension, but with layer-local losses at the price of a surrogate objective; Split-FG keeps the global loss and removes the head’s share exactly. The adversarial case 3Preprint 
+
+Algorithm 1 Split-FG estimator at hidden state h
+
+Require: Batch x, y ; split parameters θ = ( θtrunk , θ head ); sample count K
+
+Ensure: Gradient estimate bg(K)split 
+
+1: Compute the trunk representation h = f (x; θtrunk )
+
+2: Compute the head loss and exact head-side quantities: 
+
+bghead = ∇θhead L, u = ∂L
+
+∂h 
+
+3: Let Jtrunk = ∂h/∂θ trunk 
+
+4: for k = 1 , . . . , K do 
+
+5: Sample vk ∼ N (0 , I Ptrunk )
+
+6: Compute the trunk JVP ∆hk = Jtrunk vk
+
+7: Score the representation perturbation: 
+
+dk = ⟨u, ∆hk⟩ = J⊤
+
+> trunk
+
+u, v k = ⟨∇ θtrunk L, v k⟩
+
+8: end for 
+
+9: Average the forward-gradient samples on the trunk: 
+
+bg(K)trunk = 1
+
+K
+
+> K
+
+X
+
+> k=1
+
+dk vk
+
+10: Return bg(K)split = bg(K)trunk ⊕ bghead , where ⊕ concatenates the trunk and head estimates is a light head over a heavy trunk, which is most notably a plain convolutional network making the variance ratio approaches one and Split-FG degrades to standard forward gradient; the resolution is to restructure the network around a small forward-mode feature extractor and a large exact head, the inversion we adopt for image classification (Section 4.3). The same light trunk also minimizes forward-mode activation memory (Appendix F.1), so the heavy-head/light-trunk principle improves accuracy and memory together. 2.3 PARAMETER UPDATE RULE 
+
+Split-FG uses exact gradients for the head and forward-gradient estimates for the trunk, then updates both parameter sets with Adam. Let’s first recall the gradient of head parameters. For a linear head logits = h W ⊤ 
+
+> head
+
++ b with cross-entropy loss, the gradients are available in closed form: 
+
+∂L
+
+∂b = 1
+
+N
+
+X
+
+> n
+
+ pn − 1yn
+
+, ∂L
+
+∂W head 
+
+= 1
+
+> N
+
+ p − 1y
+
+⊤h, ∂L
+
+∂h = 1
+
+> N
+
+ p − 1y
+
+Whead , (7) Here p = softmax(logits) , 1y is the one-hot target matrix, and N = BT is the number of token positions. These are the usual one-layer head derivatives, computed directly rather than with an autodiff tape. Split-FG eliminates reverse-mode differentiation through the trunk, not through the head. As to the trunk parameters, where the forward gradient comes into play, we compute a trunk JVP and its directional derivative for K random tangent vectors vk ∼ N (0 , I Ptrunk ), : 
+
+∆hk = ∂h ∂θ trunk 
+
+vk, dk =
+
+D ∂L
+
+∂h , ∆hk
+
+E
+
+, ˆgtrunk = 1
+
+K
+
+> K
+
+X
+
+> k=1
+
+dk vk, (8) Each tangent requires one JVP and one inner product. The estimator is unbiased because E[vv ⊤] = 
+
+I.Next, we use bias-corrected Adam (Kingma & Ba, 2017), with the exact head gradient and the trunk estimate in Eq. equation 8. Its per-coordinate normalization handles the scale mismatch between 4Preprint head gradients of magnitude O(1) and trunk estimates with variance O(Ptrunk /K ). However, it does not account for each coordinate’s signal-to-noise ratio, so noisy trunk coordinates can still receive overly large updates. For large trunks, we therefore use a separate trunk step scale (Section 4.4). Adam, AdamW, and Muon work in our ablations, whereas SGD forward gradients remain at the random-prediction floor on WikiText-103; even tuned pure FG with Adam is 7.5× worse than Split-FG (Table 3). 
+
+## 3 CONVERGENCE ANALYSIS FOR A PREDICTABLE PRECONDITIONER 
+
+In this section we will provide a theoretical support for the convergence of Split-FG under Adam. Throughout this section F (θ) denotes the full-batch training objective, i.e. the loss L of Section 2 evaluated on the full training set. The Split-FG estimator of Section 2.2 is conditionally unbiased for 
+
+∇F (θ) when the loss is evaluated full-batch; minibatch sampling adds only the standard data-noise term, handled at the end of Appendix C. For simplicity, we analyse the idealised update θt+1 =
+
+θt − ηA t ˆgt, where ˆgt is the Split-FG estimator (exact head, K-tangent trunk) and At is a diagonal preconditioner, under the following assumptions. 
+
+Assumption 1 (Regularity) . F is differentiable and L-smooth, and bounded below: F (θ) ≥ F⋆ >
+
+−∞ for all θ.
+
+Assumption 2 (Predictable, bounded preconditioner) . At = diag( at, 1, . . . , a t,P total ) is 
+
+predictable —measurable with respect to the history Ft fixed before the step-t tangents are drawn— and satisfies 0 < a min ≤ at,i ≤ amax < ∞ for all t, i .
+
+Assumption 3 (Unbiasedness and bounded adaptive noise) . The estimator is conditionally unbi-ased, Et[ˆ gt] = ∇F (θt), and its adaptive noise ratio Rt(At) = Et[∥At ˆgt∥2]⟨∇ F (θt), A t∇F (θt)⟩
+
+(set to 0 when ∇F (θt) = 0 ) obeys Rt(At) ≤ Rmax almost surely. 
+
+Theorem 1 (Predictable-preconditioner Split-FG) . Under Assumptions 1–3, if 0 < η ≤ 1 
+
+> LR max
+
+then for every horizon T ≥ 11
+
+T 
+
+> T−1
+
+X
+
+> t=0
+
+E⟨∇ F (θt), A t∇F (θt)⟩ ≤ 2 ( F (θ0) − F⋆)
+
+η T ,
+
+and consequently 1
+
+> T
+
+PT −1 
+
+> t=0
+
+E∥∇ F (θt)∥2 ≤ 2( F (θ0) − F⋆)/(η a min T ). The Split-FG estimator satisfies Rmax ≤ (a2max /a min ) 1 + ( Ptrunk + 1) /K , so the step-size condition is always feasible; the guarantee is the standard O(1 /T ) rate for nonconvex first-order stationarity. 
+
+Theorem 1 certifies descent in the geometry chosen by the preconditioner: the stationarity measure is the preconditioned gradient energy ⟨∇ F, A t∇F ⟩, and the head coordinates contribute no variance term because they are updated exactly. It guarantees convergence, not the quality of the point reached within a finite budget—the second-moment denominator equalises update magnitudes but does not distinguish signal from noise, and Section 4.4 shows that at large Ptrunk a further trunk-specific step scale ρ is needed. That variant is covered unchanged, since scaling the trunk entries of At by a constant ρ preserves Assumption 2. The proof, the exact weighted second moment underlying the 
+
+Rmax bound, and an unpreconditioned SGD counterpart are in Appendix C. 
+
+## 4 EXPERIMENTS 
+
+This section is designed to test Split-FG as a general training principle, not only as a language-model trick. We organize the experiments around four questions. First, does the estimator variance follow the scaling predicted by Eq. equation 6? Second, does Split-FG work with different loss functions, including cross-entropy classification and MSE regression? Third, does the method transfer across modern tabular, vision, and language architectures? Fourth, which design choices matter most in GPT-style transformers? 
+
+Protocol and metrics. Tabular and GPT experiments pair Split-FG with a same-architecture back-propagation reference under the same data-exposure budget. The headline image table instead com-pares separately structured systems and, on CIFAR-100, method-specific budgets; its architecture-matched flat-head ablation is reported separately. Each large experiment reports peak GPU memory 5Preprint together with the reference difference MemSave = 1 − Mpeak (Split-FG )/M peak (Backprop ). The full training and memory-measurement protocol is given in Appendix D. 
+
+No-global-backward baselines. Beyond pure forward gradient and antithetic ES, we compare— wherever they apply against Forward-Forward (Hinton, 2022) (layer-local goodness training; clas-sification only), predictive coding (Whittington & Bogacz, 2017; Millidge et al., 2022) (local error settling with Hebbian updates), and a training-free modern-Hopfield associative memory (Ramsauer et al., 2021) (softmax retrieval over a frozen trunk; kNN-LM style (Khandelwal et al., 2020) for language modelling). All three use zero JVPs and zero trunk backward passes; their mechanisms and per-domain configurations are detailed in Appendix D and the per-domain protocol appendices. 4.1 TOY ILLUSTRATION : V ARIANCE AT THE SPLIT 
+
+We first construct a toy model in which the total parameter vector can be partitioned into a large linear head and a small nonlinear trunk. The model has the form 
+
+h = f (x; θtrunk ), ˆy = Whead h + b, (9) with squared loss or cross-entropy loss depending on the output type. This setting allows us to measure the true gradient exactly and compare the empirical variance of three estimators: standard forward gradient over all parameters, Split-FG with an exact head gradient, and backpropagation. We vary the head dimension while holding the trunk fixed, so that Phead /P trunk can be swept di-rectly. We instantiate this diagnostic with a two-layer ReLU MLP trunk ( Ptrunk = 1600 ) and a linear cross-entropy head whose class count C ∈ { 50 , 500 , 5000 } grows the head from 1650 to 165000 
+
+parameters at fixed trunk; for each C we draw 2000 single-direction ( K=1 ) estimates against the ex-act minibatch gradient and report variance over the trunk coordinates (the analytical head contributes none). Full protocol in Appendix B. For Gaussian tangents, the leading-order variance-ratio prediction on a fixed minibatch is 
+
+Var[ˆ gsplit trunk ]Var[ˆ gpure trunk ] = ∥∇ θtrunk L∥ 22
+
+∥∇ θ L∥ 22
+
+. (10) The parameter-count ratio Ptrunk /P total is thus a uniform-gradient-energy approximation, not an identity. This distinction matters in the toy classifier: as the number of classes grows, the count ratio becomes very small, but the observed ratio follows the gradient-energy prediction. The toy result (Figure 2 and Table 5, Appendix B) supports the core variance mechanism while also clarifying what should be compared in finite models. Split-FG consistently reduces the trunk-coordinate variance relative to pure forward gradient, and the measured ratios are within 6.8% of Eq. equation 10 across the sweep. Backpropagation is included only as the zero-variance reference: it supplies the exact gradient used to evaluate estimator variance, but it is not a stochastic estimator. 4.2 TABULAR LEARNING WITH TAB M-S TYLE MODELS 
+
+The tabular experiments test both architectural generality and loss-function generality. We use a TabM-style parameter-efficient ensemble model, with feature preprocessing, a shared MLP trunk, and multiple prediction heads or submodel outputs. For classification datasets, the final layer uses cross-entropy and the analytical head gradient from Eq. equation 7. For regression datasets, the final layer uses MSE, whose closed-form head gradient mirrors Eq. equation 7 (Appendix E.3). The dataset subset follows the spirit of the TabM (Gorishniy et al., 2025) benchmark while keeping the experiment time reasonable; the datasets are drawn mainly from OpenML. Full dataset and protocol details are in Appendix E, and the network structure in Appendix E.3. Across all eight default datasets, Split-FG consistently improves over the evaluated pure forward-gradient and ES controls under 5-fold cross-validation (paired t-tests)—e.g. on Otto it lifts accuracy from 62 .8% to 71 .7% against a 78 .3% backprop reference. On Higgs its lead over Forward-Forward is within the cross-validation spread. Split-FG also lowers peak training memory on every dataset measured ( 4.3–24 .1% ; Table 7 in the appendix). 6Preprint Table 1: Tabular benchmarks: held-out-fold accuracy (%, classification) and RMSE (regression), mean ± std over 5-fold cross-validation; “–” marks methods that do not apply. Protocol and model structure: Appendices E.2 and E.3.                                                                                  
+
+> Dataset Task Loss Backprop Pure FG ES FF PC Hop. Split-FG Adult bin. cls. CE 84 .2±0.581 .7±0.181 .8±0.181 .6±0.581 .5±0.479 .1±0.482.5 ±0.4
+> Higgs Small bin. cls. CE 68 .8±0.759 .0±0.659 .0±0.661 .7±0.461 .5±0.455 .4±0.361.9 ±0.3
+> Otto multicls. CE 78 .3±0.462 .8±0.662 .8±0.630 .8±3.568 .8±0.462 .3±0.771.7 ±0.4
+> Covertype multicls. CE 71 .7±0.561 .2±0.261 .2±0.235 .0±2.265 .5±0.662 .1±1.166.8 ±0.6
+> California reg. MSE 0.491 ±0.013 0.595 ±0.012 0.595 ±0.012 –0.638 ±0.015 0.755 ±0.014 0.564 ±0.016
+> House 16H reg. MSE 0.652 ±0.024 0.829 ±0.027 0.829 ±0.027 –0.838 ±0.033 0.859 ±0.040 0.773 ±0.030
+> Diamond reg. MSE 0.249 ±0.004 0.334 ±0.006 0.334 ±0.006 –0.452 ±0.001 0.490 ±0.003 0.311 ±0.004
+> Black Friday reg. MSE 0.809 ±0.006 0.906 ±0.003 0.906 ±0.003 –0.901 ±0.004 0.938 ±0.005 0.890 ±0.006
+
+Table 2: Image development evaluation: top-1 accuracy (%). Protocol and model structure: Appen-dices F.1 and F.2. 
+
+Dataset Backprop Pure FG ES FF PC Hop. Split-FG CIFAR-10 88 .2±0.6 29 .5±1.9 29 .3±1.4 48 .8±0.4 40 .7±1.1 10 .0±0.0 60 .5±1.2
+
+CIFAR-100 65 .6±1.0 1.2±0.2 1.2±0.1 6.9±0.5 1.0±0.0 1.4±0.3 35 .2±0.5
+
+4.3 IMAGE CLASSIFICATION 
+
+Convolutional networks are the adversarial case for Split-FG (Section 2.2): a ResNet holds almost all of its parameters in the convolutional trunk and only a thin linear head, so a naive split must forward-estimate the whole trunk and degrades to standard forward gradient. We therefore apply the heavy-head/light-trunk restructuring: for CIFAR-10 we keep only the first residual block of a ResNet-20 (GroupNorm) as the forward-mode trunk ( 5,136 parameters, under 2% of the backbone) and attach a large exact head that flattens its feature map and maps it to the logits through a two-layer 
+
+linear factorisation, 
+
+h = ResBlock 1(x; θtrunk ) ∈ R16384 , logits = W2(W1h) + b, (11) trained by an exact closed-form gradient (pure matrix products, no reverse-mode backward pass through the trunk). Although W2W1 collapses to a single linear map, training the factored pair yields a deep-linear over-parameterisation effect worth +2 .5 points over a single exact linear head (p < 0.01 ; Appendix F.3). The inner width is H=64 , so W1 ∈ RH×16384 and W2 ∈ RC×H
+
+for C classes; we use K=4 tangents ( H=128 for CIFAR-100, which uses a stronger ResNet-18 backbone). The baselines use the dataset’s standard backbone: Pure FG and ES estimate the full network, Forward-Forward (FF) and predictive coding (PC) run on flattened images, and Hopfield (Hop.) is an associative-memory readout over a frozen trunk. Dataset, protocol, and architecture details are given in Appendices F–F.2. In the reported five-seed CIFAR-10 development results, the restructured Split-FG system reaches 
+
+60 .5% after 60 epochs (Table 2), compared with 29 .5% for full-ResNet pure FG and 48 .8% for the separately structured Forward-Forward system; because these methods use different architectures, this does not isolate an estimator effect. Split-FG is 27 .7 points below the full ResNet-20 backprop-agation reference ( 88 .2% ). Published no-global-backward pipelines with heavier machinery reach far higher. For example, DeepZero (Chen et al., 2024) attains ∼86% on CIFAR-10 with sparse zeroth-order training of a full ResNet-20 at substantially larger compute. Table 2 should therefore be read as preliminary system evidence, not a state-of-the-art or matched-method comparison. The exact head is what makes the split work: forward-estimating it instead collapses accuracy from 
+
+56 .9% to ≈ 22% in the matched ablation of Appendix F.3. The light trunk also cuts peak memory to 1282 MiB, below backpropagation’s 1520 MiB and reversing the 2668 MiB blow-up of the naive full-trunk split (Table 10). On CIFAR-100, the 60 -epoch Split-FG system reaches 35 .2±0.5% and the 60 -epoch ResNet-18 backpropagation reference reaches 65 .6±1.0%. The remaining methods were stopped at the same budgets, so their numbers support a matched-budget ranking. 7Preprint Table 3: WikiText-103 validation results for the small8 GPT model. All neural methods use one epoch of matched token exposure. Hyperparameters were selected using validation results; no test-set claim is made. Lower perplexity is better.                                                                                                 
+
+> Method Train exposure Val. NLL PPL Time Peak mem. Same-architecture backprop + Adam 119 .1M / 1ep. 5.0080 149 .61 41 .7ms 1237 .7MiB Forward gradient + Adam, K=1 same 10 .5999 40128 .90 63 .6ms 1038 .4MiB Forward gradient + Adam, K=4 , tuned lr same 7.9673 2884 .97 137 .4ms 1694 .5MiB Forward gradient + SGD, K=1 same 10 .8274 50385 .05 54 .6ms 913 .7MiB Antithetic ES + Adam, K=1 same 9.4012 12103 .11 44 .1ms 764 .7MiB Hopfield assoc. memory (kNN-LM) 4096 windows 7.4466 1714 .02 48 .5s5368 .1MiB Unigram reference (count-based) train counts 7.4140 1659 .03 ——Interpolated bigram reference train counts 5.2889 198 .12 ——Split-FG + Adam, K=4 , naive trunk step ( ×1)119 .1M / 1ep. 7.4578 1733 .36 137 .3ms 810 .6MiB Frozen trunk +exact head ( K=0 )119 .1M / 1ep. 6.5037 667 .64 24 .4ms 810 .6MiB Split-FG + Adam, K=4 , trunk step ×0.03 119 .1M / 1ep. 5.9577 386 .70 133 .8ms 810 .6MiB
+
+4.4 GPT-S TYLE LANGUAGE MODELLING 
+
+The main stress test is GPT-2-style causal language modelling from random initialisation on WikiText-103, a standard real-text benchmark. The model is a causal transformer (token and po-sitional embeddings, GPT blocks, final normalisation, linear LM head); the default split is before the LM head: 
+
+h = GPT trunk (x; θtrunk ), logits = hW ⊤ 
+
+> out
+
++ b. (12) We report single-seed validation NLL and perplexity, mean step time, and peak GPU memory; the tangent-count ablation in Appendix G.6 additionally reports JVPs per step. The same-architecture Adam backpropagation and Split-FG runs use the same number of training tokens and optimizer updates. The concrete small8 architecture ( 4 layers, dmodel = 256 , 16 .1M parameters) is listed in Table 17, and the full protocol in Appendix G.1. Table 3 compares three Split-FG settings: a naive run that uses Adam’s full step for the trunk (per-plexity 1733 .4), a frozen-trunk control that trains only the exact head ( 667 .6), and a run with the trunk step scaled by ρ = 0 .03 (386 .7). Unless noted otherwise, FG and ES use one tangent. The 
+
+K=4 pure-FG baseline is learning-rate tuned using the screening protocol in Appendix G.1. The backpropagation reference uses Adam without weight decay; a separately tuned AdamW run reaches 
+
+75 .5 perplexity. Hopfield time denotes a full retrieval pass. The naive run performs worse than freezing the trunk. We believe this is because the unbiased trunk estimate still has very low per-coordinate signal-to-noise ratio ( ∼1/P trunk ; Eq. equation 5). Adam therefore gives full-sized updates to many weakly determined trunk coordinates, which can cause the trunk to drift before its signal accumulates. Reducing the trunk step by ρ ≪ 1 limits this noise-driven drift while preserving the slower, coherent update. At matched K=4 , this simple change improves perplexity by 4.5× with the same peak memory and essentially unchanged step time. Figure 1 shows the training curves; further frozen-trunk and trunk-scale controls are in Appendix G.2. 
+
+Results. In this single-seed validation comparison, the same-architecture backpropagation refer-ence (Adam, no weight decay, as for Split-FG) reaches perplexity 149 .6; Split-FG with a reduced trunk step reaches 386 .7 (Appendix G.2). It performs better than the evaluated trainable no-global-backward baselines in this table. The comparison that most directly isolates the split is pure forward gradient at the same K=4 and with the same learning-rate screening procedure (Appendix G.1): it reaches 2,885 , so removing the split, which estimates the head instead of solving it exactly, costs 
+
+7.5× at equal K (and 104 × against the untuned K=1 default). The training-free Hopfield/kNN-LM baseline holds 6.6× Split-FG’s memory. The count-based unigram/bigram references are fitted on the training tokens and evaluated identically; the interpolated bigram ( 198 ) still leads all evalu-ated trainable no-global-backward methods (Appendix G.2). Split-FG trains in 810 .6 MiB against 
+
+1237 .7 MiB for backpropagation ( MemSave = 34 .5% , Eq. equation 38). The costs are a 3.2× step time and a 2.6× perplexity gap to backpropagation, which come from estimating the trunk with K
+
+scalar probes per step. 8Preprint 50 100 150 200 
+
+> optimizer steps (thousands)
+> 200
+> 400
+> 700
+> 1200
+> 2000
+> 3000
+> validation perplexity  unigram (1659)
+> bigram (198)
+> naive Split-FG (trunk step x1), K=4
+> frozen trunk + exact head
+> Split-FG, trunk step x0.03, K=4
+
+Figure 1: Frozen-trunk control, naive Split-FG ( K=4 ), and ρ-scaled Split-FG on WikiText-103, same one-epoch cosine schedule (single seed). Naive trunk training tracks above the frozen control throughout; the ρ-scaled trunk drops below it from the first checkpoint and passes the frozen run’s final perplexity in about a quarter of the budget. Table 4: Trunk-step-scale sensitivity on WikiText-103 ( small8 , Split-FG + Adam, K=4 , single seed) at two fully annealed budgets: 10% -epoch screening (matched frozen control 816 .0) and full epoch (frozen 667 .6). Every ρ beats the frozen control at both budgets; the optimum ρ = 0 .1 sits one grid step above the paper’s default ρ = 0 .03 , whose full-budget entry is the main-text run (Table 3). 
+
+Trunk step scale ρ 10% -budget PPL Full-budget PPL 
+
+0.003 716 .1 622 .70.01 681 .8 514 .90.03 623 .3 386 .70.1 541 .9 365 .00.3 677 .9 633 .1
+
+Frozen control ( K=0 ) 816 .0 667 .6
+
+4.5 GPT A BLATION STUDIES 
+
+We isolate each design choice by changing one component at a time from the main configuration (full tables in Appendices G.3–G.6). Removing the trunk step scale costs 4.5× in perplexity, freezing the trunk costs 1.7×, and dropping the split entirely costs 7.5× against a pure-FG baseline matched in tangent count and tuning ( 104 × against the untuned K=1 default). These single-seed controls are consistent with the split removing a dominant noise source and the reduced step making the remaining trunk estimate usable. In the reported 100 × grid of ρ, every value beats the frozen control at both the screening and the full budget, with a broad minimum around ρ ∈ [0 .03 , 0.1] (Table 4; Appendix G.4). Increasing K from 1 to 8 improves perplexity monotonically at constant peak memory (the K tangents run sequentially, each freeing its tape before the next) and sub-linear wall-clock cost ( 52 → 187 ms per step), making K a pure time–variance dial. Among optimizers (Appendix G.5), the three adaptive methods cluster tightly (Muon 382 , Adam 
+
+387 , AdamW 399 ) while SGD fails entirely ( 44 ,918 ): only a per-coordinate denominator can rec-oncile the O(1) head gradient with the O(Ptrunk /K ) trunk estimate under one learning rate. 
+
+## 5 DISCUSSION 
+
+Limitations. Split-FG still trails backpropagation: on WikiText-103 it reaches perplexity 387 ,versus 150 with matched Adam and 75 .5 with tuned AdamW, with gaps of 27 .7 and 30 .4 points on CIFAR-10 and CIFAR-100. Its variance also favors architectures with a large exact head; our flat-head image models make this trade-off by using a shallow feature extractor. Memory savings come at a substantial time cost ( 1.5–4.5× slower steps for K=2 –8), and activation checkpointing (Chen et al., 2016) or reversible architectures (Gomez et al., 2017) remain stronger choices when memory is the only goal. Split-FG’s distinct property is eliminating reverse-mode passes through the trunk.This approach is especially valuable where a backward pass is unavailable, such as on the optical and analog accelerators motivating this work, as it obtains trunk gradients solely through forward perturb-and-measure techniques Our experiments are limited to a 16 M-parameter language 9Preprint model and vision backbones up to 11 M parameters on one 8 GB GPU; because variance scales as Ptrunk /K , larger trunks remain the main open question. The GPT results are single-seed, use gradient clipping and a readout-only surrogate for tied embeddings (Appendices D and G.7). Com-parisons across K are additionally affected by separate annealing schedules. 
+
+A negative result: sizing the trunk to the probe budget. We first tested whether reducing the forward-trained trunk to match the probe budget would help. This “light trunk” trains only positional embeddings, LayerNorm affines, and biases ( 46 .6k parameters, roughly 20 probes per parameter), while freezing the trunk weight matrices. It only ties the frozen control ( 671 .6 vs. 667 .6 perplexity), whereas the ρ-scaled full trunk reaches 386 .7. The limiting factor is therefore step size, not probe count: with a reduced trunk step, even a severely under-determined trunk can learn. Here ρ is simply a per-group learning-rate multiplier (You et al., 2020; Howard & Ruder, 2018; Yang et al., 2021); the key point is that the noisy, estimated trunk gradient needs a much smaller step than the exact head gradient. 
+
+Future directions. Two extensions stand out: conditioned tangents, which scale each tangent coordinate by a running gradient-magnitude estimate, reweighted to stay unbiased (preliminary runs: better sample efficiency, same plateau under full annealing) and broader head classes, e.g. a head-only backward pass for nonlinear heads or finite-difference head gradients for black-box heads. 
+
+## REFERENCES 
+
+Atılım G¨ unes ¸ Baydin, Barak A. Pearlmutter, Don Syme, Frank Wood, and Philip Torr. Gradients without backpropagation, 2022. URL https://arxiv.org/abs/2202.08587 .Aochuan Chen, Yimeng Zhang, Jinghan Jia, James Diffenderfer, Konstantinos Parasyris, Jiancheng Liu, Yihua Zhang, Zheng Zhang, Bhavya Kailkhura, and Sijia Liu. Deepzero: Scaling up zeroth-order optimization for deep model training. In The Twelfth International Conference on Learning Representations , 2024. URL https://openreview.net/forum?id=qBWhjsNPEY .Tianqi Chen, Bing Xu, Chiyuan Zhang, and Carlos Guestrin. Training deep nets with sublinear memory cost, 2016. URL https://arxiv.org/abs/1604.06174 .Aidan N Gomez, Mengye Ren, Raquel Urtasun, and Roger B Grosse. The reversible residual network: Backpropagation without storing activations. In I. Guyon, U. Von Luxburg, S. Bengio, H. Wallach, R. Fergus, S. Vishwanathan, and R. Garnett (eds.), Ad-vances in Neural Information Processing Systems , volume 30. Curran Associates, Inc., 2017. URL https://proceedings.neurips.cc/paper_files/paper/2017/ file/f9be311e65d81a9ad8150a60844bb94c-Paper.pdf .Yury Gorishniy, Akim Kotelnikov, and Artem Babenko. Tabm: Advancing tabular deep learning with parameter-efficient ensembling. In The Thirteenth International Conference on Learning Representations , 2025. URL https://openreview.net/forum?id=Sd4wYYOhmY .Andreas Griewank and Andrea Walther. Evaluating Derivatives . Society for Industrial and Applied Mathematics, second edition, 2008. doi: 10.1137/1.9780898717761. URL https://epubs. siam.org/doi/abs/10.1137/1.9780898717761 .Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep Residual Learning for Image Recognition . In 2016 IEEE Conference on Computer Vision and Pattern Recognition (CVPR) ,pp. 770–778, Los Alamitos, CA, USA, June 2016. IEEE Computer Society. doi: 10.1109/CVPR. 2016.90. URL https://doi.ieeecomputersociety.org/10.1109/CVPR.2016. 90 .Geoffrey Hinton. The forward-forward algorithm: Some preliminary investigations, 2022. URL 
+
+https://arxiv.org/abs/2212.13345 .Jeremy Howard and Sebastian Ruder. Universal language model fine-tuning for text classification. In Iryna Gurevych and Yusuke Miyao (eds.), Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pp. 328–339, Melbourne, Australia, July 2018. Association for Computational Linguistics. doi: 10.18653/v1/P18-1031. URL https://aclanthology.org/P18-1031/ .10 Preprint Tyler W. Hughes, Momchil Minkov, Yu Shi, and Shanhui Fan. Training of photonic neural networks through in situ backpropagation and gradient measurement. Optica , 5(7):864–871, Jul 2018. doi: 10.1364/OPTICA.5.000864. URL https://opg.optica.org/optica/ abstract.cfm?URI=optica-5-7-864 .L. Isserlis. On a formula for the product-moment coefficient of any order of a normal frequency distribution in any number of variables. Biometrika , 12(1/2):134–139, 1918. ISSN 00063444, 14643510. URL http://www.jstor.org/stable/2331932 .Urvashi Khandelwal, Omer Levy, Dan Jurafsky, Luke Zettlemoyer, and Mike Lewis. Generalization through memorization: Nearest neighbor language models. In International Conference on Learn-ing Representations , 2020. URL https://openreview.net/forum?id=HklBjCEKvH .Diederik P. Kingma and Jimmy Ba. Adam: A method for stochastic optimization, 2017. URL 
+
+https://arxiv.org/abs/1412.6980 .Alex Krizhevsky. Learning multiple layers of features from tiny images. 2009. URL https: //api.semanticscholar.org/CorpusID:18268744 .Axel Laborieux, Maxence Ernoult, Benjamin Scellier, Yoshua Bengio, Julie Grollier, and Damien Querlioz. Scaling equilibrium propagation to deep convnets by drastically reducing its gradi-ent estimator bias. Frontiers in Neuroscience , Volume 15 - 2021, 2021. ISSN 1662-453X. doi: 10.3389/fnins.2021.633674. URL https://www.frontiersin.org/journals/ neuroscience/articles/10.3389/fnins.2021.633674 .Sadhika Malladi, Tianyu Gao, Eshaan Nichani, Alex Damian, Jason D. Lee, Danqi Chen, and San-jeev Arora. Fine-tuning language models with just forward passes. In Thirty-seventh Confer-ence on Neural Information Processing Systems , 2023. URL https://openreview.net/ forum?id=Vota6rFhBQ .Stephen Merity, Caiming Xiong, James Bradbury, and Richard Socher. Pointer sentinel mix-ture models. In International Conference on Learning Representations , 2017. URL https: //openreview.net/forum?id=Byj72udxe .Beren Millidge, Alexander Tschantz, and Christopher L. Buckley. Predictive coding approximates backprop along arbitrary computation graphs. Neural Computation , 34(6):1329–1368, 2022. doi: 10.1162/neco a 01497. Arild Nøkland. Direct feedback alignment provides learning in deep neural networks. In Neu-ral Information Processing Systems , 2016. URL https://api.semanticscholar.org/ CorpusID:2843914 .Alec Radford, Jeffrey Wu, Rewon Child, David Luan, Dario Amodei, and Ilya Sutskever. Language models are unsupervised multitask learners. OpenAI , 2019. URL https: //cdn.openai.com/better-language-models/language_models_are_ unsupervised_multitask_learners.pdf . Accessed: 2024-11-15. Hubert Ramsauer, Bernhard Sch¨ afl, Johannes Lehner, Philipp Seidl, Michael Widrich, Lukas Gru-ber, Markus Holzleitner, Thomas Adler, David Kreil, Michael K Kopp, G¨ unter Klambauer, Jo-hannes Brandstetter, and Sepp Hochreiter. Hopfield networks is all you need. In International Conference on Learning Representations , 2021. URL https://openreview.net/forum? id=tL89RnzIiCd .Mengye Ren, Simon Kornblith, Renjie Liao, and Geoffrey Hinton. Scaling forward gradient with local losses. In The Eleventh International Conference on Learning Representations , 2023. URL 
+
+https://openreview.net/forum?id=JxpBP1JM15-.David E. Rumelhart, Geoffrey E. Hinton, and Ronald J. Williams. Learning representations by back-propagating errors. Nature , 323:533–536, 1986. URL https://api.semanticscholar. org/CorpusID:205001834 .Tim Salimans, Jonathan Ho, Xi Chen, Szymon Sidor, and Ilya Sutskever. Evolution strategies as a scalable alternative to reinforcement learning, 2017. URL https://arxiv.org/abs/ 1703.03864 .11 Preprint Tommaso Salvatori, Yuhang Song, Thomas Lukasiewicz, Rafał Bogacz, and Zhenghua Xu. Re-verse differentiation via predictive coding. Proceedings of the ... AAAI Conference on Arti-ficial Intelligence. AAAI Conference on Artificial Intelligence , 36:8150 – 8158, 2021. URL 
+
+https://api.semanticscholar.org/CorpusID:237532780 .Benjamin Scellier and Yoshua Bengio. Equilibrium propagation: Bridging the gap between energy-based models and backpropagation. Frontiers in Computational Neuroscience ,Volume 11 - 2017, 2017. ISSN 1662-5188. doi: 10.3389/fncom.2017.00024. URL 
+
+https://www.frontiersin.org/journals/computational-neuroscience/ articles/10.3389/fncom.2017.00024 .Yichen Shen, Nicholas C. Harris, Scott Skirlo, Mihika Prabhu, Tom Baehr-Jones, Michael Hochberg, Xin Sun, Shijie Zhao, Hugo Larochelle, Dirk Englund, and Marin Soljaˇ ci´ c. Deep learning with coherent nanophotonic circuits. Nature Photonics , 11(7):441–446, July 2017. doi: 10.1038/nphoton.2017.93. David Silver, Anirudh Goyal, Ivo Danihelka, Matteo Hessel, and Hado van Hasselt. Learning by directional gradient descent. In International Conference on Learning Representations , 2022. URL https://openreview.net/forum?id=5i7lJLuhTm .James C. R. Whittington and Rafał Bogacz. An approximation of the error backpropagation al-gorithm in a predictive coding network with local hebbian synaptic plasticity. Neural computa-tion , 29:1229 – 1262, 2017. URL https://api.semanticscholar.org/CorpusID: 13651627 .Daan Wierstra, Tom Schaul, Tobias Glasmachers, Yi Sun, Jan Peters, and J ˜ A¼rgen Schmidhuber. Natural evolution strategies. Journal of Machine Learning Research , 15(27):949–980, 2014. URL 
+
+http://jmlr.org/papers/v15/wierstra14a.html .Ge Yang, Edward Hu, Igor Babuschkin, Szymon Sidor, Xiaodong Liu, David Farhi, Nick Ryder, Jakub Pachocki, Weizhu Chen, and Jianfeng Gao. Tuning large neu-ral networks via zero-shot hyperparameter transfer. In M. Ranzato, A. Beygelzimer, Y. Dauphin, P.S. Liang, and J. Wortman Vaughan (eds.), Advances in Neural In-formation Processing Systems , volume 34, pp. 17084–17097. Curran Associates, Inc., 2021. URL https://proceedings.neurips.cc/paper_files/paper/2021/ file/8df7c2e3c3c3be098ef7b382bd2c37ba-Paper.pdf .Yang You, Igor Gitman, and Boris Ginsburg. Large batch training of convolutional networks, 2017. URL https://arxiv.org/abs/1708.03888 .Yang You, Jing Li, Sashank Reddi, Jonathan Hseu, Sanjiv Kumar, Srinadh Bhojanapalli, Xiaodan Song, James Demmel, Kurt Keutzer, and Cho-Jui Hsieh. Large batch optimization for deep learn-ing: Training bert in 76 minutes, 2020. URL https://arxiv.org/abs/1904.00962 .
+
+## A RELATED WORK 
+
+Forward gradients and zeroth-order training. Forward-mode directional derivatives as unbi-ased gradient estimates were proposed by Baydin et al. (2022) and studied for representation learn-ing by Silver et al. (2022); evolution strategies (Salimans et al., 2017; Wierstra et al., 2014) and zeroth-order fine-tuning (Malladi et al., 2023) estimate the same object from function evaluations. All inherit variance that grows with the number of perturbed parameters. Ren et al. (2023) reduce that dimension with layer-local losses at the price of a surrogate objective; Split-FG instead keeps the global loss and removes the head’s share of the dimension exactly, which is where most parame-ters live in our settings. Our frozen-trunk control asks a question this literature rarely does—whether the estimated component improves on not training it at all —and our answer (no, unless the update is rescaled) suggests such controls should be standard. 12 Preprint 
+
+Local and biologically motivated learning. Forward-Forward (Hinton, 2022), predictive coding (Whittington & Bogacz, 2017; Millidge et al., 2022), equilibrium propagation (Scellier & Bengio, 2017), and feedback alignment (Nøkland, 2016) avoid the backward pass with local objectives or fixed feedback, introducing bias; associative-memory readouts (Ramsauer et al., 2021; Khandelwal et al., 2020) avoid training altogether. We compare against these families directly (Section 4). 
+
+Per-group step sizes. Mechanically, our trunk step scale ρ is a per-group learning-rate multiplier—an axis long used by layer-wise adaptive methods (You et al., 2017; 2020), discrimi-native fine-tuning ( ?), and width-aware parameterisations (Yang et al., 2021). We claim no novelty for the mechanism. The contribution is the diagnosis : with a mixed exact/estimated gradient, Adam-style normalisation equalises update magnitudes but not signal-to-noise, so the estimated group must be slowed by orders of magnitude ( ρ ≈ 0.03 at Ptrunk =3 .2M)—without which trunk training is worse than leaving the trunk frozen, a failure mode invisible unless the frozen control is run. 
+
+Memory-efficient exact-gradient training. Activation checkpointing (Chen et al., 2016) and re-versible architectures (Gomez et al., 2017) reduce activation memory while keeping exact gradients, and on pure memory grounds they are strong alternatives to forward-mode training. Split-FG’s claim is different: it uses zero reverse-mode passes through the trunk, the regime relevant to hardware that cannot run a backward pass and to models of biological learning; its memory saving (Section 4) is a by-product, not the primary argument. 
+
+## B VARIANCE REDUCTION DERIVATION 
+
+Let θ = ( θtrunk , θ head ) and write F (θ) for the full-batch training objective. At a fixed iterate, denote the exact gradients by gtrunk = ∇θtrunk F (θ) and ghead = ∇θhead F (θ). Split-FG draws K
+
+independent Gaussian tangent vectors vk ∼ N (0 , I Ptrunk ) only in the trunk parameter space and uses 
+
+ˆgtrunk = 1
+
+K
+
+> K
+
+X
+
+> k=1
+
+⟨gtrunk , v k⟩vk, ˆghead = ghead . (13) Unbiasedness follows from E[vkv⊤ 
+
+> k
+
+] = I: E[⟨gtrunk , v k⟩vk] = gtrunk .For a single tangent and a trunk coordinate i, write ˆgi = ( P 
+
+> j
+
+gj vj )vi. Since E[vj vℓv2 
+
+> i
+
+] = δjℓ +2δij δiℓ for Gaussian v, E[ˆ g2 
+
+> i
+
+] = ∥gtrunk ∥2 + 2 g2 
+
+> i
+
+. Subtracting the squared mean g2 
+
+> i
+
+and averaging 
+
+K independent samples gives 
+
+Var[(ˆ gtrunk )i] = 1
+
+K
+
+ ∥gtrunk ∥2 + ( gtrunk )2
+
+> i
+
+ . (14) Thus Split-FG replaces the pure forward-gradient dominant term ∥∇ F (θ)∥2 by ∥gtrunk ∥2 for each trunk coordinate; the head contribution is exact and contributes no estimator variance. Summing over the Ptrunk trunk coordinates gives 
+
+E[ˆ g | θ] = ∇F (θ), (15) 
+
+E∥ˆg − ∇ F (θ)∥2 | θ = Ptrunk + 1 
+
+K ∥gtrunk ∥2, (16) 
+
+E∥ˆg∥2 | θ = ∥ghead ∥2 +
+
+
+
+1 + Ptrunk + 1 
+
+K
+
+
+
+∥gtrunk ∥2. (17) For pure forward gradient over all Ptotal parameters, the corresponding total variance is (( Ptotal +1) /K )∥∇ F (θ)∥2. Under roughly uniform gradient energy per coordinate, the dominant per-coordinate variance ratio becomes Ptrunk /P total .
+
+## C CONVERGENCE PROOFS 
+
+Formal statement (predictable-preconditioner Split-FG). Let F denote the full-batch training objective. Assume that F is bounded below by F⋆ and is L-smooth. Let ˆgt be the Split-FG esti-mator at step t, with an exact head component and a K-sample forward-gradient trunk component. 13 Preprint 10 2 10 3    
+
+> head output dimension
+> 350
+> 400
+> 450
+> 500
+> 550
+> 600
+> 650
+> total trunk-coordinate variance
+> Estimator variance
+> Pure FG
+> Split-FG
+> 10 210 1
+> P_trunk / P_total
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> Var(Split-FG) / Var(Pure FG)
+> 5000
+> 500 50
+> Variance ratio
+> measured
+> exact energy theory
+> count heuristic
+
+Figure 2: Controlled toy variance experiment (Section 4.1). Left: total empirical variance over trunk coordinates for pure forward gradient and Split-FG as the linear head grows. Right: the measured variance ratio tracks the gradient-energy prediction in Eq. equation 10; the parameter-count ratio is a useful heuristic only when gradient energy is approximately uniform across parameters. Table 5: Toy variance diagnostic with a fixed trunk and growing linear classification head. Ratios use trunk-coordinate estimator variance; relative error is with respect to the energy-ratio prediction of Eq. equation 10. 
+
+Classes Ptotal Ptrunk /P total Measured Energy theory Rel. error 50 3250 0.4923 0.7162 0.6993 2.4% 500 18100 0.0884 0.6875 0.6727 2.2% 5000 166600 0.0096 0.5689 0.6104 6.8% 
+
+Consider the diagonal-preconditioned update 
+
+θt+1 = θt − ηA t ˆgt, At = diag( at, 1, . . . , a t,P total ), (18) where At is predictable given the history before drawing the current tangents and is uniformly bounded: 
+
+0 < a min ≤ at,i ≤ amax < ∞. (19) Define the adaptive noise ratio 
+
+Rt(At) = Et[∥At ˆgt∥2]
+
+⟨∇ F (θt), A t∇F (θt)⟩ . (20) When ∇F (θt) = 0 , both numerator and denominator vanish for the full-batch estimator and we set 
+
+Rt(At) = 0 by convention. If Rt(At) ≤ Rmax almost surely and 0 < η ≤ 1/(LR max ), then for any horizon T ,
+
+1
+
+T 
+
+> T−1
+
+X
+
+> t=0
+
+E[⟨∇ F (θt), A t∇F (θt)⟩] ≤ 2( F (θ0) − F⋆)
+
+ηT . (21) Consequently, 
+
+1
+
+T 
+
+> T−1
+
+X
+
+> t=0
+
+E∥∇ F (θt)∥2 ≤ 2( F (θ0) − F⋆)
+
+ηa min T . (22) 
+
+Predictable-preconditioner assumptions and weighted moment. The theorem applies to a bounded diagonal preconditioner fixed before the current tangent draw, for example a deliberately lagged inverse-RMS preconditioner. It does not capture the exact Adam implementation in our ex-periments: both its first moment and its second-moment denominator are updated from the current stochastic estimate before the parameter step. Establishing a result for that optimizer requires a 14 Preprint separate dependence analysis. Within the idealised algorithm, the trunk-specific step scale ρ of Ap-pendix G.2 multiplies the trunk entries of At by a constant and therefore preserves the theorem’s assumptions. For a fixed diagonal preconditioner At, Split-FG has the exact conditional weighted second moment 
+
+Et
+
+∥At ˆgt∥2 = ∥Atghead ,t ∥2 + X
+
+> i∈trunk
+
+a2
+
+> t,i
+
+ 
+
+1 + 1
+
+K
+
+
+
+g2 
+
+> t,i
+
++ 1
+
+K ∥gtrunk ,t ∥2
+
+
+
+. (23) This identity explains the possible role of predictable inverse-RMS scaling: noisy trunk coordinates with large past running second moment can acquire smaller at,i , so their contribution to the smooth-ness penalty is reduced quadratically, while the exact head coordinates carry no forward-gradient variance term. A coarse worst-case bound is Rmax ≤ (a2max /a min )(1 + ( Ptrunk + 1) /K ), recover-ing the unpreconditioned Split-FG scaling up to conditioning of the diagonal preconditioner. If an implementation shares a parameter between the trunk computation and the exact head, the the-orem applies to the strict estimator that includes both contributions (the include tied variant). It does not cover the readout-only surrogate used in our GPT runs: there the stop-gradient copy of the lookup role is redefined at every iterate, so no fixed L-smooth, lower-bounded objective telescopes in the descent argument; the guarantee applies to the untied parameters, and the tied table’s update is a heuristic we disclose (Appendix G.7). 
+
+Proof of the predictable-preconditioner theorem. For a trunk coordinate i, Eq. equation 14 gives 
+
+Et[ˆ g2
+
+> t,i
+
+] = 
+
+
+
+1 + 1
+
+K
+
+
+
+g2 
+
+> t,i
+
++ 1
+
+K ∥gtrunk ,t ∥2, (24) where Et[·] conditions on the current iterate and all previous randomness. For head coordinates, Split-FG is exact: ˆgt,i = gt,i . Since At is fixed under Et[·], multiplying by a2 
+
+> t,i
+
+and summing over coordinates proves the weighted second-moment identity in Eq. equation 23. By L-smoothness and the update θt+1 = θt − ηA t ˆgt,
+
+Et[F (θt+1 )] ≤ F (θt) − η ⟨∇ F (θt), A tEt[ˆ gt]⟩ + Lη 2
+
+2 Et[∥At ˆgt∥2] (25) 
+
+= F (θt) − η⟨∇ F (θt), A t∇F (θt)⟩ + Lη 2
+
+2 Et[∥At ˆgt∥2] (26) 
+
+≤ F (θt) − η
+
+
+
+1 − LηR max 
+
+2
+
+
+
+⟨∇ F (θt), A t∇F (θt)⟩ (27) 
+
+≤ F (θt) − η
+
+2 ⟨∇ F (θt), A t∇F (θt)⟩. (28) The second line uses Split-FG unbiasedness, and the third uses the definition of Rt(At) together with 
+
+Rt(At) ≤ Rmax . Taking total expectation, summing from t = 0 to T − 1, and using F (θT ) ≥ F⋆
+
+gives Eq. equation 21. Finally, At ⪰ amin I implies ⟨∇ F (θt), A t∇F (θt)⟩ ≥ amin ∥∇ F (θt)∥2,yielding Eq. equation 22. 
+
+SGD baseline theorem. For comparison, the unpreconditioned Split-FG update also converges under the standard nonconvex stochastic-gradient argument. Assume F is differentiable, bounded below by F⋆, and L-smooth. Run the SGD version of Split-FG, 
+
+θt+1 = θt − ηˆgt, (29) where the head gradient is exact and the trunk estimator is Eq. equation 13. If 
+
+0 < η ≤ 1
+
+L (1 + ( Ptrunk + 1) /K ) , (30) then for any horizon T ,
+
+1
+
+T 
+
+> T−1
+
+X
+
+> t=0
+
+E∥∇ F (θt)∥2 ≤ 2 ( F (θ0) − F⋆)
+
+ηT . (31) 15 Preprint Taking the largest allowed step size yields 
+
+min  
+
+> 0≤t<T
+
+E∥∇ F (θt)∥2 ≤ 2L (1 + ( Ptrunk + 1) /K ) ( F (θ0) − F⋆)
+
+T . (32) Thus full-batch Split-FG reaches a first-order stationary point at the standard nonconvex stochastic-gradient rate, with the forward-gradient penalty depending on Ptrunk rather than Ptotal .
+
+Proof of the SGD baseline. By L-smoothness and the update rule, 
+
+Et[F (θt+1 )] ≤ F (θt) − η ⟨∇ F (θt), Et[ˆ gt]⟩ + Lη 2
+
+2 Et[∥ˆgt∥2] (33) 
+
+= F (θt) − η∥∇ F (θt)∥2 + Lη 2
+
+2
+
+
+
+∥ghead ,t ∥2 +
+
+
+
+1 + Ptrunk + 1 
+
+K
+
+
+
+∥gtrunk ,t ∥2
+
+
+
+(34) 
+
+≤ F (θt) − η
+
+
+
+1 − Lη 
+
+2
+
+
+
+1 + Ptrunk + 1 
+
+K
+
+ 
+
+∥∇ F (θt)∥2 (35) 
+
+≤ F (θt) − η
+
+2 ∥∇ F (θt)∥2. (36) The second line uses unbiasedness and the second-moment identity from Eq. equation 15; the final line uses Eq. equation 30. Taking total expectation, summing over t = 0 , . . . , T − 1, and using 
+
+F (θT ) ≥ F⋆ proves Eq. equation 31. 
+
+Minibatches. With minibatches, the same argument applies after adding the usual data-noise term. If the combined estimator remains unbiased for ∇F (θt) and has conditional second moment at most 
+
+(1 + ( Ptrunk + 1) /K ) ∥∇ F (θt)∥2 + σ2data , then the SGD bound becomes 
+
+1
+
+T 
+
+> T−1
+
+X
+
+> t=0
+
+E∥∇ F (θt)∥2 ≤ 2 ( F (θ0) − F⋆)
+
+ηT + Lησ 2data . (37) The additional term is the standard minibatch stochastic-gradient term; the structural Split-FG con-tribution still scales with Ptrunk /K .
+
+## D GENERAL EXPERIMENTAL PROTOCOL 
+
+Backpropagation-reference protocol. The tabular and GPT comparisons use the same dataset, preprocessing, architecture, loss function, data exposure, and optimizer family for Split-FG and their backpropagation references. For language models this means the same number of training tokens and optimizer updates. The image headline table is a system comparison: Split-FG uses a light-trunk/flat-head architecture while the backpropagation, Pure-FG, and ES references use standard full ResNets and the other baselines use their native architectures. The image appendix therefore reports the architecture-matched flat-head estimator ablation separately. Wall-clock time is reported as an outcome, not a matching criterion. 
+
+Memory metric. For each large experiment we report peak GPU memory and the relative differ-ence of Split-FG from its stated backpropagation reference: 
+
+MemSave = 1 − Mpeak (Split -FG) 
+
+Mpeak (Backprop) . (38) We also report held-out-fold, development, or validation performance as labelled and step time; the ablation tables additionally report JVPs per step, and every Split-FG run uses zero reverse-mode passes through the trunk. 
+
+Gradient clipping. Every run in the paper—backpropagation included—applies global-norm clip-ping at 1.0 to the assembled gradient estimate (all parameter groups jointly) before the optimizer step. For high-variance estimates whose norm exceeds the threshold, clipping rescales the whole update and thereby introduces a bias not covered by the analysis of Section 3, which treats the un-clipped estimator; the protocol is uniform across methods, so comparisons within each table share it. 16 Preprint 
+
+Backprop-free baselines. The Forward-Forward algorithm (Hinton, 2022) trains each layer with a local goodness objective on positive and negative (label-overlaid) inputs and is defined for clas-sification only; it therefore appears in the tabular-classification and image experiments but not in regression or language modelling. Predictive coding (Whittington & Bogacz, 2017; Millidge et al., 2022) settles layer-wise latent variables to minimise local prediction errors and then applies local Hebbian weight updates; it applies to both classification and regression and, in the small-step-size limit, approximates the backpropagation gradient using only local computation. The modern Hop-field associative-memory baseline (Ramsauer et al., 2021) performs a training-free softmax retrieval over a frozen trunk, storing (feature , target ) pairs and answering queries by w = softmax( β qK ⊤),
+
+ˆy = wV ; for language modelling this reduces to per-token nearest-neighbour recall in the spirit of kNN-LM (Khandelwal et al., 2020). All three baselines use zero JVPs and zero trunk backward passes, isolating how much of each task is solvable by local goodness training, local error settling, or associative recall over a random representation. 
+
+## E TABULAR DATA 
+
+E.1 TABULAR DATASET DETAILS 
+
+Table 6 summarizes the eight default tabular datasets used in the experiments of Section 4.2. They are standard public benchmarks obtained from OpenML (with Kaggle origins for Otto Group Prod-ucts and Diamond), chosen to cover binary classification, multiclass classification, and regression across a range of feature counts and dataset sizes. Following the preprocessing in our loader, nu-meric features are standardised to zero mean and unit variance and categorical features are integer-encoded. We use 5-fold cross-validation for all datasets and methods; each fold trains under the fixed 300 -step budget of Appendix E.2. Table 6: Summary of the default tabular datasets used in Section 4.2. “#Feat.” is the number of input features and “#Cls.” the number of target classes (“–” for regression). .                                                       
+
+> Dataset Domain Task #Samples #Feat. #Cls. Source Adult Census income Binary classification 48 ,842 14 2OpenML Higgs Small Particle physics Binary classification 98 ,050 28 2OpenML Otto Group Products E-commerce Multiclass classification 61 ,878 93 9Kaggle/OpenML Covertype Forest cartography Multiclass classification 581 ,012 54 7OpenML California Housing Housing prices Regression 20 ,640 8–OpenML House 16H Housing prices Regression 22 ,784 16 –OpenML Diamond Diamond prices Regression 53 ,940 9–Kaggle/OpenML Black Friday Retail purchases Regression 166 ,821 9–OpenML
+
+E.2 TABULAR EXPERIMENTAL PROTOCOL 
+
+Metrics. For the classification datasets we report held-out-fold accuracy (%, higher is better); for the regression datasets we report held-out-fold RMSE (lower is better) on the standardised targets. Because the loader standardises regression targets using training-fold statistics, RMSE is expressed in units of target standard deviations. Classification is trained with cross-entropy and regression with MSE. 
+
+Methods. Each dataset is run with matched backpropagation, pure forward gradient (Pure FG), antithetic evolution strategies (ES), and the no-global-backward baselines Forward-Forward (FF), predictive coding (PC), and the Hopfield associative-memory readout (Hop.), against Split-FG. FF applies only to classification (“–” for regression); PC and Hopfield apply to both. Every Split-FG run is paired with the matched backpropagation version of the same TabM-style model (Appendix E.3). 
+
+Training budget. Every method uses a fixed budget of 300 optimiser steps at batch size 256 , run once per cross-validation fold with seed 0; the ± values in Table 1 are standard deviations over the 
+
+5 folds, not over seeds. The effective number of epochs is steps × batch /N train and so varies with dataset size (reported in Table 7): under this controlled budget the largest datasets (Covertype, Black Friday) see well under one epoch. 17 Preprint 
+
+Memory measurement. Table 7 reports peak GPU memory via 
+
+torch.cuda.max memory allocated , reset at the start of training, and MemSave =1 − Mpeak (Split-FG )/M peak (Backprop ) (Eq. equation 38). Both methods keep the full dataset resident on-device, so the peak includes the data tensors; this dilutes the activation-graph saving on the largest datasets, which is why the relative saving is largest for the smallest dataset (California Housing, 24 .1% ) and smallest for the largest (Black Friday, 4.3% ). All runs use a single NVIDIA RTX 4070 laptop GPU. Table 7: Tabular memory savings: peak GPU memory (MiB) for matched backpropagation vs. Split-FG, with MemSave from Eq. equation 38. Measurement setup and the dataset-size trend are detailed in Appendix E.2.                               
+
+> Dataset Loss Epochs Backprop mem. (MiB) Split-FG mem. (MiB) MemSave Adult CE 2.3144 .4126 .012 .7%
+> Covertype CE 0.2309 .8291 .16.0%
+> California Housing MSE 5.376 .057 .724 .1%
+> Diamond MSE 2.0156 .9138 .611 .7%
+> Black Friday MSE 0.7425 .2406 .94.3%
+
+E.3 TABULAR MODEL ARCHITECTURE 
+
+All tabular experiments (Table 1) use the same TabM-style parameter-efficient MLP ensemble (Gor-ishniy et al., 2025). We reserve K for the number of forward-gradient tangent samples and write the TabM ensemble count as kens . A single shared MLP is evaluated by kens ensemble members that differ only through BatchEnsemble rank-1 multiplicative adapters: at each layer member i com-putes yi =  (xi ⊙ ri) W ⊤ ⊙ si + b, with a shared weight W and bias b and per-member vectors 
+
+ri, s i (initialised near 1 to break symmetry). The per-member representations are averaged before a single shared linear head; because averaging is linear, this keeps the head a single linear layer, so the trunk/head split admits the closed-form CE/MSE head gradient of Eq. equation 7. For the MSE case, with ˆy = hW ⊤ 
+
+> head
+
++ b and L = (2 N )−1∥ˆy − y∥2, the closed forms are ∂L/∂W head = r⊤h,
+
+∂L/∂b = P 
+
+> n
+
+rn, and ∂L/∂h = rW head , where r = (ˆ y − y)/N . The trunk (input broadcast, the 
+
+nlayers BatchEnsemble layers, and the member average) is the nonlinear part estimated by forward-gradient JVPs; the linear head is estimated exactly. Table 8 lists the structure. Default hyperparameters: hidden width dh = 128 , nlayers = 2 shared layers, kens = 8 ensemble members, K = 8 forward-gradient tangent samples, the Adam optimizer at learning rate 3 × 10 −3,batch size 256 , trained for 300 steps. Here n denotes the number of input features and C the number of outputs ( C classes for classification, C = 1 for regression), both dataset-dependent (Table 6); B
+
+is the batch size. 
+
+## F IMAGE DATASET DETAILS 
+
+Table 9 summarizes the image-classification benchmarks used in Section 4.3. CIFAR-10 and CIFAR-100 (Krizhevsky, 2009) are standard 32 × 32 natural-image datasets with a fixed 
+
+50 ,000 /10 ,000 train/test split; Following the preprocessing in our loader, images are standardised per channel; at training time CIFAR uses standard augmentation (reflection padding with a random 
+
+32 × 32 crop and a random horizontal flip). Unlike the smaller tabular datasets, which use 5-fold cross-validation, the current image artifacts use the fixed official train/test split. Because the test split was inspected during method development and evaluation samples random batches from it, we label these values development evaluation rather than final held-out test results (Appendix F.1). F.1 IMAGE EXPERIMENTAL PROTOCOL 
+
+Metrics. The backpropagation, Pure-FG, ES, and Split-FG artifacts report top-1 accuracy (%, higher is better) by sampling 50 random batches of size 128 from the official CIFAR test split; the FF, PC, and Hopfield runners evaluate all 10 ,000 examples. Thus the former are Monte Carlo estimates, not deterministic full-test passes. Moreover, that split was inspected during method development, so 18 Preprint Table 8: Network structure of the TabM-style model used for the tabular experiments (Table 1). Rows above the rule form the trunk, estimated by forward-gradient JVPs; the linear head below the rule is estimated with the exact analytical head gradient (Eq. equation 7). n: input features; 
+
+dh = 128 : hidden width; kens = 8 : ensemble members; K: forward-gradient tangent samples; C:number of outputs; B: batch size.                                                   
+
+> Layer Operation Output shape Description Input Standardised features (B, n )Numerical features standardised; categori-cals integer-encoded and appended. Broadcast Replicate to kens members (B, k ens , n )Shared input copied to all kens ensemble members. 1BatchEnsemble Linear +ReLU (B, k ens , d h)Shared W1∈Rdh×n, bias; per-member rank-1 scales r1, s 1.2BatchEnsemble Linear +ReLU (B, k ens , d h)Shared W2∈Rdh×dh, bias; per-member rank-1 scales r2, s 2.Mean Average over members (B, d h)¯h=1
+> kens
+> Pkens
+> i=1 hi; linearises the head.
+> — trunk / head split —
+> Head Linear (B, C )Shared Whead ∈RC×dh, bias; averaged logits (cls.) / prediction (reg.). Output CE / MSE loss scalar Cross-entropy (classification) or 12MSE (regression).
+
+Table 9: Summary of the image-classification datasets used in Section 4.3. “Res.” is the input resolution and “#Cls.” the number of target classes.                       
+
+> Dataset Domain Task #Samples Res. #Cls. Source CIFAR-10 Natural images Multiclass classification 60 ,000 32 ×32 10 (Krizhevsky, 2009) CIFAR-100 Natural images Multiclass classification 60 ,000 32 ×32 100 (Krizhevsky, 2009)
+
+Table 2 is labelled development evaluation. All trainable models use cross-entropy. CIFAR-10 and CIFAR-100 entries are reported as mean ± standard deviation over five seeds. 
+
+Methods. Each dataset is run with a standard-backbone backpropagation reference, pure for-ward gradient (Pure FG), antithetic evolution strategies (ES), and the no-global-backward base-lines Forward-Forward (FF), predictive coding (PC), and the Hopfield associative-memory readout (Hop.), against Split-FG. Pure FG and ES use the standard ResNet-20 with all parameters estimated: Pure FG by a single full-network JVP (variance ∝ Ptotal ) and ES by a two-point zeroth-order finite difference. FF and PC are self-contained two-hidden-layer MLPs on the flattened image trained without any global backward pass. More specifically, FF greedily optimises a layer-local “good-ness” objective with the label overlaid on the input, and PC settles per-layer latents and updates weights by a local Hebbian rule. Hopfield is training-free: a frozen random trunk maps inputs to features and a modern-Hopfield/ kNN memory answers queries by softmax retrieval over stored (fea-ture, target) pairs. Split-FG uses the heavy-head/light-trunk flat-head restructuring (Appendix F.2). The standard-ResNet backpropagation row is a same-data-exposure reference, not an architecture-matched estimator control; the latter is reported in Appendix F.3. 
+
+Training budget. CIFAR-10 uses 23 ,437 steps at batch size 128 (≈ 60 epochs) for every reported method. CIFAR-100 uses that budget only for backpropagation and Split-FG; Pure FG uses 2,000 
+
+steps ( 5.12 epochs), ES 400 (1.02 epochs), FF and PC 3,000 (7.68 epochs), and Hopfield is training-free. These early-stopped rows diagnose failure at their stated budgets but are not comparable as a matched-budget ranking. Trainable image methods use Adam at learning rate 1 × 10 −3 and standard augmentation; the 60-epoch runs use a cosine schedule. CIFAR-10 uses 200 warmup steps and no weight decay; CIFAR-100 uses 300 warmup steps and weight decay 5 × 10 −4 where applicable (Appendix F.2). The forward-gradient methods use K = 4 tangent samples. The 15 .4-epoch ( 6000 -step) protocol is retained only for the flat-head estimator ablation in Appendix F.3. 19 Preprint 
+
+Memory measurement. Table 10 reports peak GPU memory via 
+
+torch.cuda.max memory allocated , reset at the start of training, and MemSave =1 − Mpeak (Split-FG )/M peak (Backprop ) (Eq. equation 38). Unlike the small tabular and linear models, a convolutional trunk carries large activation maps, and forward mode carries a tangent copy of the trunk activations; because the K tangents are evaluated sequentially, peak memory does not grow with K. The comparison therefore spans architectures: the flat-head Split-FG model versus the full ResNet-20 backprop reference. For reference, carrying full-network tangents on the standard CIFAR-10 backbone (pure FG at K=4 , memory-identical to the naive full-trunk split) peaks at 2668 MiB—the blow-up quoted in Section 4.3. Table 10: Image system peak GPU memory (MiB), measured with 
+
+torch.cuda.max memory allocated ; peak memory is per-step and independent of epoch budget. Backpropagation uses the full standard backbone; Split-FG uses the light-trunk/flat-head architecture. “RefDiff” is their fractional peak-memory difference and must not be attributed to the estimator alone. “Top-1 gap” is the corresponding cross-system difference after 60 epochs (mean ± SD over five seeds).                   
+
+> Dataset BP backbone Epochs Backprop mem. (MiB) Split-FG mem. (MiB) RefDiff Top-1 gap CIFAR-10 ResNet-20 60 1520 1282 +15 .6% −27 .7
+> CIFAR-100 ResNet-18 60 3402 3117 +8 .4% −30 .4±1.4
+
+F.2 IMAGE MODEL ARCHITECTURE 
+
+Backprop, Pure FG and ES backbones. CIFAR-10 uses a standard CIFAR ResNet-20 (He et al., 2016): a 3×3 stem ( 3 → 16 ) followed by three stages of three BasicBlocks at widths 16 /32 /64 (spa-tial 32 /16 /8), global average pooling and a linear head— ≈ 272 k parameters. The harder 100 -class CIFAR-100 uses the larger ResNet-18: a 3 × 3 stem ( 3 → 64 , the CIFAR adaptation with no max-pool) and four stages of two BasicBlocks at widths 64 /128 /256 /512 (spatial 32 /16 /8/4), global av-erage pooling and a linear head— ≈ 11 .2M parameters. Both replace BatchNorm with GroupNorm, so the trunk is a pure function of its parameters and is differentiable under torch.func.jvp in 
+
+.eval() mode. 
+
+Split-FG flat head. Split-FG keeps only the stem and the first BasicBlock as the forward-mode trunk and flattens its feature map into a large two-layer linear head W2W1 trained by the exact closed-form gradient (no activation, no backward pass through the trunk; Table 11). The first block inherits the backbone’s first-stage width, so the trunk is 5,136 parameters (flattened feature 16 ×
+
+32 × 32=16 ,384 , H=64 ) for the ResNet-20 on CIFAR-10, and 75 ,840 parameters (flattened 64 ×
+
+32 × 32=65 ,536 , H=128 ) for the ResNet-18 on CIFAR-100. In both, the trunk is under 1% of the head’s parameters, and H exceeds the class count so the factored head stays full rank. 
+
+FF and PC. Forward-Forward and predictive coding are MLP-based local-learning rules and can-not use a convolutional backbone; we run them on a parameter-matched MLP over the flattened image ( 3072 → 2000 → 2000 , ≈ 10 M parameters, comparable to the ResNet-18). 
+
+Hyperparameters. GroupNorm with 8 groups, the Adam optimizer, and K=4 forward-gradient tangents throughout. CIFAR-10: learning rate 1 × 10 −3, cosine schedule ( 200 warmup), batch 
+
+128 , 60 epochs (the 6000 -step / 15 .4-epoch budget is used only for the ablation of Appendix F.3). CIFAR-100 backpropagation and Split-FG: learning rate 1 × 10 −3, weight decay 5 × 10 −4, cosine schedule ( 300 warmup), batch 128 , 60 epochs; the other methods use the shorter budgets stated in Appendix F.1. Here C is the number of classes and B the batch size. F.3 FLAT -HEAD ESTIMATOR ABLATION 
+
+To separate the contribution of Split-FG’s exact head from the choice of architecture, Table 12 runs every estimator on the same flat-head network (CIFAR-10, the 15 .4-epoch/ 6000 -step budget, which is why its Split-FG entry sits below the 60 -epoch 60 .5% of Table 2). Pure FG and ES estimate 20 Preprint Table 11: Network structure of the flat-head ResNet used by Split-FG. Rows above the rule form the forward-mode trunk (stem + one BasicBlock at the backbone’s first-stage width w), estimated by forward-gradient JVPs; the two-layer linear head below the rule is estimated by the exact closed-form gradient. Concrete sizes: w=16 , flatten 16 ,384 , H=64 for the ResNet-20 (CIFAR-10); w=64 ,flatten 65 ,536 , H=128 for the ResNet-18 (CIFAR-100). C: classes; B: batch. Backprop and the FG/ES baselines instead continue the full backbone body (remaining stages, global pool, linear head) in place of the flat head. 
+
+Layer Operation Output shape Description Input Image (B, 3, 32 , 32) Per-channel standardised; train-time reflect-crop + horizontal flip. Stem 3 × 3 Conv, GN, ReLU (B, w, 32 , 32) 3 → w channels, stride 1, padding 1;GroupNorm ( 8 groups). Block 1 BasicBlock (B, w, 32 , 32) Two 3 × 3 convs w → w (Conv-GN-ReLU, Conv-GN) with identity shortcut, then ReLU. Flatten Reshape (B, 1024 w) The w × 32 × 32 feature map flattened (1024 w). 
+
+— trunk / head split — 
+
+Head 1 Linear (B, H ) Shared W1 ∈ RH×1024 w , bias; no activa-tion. Head 2 Linear (B, C ) Shared W2 ∈ RC×H , bias; logits =
+
+W2(W1h) + b (factored linear). Output CE loss scalar Cross-entropy over C classes. 
+
+all ≈ 1.05 M parameters — the two-layer linear head alone is 99 .5% of them — whereas Split-FG estimates only the 5,136 -parameter trunk and computes the head gradient exactly. Treating the head exactly is worth +34 points over forward-estimating it ( 56 .9 vs 22 .6): on a fixed network, the variance of estimating a million-parameter head ( ∝ Ptotal ) is precisely what the split removes, while backprop on the same net ( 70 .7% ) bounds the architecture. The table also includes Split-FG with a single exact linear head ( 54 .4±1.5): the factored two-layer head of Section 4.3 improves on it by 
+
++2 .5 points (paired t(4) = 6 .93 , p < 0.01 ), the deep-linear over-parameterisation effect cited in the main text. This is the architecture-matched comparison underlying the Split-FG column of Table 2. Table 12: Flat-head estimator ablation (CIFAR-10, 15 .4-epoch/ 6000 -step budget): all estimators on the identical flat-head network (one-block forward-mode trunk + two-layer linear head). Pure FG and ES estimate every parameter; Split-FG estimates only the trunk and treats the head exactly. Top-1 accuracy (%), mean ± std ( 2 seeds for backprop/Pure FG/ES, 5 for the Split-FG variants).               
+
+> Estimator on the flat-head net Params estimated Top-1 (%) Backprop (exact reverse mode) — (exact) 70 .7±0.3
+> Split-FG (exact 2-layer linear head) trunk only ( 5,136 )56 .9±1.2
+> Split-FG (exact single linear head) trunk only ( 5,136 )54 .4±1.5
+> Pure FG (forward gradient) all ( 1.05 M) 22 .6±1.4
+> ES (antithetic, zeroth-order) all ( 1.05 M) 21 .7±1.9
+
+## G GPT-S TYLE LANGUAGE -M ODELLING DETAILS 
+
+Table 13 summarizes the language-modelling dataset used in Section 4.4. We use WikiText-103 raw (Merity et al., 2017), tokenized with the GPT-2 byte-pair encoding (Radford et al., 2019) ( 50 ,257 
+
+tokens). In summary, we have 119 ,085 ,169 train tokens and 249 ,750 validation tokens. 21 Preprint Table 13: Summary of the GPT-style language-modelling dataset. Token counts are after GPT-2 BPE tokenization and insertion of end-of-text separators. The full validation pass uses complete non-overlapping T =128 windows, covering 249 ,728 target tokens.                
+
+> Dataset Split Tokenizer Tokens Eval tokens Source WikiText-103 Train GPT-2 BPE 119 ,085 ,169 –wikitext-103-raw-v1
+> WikiText-103 Val. GPT-2 BPE 249 ,750 249 ,728 wikitext-103-raw-v1
+
+G.1 GPT E XPERIMENTAL PROTOCOL 
+
+Metrics. We report validation negative log-likelihood (NLL) and perplexity, where PPL =exp(NLL) , together with wall-clock time, mean step time, peak GPU memory, number of JVPs per step, and backward trunk passes. Validation is a full pass over the validation token stream using non-overlapping windows; no validation minibatches are sampled for the reported main run. 
+
+Methods. The main GPT comparison uses same-architecture, same-token-exposure backpropaga-tion with Adam and no weight decay (the recipe used by Split-FG; an AdamW variant with de-coupled weight decay 0.01 reaches perplexity 75 .5 and is noted in the caption of Table 3), pure forward gradient with Adam, pure forward gradient with SGD, antithetic ES with Adam, the Hop-field associative-memory/kNN-LM baseline, and Split-FG with Adam. Forward-Forward is omit-ted because it is not defined for next-token language modelling; predictive coding and equilibrium propagation are omitted because our implementations of those baselines do not extend to next-token language modelling. The Hopfield/kNN-LM row is training-free: a frozen random GPT trunk maps training windows to features and validation queries retrieve next-token distributions by softmax kNN over the stored features. On the 8GB run we cap the store at 4096 train windows and evaluate all validation windows; its reported time entry in Table 3 is one full retrieval-evaluation pass rather than a training-step time. 
+
+Training budget. All GPT runs use the small8 GPT configuration in Table 17: L = 4 layers, 
+
+dmodel = 256 , 4 attention heads, dff = 1024 , sequence length T = 128 , and batch size 4. Training uses deterministic non-overlapping windows over the full tokenized WikiText-103 train split. This gives 930 ,352 train windows and 232 ,588 optimizer steps for one epoch. All trainable methods use the same number of optimizer steps and the same token exposure. The optimizer schedule is cosine decay with 100 warmup steps. The default learning rate is 1.5 × 10 −3 for Adam/AdamW methods and 5 × 10 −4 for the SGD forward-gradient baseline. The main table reports Split-FG at K=4 with the reduced trunk step ( ρ = 0 .03 , Appendix G.2) alongside the naive-step run at the same K; the frozen-trunk control uses K=0 (head-only), and the K-ablation table reports the sweep with the same reduced trunk step. Mechanically, the trunk step scale multiplies the Adam update of every trunk parameter by ρ while the head parameters keep the base learning rate; it changes neither the estimator nor the memory or step time. 
+
+Gradient-energy measurement. The gradient-energy ratio quoted in Section 2.2 is measured at initialisation (seed 0, the same initialisation as every small8 run) by computing exact backprop-agation gradients on 16 sequential non-overlapping WikiText-103 training minibatches ( T =128 ,
+
+B=4 ) and averaging the per-batch ratio ∥∇ θtrunk L∥ 2/∥∇ θ L∥ 2 under the same exclude tied 
+
+trunk/head partition used for training; the measurement script is included in the supplementary ma-terial. The ratio evolves over training; we report the initialisation value. 
+
+Pure-FG baseline tuning. The K=4 pure-FG row of Table 3 is tuned by the same screening protocol as ρ (fully annealed runs at the 10% -epoch budget of 23 ,258 steps, one full epoch at the argmin), applied to a six-point learning-rate grid. Screening validation perplexities: 3 × 10 −3:
+
+21 ,319 ; 1.5 × 10 −3: 8,026 ; 4.5 × 10 −4: 4,544 (argmin); 1.5 × 10 −4: 6,111 ; 4.5 × 10 −5: 16 ,510 ;
+
+1.5 × 10 −5: 32 ,543 . The full-epoch run at the argmin reaches 2,885 (the value in Table 3). The grid is over the global learning rate because pure FG has no exact/estimated group split; it spans 200 ×,comparable to the 100 × span of the five-point ρ grid in Table 4. 22 Preprint G.2 FROZEN -T RUNK CONTROL AND THE TRUNK STEP SCALE 
+
+Because Split-FG’s head is exact, any comparison against other estimators leaves one question open: does the forward-gradient trunk training contribute, or is the exact head over random features doing all the work? We answer it with the cheapest possible control: freeze the trunk at its random ini-tialisation and train only the head with the exact gradient, under an identical budget and schedule. Table 3 in the main text gathers the outcome, including two count-based references fitted on the training tokens and evaluated under the same windowed protocol (a unigram model, 1659 , and an interpolated bigram model, 198 ); Figure 1 (main text) shows the trajectories. 
+
+Naive trunk training hurts at this scale. The frozen control reaches perplexity 667 .6: a random causal transformer is already a strong feature extractor, and the exact head reads substantial structure off it (well below the unigram reference). Naive Split-FG, by contrast, converges at 1733 .4 at K=4 
+
+(the run shown in Figure 1; even K=8 only reaches 1656 .7)— above the frozen control and near the unigram level. Training the trunk with the naive step destroys more than it learns. 
+
+Diagnosis: a noise-blind step size. The trunk estimate is unbiased, but its per-coordinate signal-to-noise ratio is ∼1/P trunk (Eq. equation 5), and one epoch supplies only steps × K/P trunk ≈ 0.3
+
+scalar probes per trunk parameter—the trunk is under-determined within the budget. Adam is blind to this: its second-moment normalisation drives every coordinate at approximately full step length, whether its gradient estimate is signal or noise. On this account, the trunk executes a near-full-speed random walk away from its good random initialisation while the exact head continuously re-fits a drifting, degrading representation. We emphasise that the controls are consistent with this mechanism rather than a proof of it (we do not trace trunk displacement directly), but under it the failure is due to the step size rather than the estimator. 
+
+Fix: reduce the trunk step. We multiply the trunk’s Adam step by a single factor ρ ≪ 1 (the head keeps the base rate): the noise-driven random walk should be suppressed quadratically, while the signal—accumulated coherently by the first-moment average—still drives a slow, consistent drift. This is a selected per-group learning-rate multiplier, not an SNR-derived rule. For transparency about the selection: ρ = 0 .03 was fixed by a single exploratory run at a 10% budget before the sensitivity grid of Appendix G.4 existed; the grid, run afterwards, places the optimum near ρ = 0 .1
+
+at both budgets; the headline run retains the earlier selected value ρ = 0 .03 . All selection used the validation split. An adaptive rule is left to future work. The same trunk that hurt now helps in this run: perplexity 386 .7, 42% below the frozen control and 4.5× below the K-matched naive run, at identical memory and step time; Figure 1 shows the scaled run below the frozen control at every checkpoint, passing its final perplexity after about a quarter of the budget. The image controls (single seed) mark the benign end of the scale: with only 5,136 trunk parameters on CIFAR-10, the unscaled trunk already helps ( 60 .5% vs. 55 .2% frozen), while CIFAR-100 ( 75 ,840 ) sits near break-even ( 35 .2% vs. 34 .8% ). Probe density alone does not explain the pattern—a light-trunk GPT variant with ample probe coverage merely ties the frozen control (Section 5)—evidence consistent with step size being an important variable. The interpolated bigram reference ( 198 ) remains 2×
+
+below even the fixed method, marking the clear next target. G.3 GPT C ORE ABLATION 
+
+G.4 GPT T RUNK -S TEP -S CALE ABLATION 
+
+The step-scale fix of Appendix G.2 introduces one hyperparameter, ρ. Table 4 sweeps it over two orders of magnitude at two budgets: a 10% -epoch screening budget and the full epoch, each run fully annealed and compared against a frozen control ( K=0 ) at the same budget. The dependence is a smooth, asymmetric basin at both budgets, degrading gracefully toward the frozen bar as ρ → 0
+
+(the trunk barely moves) and falling off more steeply as ρ → 1 (the full-budget naive run at ρ=1 
+
+reaches 1733 .4; Table 14). Every grid point beats the frozen control at both budgets, so the fix is not sensitive to the exact value of ρ. The optimum is stable across budgets: ρ = 0 .1 minimises perplexity at both the screening ( 541 .9) and full ( 365 .0) budgets—so the paper’s default ρ = 0 .03 ,one grid step below the optimum, is a conservative choice. The grid itself is shown in Table 4 (main text). 23 Preprint Table 14: Core ablation on WikiText-103; the relative factor is validation perplexity against the main method (Split-FG + Adam, K=4 , trunk step ×0.03 ). The first three rows change exactly one component. The fourth removes the split at matched tangent count and tuning ( K=4 , learning rate tuned by the same screening protocol as ρ; Appendix G.1)—the fair attribution of the split’s benefit, 7.5×; the remaining rows are the untuned K=1 Table 3 baselines. Entries from Table 3 and Table 16. 
+
+Configuration Val. PPL Relative factor Interpretation Split-FG + Adam, K=4 , trunk step ×0.03 386 .7 1.0× main method Undo step scaling (trunk step ×1, same K=4 ) 1733 .4 4.5× noise-blind steps Freeze the trunk (head only, K=0 ) 667 .6 1.7× trunk training helps Remove split (pure FG + Adam, K=4 , tuned lr) 2885 .0 7.5× matched split attribution Remove split (pure FG + Adam, K=1 , default) 40128 .9 104 × untuned baseline Remove split (pure FG + SGD, K=1 ) 50385 .1 130 × at the uniform floor Use ES instead of JVP (+ Adam, K=1 ) 12103 .1 31 × zeroth-order comparison 
+
+G.5 GPT O PTIMIZER ABLATION 
+
+Table 15: Optimizer ablation on WikiText-103 ( small8 , one full epoch, K=4 , trunk step ×0.03 ,single seed). Adam, AdamW, and Muon all train the split to 382 –399 perplexity; SGD, lacking per-coordinate normalisation, stalls near the random-token floor ( 50 ,257 ). AdamW uses decoupled weight decay 0.01 scaled by the per-parameter learning rate; Muon applies Nesterov momentum +
+
+Newton–Schulz orthogonalisation to the 2-D block weights with an internal Adam for the remaining parameters. Step times are approximate (shared laptop GPU). 
+
+Optimizer Val. PPL Val. NLL Step time Note Muon 382 .3 5.946 ∼110 ms orthogonalised trunk update Adam 386 .7 5.958 ∼134 ms main configuration AdamW 398 .8 5.988 ∼141 ms decoupled weight decay SGD 44917 .9 10 .713 ∼118 ms no adaptive normalisation 
+
+G.6 GPT T ANGENT -C OUNT ABLATION 50 100 150 200          
+
+> optimizer steps (thousands)
+> 1600
+> 2000
+> 3000
+> 5000
+> 10000
+> validation perplexity
+> (a) versus optimizer steps
+> K=1
+> K=2
+> K=4
+> K=8
+> 0246810 12
+> wall-clock time (h)
+> 1949 1797 1733 1657
+> (b) versus wall-clock time
+
+Figure 3: Split-FG tangent-count sweep on WikiText-103 with the reduced trunk step ( ρ = 0 .03 ;
+
+small8 , one epoch per run, cosine schedule): validation perplexity versus optimizer steps (left) and versus wall-clock time (right) for K ∈ { 1, 2, 4, 8}. Perplexity improves monotonically in K
+
+(546 .8 → 361 .5) at constant peak memory ( 811 MiB; Table 16), and every K converges below the frozen-trunk control (dotted, 667 .6)—even K=1 . On the wall-clock axis the curves share a common frontier, so K trades time for variance; comparisons across K are schedule-confounded, since each run anneals over its own full epoch. 24 Preprint Table 16: Tangent-count ablation on WikiText-103 with the reduced trunk step ( ρ = 0 .03 ; small8 ,one full epoch per run, cosine schedule, single seed; trajectories in Figure 3). Increasing K reduces trunk-estimator variance ( ∝ Ptrunk /K ): perplexity improves monotonically with diminishing re-turns, and every K—even K=1 —beats the frozen-trunk control ( 667 .6; Table 3). Peak memory is constant because the K tangents are evaluated in a sequential loop (one JVP tape freed before the next, plus a single gradient accumulator), so K is a pure time–variance dial; step time is set by the JVP count and is independent of ρ (measured on a shared laptop GPU). 
+
+K JVPs/step Final PPL Val. NLL Step time Peak mem. 
+
+1 1 546 .8 6.304 52 ms 811 MiB 
+
+2 2 437 .6 6.081 62 ms 811 MiB 
+
+4 4 386 .7 5.958 134 ms 811 MiB 
+
+8 8 361 .5 5.890 187 ms 811 MiB 
+
+Memory measurement. We report peak GPU memory from 
+
+torch.cuda.max memory allocated , reset at the start of each run. The same statis-tic is used for matched backpropagation and Split-FG so that MemSave in Eq. equation 38 measures the effect of removing trunk backpropagation. The run is carried out on a single NVIDIA RTX 4070 laptop GPU with 8GB VRAM. Full validation runs under torch.no grad() , but it is still part of the measured process and is therefore included in the peak-memory trace if it exceeds the training peak. G.7 GPT M ODEL ARCHITECTURE 
+
+The GPT model is a causal transformer trained from random initialization. The default Split-FG decomposition places the split immediately before the linear LM head: the trunk computation maps token ids to hidden states through the token lookup, positional embeddings, all transformer blocks, and final LayerNorm, and the head is a large vocabulary projection hW ⊤ 
+
+> out
+
++ b. In the reported runs, the vocabulary table used by the output projection is assigned to the exact head group, together with the LM-head bias; its token-lookup role is held fixed with respect to the trunk JVP. The forward-mode trunk JVP covers the positional table, transformer blocks, and final LayerNorm. Table 17 lists the concrete 8GB architecture. Table 17: Network structure of the 8GB small8 GPT model used for the full WikiText-103 Table 3 run. Rows above the rule form the trunk computation for Split-FG. The forward-mode trunk param-eters are the positional table, transformer blocks, and final LayerNorm; the vocabulary table used by the output projection and the LM-head bias below the rule are trained by the analytical cross-entropy gradient, while the table’s token-lookup role is held outside the trunk JVP. For this model 
+
+Ptrunk = 3 ,192 ,320 , Phead = 12 ,916 ,049 , and Ptotal = 16 ,108 ,369 , so Ptrunk /P total = 0 .198 .                                                    
+
+> Layer Operation Output shape Description Input Token ids (B, T )Next-token language modelling windows,
+> B= 4 ,T= 128 .Embedding Token +position (B, T, 256) Token lookup plus learned positional table; the vocabulary table’s lookup role is held out-side the trunk JVP. Blocks 1. . . 4Causal self-attention +MLP (B, T, 256) Four transformer blocks, 4heads, feed-forward width 1024 , GELU activations. Final norm LayerNorm (B, T, 256) Final normalization before the LM head.
+> — trunk / head split —
+> LM head Linear vocabulary projection (B, T, 50257) Logits =hW ⊤
+> out +b; the vocabulary table and breceive the exact CE head gradient. Output CE loss scalar Cross-entropy over all token positions.
+
+25
