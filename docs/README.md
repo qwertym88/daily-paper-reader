@@ -6,57 +6,79 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-26
-- 运行时间：2026-07-26 20:59:40 UTC
+- 最新运行日期：2026-07-27
+- 运行时间：2026-07-27 21:41:34 UTC
 - 运行状态：成功
-- 本次总论文数：12
-- 精读区：0
+- 本次总论文数：19
+- 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日速读12篇论文，精读0篇，其中3篇评分7.0的论文值得关注。最有价值的方向包括：无需反向传播的干训练方法、更强大的具身基础模型RynnBrain 1.1、以及面向接触丰富操作的力记忆视觉-语言-动作模型。建议优先精读这三篇7分论文，把握无反向传播训练和具身智能的最新突破。
-- 详情：[/202607/26/README](/202607/26/README)
+今日精选19篇论文，7篇精读与12篇速读，聚焦人形机器人无真实数据训练与具身基础模型突破。  
+最值得关注的两大方向：9.0分的《Learning Diverse Humanoid Tasks via Synthetic Video Scenarios》展示了纯合成数据训练人形任务的可行性，8.0分的《RynnBrain 1.1》则推进了具身基础模型的泛化能力。  
+建议普通读者优先阅读这两篇精读论文，并速读《Norm or Direction? Decoding Vision Mambas》以理解高分辨率视觉的解析新视角。
+- 详情：[/202607/27/README](/202607/27/README)
 
 ### 精读区论文标签
-- 本次无精读推荐。
+1. [Learning Diverse Humanoid Tasks via Synthetic Video Scenarios without Real World Data](/202607/27/2607.21648v1-learning-diverse-humanoid-tasks-via-synthetic-video-scenarios-without-real-world-data)  
+   标签：评分：9.0/10、query:hum-ctrl
+   evidence：人形机器人运动生成大模型
+2. [RynnBrain 1.1: Towards More Capable and Generalizable Embodied Foundation Model](/202607/27/2607.17977v1-rynnbrain-11-towards-more-capable-and-generalizable-embodied-foundation-model)  
+   标签：评分：8.0/10、query:hum-ctrl
+   evidence：体现基础模型部署在Unitree G1等人形机器人上，支持感知与规划
+3. [L1 Augmented Attention as an Improved Vector Similarity Metric](/202607/27/2607.18027v1-l1-augmented-attention-as-an-improved-vector-similarity-metric)  
+   标签：评分：8.0/10、query:neural-arch
+   evidence：新颖神经网络架构设计（注意力机制）提升准确率
+4. [Sobek: Streaming Equivariant Tensor Product Convolutions](/202607/27/2607.18074v1-sobek-streaming-equivariant-tensor-product-convolutions)  
+   标签：评分：8.0/10、query:neural-arch
+   evidence：等变神经网络卷积的流式优化方法
+5. [Agentic Real2Sim: Physics-based World Modeling with Vision-Language Agents](/202607/27/2607.19190v2-agentic-real2sim-physics-based-world-modeling-with-vision-language-agents)  
+   标签：评分：8.0/10、query:hum-ctrl
+   evidence：真实到仿真的转换用于机器人交互
+6. [One Hand Watches The Other: Dynamic Multi-Agent Cooperation for Sample-Efficient Bimanual Manipulation in Dynamic Environments](/202607/27/2607.22119v1-one-hand-watches-the-other-dynamic-multi-agent-cooperation-for-sample-efficient-bimanual-manipulation-in-dynamic-environments)  
+   标签：评分：8.0/10、query:hum-ctrl
+   evidence：双臂操作协作框架
+7. [Plug, Play, and Comply: A Modular Framework for Online Variable Impedance with Arbitrarily Oriented Compliance Axes](/202607/27/2607.22483v1-plug-play-and-comply-a-modular-framework-for-online-variable-impedance-with-arbitrarily-oriented-compliance-axes)  
+   标签：评分：8.0/10、query:hum-ctrl
+   evidence：模块化柔性控制框架，适用于机器人运动控制
 
 ### 速读区论文标签
-1. [Backpropagation-Free Trunk Training via the Split Forward Gradients](/202607/26/2607.16612v1-backpropagation-free-trunk-training-via-the-split-forward-gradients)  
-   标签：评分：7.0/10、query:neural-arch
-   evidence：分割前向梯度用于内存高效的主干网络训练
-2. [RynnBrain 1.1: Towards More Capable and Generalizable Embodied Foundation Model](/202607/26/2607.17977v1-rynnbrain-11-towards-more-capable-and-generalizable-embodied-foundation-model)  
+1. [Norm or Direction? Decoding Vision Mambas for High-Resolution Vision](/202607/27/2607.18625v1-norm-or-direction-decoding-vision-mambas-for-high-resolution-vision)  
+   标签：评分：8.0/10、query:neural-arch
+   evidence：分析Vision Mamba与门控CNN的表示差异，有助于新型架构设计理解
+2. [Self-organizing Architecture of Receptron Units: a Hardware-Aware Framework for Edge Intelligence](/202607/27/2607.20162v1-self-organizing-architecture-of-receptron-units-a-hardware-aware-framework-for-edge-intelligence)  
+   标签：评分：8.0/10、query:neural-arch
+   evidence：提出一种新颖的神经形态单单元架构，用于边缘设备的有效分类
+3. [On the Depth Scalability of Logic Gate Networks](/202607/27/2607.21633v1-on-the-depth-scalability-of-logic-gate-networks)  
+   标签：评分：8.0/10、query:neural-arch
+   evidence：输入锚定逻辑门网络提升深度可扩展性
+4. [On Optimal Event-Triggered Distributed Control for Stochastic Multi-Agent Systems via Reinforcement Learning](/202607/27/2607.17635v1-on-optimal-event-triggered-distributed-control-for-stochastic-multi-agent-systems-via-reinforcement-learning)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：面向机器人操作的具身基础模型，包括人形机器人部署
-3. [FM-VLA: Force-based Memory for Vision-Language-Action Models in Contact-Rich Manipulation](/202607/26/2607.18231v1-fm-vla-force-based-memory-for-vision-language-action-models-in-contact-rich-manipulation)  
+   evidence：基于强化学习的多智能体系统分布式控制
+5. [Patch Policy: Efficient Embodied Control via Dense Visual Representations](/202607/27/2607.18236v1-patch-policy-efficient-embodied-control-via-dense-visual-representations)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：基于力记忆的机器人操作模型
-4. [Norm or Direction? Decoding Vision Mambas for High-Resolution Vision](/202607/26/2607.18625v1-norm-or-direction-decoding-vision-mambas-for-high-resolution-vision)  
-   标签：评分：7.0/10、query:neural-arch
-   evidence：视觉骨干网络架构分析
-5. [WorldScape Policy 2.0: Empowering Steerable World Action Modeling with Reasoning-Augmented Memory](/202607/26/2607.18840v1-worldscape-policy-20-empowering-steerable-world-action-modeling-with-reasoning-augmented-memory)  
+   evidence：使用密集补丁特征的高效机器人策略
+6. [Diffusion ReRoll: Revisable Denoising for Robotic Sequential Prediction](/202607/27/2607.19919v1-diffusion-reroll-revisable-denoising-for-robotic-sequential-prediction)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：用于机器人操作的世界动作模型
-6. [Agentic Real2Sim: Physics-based World Modeling with Vision-Language Agents](/202607/26/2607.19190v1-agentic-real2sim-physics-based-world-modeling-with-vision-language-agents)  
+   evidence：基于扩散模型的机器人序列预测，支持可修订去噪
+7. [Emergent Compositional Skills in Mixture-of-Experts VLAs](/202607/27/2607.20771v1-emergent-compositional-skills-in-mixture-of-experts-vlas)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：物理仿真器用于机器人仿真
-7. [Test-Time Scaling for World Action Models via Zero-Shot Geometric Evaluation](/202607/26/2607.17454v1-test-time-scaling-for-world-action-models-via-zero-shot-geometric-evaluation)  
+   evidence：混合专家模型用于组合式机器人策略学习
+8. [Safe Learning Predictive Control for Ego-World Robotic Systems](/202607/27/2607.22225v1-safe-learning-predictive-control-for-ego-world-robotic-systems)  
+   标签：评分：7.0/10、query:hum-ctrl
+   evidence：用于自我-世界机器人系统的安全学习预测控制
+9. [RoboInter1.5: A Holistic Intermediate Representation Suite for Embodied World Modeling and Robotic Manipulation](/202607/27/2607.18709v1-robointer15-a-holistic-intermediate-representation-suite-for-embodied-world-modeling-and-robotic-manipulation)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：提出世界动作模型的测试时缩放，可用于机器人运动生成
-8. [Conservative Query and Adaptive Regularization for Offline RL Under Uncertainty Estimation](/202607/26/2607.19199v1-conservative-query-and-adaptive-regularization-for-offline-rl-under-uncertainty-estimation)  
+   evidence：面向机器人操作的中间表示套件
+10. [The Twist Decomposition of Serial Robots Under Lower-Mobility Tasks](/202607/27/2607.18940v1-the-twist-decomposition-of-serial-robots-under-lower-mobility-tasks)  
    标签：评分：6.0/10、query:hum-ctrl
-   evidence：离线强化学习方法结合偏好查询可应用于人形机器人运动控制
-9. [A Flexible Sparsity-Aware FPGA Accelerator with Column-Wise Compression for Efficient CNN Inference](/202607/26/2607.19248v1-a-flexible-sparsity-aware-fpga-accelerator-with-column-wise-compression-for-efficient-cnn-inference)  
+   evidence：低自由度任务下串联机器人的扭曲分解
+11. [Agentic Real2Sim: Physics-based World Modeling with Vision-Language Agents](/202607/27/2607.19190v3-agentic-real2sim-physics-based-world-modeling-with-vision-language-agents)  
+   标签：评分：6.0/10、query:hum-ctrl
+   evidence：用于机器人交互的物理仿真器构建
+12. [BRIM: Workload-Balanced Dual-Sided Bit-Serial Sparse Inference Accelerator](/202607/27/2607.19431v1-brim-workload-balanced-dual-sided-bit-serial-sparse-inference-accelerator)  
    标签：评分：6.0/10、query:neural-arch
-   evidence：面向高效CNN推理的稀疏感知FPGA加速器
-10. [Learning Personalized Safety Interventions for Haptic Human-Robot Shared Control](/202607/26/2607.19534v1-learning-personalized-safety-interventions-for-haptic-human-robot-shared-control)  
-   标签：评分：6.0/10、query:hum-ctrl
-   evidence：基于控制障碍函数与示范学习的个性化触觉共享控制
-11. [NavVerse: Benchmarking Indoor-to-Outdoor Embodied Navigation in Continuous Robot Simulation](/202607/26/2607.19695v1-navverse-benchmarking-indoor-to-outdoor-embodied-navigation-in-continuous-robot-simulation)  
-   标签：评分：6.0/10、query:hum-ctrl
-   evidence：基于物理的机器人导航仿真基准
-12. [EA-Nav: Learning Safe Visual Navigation Policies with Embodiment Awareness](/202607/26/2607.19880v1-ea-nav-learning-safe-visual-navigation-policies-with-embodiment-awareness)  
-   标签：评分：6.0/10、query:hum-ctrl
-   evidence：模仿学习用于导航，与机器人控制的强化学习相关
+   evidence：负载均衡的双侧位串行稀疏加速器用于DNN推理
 
 
 <div class="dpr-home-promo-card">
