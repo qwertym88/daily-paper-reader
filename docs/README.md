@@ -6,79 +6,71 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-27
-- 运行时间：2026-07-27 21:41:34 UTC
+- 最新运行日期：2026-07-28
+- 运行时间：2026-07-28 21:46:01 UTC
 - 运行状态：成功
-- 本次总论文数：19
-- 精读区：7
+- 本次总论文数：17
+- 精读区：5
 - 速读区：12
 
 ### 今日简报（AI）
-今日精选19篇论文，7篇精读与12篇速读，聚焦人形机器人无真实数据训练与具身基础模型突破。  
-最值得关注的两大方向：9.0分的《Learning Diverse Humanoid Tasks via Synthetic Video Scenarios》展示了纯合成数据训练人形任务的可行性，8.0分的《RynnBrain 1.1》则推进了具身基础模型的泛化能力。  
-建议普通读者优先阅读这两篇精读论文，并速读《Norm or Direction? Decoding Vision Mambas》以理解高分辨率视觉的解析新视角。
-- 详情：[/202607/27/README](/202607/27/README)
+今日研究聚焦个性化联邦边缘智能与人形机器人运动学习，共评17篇论文。最值得关注的是OrchNAS（9.0分）的联邦神经架构搜索服务，以及Learning Reusable Hybrid Motion Priors（9.0分）的人形机器人运动先验学习。建议优先精读这两篇高分论文，速读部分可关注RynnBrain 1.1具身基础模型的进展。
+- 详情：[/202607/28/README](/202607/28/README)
 
 ### 精读区论文标签
-1. [Learning Diverse Humanoid Tasks via Synthetic Video Scenarios without Real World Data](/202607/27/2607.21648v1-learning-diverse-humanoid-tasks-via-synthetic-video-scenarios-without-real-world-data)  
+1. [OrchNAS: Orchestrated Neural Architecture Search Service for Personalised Federated Edge Intelligence](/202607/28/2607.22805v1-orchnas-orchestrated-neural-architecture-search-service-for-personalised-federated-edge-intelligence)  
+   标签：评分：9.0/10、query:neural-arch
+   evidence：提出OrchNAS神经架构搜索服务，直接符合神经架构搜索需求
+2. [Learning Reusable Hybrid Motion Priors for Humanoid Locomotion from Motion Imitation](/202607/28/2607.24083v1-learning-reusable-hybrid-motion-priors-for-humanoid-locomotion-from-motion-imitation)  
    标签：评分：9.0/10、query:hum-ctrl
-   evidence：人形机器人运动生成大模型
-2. [RynnBrain 1.1: Towards More Capable and Generalizable Embodied Foundation Model](/202607/27/2607.17977v1-rynnbrain-11-towards-more-capable-and-generalizable-embodied-foundation-model)  
-   标签：评分：8.0/10、query:hum-ctrl
-   evidence：体现基础模型部署在Unitree G1等人形机器人上，支持感知与规划
-3. [L1 Augmented Attention as an Improved Vector Similarity Metric](/202607/27/2607.18027v1-l1-augmented-attention-as-an-improved-vector-similarity-metric)  
+   evidence：基于运动模仿的可重用混合运动先验用于人形机器人
+3. [AdaKAN: A dual-branch adaptive Kolmogorov-Arnold network for medical image segmentation](/202607/28/2607.22891v1-adakan-a-dual-branch-adaptive-kolmogorov-arnold-network-for-medical-image-segmentation)  
    标签：评分：8.0/10、query:neural-arch
-   evidence：新颖神经网络架构设计（注意力机制）提升准确率
-4. [Sobek: Streaming Equivariant Tensor Product Convolutions](/202607/27/2607.18074v1-sobek-streaming-equivariant-tensor-product-convolutions)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：等变神经网络卷积的流式优化方法
-5. [Agentic Real2Sim: Physics-based World Modeling with Vision-Language Agents](/202607/27/2607.19190v2-agentic-real2sim-physics-based-world-modeling-with-vision-language-agents)  
+   evidence：结合KAN和注意力机制的新型神经网络架构用于医学图像分割
+4. [Actuator-Aware Spatiotemporal Tube Synthesis for Temporal Reach-Avoid-Stay Tasks](/202607/28/2607.23040v1-actuator-aware-spatiotemporal-tube-synthesis-for-temporal-reach-avoid-stay-tasks)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：真实到仿真的转换用于机器人交互
-6. [One Hand Watches The Other: Dynamic Multi-Agent Cooperation for Sample-Efficient Bimanual Manipulation in Dynamic Environments](/202607/27/2607.22119v1-one-hand-watches-the-other-dynamic-multi-agent-cooperation-for-sample-efficient-bimanual-manipulation-in-dynamic-environments)  
+   evidence：执行器感知的时空管综合用于约束下的控制
+5. [Bridging Reinforcement Learning and Optimal Control via Feasible Action Mapping](/202607/28/2607.23930v1-bridging-reinforcement-learning-and-optimal-control-via-feasible-action-mapping)  
    标签：评分：8.0/10、query:hum-ctrl
-   evidence：双臂操作协作框架
-7. [Plug, Play, and Comply: A Modular Framework for Online Variable Impedance with Arbitrarily Oriented Compliance Axes](/202607/27/2607.22483v1-plug-play-and-comply-a-modular-framework-for-online-variable-impedance-with-arbitrarily-oriented-compliance-axes)  
-   标签：评分：8.0/10、query:hum-ctrl
-   evidence：模块化柔性控制框架，适用于机器人运动控制
+   evidence：结合强化学习与最优控制处理约束动力学系统
 
 ### 速读区论文标签
-1. [Norm or Direction? Decoding Vision Mambas for High-Resolution Vision](/202607/27/2607.18625v1-norm-or-direction-decoding-vision-mambas-for-high-resolution-vision)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：分析Vision Mamba与门控CNN的表示差异，有助于新型架构设计理解
-2. [Self-organizing Architecture of Receptron Units: a Hardware-Aware Framework for Edge Intelligence](/202607/27/2607.20162v1-self-organizing-architecture-of-receptron-units-a-hardware-aware-framework-for-edge-intelligence)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：提出一种新颖的神经形态单单元架构，用于边缘设备的有效分类
-3. [On the Depth Scalability of Logic Gate Networks](/202607/27/2607.21633v1-on-the-depth-scalability-of-logic-gate-networks)  
-   标签：评分：8.0/10、query:neural-arch
-   evidence：输入锚定逻辑门网络提升深度可扩展性
-4. [On Optimal Event-Triggered Distributed Control for Stochastic Multi-Agent Systems via Reinforcement Learning](/202607/27/2607.17635v1-on-optimal-event-triggered-distributed-control-for-stochastic-multi-agent-systems-via-reinforcement-learning)  
+1. [RynnBrain 1.1: Towards More Capable and Generalizable Embodied Foundation Model](/202607/28/2607.17977v1-rynnbrain-11-towards-more-capable-and-generalizable-embodied-foundation-model)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：基于强化学习的多智能体系统分布式控制
-5. [Patch Policy: Efficient Embodied Control via Dense Visual Representations](/202607/27/2607.18236v1-patch-policy-efficient-embodied-control-via-dense-visual-representations)  
+   evidence：部署在人形机器人上的具身基础模型
+2. [Closing the Loop in Humanoid VLA: Persistent 3D Object Tokens for Verifiable Loco-Manipulation](/202607/28/2607.18016v2-closing-the-loop-in-humanoid-vla-persistent-3d-object-tokens-for-verifiable-loco-manipulation)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：使用密集补丁特征的高效机器人策略
-6. [Diffusion ReRoll: Revisable Denoising for Robotic Sequential Prediction](/202607/27/2607.19919v1-diffusion-reroll-revisable-denoising-for-robotic-sequential-prediction)  
+   evidence：人形机器人定位操作与持久3D物体令牌
+3. [GRACE: Gradient-Free Robot Action Generation via Combined Diffusion-MPPI Posterior Mean Estimation](/202607/28/2607.21661v1-grace-gradient-free-robot-action-generation-via-combined-diffusion-mppi-posterior-mean-estimation)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：基于扩散模型的机器人序列预测，支持可修订去噪
-7. [Emergent Compositional Skills in Mixture-of-Experts VLAs](/202607/27/2607.20771v1-emergent-compositional-skills-in-mixture-of-experts-vlas)  
+   evidence：无梯度机器人动作生成结合扩散和MPPI
+4. [Small, Bias-Free, Blind and Convolutional Denoiser: A compact ConvNeXt U-Net for blind Gaussian color-image denoising](/202607/28/2607.22793v1-small-bias-free-blind-and-convolutional-denoiser-a-compact-convnext-u-net-for-blind-gaussian-color-image-denoising)  
+   标签：评分：7.0/10、query:neural-arch
+   evidence：ConvNeXt U-Net中的深度可分离Gabor茎和拉普拉斯金字塔跳跃连接
+5. [A Replay-Constrained Simulation Framework for Personalization of Powered Knee--Ankle Prosthesis Controllers](/202607/28/2607.22858v1-a-replay-constrained-simulation-framework-for-personalization-of-powered-knee--ankle-prosthesis-controllers)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：混合专家模型用于组合式机器人策略学习
-8. [Safe Learning Predictive Control for Ego-World Robotic Systems](/202607/27/2607.22225v1-safe-learning-predictive-control-for-ego-world-robotic-systems)  
+   evidence：使用基于MuJoCo的仿真器个性化假肢控制器，与用于人形机器人模拟的物理仿真器直接相关
+6. [PRISM: Polynomial Representations for Interaction-Structured Motor Control](/202607/28/2607.23473v1-prism-polynomial-representations-for-interaction-structured-motor-control)  
    标签：评分：7.0/10、query:hum-ctrl
-   evidence：用于自我-世界机器人系统的安全学习预测控制
-9. [RoboInter1.5: A Holistic Intermediate Representation Suite for Embodied World Modeling and Robotic Manipulation](/202607/27/2607.18709v1-robointer15-a-holistic-intermediate-representation-suite-for-embodied-world-modeling-and-robotic-manipulation)  
-   标签：评分：6.0/10、query:hum-ctrl
-   evidence：面向机器人操作的中间表示套件
-10. [The Twist Decomposition of Serial Robots Under Lower-Mobility Tasks](/202607/27/2607.18940v1-the-twist-decomposition-of-serial-robots-under-lower-mobility-tasks)  
-   标签：评分：6.0/10、query:hum-ctrl
-   evidence：低自由度任务下串联机器人的扭曲分解
-11. [Agentic Real2Sim: Physics-based World Modeling with Vision-Language Agents](/202607/27/2607.19190v3-agentic-real2sim-physics-based-world-modeling-with-vision-language-agents)  
-   标签：评分：6.0/10、query:hum-ctrl
-   evidence：用于机器人交互的物理仿真器构建
-12. [BRIM: Workload-Balanced Dual-Sided Bit-Serial Sparse Inference Accelerator](/202607/27/2607.19431v1-brim-workload-balanced-dual-sided-bit-serial-sparse-inference-accelerator)  
+   evidence：用于运动控制的多项式策略表示，可适用于人形机器人
+7. [Hilbert Operator for Progressive Encoding (HOPE): A Mathematical Framework for Deconstructing Learned Representations in Deep Networks](/202607/28/2607.21366v1-hilbert-operator-for-progressive-encoding-hope-a-mathematical-framework-for-deconstructing-learned-representations-in-deep-networks)  
    标签：评分：6.0/10、query:neural-arch
-   evidence：负载均衡的双侧位串行稀疏加速器用于DNN推理
+   evidence：通过希尔伯特算子解码深度网络表示
+8. [Ordered Action Tokens for Visuomotor Policy Learning](/202607/28/2607.21670v1-ordered-action-tokens-for-visuomotor-policy-learning)  
+   标签：评分：6.0/10、query:hum-ctrl
+   evidence：有序动作令牌化用于机器人策略学习
+9. [Addressing the Orchestration Gap in Generalist Robots via Physical Agency](/202607/28/2607.21725v1-addressing-the-orchestration-gap-in-generalist-robots-via-physical-agency)  
+   标签：评分：6.0/10、query:hum-ctrl
+   evidence：通用机器人控制编排框架
+10. [Safe Learning Predictive Control for Ego-World Robotic Systems](/202607/28/2607.22225v1-safe-learning-predictive-control-for-ego-world-robotic-systems)  
+   标签：评分：6.0/10、query:hum-ctrl
+   evidence：使用稀疏变分高斯过程和MPC的自我-世界机器人安全学习预测控制
+11. [Conformal Constraint Tightening for Chance-Constrained Motion Planning with Unknown Dynamics](/202607/28/2607.22409v1-conformal-constraint-tightening-for-chance-constrained-motion-planning-with-unknown-dynamics)  
+   标签：评分：6.0/10、query:hum-ctrl
+   evidence：提出运动规划的约束收紧方法，提供概率保证，与运动控制技术相关
+12. [Robot-Factored World Models via Robot Rendering](/202607/28/2607.22535v1-robot-factored-world-models-via-robot-rendering)  
+   标签：评分：6.0/10、query:hum-ctrl
+   evidence：机器人分解世界模型用于运动预测
 
 
 <div class="dpr-home-promo-card">
