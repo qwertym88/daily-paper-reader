@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-01</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-02</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 14 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 9 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>12</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>7</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-01 21:18:46 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-02 21:12:58 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共梳理14篇论文，精读2篇、速读12篇，核心集中在机器人控制与强化学习领域。最值得关注的是人形机器人躲避球的全身体安全控制（PAC-MAN）与蛇形机器人动态环境自适应运动。建议优先精读PAC-MAN的安全感知CBF-RL方法，对机器人实战部署更具启发性。</p>
+<p>今日共读9篇论文，其中2篇精读、7篇速读，重点聚焦机器人学习与运动理解领域。最值得关注的是精读的《P3》与《MUGEN》，均获8.0分：前者提出基于概率策略传播的稳定VAE训练方法，后者构建了统一的高效运动理解与生成框架。建议普通读者优先从这两篇入手，先看摘要与实验对比，再按需深入方法细节。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -74,7 +74,7 @@
     <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="PAC-MAN: Perception-Aware CBF-RL for Whole-Body Safety in Humanoid Dodgeball">PAC-MAN: Perception-Aware CBF-RL for Whole-Body Safety in Humanoid Dodgeball</span></li><li><span class="dpr-home-dashboard-paper-title" title="Adaptive Undulatory Locomotion of Snake-like Robots in Dynamic Viscous Environments via Deep Reinforcement Learning">Adaptive Undulatory Locomotion of Snake-like Robots in Dynamic Viscous Environments via Deep Reinforcement Learning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="P3: Probabilistic Policy Propagation for Stable VAE-Based Robot Learning">P3: Probabilistic Policy Propagation for Stable VAE-Based Robot Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="MUGEN: A Unified Framework for Efficient Motion Understanding and Generation">MUGEN: A Unified Framework for Efficient Motion Understanding and Generation</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span></div>
 </section>
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">12 篇</strong>
+    <strong class="dpr-home-dashboard-count">7 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Algorithmic Separation between Constant-Depth and Logarithmic-Depth Neural Networks">Algorithmic Separation between Constant-Depth and Logarithmic-Depth Neural Networks</span></li><li><span class="dpr-home-dashboard-paper-title" title="Self-Adaptive Learning and Model Predictive Control for Tracking Unknown Dynamics with No Regret">Self-Adaptive Learning and Model Predictive Control for Tracking Unknown Dynamics with No Regret</span></li><li><span class="dpr-home-dashboard-paper-title" title="Reinforcement Learning on Cost-Constrained Quadrupedal Hardware">Reinforcement Learning on Cost-Constrained Quadrupedal Hardware</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Temporal-Distance JEPA: Plan-Aware Representation Learning for Latent World Model Predictive Control">Temporal-Distance JEPA: Plan-Aware Representation Learning for Latent World Model Predictive Control</span></li><li><span class="dpr-home-dashboard-paper-title" title="Simplifying Neural Networks During Training">Simplifying Neural Networks During Training</span></li><li><span class="dpr-home-dashboard-paper-title" title="Understanding Is Done Early: A Depth Division of Labor in Large Language Models and Its Use for Unbounded-Context Memory">Understanding Is Done Early: A Depth Division of Labor in Large Language Models and Its Use for Unbounded-Context Memory</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>11</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">neural-arch <strong>4</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span></div>
 </section>
 </div>
 
