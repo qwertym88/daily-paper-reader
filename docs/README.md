@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-02</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-03</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 9 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 17 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>7</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>5</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>12</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-02 21:12:58 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-03 22:01:52 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共读9篇论文，其中2篇精读、7篇速读，重点聚焦机器人学习与运动理解领域。最值得关注的是精读的《P3》与《MUGEN》，均获8.0分：前者提出基于概率策略传播的稳定VAE训练方法，后者构建了统一的高效运动理解与生成框架。建议普通读者优先从这两篇入手，先看摘要与实验对比，再按需深入方法细节。</p>
+<p>今日共读17篇机器人论文，精读5篇，聚焦人形机器人负重与腿足机器人进展。最值得看的是《Balancing of Humanoid with Object Mass》中的动力学权衡分析与升降控制，以及腿足机器人综述中的挑战与机遇。建议先读高分平衡控制研究，再结合综述把握领域未来方向。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">2 篇</strong>
+    <strong class="dpr-home-dashboard-count">5 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="P3: Probabilistic Policy Propagation for Stable VAE-Based Robot Learning">P3: Probabilistic Policy Propagation for Stable VAE-Based Robot Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="MUGEN: A Unified Framework for Efficient Motion Understanding and Generation">MUGEN: A Unified Framework for Efficient Motion Understanding and Generation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Balancing of Humanoid with Object Mass: Trade-off Analyses and Lifting Control">Balancing of Humanoid with Object Mass: Trade-off Analyses and Lifting Control</span></li><li><span class="dpr-home-dashboard-paper-title" title="Advances, challenges, and opportunities for legged robots">Advances, challenges, and opportunities for legged robots</span></li><li><span class="dpr-home-dashboard-paper-title" title="CLIFT: Turning Gemini Robotics On-Device into Humanoid Specialists via Non-Invasive Closed-Loop Iterative Fine-Tuning">CLIFT: Turning Gemini Robotics On-Device into Humanoid Specialists via Non-Invasive Closed-Loop Iterative Fine-Tuning</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">7 篇</strong>
+    <strong class="dpr-home-dashboard-count">12 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Temporal-Distance JEPA: Plan-Aware Representation Learning for Latent World Model Predictive Control">Temporal-Distance JEPA: Plan-Aware Representation Learning for Latent World Model Predictive Control</span></li><li><span class="dpr-home-dashboard-paper-title" title="Simplifying Neural Networks During Training">Simplifying Neural Networks During Training</span></li><li><span class="dpr-home-dashboard-paper-title" title="Understanding Is Done Early: A Depth Division of Labor in Large Language Models and Its Use for Unbounded-Context Memory">Understanding Is Done Early: A Depth Division of Labor in Large Language Models and Its Use for Unbounded-Context Memory</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Transformer Transformer: A Unified Model for Motion-Conditioned Robot Co-design">Transformer Transformer: A Unified Model for Motion-Conditioned Robot Co-design</span></li><li><span class="dpr-home-dashboard-paper-title" title="BWM: A Low-Cost High-Fidelity World Simulator for Robot Learning">BWM: A Low-Cost High-Fidelity World Simulator for Robot Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Temporal Policy: History-Initialized Action Generation for Robotic Learning from Demonstration">Temporal Policy: History-Initialized Action Generation for Robotic Learning from Demonstration</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">neural-arch <strong>4</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>10</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span></div>
 </section>
 </div>
 
