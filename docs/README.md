@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-03</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-05</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 17 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 19 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>5</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>7</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>12</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-03 22:01:52 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-05 21:48:14 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共读17篇机器人论文，精读5篇，聚焦人形机器人负重与腿足机器人进展。最值得看的是《Balancing of Humanoid with Object Mass》中的动力学权衡分析与升降控制，以及腿足机器人综述中的挑战与机遇。建议先读高分平衡控制研究，再结合综述把握领域未来方向。</p>
+<p>今日共读19篇论文，精读7篇，覆盖视觉Transformer注意力机制与机器人运动生成两大热点。</p>
+<p>最值得精读的是《Role-Decoupled Attention Residuals》与《GenTrack》，前者解耦注意力匹配与内容检索，后者实现机器人零样本人体跟踪，均获9.0分。</p>
+<p>建议普通读者优先关注机器人物理对齐生成与ViT轻量化剪枝方向，这两项技术更贴近落地应用。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +73,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">5 篇</strong>
+    <strong class="dpr-home-dashboard-count">7 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Balancing of Humanoid with Object Mass: Trade-off Analyses and Lifting Control">Balancing of Humanoid with Object Mass: Trade-off Analyses and Lifting Control</span></li><li><span class="dpr-home-dashboard-paper-title" title="Advances, challenges, and opportunities for legged robots">Advances, challenges, and opportunities for legged robots</span></li><li><span class="dpr-home-dashboard-paper-title" title="CLIFT: Turning Gemini Robotics On-Device into Humanoid Specialists via Non-Invasive Closed-Loop Iterative Fine-Tuning">CLIFT: Turning Gemini Robotics On-Device into Humanoid Specialists via Non-Invasive Closed-Loop Iterative Fine-Tuning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Role-Decoupled Attention Residuals: Separating Matching and Content Retrieval Across Depth">Role-Decoupled Attention Residuals: Separating Matching and Content Retrieval Across Depth</span></li><li><span class="dpr-home-dashboard-paper-title" title="GenTrack: Physical Alignment for Robot-Native Motion Generation and Zero-Shot Humanoid Tracking">GenTrack: Physical Alignment for Robot-Native Motion Generation and Zero-Shot Humanoid Tracking</span></li><li><span class="dpr-home-dashboard-paper-title" title="HiResNets: Native Full-HD Video Recognition with Foveal Residual Streams">HiResNets: Native Full-HD Video Recognition with Foveal Residual Streams</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>5</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,9 +89,9 @@
     <strong class="dpr-home-dashboard-count">12 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Transformer Transformer: A Unified Model for Motion-Conditioned Robot Co-design">Transformer Transformer: A Unified Model for Motion-Conditioned Robot Co-design</span></li><li><span class="dpr-home-dashboard-paper-title" title="BWM: A Low-Cost High-Fidelity World Simulator for Robot Learning">BWM: A Low-Cost High-Fidelity World Simulator for Robot Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Temporal Policy: History-Initialized Action Generation for Robotic Learning from Demonstration">Temporal Policy: History-Initialized Action Generation for Robotic Learning from Demonstration</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Interpretability-Guided Soft Pruning of Attention Heads in Vision Transformers">Interpretability-Guided Soft Pruning of Attention Heads in Vision Transformers</span></li><li><span class="dpr-home-dashboard-paper-title" title="Action Chunk Scheduling for Batched Robot Policy Serving">Action Chunk Scheduling for Batched Robot Policy Serving</span></li><li><span class="dpr-home-dashboard-paper-title" title="First Deployable Dynamic-CoM: A Unified Policy and Method-Agnostic Benchmark for Humanoid Single-Leg Balance">First Deployable Dynamic-CoM: A Unified Policy and Method-Agnostic Benchmark for Humanoid Single-Leg Balance</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>10</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>11</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
 </div>
 
