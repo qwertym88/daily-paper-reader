@@ -1,0 +1,734 @@
+Title: Designing a Good Virtual Node: Addressable and Cardinality-Preserving Global Memory for Message Passing Architectures
+
+URL Source: https://arxiv.org/pdf/2608.02709v1
+
+Published Time: Wed, 05 Aug 2026 00:04:01 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# Designing a Good Virtual Node: Addressable and Cardinality-Preserving Global Memory for Message Passing Architectures 
+
+Félix Marcoccia 
+
+# Abstract 
+
+Virtual nodes give message-passing neural networks a simple global communica-tion route, but the standard node–VN–node pipeline compresses the graph into one homogeneous state and broadcasts it identically to every node. Building on the Two-Radius analysis of Mishayev et al. [1], we ask how auxiliary virtual memory can relieve this finite-capacity bottleneck without self-attention. We identify two requirements. First, the global memory should be factorized into in-dependently writable and readable states: this can be achieved using addressable cross-attention slots. Second, addressability alone does not preserve multiplicity, because softmax attention is invariant to uniform replication. Inserting each slot query as a private key/value anchor recovers the discarded normalization mass and yields, on bounded color domains, an injective multiset representation able to implement a 1-WL refinement. Experiments on multiplicity-aware Two-Radius, motif counting, and constrained link-set prediction support this addressable and cardinality-preserving virtual memory at O(nM d ) arithmetic cost. 
+
+# 1 Introduction 
+
+Message-passing neural networks (MPNNs) remain a natural default for learning on graphs. Their computation follows observed edges, scales with graph sparsity, and encodes the assumption that local relations should be processed locally [2]. The same locality can create a communication bottleneck: many distinct signals may have to cross a small number of intermediate node representations. This phenomenon is usually discussed as oversquashing [3–5]. Most standard examples combine a large graph radius with a rapidly expanding receptive field. The Two-Radius construction of Mishayev et al. [1] separates these effects. It has n sources, n targets, and one or several central nodes. Every source is only two hops from every target, yet each target must recover the label carried by the source with the same identifier. The task therefore requires a global table of n associations to pass through the central representation. Accuracy deteriorates with n even though depth, distance, and node-to-node Jacobian path length remain constant. This is short-range oversquashing: the difficulty is a finite-capacity channel, not merely long-distance attenuation. The central nodes are part of the input graph, whereas a virtual node is an auxiliary state introduced by the architecture. The two are distinct, but both act as finite-dimensional channels across the same source–target cut. A conventional virtual node (VN) [2, 6] does not fundamentally change this setting. It shortens graph paths and improves mixing in long-range tasks, an effect characterized spectrally in [7, 8], but Two-Radius already has radius two. More importantly, the standard node–VN–node operation forms one homogeneous summary and broadcasts the same global message to every target. Several cloned VNs also remain identical under shared initialization, connectivity, and updates. The empirical study in [1] therefore finds only a modest improvement. Increasing the width of this state increases its raw information capacity, so a sufficiently wide VN is not intrinsically incapable of storing the complete table. A fully additive broadcast, however, contributes the same global term to every target and cannot realize arbitrary target-specific lookup. Exploiting a wide VN therefore requires a joint non-separable decoder that uses the target representation to 
+
+Preprint. Preliminary work. arXiv:2608.02709v1 [cs.LG] 3 Aug 2026 Designing a Good Virtual Node 
+
+partition and select its feature coordinates. Generic nonlinear decoders can synthesize this operation in principle, but they must discover both the hidden factorization and its gating implicitly. We instead expose the factorization as an architectural memory axis with separately routed writes and reads. Dense self-attention is an effective escape route: every target can interact directly with every source. It is nevertheless a strong architectural intervention. It introduces quadratic all-pairs interactions, and in hybrid graph Transformers it can partially replace rather than simply support edge-based message passing [9, 10]. This is not always undesirable, but it makes the answer to the bottleneck problem depend on a different global computation primitive. This paper considers a narrower question: 
+
+What properties should a virtual node have in order to provide useful global communication while retaining an MPNN as the primary graph feature aggregator? 
+
+We identify two expressivity requirements and one practical integration principle. 
+
+Addressability. A useful global memory should expose several independently queryable states rather than one homogeneous summary. We represent these states as M latent virtual nodes, or slots .Slots aggregate graph information by cross-attention and are queried by graph nodes through a second cross-attention. The mechanism is related to induced set attention and latent arrays [11, 12]; RANGE similarly relays graph information through attention nodes with positional encodings [13]. Our focus is the factorization itself: which capacity is gained over a homogeneous broadcast, which decoder interaction is required for target-specific lookup, and how compact dot-product addresses realize the write–read partition. 
+
+Multiplicity preservation. A slot may be addressable and still discard absolute counts. Softmax attention produces a normalized weighted mean and is unchanged when every key/value is repeated the same number of times. This limitation is the attention analogue of the gap between mean and injective sum aggregation in WL-style expressivity analyses [14–16]. We introduce a counted Two-Radius task in which labels and their multiplicities must both be recovered. A practical broadcast should also preserve the local representation while the global route is being learned. We use a short identity- or near-identity-initialized Slot-FiLM update for this purpose. The resulting analysis provides four contributions: (i) an effective factorization bound and an invariant–equivariant construction with per-slot width O(( n/M ) log n/b ); (ii) a characterization of homogeneous broadcast, implicit target-conditioned addressing, and compact dot-product routing, including an M -versus-O(log M ) address-dimension comparison; (iii) an anchored read that restores the normalization mass discarded by softmax and recovers cardinality-sensitive, 1-WL-style aggrega-tion; and (iv) controlled benchmarks for address retrieval, multiplicity recovery, motif counting, and constrained link generation. Figure 1 separates the structural Two-Radius bottleneck from the auxiliary virtual memory and contrasts a homogeneous VN with an addressable Cross-Attn VN. 
+
+# 2 Background and Design Objective 
+
+2.1 Message passing and the Two-Radius task 
+
+An MPNN layer updates node v as 
+
+m(ℓ) 
+
+> v
+
+= M 
+
+> u∈N(v)
+
+ψℓ
+
+
+
+h(ℓ) 
+
+> v
+
+, h (ℓ) 
+
+> u
+
+, e uv 
+
+
+
+, (1) 
+
+h(ℓ+1)  
+
+> v
+
+= ϕℓ
+
+
+
+h(ℓ) 
+
+> v
+
+, m (ℓ)
+
+> v
+
+
+
+, (2) where L is permutation invariant. Depending on the choice of aggregation and update, this model class is at most as discriminative as 1-WL on unlabeled graphs [14, 17]. In permutation-valued Two-Radius, the graph contains sources S = {s1, . . . , s n}, targets T =
+
+{t1, . . . , t n}, and a nonempty central set C. Every central node is adjacent to every source and     
+
+> 2Designing a Good Virtual Node
+> (a) VN
+> sources targets
+> ......
+> VN
+> c
+> (b) Cross-Attn VN
+> sources targets
+> ......
+> z1
+> z2
+> ...
+> zM
+> c
+
+Figure 1: Structural and auxiliary communication in Two-Radius. (a) The real central node c remains the graph bottleneck, while a conventional VN adds one homogeneous auxiliary state broadcast to every target. (b) A Cross-Attn VN keeps the original graph path unchanged and adds M separately queryable slots; the highlighted route illustrates a source-specific write followed by a target-specific read. target, with no direct source–target edges. Source si carries identifier i and label π(i), where π is a permutation of [n]. Target tj carries identifier j and must output 
+
+ytj = π(j). (3) All useful information can arrive in two rounds, yet the intermediate state must encode one of n!
+
+assignments. 
+
+Structural bottleneck versus auxiliary memory. The nodes in C are real nodes of the Two-Radius input graph and form its structural bottleneck. A VN is an auxiliary state introduced by the architecture. These objects are distinct, although both transmit finite-dimensional summaries across the source–target cut. A conventional VN adds another homogeneous summary; it does not replace the central nodes or factorize their information. The proposed slots add a parallel virtual route whose states are explicitly distinguished and separately queried. The local MPNN continues to process the original graph in every model. The original analysis establishes a width requirement for fixed-precision MPNNs and shows that simply adding standard VNs does not convincingly resolve the empirical bottleneck [1]. We retain this task because it isolates global communication without confounding it with deep propagation. 
+
+2.2 Why not simply use global self-attention? 
+
+A graph Transformer can create a direct path between each source and each target. This changes the communication graph from sparse to complete, uses O(n2) node–node attention pairs, and has 
+
+O(n2d) arithmetic cost. Sparse and linearized variants can reduce this cost, but they still introduce a global node-to-node processing path that may become the dominant computation [10, 18]. In the uniform-expressivity setting, moreover, self-attention and VN-augmented message passing are in general incomparable [19], so replacing one primitive by the other is not a strict upgrade. We study the complementary regime in which edge-based message passing remains unchanged, global computation is restricted to M latent states, and nodes interact globally only through these states. One local layer followed by a bidirectional node–slot block costs O(|E|d + nM d ).
+
+2.3 Design criteria for a good VN 
+
+A single global vector can be expressive on bounded graphs when width and precision are uncon-strained, and MPNN+VN can even approximate attention under suitable non-uniform constructions [20]. Our concern is a practical finite-width channel. The relevant obstruction is the classical Deep Sets bottleneck: sum-decomposable multiset encoders require a latent dimension that grows with the multiset size to remain injective [21, 22], and finite communication capacity bounds what constant-width states can transmit across a graph cut [23]. We use the following criteria. 
+
+Definition 2.1 (Addressable global memory) . A collection of virtual states is addressable when different input queries can select different states, and the states are allowed to evolve differently under permutation-equivariant computation. 
+
+> 3Designing a Good Virtual Node
+
+Definition 2.2 (Multiplicity-preserving read) . A source-to-memory aggregation is multiplicity pre-serving on a task family when relevant changes in the multiplicities of indistinguishable inputs remain recoverable from its output. 
+
+The first criterion controls where information is stored. The second controls what survives aggregation. Their combination separates routing capacity from multiset fidelity. 
+
+# 3 Addressable Virtual Nodes 
+
+3.1 Architecture 
+
+Let H ∈ R|V |× d denote the states of all real graph nodes, including the structural central nodes, after a local MPNN block. The local MPNN operates only on the original graph. Let S(0) ∈ RM ×d be M
+
+distinct learned slot states. For a single attention head, the node-to-slot write is 
+
+QS = S(0) WQ, KX = HW K , VX = HW V , (4) 
+
+Ain = softmax nodes 
+
+ QS K⊤
+
+> X
+
+τin 
+
+√d
+
+
+
+, (5) 
+
+Z = S(0) +  Ain VX
+
+ WO . (6) The last line is the standard cross-attention residual: it retains the learned slot identity while adding data-dependent graph content. It does not keep address and content in formally disjoint subspaces. In the controlled Two-Radius experiments, the write attends only to source states, so H is replaced by HS in KX and VX . Targets and structural central nodes are excluded from this attention set to isolate the source–memory–target channel. In the multiplicity experiment, this also prevents fixed, non-replicated nodes from acting as implicit anchors inside the softmax normalization. Targets then query the updated slots: 
+
+QT = HT UQ, KZ = ZU K , VZ = ZU V , (7) 
+
+Aout = softmax slots 
+
+ QT K⊤
+
+> Z
+
+τout 
+
+√d
+
+
+
+, (8) 
+
+OT = Aout VZ . (9) The block is permutation invariant in source order and equivariant in target order. This follows from the usual cancellation between a column permutation of the attention weights and the same row permutation of the values. At this stage, the residual S(0) lies outside the attention normalization. The block is therefore addressable but remains invariant to uniform replication of its source keys and values. Section 4 adds a private slot-derived key/value inside the attention set to recover the missing normalization mass. The architecture is close to induced set attention [11] and latent-array attention [12]. The distinction emphasized here is semantic: the latent states are treated as virtual graph nodes whose purpose is to supplement the MPNN’s global communication. There is no real-node self-attention. 
+
+3.2 Capacity and effective factorization 
+
+A width-D bottleneck provides Db bits of raw finite-precision storage, but this capacity is not automatically exposed as D independently usable memory locations. In a fully additive broadcast, meaning a separable prediction of the form 
+
+byj = f (hj ) + g(z),
+
+the same global contribution is delivered to every target, so arbitrary target-specific retrieval cannot be realized. This statement does not cover a message that is merely added before a joint nonlinear map: nonlinear decoders can in principle create a non-separable interaction between hj and z. When they succeed, however, the encoder must separate contents across feature subspaces and the decoder must learn which subspace to select from the target representation. The factorization and its gating are then implicit in the feature coordinates, without an architectural mechanism that directly supports 
+
+> 4Designing a Good Virtual Node
+
+them. We call this organization a factorization of the bottleneck. A conventional broadcast leaves it implicit, whereas addressable slots expose it directly as a memory axis with separately routed writes and reads. The relevant quantity is therefore not the number of physical virtual nodes, but the number of states that can carry different contents and be used separately by the target decoder. 
+
+Definition 3.1 (Effective factorization degree) . A source–target transcript has effective factorization degree Leff if all source-dependent information available to the targets is represented by 
+
+T (XS ) = ( u1, . . . , u Leff ) ∈ A Leff ×d, |A| ≤ 2b,
+
+where the uℓ may vary independently on the task family and are separately usable by the decoder. Physical copies constrained to be identical count as one effective state. 
+
+Remark 3.2 (Operational status of Definition 3.1) . “Separately usable” is deliberately an operational notion rather than a purely syntactic one. It is exact in the two cases that matter for our argument. First, identically initialized clones with shared equivariant updates provably remain equal at every layer (Appendix A), hence contribute exactly one effective state. Second, the addressable construction of Theorem 3.5 supplies an explicit write and read routing, hence attains Leff = M + O(1) by construction. Intermediate cases—for instance independently initialized VN clones without any selection mechanism—escape the exact symmetry obstruction but provide no interface through which a target could reliably select a specific state; we therefore regard the read interface, not the initialization, as the determining factor, and treat Definition 3.1 as a design criterion rather than a measurable property of an arbitrary trained network. 
+
+The fixed structural path of Two-Radius contributes only a constant number of such states. Aconventional VN adds one homogeneous state. Likewise, M cloned VNs with identical initialization, neighborhoods, and shared updates remain equal and do not produce an M -fold factorization. Addressable slots are designed precisely to make the M auxiliary states distinguishable, separately writable, and separately readable. 
+
+Theorem 3.3 (Effective finite-capacity requirement) . Any deterministic architecture whose complete source-dependent transcript has effective factorization degree Leff , width d, and b-bit coordinates, and that solves all permutation-valued Two-Radius instances exactly, satisfies 
+
+Leff db ≥ log 2(n!) . (10) 
+
+Consequently, 
+
+d = Ω 
+
+ n log nLeff b
+
+
+
+.
+
+Remark 3.4 (Scope of Theorem 3.3) . The bound is a worst-case, exact-recovery statement for deterministic architectures: it applies to any model that must output the correct permutation on every 
+
+instance, and it is silent about approximate or average-case recovery, for which a rate–distortion formulation would be the natural replacement. It is also an information-counting argument: it does not assume anything about the architecture beyond the finiteness of its transcript, and conversely it cannot by itself guarantee that a given architecture exposes its raw capacity to the decoder—that gap is precisely what Definition 3.1 and the addressable construction are meant to capture. 
+
+The proof is the usual injectivity argument: different permutations require different complete tran-scripts. In the baseline architecture Leff = O(1) , so the required width remains Ω( n log n/b ). The construction below realizes M separately usable auxiliary states, so Leff = M + O(1) after including the fixed structural route. This reduces the required width of each state by a factor M , up to that constant structural contribution, while leaving the total information requirement unchanged. A single VN of width D = M d has the same raw finite-state capacity as M slots of width d. The distinction is therefore not additional bits at fixed total width, but whether the required factorization is hidden in feature coordinates or exposed as a memory axis. 
+
+Theorem 3.5 (Constructive addressable upper bound) . Let M ≤ n and assume each coordinate stores at most b bits. There exists a permutation-invariant encoder with M addressable slots and a permutation-equivariant target decoder that solves permutation-valued Two-Radius using 
+
+d ≤
+
+l nM
+
+m  log 2 nb
+
+
+
++
+
+ log 2 Mb
+
+
+
++ O(1) (11) 
+
+coordinates per slot. 
+
+> 5Designing a Good Virtual Node
+
+Construction. Partition the public identifier set into balanced groups I1, . . . , I M . Let g(i) denote the group of identifier i and r(i) its position inside that group. Slot m stores a fixed address code and one label-code block for each identifier in Im. Source i writes the code of π(i) into block r(i) of slot 
+
+g(i); target j queries slot g(j) and reads block r(j). The write is invariant to source order because destinations depend only on identifiers, and the read is equivariant because all targets apply the same identifier-conditioned decoder. A full proof appears in Appendix A. The construction uses M d = O(n log n/b ) total auxiliary width. A wide VN of that total width could represent the same table, but its decoder would have to discover an equivalent decomposition of the coordinates and a target-specific selection rule. 
+
+3.3 From homogeneous broadcast to explicit addressing 
+
+A standard VN sends the same global state z to every target. This alone does not prohibit lookup, but the decoder must make the global contribution depend on the target representation. 
+
+Proposition 3.6 (Limitation of separable broadcast) . Let the exact target output be represented by a label vector and suppose 
+
+byj = f (hj ) + g(z), (12) 
+
+where z is broadcast identically, the target states hj depend only on their fixed identifiers, and no other path carries source information to the targets. For n ≥ 2, this decoder cannot realize every permutation-valued Two-Radius instance. Proof. Choose two permutations that differ by exchanging the labels of targets p and q. The change 
+
+g(zπ ) − g(zπ′ ) is identical for every target, whereas the required changes at p and q are opposite nonzero label-vector differences. A general decoder F (hj , z ) can escape Proposition 3.6. For example, a bilinear map, FiLM, or a sufficiently expressive MLP can use hj to select an identifier-specific subspace of a wide VN. Even MLP( Whhj + Wz z) is not generally separable after the joint nonlinearity. Such a successful solution is best understood as implicit addressing : the memory partition and selection operation are synthesized inside the feature coordinates and decoder rather than supplied by the VN broadcast. A literal implementation stores M payload blocks in one vector and uses a one-hot gate to select one block. Exact linear generation of that gate has a large address interface. 
+
+Proposition 3.7 (Linear one-hot addressing) . Let a1, . . . , a M ∈ Rp be target addresses. If a linear map W ∈ RM ×p satisfies W a m = em for every m, then 
+
+p ≥ M. (13) 
+
+Proof. Writing A = [ a1, . . . , a M ] gives W A = IM , hence M = rank( IM ) ≤ rank( A) ≤ p.Dot-product addressing does not require this one-hot representation. It compares a compact query against the keys of all slots and normalizes the resulting similarities. 
+
+Proposition 3.8 (Soft partition routing) . Let g : [ n] → [M ] define groups Im = {i : g(i) = m}.Suppose unit address vectors a1, . . . , a M ∈ Rp satisfy 
+
+a⊤
+
+> m
+
+am′ ≤ 1 − ∆ for m̸ = m′, ∆ > 0.
+
+Assign key ki = ag(i) to source i and query qm = am to slot m. At temperature τ , the attention mass assigned outside Im is bounded by 
+
+δm ≤ n − | Im||Im| exp( −∆/τ ). (14) 
+
+For target-to-slot reading, the weight assigned by address am to its matching slot is at least 
+
+ρmm ≥ 11 + ( M − 1) exp( −∆/τ ) . (15) 
+
+Proof. Matching logits equal 1/τ , while every non-matching logit is at most (1 − ∆) /τ . Summing the corresponding exponentials gives both bounds. 
+
+> 6Designing a Good Virtual Node
+
+Constant-margin binary or spherical codebooks contain M addresses in p = O(log M ) dimensions. Conversely, under b-bit precision, merely representing M distinct addresses requires pb ≥ log 2 M .Thus dot-product cross-attention realizes near-disjoint addressing with an asymptotically logarithmic address dimension, whereas exact linear one-hot gating requires p ≥ M . The payload capacity M d 
+
+is unchanged; the gain concerns the interface used to organize and retrieve it. Distinct slot embeddings remove the exact symmetry obstruction, and lower temperature sharpens routing. In our implementation, static addresses are kept separate from dynamic contents and the same identifier-derived address space is used for source writes and target reads. 
+
+Reading and integrating the slot memory. Once the slots have gathered the global information, it must be returned to the graph. A shared global FiLM read [24, 25], 
+
+[γ, β ] = Φ( Z1, . . . , Z M ), h+ 
+
+> j
+
+= (1 + γ) ⊙ hj + β, (16) is already non-separable: although γ, β are broadcast, their multiplicative interaction with hj can implement an implicit target-dependent gate. It can therefore decode a factorized wide state when target addresses are aligned with its feature coordinates. Our default is an explicit target-to-slot read, 
+
+ρjm = softmax m
+
+ qr(hj )⊤kr(Zm)
+
+√d
+
+
+
+, Oj =
+
+> M
+
+X
+
+> m=1
+
+ρjm vr(Zm), (17) which places the selection on the memory axis rather than inside hidden feature blocks. Source-to-slot attention determines where information is written; Equation (17) determines which compartments each target reads. This introduces no direct real-node attention and costs O(nM d ).The target-specific context may be added to hj , or integrated through a small Slot-FiLM map, 
+
+[γj , β j ] = MLP film ([ hj , O j ]) , h+ 
+
+> j
+
+= (1 + γj ) ⊙ hj + βj . (18) The multiplicative branch aligns retrieved content with local features. Zero-initializing its final map gives h+ 
+
+> j
+
+= hj and ∂h + 
+
+> j
+
+/∂h j = I; a small near-zero initialization preserves this direct path while allowing gradients to reach the routing branch. 
+
+# 4 Multiplicity-Preserving Virtual Nodes 
+
+Addressability determines where information is stored, but a normalized write can still discard how many nodes contributed. One direct solution is an unnormalized weighted sum, as in cardinality-preserved attention and the ACAM tokens of NetDiff [16, 26]. Such reads preserve additive mass, but their norm can grow with graph size and score concentration, which requires additional scaling or clipping. We instead retain softmax normalization and place the querying latent inside its own attention set. 
+
+4.1 Replication blindness of normalized attention 
+
+Standard cross-attention writes 
+
+Att( q, X ) = 
+
+P 
+
+> x∈X
+
+exp( s(q, x )) v(x)
+
+P 
+
+> x∈X
+
+exp( s(q, x )) . (19) For a multiset X, let rX repeat every element r times. 
+
+Proposition 4.1 (Replication invariance) . For every q, every integer r ≥ 1, and arbitrary learned score and value functions, 
+
+Att( q, rX ) = Att( q, X ). (20) 
+
+The result holds independently for every head and every slot. Proof. Uniform replication multiplies both numerator and denominator of Eq. (19) by r.Thus normalized attention represents a weighted empirical distribution rather than its absolute count-ing measure. Increasing slot width, slot count, or downstream depth cannot reconstruct multiplicity once all source-to-memory paths satisfy Proposition 4.1; a formal induction over stacked layers is given in Appendix B. A residual outside the attention, z + Att( z, X ), remains replication invariant whenever z is unchanged. 
+
+> 7Designing a Good Virtual Node
+
+# qm
+
+# (km0, a m) x1 x2 x3 x4
+
+Figure 2: Anchored Cross-Attn VN write for slot m. The slot query qm attends jointly to the source keys/values and to one private slot-derived anchor (km0, a m). Because the anchor participates in the same softmax normalization, its weight αm0 = esm0 /(esm0 + P 
+
+> i
+
+esmi ) reveals the source normalization mass. 
+
+4.2 Anchoring the latent query inside its attention 
+
+Figure 2 shows the modification relative to the normalized Cross-Attn VN write. Let the slot query be q, let the same latent state produce a private anchor key/value (k0, a ), and let node keys/values be 
+
+(ki, v i). Anchored attention is 
+
+z(X) = es0 a + P 
+
+> i
+
+esi vi
+
+es0 + P 
+
+> i
+
+esi , s0 = q⊤k0, si = q⊤ki. (21) Each slot has its own private anchor, and anchors do not mix across slots. 
+
+Proposition 4.2 (Density-induced displacement) . Assume k identical matching nodes have score s
+
+and value v, while the anchor has score s0 and value a̸ = v. Then 
+
+zk = es0 a + ke sves0 + ke s = (1 − λk)a + λkv, λk = ke s
+
+es0 + ke s . (22) 
+
+The map k 7 → zk is injective for finite k ≥ 0.Proof. λk is strictly increasing in k, so distinct multiplicities occupy distinct points on the segment between a and v.The representation therefore moves away from its private reference as the density of matching nodes increases. More generally, the anchor exposes the complete softmax normalization mass. 
+
+Proposition 4.3 (Recovery of normalized content and mass) . Let 
+
+Z = X
+
+> i
+
+esi , μ = 1
+
+Z
+
+X
+
+> i
+
+esi vi.
+
+Assume the anchor value occupies a dedicated coordinate in which all node values are zero. From the anchored output and known anchor logit s0, one recovers 
+
+α0 = es0
+
+es0 + Z , Z = es0 1 − α0
+
+α0
+
+, μ = z⊥
+
+1 − α0
+
+. (23) 
+
+Consequently, the unnormalized weighted sum Zμ is recoverable. 
+
+In implementation, we expose α0 as a separate mass channel before LayerNorm. The semantic channel uses the conditionally normalized node weights 
+
+eαi = αi
+
+1 − α0
+
+= esi
+
+Z ,
+
+while the count pathway receives 
+
+log Z = s0 + log(1 − α0) − log α0.
+
+This decomposition keeps label content invariant to replication and isolates multiplicity for counting. 
+
+Remark 4.4 (Relation to register tokens and attention sinks) . Appending special tokens to an attention set is a known stabilization device: register tokens absorb spurious global attention in vision Transformers [27], and attention sinks absorb excess probability mass in streaming language models [28]. These mechanisms treat the absorbed mass as a nuisance to be parked. The private anchor inverts this reading: because the anchor’s logit is known, the mass it absorbs is a measurement 
+
+of the softmax normalizer Z, turning a stabilization trick into an explicit cardinality channel. 
+
+> 8Designing a Good Virtual Node
+
+4.3 A 1-WL characterization on bounded multisets 
+
+The preceding result gives a direct characterization in the multiset setting underlying 1-WL. Let Σ be a finite color alphabet and let X be a nonempty multiset over Σ with bounded size. 
+
+Theorem 4.5 (Injective anchored multiset read) . Anchored attention followed by a sufficiently expressive post-processing map can implement an injective representation of X. Consequently, on bounded colored neighborhoods it can realize one 1-WL refinement step. Standard normalized attention without an additional cardinality path is not injective on any domain containing both a multiset X and one of its uniform replications rX , r > 1.Proof. Set every node logit to zero and encode color c ∈ Σ by the canonical vector ec. Standard normalized attention then returns 
+
+μ(X) = 1
+
+|X|
+
+X
+
+> x∈X
+
+ex,
+
+the normalized color histogram. Hence 
+
+μ(rX ) = μ(X),
+
+so this representation is not injective whenever both X and rX belong to the task domain. Now add an anchor with logit s0 = 0 . Give the anchor value 1 in a dedicated coordinate and zero in all color coordinates, while node values are zero in the anchor coordinate and equal to ex in the color coordinates. The anchored output is then 
+
+z(X) = [ α0, (1 − α0)μ(X)] , α0 = 11 + |X| .
+
+Therefore both the multiset size and its normalized color histogram are recoverable: 
+
+|X| = 1 − α0
+
+α0
+
+, μ(X) = zcolor 
+
+1 − α0
+
+.
+
+Their product gives 
+
+|X|μ(X) = X
+
+> x∈X
+
+ex,
+
+which is the integer color histogram and uniquely determines X.A 1-WL refinement is an injective function of the current node color and the multiset of neighbor colors. Since both the color alphabet and neighborhood size are bounded, the set of possible inputs is finite, and a sufficiently expressive post-processing MLP can represent the corresponding injective update. The theorem identifies the exact statistic missing from ordinary softmax: normalized attention retains color proportions, while the anchor additionally reveals the total mass needed to recover the counting measure used by 1-WL. 
+
+Remark 4.6 (Existence versus learnability) . The proof of Theorem 4.5 is constructive and uses a structured parameter setting: zero node logits, a dedicated anchor coordinate, and canonical color encodings. It is an expressivity statement in the usual WL-analysis sense—it shows that anchored attention does not inherit the representation-level obstruction of Proposition 4.1—but it does not describe what gradient-based training finds in practice. That second question is empirical and is addressed by the paired-replication diagnostics of Section 5 and Appendix C. 
+
+Corollary 4.7 (Multiplicity-aware Two-Radius) . Consider a bounded Two-Radius family in which source type (i, π (i)) occurs ci times and target ti must predict (π(i), c i). Then: 1. colored 1-WL solves the task in two refinement rounds; 2. a normalized global read satisfying Proposition 4.1 cannot distinguish (π, c ) from (π, rc ) when no parallel path reveals cardinality; 3. addressable anchored slots with sufficient width solve the task by combining the partition of Theorem 3.5 with the injective multiset read of Theorem 4.5. 
+
+> 9Designing a Good Virtual Node
+
+Proof sketch. In the first 1-WL round, each structural central node receives the complete multiset 
+
+(i, π (i)) ci : i ∈ [n] .
+
+Its refined color therefore determines both the label and multiplicity associated with every identifier. In the second round, target ti combines this global color with its own identifier i and recovers 
+
+(π(i), c i).The failure of normalized global attention follows directly from Proposition 4.1: uniformly multiply-ing all multiplicities does not change the normalized source-to-memory representation. For the anchored construction, partition identifiers across slots as in Theorem 3.5. Within slot g(i),assign identifier i the private block r(i), so that a source of type (i, π (i)) is represented by the slot-local color (r(i), π (i)) . By Theorem 4.5, the anchored write recovers the exact histogram of these slot-local colors. Consequently, block r(i) records multiplicity ci in label coordinate π(i).Target ti selects slot g(i) and block r(i), recovering (π(i), c i).
+
+# 5 Benchmarks 
+
+The experiments evaluate the two requirements jointly and then test counting in a separate graph-level setting. For multiplicity-aware Two-Radius, all four variants use the same categorical inputs, three-layer mean-MPNN backbone, prediction heads, optimization schedule, and random seed; only the global communication module changes. The exact data-generation, architecture, and training configuration used for Table 1 is given in Appendix C. 
+
+5.1 Benchmark A: multiplicity-aware Two-Radius 
+
+The multiplicity-aware task jointly evaluates the two theoretical requirements. Its label component is exactly the original address-retrieval problem: target ti must recover the label associated with identifier i. Its count component additionally tests whether the global read preserves absolute multiplicity. This removes the need for a separate permutation-only benchmark while retaining a direct diagnostic for addressability. We next add repeated source types. For every identifier i, sample a label π(i) and a base multiplicity 
+
+ai ∈ { 1, . . . , A }. Each base instance is rendered at several global replication scales r ∈ { 1, . . . , R },giving 
+
+ci = ra i
+
+indistinguishable copies of source (i, π (i)) . Target ti predicts both 
+
+(π(i), c i).
+
+The paired scales guarantee that standard normalized attention observes identical relative source distributions while the absolute targets differ. For Table 1, we use n = 12 source–target identifiers, one structural central node, permutation-valued labels over [12] , A = 4 , and the three replication scales r ∈ { 1, 2, 3}. Thus the largest target count is 
+
+12 . Each minibatch samples 32 latent assignments and renders every assignment at all three scales, yielding 96 paired graphs. Graphs are padded to at most 157 node positions ( 144 sources, one center, and 12 targets), with all padding masked from message passing and global attention. We report L ABEL accuracy, exact C OUNT accuracy, and B OTH , which requires both predictions to be correct for the same target. We additionally track exact graph recovery as a diagnostic. The comparison crosses the two properties directly: the VN remains a homogeneous bottleneck, the Cross-Attn VN is addressable but replication blind, and the Anchored Cross-Attn VN preserves both address and mass. An outer residual does not change the replication invariance. One subtlety in reading Table 1: by Proposition 4.1, the count predictions of the Cross-Attn VN 
+
+cannot depend on the replication scale r. Its nonzero count accuracy therefore does not reflect recovered multiplicity, but residual correlations between the paired-scale protocol and the base multiplicities ai, which are visible to any distribution-level read. The meaningful contrast is that only the anchored variant can, in principle and in practice, track the paired scales. 
+
+> 10 Designing a Good Virtual Node
+
+Table 1: Multiplicity-aware Two-Radius validation accuracy (%). Single run with seed 0. For each variant, we report the epoch with the highest validation B OTH accuracy, evaluated on 8 freshly sampled minibatches per epoch. Model Label ↑ Count ↑ Both ↑
+
+MPNN 7.8 17.1 1.3 VN 8.9 18.3 1.4 Cross-Attn VN 100.0 28.3 28.3 Anchored Cross-Attn VN 100.0 100.0 100.0 
+
+Table 2: Motif counting. All readouts share the same training budget and are selected by early stopping on validation log-MAE; we report the selected checkpoint. Jittered OOD perturbs replicated motifs while preserving the counting target. IID Jittered OOD Readout log-MAE ↓ log-R2 ↑ log-MAE ↓ log-R2 ↑
+
+Mean pool 0.523 0.526 0.812 −0.211 
+
+Sum pool 0.140 0.966 0.237 0.892 Cross-Attn VN 0.415 0.701 0.365 0.690 Anchored Cross-Attn VN 0.012 1.000 0.020 0.999 Optimization protocol. All variants are trained for 200 epochs with 50 minibatches per epoch, for 10 ,000 optimizer updates. We use AdamW with learning rate 10 −4 for the shared backbone and prediction heads and 2 × 10 −4 for the global module, zero weight decay and dropout, and gradient clipping at norm 5. The count-loss weight is zero for the first 30 epochs, is linearly increased to 
+
+0.5 over the next 40 epochs, and then remains fixed. Cross-attention variants use 12 slots, 4 heads, address temperature 0.35 , and a Slot-FiLM final-layer initialization with standard deviation 10 −3.At every epoch, validation metrics are averaged over 8 freshly sampled minibatches ( 768 rendered graphs), and the reported checkpoint maximizes validation B OTH . Table 1 reports the single run with seed 0; no variance estimate is implied. 
+
+5.2 Benchmark B: planted motif census 
+
+To test whether the effect extends beyond duplicated key–value pairs, we use a graph-level motif census. A connected graph contains a random background, distractor gadgets, and planted occurrences of six rooted motifs (triangle, square, star, path, clique, and diamond). An MPNN must recognize local rooted structure; the global readout predicts the six motif counts. Counts, background size, and motif composition have separate OOD splits. This is an inductive-bias and extrapolation test rather than a strict impossibility result. Mean pooling and standard cross-attention mainly encode relative motif prevalence, sum pooling is an additive count-aware control, and anchored slots expose query-dependent soft masses. Graph size is deliberately not provided as an input feature, so that any mass sensitivity must arise from the aggregation mechanism itself rather than from a side-channel scalar. To keep this auxiliary benchmark compact, Table 2 reports only IID evaluation and jittered-replication OOD, where replicated motif instances are perturbed by local rewiring and node-feature jitter. We report macro log-MAE and macro log-R2; the benchmark construction and controls are summarized in Appendix D. 
+
+5.3 External validation: constrained link-set prediction 
+
+We further evaluate the global module on constrained link-set prediction, a task derived from the NetDiff benchmark [26]. Given a set of nodes with geometric and categorical features, the model predicts a binary link for each candidate pair. Valid solutions must satisfy several coupled constraints, including link symmetry, absence of self-links, bipartite compatibility, bounded node degree, and a limited number of links per angular sector. Hence, the decision for one pair depends on the links selected elsewhere in the graph. 
+
+> 11 Designing a Good Virtual Node
+
+Table 3: Constrained link-set prediction without local message passing. Single-seed proof of concept; see Section 5.3 for scope.     
+
+> Global module F1 ↑
+> Cross-Attn VN 0.751 Anchored Cross-Attn VN 0.816
+
+We remove the local MPNN and compare virtual-node readouts directly. The Cross-Attn VN reaches an F1 score of 0.751 , while the Anchored Cross-Attn VN reaches 0.816 . The mass-aware virtual node produces more confident and globally coherent link predictions, indicating that multiplicity-sensitive global aggregation is useful beyond explicit counting tasks. We stress the scope of this experiment: it compares two readouts on a single seed of a specialized benchmark, and should be read as a proof of concept that the anchored read transfers to coherent global decisions—not as a definitive benchmark. A broader baseline suite and variance analysis are left to future work. 
+
+# 6 Related Work 
+
+Oversquashing and finite-capacity bottlenecks. Oversquashing was identified as a consequence of exponentially growing receptive fields and graph curvature [3–5], and bounded-capacity cuts were shown to limit what constant-width MPNNs can transmit [23]. The Two-Radius construction of [1] isolates the capacity component from long-range attenuation: distances and Jacobian path lengths stay constant while the required content grows. We adopt that task and ask which auxiliary memory organization resolves it. 
+
+Virtual nodes and global graph memory. Virtual nodes were introduced as a global communica-tion shortcut [2, 6]; spectral analyses characterize how they improve mixing [7, 8], and expressivity comparisons show that MPNN+VN and attention are related but in general incomparable primitives [19, 20]. RANGE relays information through attention nodes with positional encodings [13]. Our contribution is complementary: rather than proposing a new global layer, we characterize which prop-erties (addressability, multiplicity preservation) a VN must have, and supply a minimal mechanism for each. 
+
+Latent arrays and set attention. Slots written and read by cross-attention are structurally close to induced set attention blocks and Perceiver-style latent arrays [11, 12], and to the Deep Sets analysis of injective multiset encoders [21, 22]. Full and sparse graph Transformers instead give real nodes a direct global attention path [9, 10, 18]. We keep real-node computation purely local and restrict global computation to the latent axis. 
+
+Expressivity, counting, and cardinality. MPNN expressivity is bounded by 1-WL [14, 17]; principal neighborhood aggregation and cardinality-preserving attention show that multiplicity must be encoded explicitly [15, 16], and the ACAM tokens of NetDiff apply this idea to constrained generation [26]. The anchor mechanism achieves the same goal while retaining softmax normalization, and admits the inverted reading of register tokens and attention sinks [27, 28] discussed in Section 4. 
+
+Feature-wise modulation. FiLM conditions features on auxiliary signals through affine modulation [24, 25]. Our Slot-FiLM integration uses the same primitive with identity-preserving initialization, so that the local representation is protected while the global route is learned. 
+
+# 7 Discussion and Conclusion 
+
+The analysis separates raw storage capacity from usable factorization. A VN of width D has Db 
+
+finite-precision bits, and one wide VN with D = M d has the same raw capacity as M slots of width 
+
+d. Nevertheless, the standard homogeneous broadcast exposes no target-specific memory axis. Under a separable decoder its global contribution is identical for every target and cannot realize arbitrary lookup. A sufficiently expressive non-separable decoder may succeed, but it must then construct an implicit addressing mechanism by partitioning feature coordinates and selecting them from the target representation. 
+
+> 12 Designing a Good Virtual Node
+
+Addressable VNs make this operation structural. Physical multiplicity becomes an effective fac-torization degree only when states can evolve differently and be used separately; symmetric VN clones remain one channel. Cross-attention supplies both write and read routing, and separated dot-product codes address M compartments in O(log M ) dimensions rather than through an exact 
+
+M -dimensional linear one-hot interface. This does not reduce the total information needed by Two-Radius, but it reduces the required width per compartment and exposes the organization that a successful wide-VN decoder would otherwise learn implicitly. Addressability and multiplicity preservation remain complementary. Standard softmax slots recover target-specific labels but are invariant to uniform replication. A private anchor exposes the missing normalization mass; together with normalized semantic content it reconstructs the counting measure and, on bounded color domains, an injective 1-WL multiset representation. The Two-Radius results reflect this separation: standard slots solve label retrieval but not counting, while anchored slots solve both. Motif counting and constrained link prediction provide additional evidence that the mass-aware read improves coherent global decisions beyond duplicated key–value pairs. 
+
+Limitations. Three scope decisions delimit our claims. First, the capacity results are exact-recovery, worst-case counting arguments (Remark 3.4); approximate recovery and stochastic decoders would require a rate–distortion treatment we do not provide. Second, the positive results are constructive expressivity statements (Remark 4.6): they remove representation-level obstructions but do not characterize the optimization dynamics that reach them, and our experiments probe learnability only on controlled tasks. Third, the empirical evidence is deliberately narrow: the benchmarks are synthetic or semi-synthetic, the link-set experiment is a single-seed proof of concept on a specialized task, and we do not include the most direct ablation—a wide VN of matched total width paired with a strong non-separable decoder (e.g. global FiLM)—which would quantify how much of the gain comes from exposing the factorization architecturally rather than letting it be learned implicitly. We consider that ablation the most important next experiment. The resulting module keeps edge-based message passing as the local processor. It adds O(nM )
+
+node–memory attention pairs, with O(nM d ) arithmetic cost, rather than an O(n2) real-node attention path; choosing M = Θ( p|V |) already balances the global term against dense attention up to width factors, though the useful number of slots, routing temperature, and optimization scale remain task dependent. The overall design principle is consistent: a good virtual node should expose a compact addressable memory axis, preserve multiplicity, and return global information without replacing the graph’s local inductive bias. 
+
+# References 
+
+[1] Yaaqov Mishayev, Yonatan Sverdlov, Tal Amir, and Nadav Dym. Short-range oversquashing, 2025. Accepted at the Fourth Learning on Graphs Conference (LoG 2025); proceedings forthcoming. 1, 3, 12 [2] Justin Gilmer, Samuel S. Schoenholz, Patrick F. Riley, Oriol Vinyals, and George E. Dahl. Neural message passing for quantum chemistry. In Proceedings of the 34th International Conference on Machine Learning , volume 70 of Proceedings of Machine Learning Research ,pages 1263–1272, 2017. 1, 12 [3] Uri Alon and Eran Yahav. On the bottleneck of graph neural networks and its practical implications. In International Conference on Learning Representations , 2021. URL https: //openreview.net/forum?id=i80OPhOCVH2 . 1, 12 [4] Jake Topping, Francesco Di Giovanni, Benjamin P. Chamberlain, Xiaowen Dong, and Michael M. Bronstein. Understanding over-squashing and bottlenecks on graphs via cur-vature. In International Conference on Learning Representations , 2022. URL https: //openreview.net/forum?id=7UmjRGzp-A .[5] Francesco Di Giovanni, Lorenzo Giusti, Federico Barbero, Giulia Luise, Pietro Liò, and Michael M. Bronstein. On over-squashing in message passing neural networks: The impact of width, depth, and topology. In Proceedings of the 40th International Conference on Machine Learning , volume 202 of Proceedings of Machine Learning Research , pages 7865–7885, 2023. 1, 12 
+
+> 13 Designing a Good Virtual Node
+
+[6] Katsuhiko Ishiguro, Shin-ichi Maeda, and Masanori Koyama. Graph warp module: An auxiliary module for boosting the power of graph neural networks in molecular graph analysis, 2019. 1, 12 [7] Joshua Southern, Francesco Di Giovanni, Michael Bronstein, and Johannes F. Lutzeyer. Under-standing virtual nodes: Oversquashing and node heterogeneity. In International Conference on Learning Representations , 2025. 1, 12 [8] EunJeong Hwang, Veronika Thost, Shib Sankar Dasgupta, and Tengfei Ma. An analysis of virtual nodes in graph neural networks for link prediction. In The First Learning on Graphs Conference , 2022. URL https://openreview.net/forum?id=dI6KBKNRp7 . Extended abstract. 1, 12 [9] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Łukasz Kaiser, and Illia Polosukhin. Attention is all you need. In Advances in Neural Informa-tion Processing Systems , volume 30, pages 5998–6008, 2017. 2, 12 [10] Ladislav Rampášek, Mikhail Galkin, Vijay Prakash Dwivedi, Anh Tuan Luu, Guy Wolf, and Dominique Beaini. Recipe for a general, powerful, scalable graph transformer. In Advances in Neural Information Processing Systems , volume 35, 2022. 2, 3, 12 [11] Juho Lee, Yoonho Lee, Jungtaek Kim, Adam R. Kosiorek, Seungjin Choi, and Yee Whye Teh. Set transformer: A framework for attention-based permutation-invariant neural networks. In Proceedings of the 36th International Conference on Machine Learning , volume 97 of 
+
+Proceedings of Machine Learning Research , pages 3744–3753, 2019. 2, 4, 12 [12] Andrew Jaegle, Felix Gimeno, Andy Brock, Oriol Vinyals, Andrew Zisserman, and João Carreira. Perceiver: General perception with iterative attention. In Proceedings of the 38th In-ternational Conference on Machine Learning , volume 139 of Proceedings of Machine Learning Research , pages 4651–4664, 2021. 2, 4, 12 [13] Alessandro Caruso, Jacopo Venturin, Lorenzo Giambagli, Edoardo Rolando, Zakariya El-Machachi, Frank Noé, and Cecilia Clementi. Extending the range of graph neural networks with global encodings. Nature Communications , 17:1855, 2026. doi: 10.1038/s41467-026-69715-3. 2, 12 [14] Keyulu Xu, Weihua Hu, Jure Leskovec, and Stefanie Jegelka. How powerful are graph neural networks? In International Conference on Learning Representations , 2019. URL https: //openreview.net/forum?id=ryGs6iA5Km . 2, 12 [15] Gabriele Corso, Luca Cavalleri, Dominique Beaini, Pietro Liò, and Petar Veliˇ ckovi´ c. Principal neighbourhood aggregation for graph nets. In Advances in Neural Information Processing Systems , volume 33, 2020. 12 [16] Shuo Zhang and Lei Xie. Improving attention mechanism in graph neural networks via cardinality preservation. In Proceedings of the Twenty-Ninth International Joint Conference on Artificial Intelligence , pages 1395–1402, 2020. doi: 10.24963/ijcai.2020/194. 2, 7, 12 [17] Christopher Morris, Martin Ritzert, Matthias Fey, William L. Hamilton, Jan Eric Lenssen, Gaurav Rattan, and Martin Grohe. Weisfeiler and leman go neural: Higher-order graph neural networks. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 33, pages 4602–4609, 2019. doi: 10.1609/aaai.v33i01.33014602. 2, 12 [18] Hamed Shirzad, Ameya Velingker, Balaji Venkatachalam, Danica J. Sutherland, and Ali Kemal Sinop. Exphormer: Sparse transformers for graphs. In Proceedings of the 40th International Conference on Machine Learning , volume 202 of Proceedings of Machine Learning Research ,pages 31613–31632, 2023. 3, 12 [19] Eran Rosenbluth, Jan Tönshoff, Martin Ritzert, Berke Kisin, and Martin Grohe. Distinguished in uniform: Self-attention vs. virtual nodes. In International Conference on Learning Represen-tations , 2024. 3, 12 [20] Chen Cai, Truong Son Hy, Rose Yu, and Yusu Wang. On the connection between MPNN and graph transformer. In Proceedings of the 40th International Conference on Machine Learning ,volume 202 of Proceedings of Machine Learning Research , pages 3408–3430, 2023. 3, 12 [21] Manzil Zaheer, Satwik Kottur, Siamak Ravanbakhsh, Barnabás Póczos, Ruslan Salakhutdinov, and Alexander J. Smola. Deep sets. In Advances in Neural Information Processing Systems ,volume 30, pages 3391–3401, 2017. 3, 12 
+
+> 14 Designing a Good Virtual Node
+
+[22] Edward Wagstaff, Fabian B. Fuchs, Martin Engelcke, Ingmar Posner, and Michael A. Osborne. On the limitations of representing functions on sets. In Proceedings of the 36th International Conference on Machine Learning , volume 97 of Proceedings of Machine Learning Research ,pages 6487–6494, 2019. 3, 12 [23] Andreas Loukas. What graph neural networks cannot learn: Depth vs width. In International Conference on Learning Representations , 2020. 3, 12 [24] Ethan Perez, Florian Strub, Harm de Vries, Vincent Dumoulin, and Aaron Courville. FiLM: Visual reasoning with a general conditioning layer. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 32, 2018. doi: 10.1609/aaai.v32i1.11671. 7, 12 [25] Marc Brockschmidt. GNN-FiLM: Graph neural networks with feature-wise linear modulation. In Proceedings of the 37th International Conference on Machine Learning , volume 119 of 
+
+Proceedings of Machine Learning Research , pages 1144–1152, 2020. 7, 12 [26] Félix Marcoccia, Victor Fagoo, Gilles Monzat de Saint Julien, Cédric Adjih, Thomas Watteyne, and Paul Mühlethaler. NetDiff: Graph diffusion with improved global capabilities to generate and update mobile network topologies. In Proceedings of the 43rd International Conference on Machine Learning , 2026. Accepted at ICML 2026; proceedings forthcoming. 7, 11, 12 [27] Timothée Darcet, Maxime Oquab, Julien Mairal, and Piotr Bojanowski. Vision transformers need registers. In International Conference on Learning Representations , 2024. 8, 12 [28] Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient streaming language models with attention sinks. In International Conference on Learning Representations ,2024. 8, 12 
+
+# A Capacity Proofs 
+
+A.1 Proof of Theorem 3.3 
+
+For each permutation π ∈ Sn, let Tπ be the complete source-dependent transcript available to all targets. If π̸ = π′ but Tπ = Tπ′ , then fixed target identifiers and a deterministic decoder produce the same joint output on both instances, contradicting exact recovery. Hence π 7 → Tπ is injective and the transcript must realize at least n! values. An effectively factorized transcript with Leff states, d coordinates per state, and at most 2b values per coordinate has at most 
+
+2Leff db 
+
+possible values. Therefore 
+
+2Leff db ≥ n!,
+
+which proves Eq. (10). Stirling’s approximation gives log 2(n!) = n log 2 n−O(n). For several global layers, Leff db is replaced by the capacity of their complete source-dependent transcript. Bounds for average rather than exact recovery would require a rate–distortion argument (Remark 3.4). 
+
+A.2 Why symmetric virtual nodes do not factorize memory Lemma A.1 (Persistence of virtual-node symmetry) . Consider M VNs with identical initial states, identical neighborhoods, and shared permutation-equivariant update functions. Their states remain identical at every layer. Proof. The property holds at initialization. If all VNs are identical at layer ℓ, they receive identical neighbor multisets and aggregated messages. The shared update therefore produces identical states at layer ℓ + 1 .Their joint state is always (z, . . . , z ), so it has the same number of reachable values as one VN and contributes one effective compartment. The factor M requires a mechanism, such as addressability, that distinguishes writes, states, and reads. Independently initialized clones escape the exact symmetry of the lemma but provide no selection interface; see Remark 3.2 for the operational reading of this case. 
+
+> 15 Designing a Good Virtual Node
+
+A.3 Proof of Theorem 3.5 
+
+Let k = ⌈n/M ⌉ and fix a public partition I1, . . . , I M with |Im| ≤ k. Let g(i) and r(i) denote the group and within-group position of identifier i.A label in [n] uses q = ⌈log 2 n/b ⌉ coordinates of b bits. Slot m stores its ⌈log 2 M/b ⌉-coordinate address and k label blocks of length q. Source i writes the code of π(i) into block r(i) of slot g(i).Since each destination depends only on the identifier, source order is irrelevant. Target j selects slot g(j) and block r(j), recovering π(j). Permuting target order permutes the reads, which proves equivariance and Eq. (11). For labels independently drawn from an alphabet of size C, the analogous capacity requirement is 
+
+Leff db ≥ n log 2 C, and the construction uses O(( n/M ) log C/b ) label coordinates per slot. 
+
+# B Additional Results on Anchored Attention 
+
+B.1 General replication-blind architecture 
+
+Consider any deterministic network in which all source information reaches the targets through global reads Am satisfying 
+
+Am(q, rX ) = Am(q, X ),
+
+and suppose no parallel operation receives source cardinality. By induction over global and local layers, the complete target output is identical on X and rX : the first global states coincide, determin-istic subsequent states coincide, and repeated source copies remain indistinguishable under shared updates. Therefore no such network can solve a task with different targets on the paired instances. The assumption excludes several legitimate count-aware mechanisms: sum aggregation, explicit degree or graph-size features, an anchor inside the normalization, batch statistics over the node axis, and unmasked padding information. These must be controlled in the synthetic benchmark, and they motivate the protocol choices of Appendix C: graph size is not an input feature, padding cardinality is masked out, and the write attention set contains only replicated source tokens. 
+
+B.2 Anchored semantic/mass decomposition 
+
+Write the anchored attention weights as 
+
+α0 = es0
+
+es0 + Z , αi = esi
+
+es0 + Z .
+
+Conditioned on selecting a real node, the semantic weights are 
+
+eαi = αi
+
+1 − α0
+
+= esi
+
+Z .
+
+Hence the semantic channel X
+
+> i
+
+eαivi
+
+is exactly standard normalized attention, while α0 separately carries mass. This decomposition is useful experimentally because count-dependent variation cannot contaminate label content before the count head. 
+
+# C Detailed Experimental Protocol 
+
+C.1 Two-Radius data and batching 
+
+Table 1 uses n = 12 identifiers, 12 labels, one structural central node, maximum base multiplicity 
+
+A = 4 , and replication scales r ∈ { 1, 2, 3}. For every base example, the labels form a uniformly sampled permutation π ∈ S12 , and the base multiplicities are sampled independently as 
+
+ai ∼ Unif {1, 2, 3, 4}.
+
+The three paired graphs use counts ci = ra i, so target counts lie in {1, . . . , 12 }. Source order is independently shuffled in every rendered graph, and target identifiers are placed in a random order. 
+
+> 16 Designing a Good Virtual Node
+
+The directed communication graph contains edges from every source to the central node and from the central node to every target, with mean-normalized aggregation and no reverse edges. This prevents the fixed target set from entering the source summary through the local path. The largest graph contains 144 sources, one central node, and 12 targets. Smaller graphs are padded to these 157 
+
+positions; node and source masks remove padding from message passing, pooling, and attention. Data are generated online rather than stored in a finite train/validation split. Each training minibatch samples 32 base assignments and expands each one at all three scales, for an effective batch of 
+
+96 rendered graphs. Training therefore processes 320 ,000 base assignments, or 960 ,000 rendered graphs, over 10 ,000 updates. Validation at each epoch uses 8 independently generated minibatches, corresponding to 256 base assignments and 768 rendered graphs. 
+
+C.2 Model variants 
+
+All variants use 128 -dimensional identifier, label, and role embeddings, followed by a two-layer input MLP, LayerNorm, and three residual mean-aggregation MPNN layers. The label and count predictors are two-layer MLPs. The count head has 12 classes, with class ci − 1 representing count ci.The MPNN baseline has no auxiliary global state. The VN variant reads the sources by masked mean pooling, updates one learned virtual state with a three-layer MLP, and broadcasts it homogeneously to the targets through a residual target MLP with scale 0.2.Both cross-attention variants use M = 12 learned static slot addresses and 4 heads. Identifier embeddings are projected into a shared address space used both for source-to-slot writes and target-to-slot reads; dynamic slot content is not reused as an address. The write attends only to source tokens, and both routing directions use temperature 0.35 . Slot contents pass through an output projection, LayerNorm, a residual feed-forward block, and a second LayerNorm. The retrieved target context is integrated by Slot-FiLM, with 
+
+γ = 0 .5 tanh( bγ), β = tanh( bβ),
+
+and the final FiLM linear map is initialized from N (0 , 10 −6), i.e. with weight standard deviation 
+
+10 −3.The A NCHORED CROSS -A TTN VN additionally appends one private anchor logit to each slot and head before the source softmax. Anchor logits are initialized to zero. The per-head log-odds 
+
+log(1 − α0) − log α0
+
+are passed through a two-layer mass MLP and added to the slot content after content normalization, so LayerNorm cannot erase the mass signal. 
+
+C.3 Paired replication protocol 
+
+For a fixed base assignment (π, a ), the three rendered graphs differ only through the common scale r.Copies associated with the same identifier have identical identifier, label, role, neighborhood, and address features. Graph cardinality is never supplied as an input feature. Moreover, the source-to-slot attention set contains only source tokens: central and target nodes are excluded because their fixed, non-replicated presence would act as an implicit softmax anchor. Consequently, a normalized source read is exactly invariant across the paired scales, whereas the correct count labels change. 
+
+C.4 Optimization and model selection 
+
+All models are trained with AdamW for 200 epochs and 50 minibatches per epoch. The learning rate is 10 −4 for embeddings, the local backbone, and prediction heads. Parameters belonging to the global block use a multiplier of 2, giving learning rate 2 × 10 −4. Weight decay and dropout are zero, and gradients are clipped to norm 5.The loss is 
+
+L = Llabel + wcount Lcount .
+
+We use wcount = 0 through epoch 30 , increase it linearly to 0.5 over epochs 31 –70 , and keep it at 
+
+0.5 thereafter. All reported Table 1 rows use seed 0. At every epoch, metrics are averaged over 8
+
+freshly sampled validation minibatches, and the reported row is the epoch maximizing validation BOTH . Because the experiment contains one seed, Table 1 reports point estimates rather than means and standard deviations. 
+
+> 17 Designing a Good Virtual Node
+
+C.5 Diagnostics 
+
+For a single base assignment rendered at all three scales, we compare the complete global states against the r = 1 state. A normalized Cross-Attn VN should have zero maximum and mean difference up to floating-point error, whereas the anchored state should vary with r. We additionally record source-to-slot weights, anchor weights, target-to-slot weights, count accuracy at each scale, and exact graph recovery. 
+
+C.6 Reproducibility 
+
+An executable notebook containing the data generator, the four model definitions, the training and model-selection loops, and the replication-state diagnostic used by this protocol will be released upon publication. Notebook output cells are not part of the protocol specification; all settings stated above are taken from the executable configuration and model code. 
+
+# D Planted Motif Census 
+
+Each graph contains a random connected background and several planted rooted gadgets. The root marker is shared across motif types, so the MPNN must infer the local structure rather than read a motif label. The target vector is 
+
+[c△, c □, c star , c path , c clique , c diamond ].
+
+Distractor gadget families are marked but should not be counted. OOD splits independently enlarge motif counts, background size, and change motif mixtures. Exact replication is retained as a mechanistic unit test, while jittered replication applies degree-preserving rewiring and node-type perturbations. Compared readouts are mean, sum, standard slots, and anchored slots. Graph size is not provided as an input feature; sum pooling is therefore the only count-aware control, and the gap between sum pooling and anchored slots isolates the benefit of query-dependent soft masses over a single additive channel.
