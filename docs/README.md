@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-09</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-17</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 19 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 26 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>7</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>12</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>13</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>13</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-09 20:55:50 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-17 21:06:01 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共读19篇论文，精读7篇、速读12篇，核心聚焦AI模型架构与机器人智能。最值得关注的是LLM引导的神经架构搜索（GraphIR）与流形约束超连接表征学习，均获9.0高分，另一个实用亮点为腿足机器人自适应滤波状态估计。建议优先精读这两篇高分的架构设计论文，再结合速读中的递归记忆与接触隐式重定向快速拓展视野。</p>
+<p>今日共读26篇论文，精读13篇、速读13篇，聚焦神经架构搜索与高效视觉模型。最值得关注的是两篇满分NAS工作：多智能体共识门控用于地震断层分割，以及线性规划驱动的LP-NAS。下一步可延伸探索静态结构化剪枝与GPU加速安全规划等应用方向。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">7 篇</strong>
+    <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="GraphIR: Architecture-Level Search States for LLM-Guided Neural Architecture Evolution">GraphIR: Architecture-Level Search States for LLM-Guided Neural Architecture Evolution</span></li><li><span class="dpr-home-dashboard-paper-title" title="Beyond Residual Connections: Manifold-Constrained Hyper-Connections for Robust Speaker Representation Learning">Beyond Residual Connections: Manifold-Constrained Hyper-Connections for Robust Speaker Representation Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="LiteKD-Net: Lightweight Knowledge-Distilled Network for Mobile Image Denoising">LiteKD-Net: Lightweight Knowledge-Distilled Network for Mobile Image Denoising</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Consensus-gated Multi-Agent Neural Architecture Search for Seismic Fault Segmentation">Consensus-gated Multi-Agent Neural Architecture Search for Seismic Fault Segmentation</span></li><li><span class="dpr-home-dashboard-paper-title" title="LP-NAS: Linear Programming-based Neural Architecture Search">LP-NAS: Linear Programming-based Neural Architecture Search</span></li><li><span class="dpr-home-dashboard-paper-title" title="Degradation-Guided Underwater Image Restoration with Task-Oriented Latent Control">Degradation-Guided Underwater Image Restoration with Task-Oriented Latent Control</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">neural-arch <strong>5</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">neural-arch <strong>6</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>4</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">12 篇</strong>
+    <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Residual-Based Adaptive Kalman Filtering for Legged Robot State Estimation">Residual-Based Adaptive Kalman Filtering for Legged Robot State Estimation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Maglev: Sliding Recurrent Memory">Maglev: Sliding Recurrent Memory</span></li><li><span class="dpr-home-dashboard-paper-title" title="Shooting for Contact: Contact-Implicit Multiple Shooting for Dynamic Motion Retargeting">Shooting for Contact: Contact-Implicit Multiple Shooting for Dynamic Motion Retargeting</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Attention-Only White-Box Transformer via LeJEPA-Based Self-Supervised Pretraining">Attention-Only White-Box Transformer via LeJEPA-Based Self-Supervised Pretraining</span></li><li><span class="dpr-home-dashboard-paper-title" title="GASP: GPU-Accelerated Safe Planner for Real-Time Collision-Aware Motion Generation with Latent Trajectory Sampling">GASP: GPU-Accelerated Safe Planner for Real-Time Collision-Aware Motion Generation with Latent Trajectory Sampling</span></li><li><span class="dpr-home-dashboard-paper-title" title="StaticSegFormer: An Efficient High-Performance Semantic Segmentation Based on Static Structured Pruning">StaticSegFormer: An Efficient High-Performance Semantic Segmentation Based on Static Structured Pruning</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>10</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>5</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>4</strong></span></div>
 </section>
 </div>
 
