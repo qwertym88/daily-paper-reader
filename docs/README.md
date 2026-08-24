@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-23</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-24</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 33 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 21 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>20</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>13</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-23 20:57:37 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-24 21:10:30 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,10 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共阅读33篇论文，重点精读了2篇9分工作，并速读了3篇8分工作。</p>
-<p>最值得关注的是Max-Q Selective Imitation（人机协作在线机器人学习）与Ergodic Stochastic Optimal Control（遍历随机最优控制）。</p>
-<p>建议优先精读这两篇，再按兴趣浏览速读中的视频动作模型、6自由度水下控制及域感知剪枝研究。</p>
+<p>今日共生成 21 篇推荐（精读 8 篇，速读 13 篇）</p>
+<p>精读：《Natural Sit-to-Stand Motion Synthesis For Humanoids via Guided Assistance Curricula and Staged Rewards》（9.0/10）, 《Demonstration-Guided Humanoid Stand-Up on an Emulated Deformable Surface》（9.0/10）</p>
+<p>速读：《RynnValue: Scaling Robotic Value Foundation Models with Temporal Distance》（8.0/10）, 《Critic-Free Pretraining for Efficient Online Reinforcement Learning Fine-Tuning》（8.0/10）, 《Efficient Hypergradient Descent for Inverse Reinforcement Learning》（8.0/10）</p>
+<p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +74,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">20 篇</strong>
+    <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Max-Q Selective Imitation for Human-in-the-Loop Online Robot Learning">Max-Q Selective Imitation for Human-in-the-Loop Online Robot Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Ergodic Stochastic Optimal Control Problems">Ergodic Stochastic Optimal Control Problems</span></li><li><span class="dpr-home-dashboard-paper-title" title="Tac4Loco: Learning Spatiotemporal Plantar Pressure Representations for Humanoid Locomotion">Tac4Loco: Learning Spatiotemporal Plantar Pressure Representations for Humanoid Locomotion</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Natural Sit-to-Stand Motion Synthesis For Humanoids via Guided Assistance Curricula and Staged Rewards">Natural Sit-to-Stand Motion Synthesis For Humanoids via Guided Assistance Curricula and Staged Rewards</span></li><li><span class="dpr-home-dashboard-paper-title" title="Demonstration-Guided Humanoid Stand-Up on an Emulated Deformable Surface">Demonstration-Guided Humanoid Stand-Up on an Emulated Deformable Surface</span></li><li><span class="dpr-home-dashboard-paper-title" title="SRL-MPC: Shape-Aware Reinforcement Learned Model Predictive Control">SRL-MPC: Shape-Aware Reinforcement Learned Model Predictive Control</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>10</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>9</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>3</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -89,9 +90,9 @@
     <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Vid2WAM: Distilling Video Diffusion Priors into World Action Models">Vid2WAM: Distilling Video Diffusion Priors into World Action Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Knowledge-Distilled End-to-End Reinforcement Learning for Smooth 6-DOF Thrust Control and Rapid Adaptation to Ocean Currents in Remotely Operated Vehicles">Knowledge-Distilled End-to-End Reinforcement Learning for Smooth 6-DOF Thrust Control and Rapid Adaptation to Ocean Currents in Remotely Operated Vehicles</span></li><li><span class="dpr-home-dashboard-paper-title" title="Domain-Aware Pruning: Sparsity and Domain Generalization via Regularized Probabilistic Masking">Domain-Aware Pruning: Sparsity and Domain Generalization via Regularized Probabilistic Masking</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="RynnValue: Scaling Robotic Value Foundation Models with Temporal Distance">RynnValue: Scaling Robotic Value Foundation Models with Temporal Distance</span></li><li><span class="dpr-home-dashboard-paper-title" title="Critic-Free Pretraining for Efficient Online Reinforcement Learning Fine-Tuning">Critic-Free Pretraining for Efficient Online Reinforcement Learning Fine-Tuning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Efficient Hypergradient Descent for Inverse Reinforcement Learning">Efficient Hypergradient Descent for Inverse Reinforcement Learning</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>6</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>5</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>12</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
 </div>
 
