@@ -41,7 +41,7 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-26</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-29</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 21 篇</strong>
@@ -51,7 +51,7 @@
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>13</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-26 22:47:45 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-29 03:50:00 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读聚焦LLM驱动的神经架构搜索与零成本代理发现，速读覆盖控制优化与凸优化方法；最值得关注ATHENA（9.0）与Bi-EZP（9.0）两篇高分工作，分别探索知识引导的智能体搜索和程序演化代理；建议优先精读这两篇，并留意速读中LLM层次控制的延续性策略。</p>
+<p>今日精读8篇、速读13篇，聚焦离线强化学习与随机控制前沿。</p>
+<p>最值得看：离线强化学习的策略解耦方法，以及机会约束协方差转向中马尔可夫策略的最优性。</p>
+<p>建议优先精读这两篇9分论文，再速读策略向量表示与连续时间控制相关进展。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -74,9 +76,9 @@
     <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ATHENA: Knowledge-guided agentic neural architecture search for AutoFormer-based electronic health record modeling">ATHENA: Knowledge-guided agentic neural architecture search for AutoFormer-based electronic health record modeling</span></li><li><span class="dpr-home-dashboard-paper-title" title="Bi-EZP: LLM-Guided Bilevel Program Evolution for Ensemble Zero-Cost Proxy Discovery">Bi-EZP: LLM-Guided Bilevel Program Evolution for Ensemble Zero-Cost Proxy Discovery</span></li><li><span class="dpr-home-dashboard-paper-title" title="DreamMimic: Learning Visuomotor Whole-Body Loco-Manipulation via World Model">DreamMimic: Learning Visuomotor Whole-Body Loco-Manipulation via World Model</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Decoupling Policy Extraction for Offline Reinforcement Learning">Decoupling Policy Extraction for Offline Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="On the Optimality of Markovian Policies for Chance-Constrained Covariance Steering">On the Optimality of Markovian Policies for Chance-Constrained Covariance Steering</span></li><li><span class="dpr-home-dashboard-paper-title" title="Bounded Linear Programs for Data-Driven Optimal Control via Moment-Matching">Bounded Linear Programs for Data-Driven Optimal Control via Moment-Matching</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>4</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>3</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>5</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,9 +89,9 @@
     <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="LLM-Based Hierarchical Coordinated Control with Continuation-Aware Policy Learning">LLM-Based Hierarchical Coordinated Control with Continuation-Aware Policy Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Iterative State- and Control-Dependent Model Predictive Control: A Jacobian-Free Formulation for Constrained Nonlinear Systems">Iterative State- and Control-Dependent Model Predictive Control: A Jacobian-Free Formulation for Constrained Nonlinear Systems</span></li><li><span class="dpr-home-dashboard-paper-title" title="On the Complexity of BFGS Method for Smooth Convex Optimization">On the Complexity of BFGS Method for Smooth Convex Optimization</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Vector Symbolic Policy Gradient">Vector Symbolic Policy Gradient</span></li><li><span class="dpr-home-dashboard-paper-title" title="Continuous-Time Reinforcement Learning for Controlled Hawkes Jump-Diffusions">Continuous-Time Reinforcement Learning for Controlled Hawkes Jump-Diffusions</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning the Right Abstraction: Neural Reduced Dynamics for Complex Robot Control">Learning the Right Abstraction: Neural Reduced Dynamics for Complex Robot Control</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>8</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>8</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span></div>
 </section>
 </div>
 
