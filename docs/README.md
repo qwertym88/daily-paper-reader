@@ -41,7 +41,7 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-29</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-30</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 21 篇</strong>
@@ -51,7 +51,7 @@
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>13</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-29 03:50:00 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-30 23:20:55 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读8篇、速读13篇，聚焦离线强化学习与随机控制前沿。</p>
-<p>最值得看：离线强化学习的策略解耦方法，以及机会约束协方差转向中马尔可夫策略的最优性。</p>
-<p>建议优先精读这两篇9分论文，再速读策略向量表示与连续时间控制相关进展。</p>
+<p>今日共读21篇论文，精读8篇、速读13篇，聚焦AI与机器人交叉前沿；最值得关注Core-KAN将Kolmogorov-Arnold网络用于连续视觉核，以及物理信息贝叶斯优化在小行星表面跳跃中的加速求解；建议优先精读这两篇，再结合速读中的风险敏感强化学习扩展视野。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -76,9 +74,9 @@
     <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Decoupling Policy Extraction for Offline Reinforcement Learning">Decoupling Policy Extraction for Offline Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="On the Optimality of Markovian Policies for Chance-Constrained Covariance Steering">On the Optimality of Markovian Policies for Chance-Constrained Covariance Steering</span></li><li><span class="dpr-home-dashboard-paper-title" title="Bounded Linear Programs for Data-Driven Optimal Control via Moment-Matching">Bounded Linear Programs for Data-Driven Optimal Control via Moment-Matching</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Core-KAN: Continuous Vision Kernels with Kolmogorov-Arnold Networks">Core-KAN: Continuous Vision Kernels with Kolmogorov-Arnold Networks</span></li><li><span class="dpr-home-dashboard-paper-title" title="Physics-Informed Bayesian Optimization Warm-Starts for Sequential Convex Programming in Asteroid Surface Hopping">Physics-Informed Bayesian Optimization Warm-Starts for Sequential Convex Programming in Asteroid Surface Hopping</span></li><li><span class="dpr-home-dashboard-paper-title" title="Unified Branch-and-Bound Search for the Steiner Traveling Salesman Problem on Graphs of Convex Sets">Unified Branch-and-Bound Search for the Steiner Traveling Salesman Problem on Graphs of Convex Sets</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>5</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">neural-arch <strong>3</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>3</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -89,9 +87,9 @@
     <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Vector Symbolic Policy Gradient">Vector Symbolic Policy Gradient</span></li><li><span class="dpr-home-dashboard-paper-title" title="Continuous-Time Reinforcement Learning for Controlled Hawkes Jump-Diffusions">Continuous-Time Reinforcement Learning for Controlled Hawkes Jump-Diffusions</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning the Right Abstraction: Neural Reduced Dynamics for Complex Robot Control">Learning the Right Abstraction: Neural Reduced Dynamics for Complex Robot Control</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Risk-Sensitive Reinforcement Learning with Smoothed Quantile Objectives">Risk-Sensitive Reinforcement Learning with Smoothed Quantile Objectives</span></li><li><span class="dpr-home-dashboard-paper-title" title="Spiking Neural Networks for Continuous Control: Neuromorphic Reinforcement Learning in Conventional Computing">Spiking Neural Networks for Continuous Control: Neuromorphic Reinforcement Learning in Conventional Computing</span></li><li><span class="dpr-home-dashboard-paper-title" title="Beyond the Stability-Exploration Dilemma: Environmental Regularization for LLM Policy Optimization">Beyond the Stability-Exploration Dilemma: Environmental Regularization for LLM Policy Optimization</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>8</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>11</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
 </div>
 

@@ -1,0 +1,588 @@
+Title: Beyond the Stability-Exploration Dilemma: Environmental Regularization for LLM Policy Optimization
+
+URL Source: https://arxiv.org/pdf/2608.23311v1
+
+Published Time: Tue, 25 Aug 2026 02:11:05 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# Beyond the Stability-Exploration Dilemma: Environmental Regularization for LLM Policy Optimization 
+
+Xianlei Zhou 1, Xiangdi Meng 1, Yu He 1,2 *, Tianyu Qi 3, Shuyan Guan 1,Xianli Zhang 1, Jian Zhang 4, Xin Li 1, Qika Lin 5, Jun Liu 21AMAP, Alibaba Group 2Xi’an Jiaotong University 3JD.com 
+
+> 4
+
+Beijing Normal University 5National University of Singapore 
+
+{zhouxianlei.zxl,gaolin.hy}@alibaba-inc.com 
+
+Abstract 
+
+Policy optimization (PO) for Large Language Models faces a stability–exploration trade-off, currently mediated by an action-side Policy-KL regularizer. This puts practitioners in a double bind: keeping Policy-KL constrains response behavior and consumes the action-side explo-ration budget, while dropping it leaves the opti-mization without an explicit drift control. We argue for an alternative that breaks the dilemma by moving regularization to the input side. As training progresses, the distribution over train-ing queries induced by the current policy drifts unchecked from its pre-RL reference distribu-tion. Concretely, Environment-Regularized Policy Optimization (ERPO) introduces a Query-KL (QKL) term that bounds this query dis-tribution shift, together with a dataset-static reference-derived per-query weight that biases each per-query update toward queries typical under the reference. The QKL gradient flows strictly through the query likelihood; the re-sponse score function used by policy-gradient estimators does not appear in the QKL term, so QKL exerts no direct gradient pressure on the response distribution—exploration is preserved. ERPO plugs into GRPO/PPO/REINFORCE-style pipelines without additional forward passes. On six mathematical reasoning bench-marks, ERPO replaces the standard Policy-KL regularizer while achieving effective control over query distribution drift, delivering stronger accuracy and substantially more stable behav-ior under high-temperature decoding and long-horizon training.Our source code are available at https://github.com/alibaba/ERPO .
+
+1 Introduction 
+
+Policy optimization (PO) methods have become the de facto recipe for post-training large language models (LLMs), spanning trust-region style up-
+
+> *Corresponding author.
+
+dates (TRPO/PPO) and preference-based objec-tives (DPO) together with broader RLHF/RLAIF variants (Schulman et al., 2015b, 2017; Ouyang et al., 2022; Bai et al., 2022; Rafailov et al., 2023). Despite impressive progress in mathematical rea-soning and beyond, practitioners still face a persis-tent dilemma: how to trade off training stability against effective exploration . In long-horizon runs, optimization noise and distribution shift tend to accumulate, leading to oscillations and occasional collapses. We argue that a key and under-controlled source of instability is environment non-stationarity in-duced by the query distribution . Even with a fixed training corpus, the model’s own sequence likelihood over training queries co-evolves with the policy: as θ updates, the likelihood the model assigns to each prompt drifts, altering the effec-tive training environment and amplifying gradient variance. This input-side non-stationarity mirrors classic RL settings in which either the initial-state distribution or the transition kernel drifts over time; non-stationary and robust RL therefore advocate explicit distributional control (Padakandla, 2021; Iyengar, 2005; Nilim and El Ghaoui, 2005). Arelated lesson from imitation learning is that pol-icy updates induce covariate (state) shift, moti-vating interactive data aggregation such as DAg-ger/AggreVaTe (Ross et al., 2011; Ross and Bag-nell, 2014). Recent LLM work formalizes prompt distribu-tions (EVA, Align-Pro (Ye et al., 2024; Trivedi et al., 2025)) or reweights training data (Sta-blePrompt, WPO (Kwon et al., 2024; Zhou et al., 2024)), while mainstream RLHF PO focuses on action-side Policy-KL to an SFT reference (Schul-man et al., 2015b, 2017; Ouyang et al., 2022); nei-ther directly constrains the query distribution. Em-pirically (Figure 1), under a fixed Policy-KL budget the batch-estimated Query-KL rises steadily while Policy-KL stays flat—the policy-induced query dis-arXiv:2608.23311v1 [cs.CL] 24 Aug 2026 Figure 1: KL losses during GRPO training. The Query-KL (dark) rises while the Policy-KL (light) stays low, showing action-only KL does not stabilize the query process. 
+
+tribution ρθ drifts unchecked from its pre-RL refer-ence ρθ0 .We treat the model’s query likelihood as the input-side statistic to regularize. We in-troduce Query-KL regularization (QKL) , apenalty on the KL divergence between the cur-rent policy-induced query distribution ρθ and a 
+
+pre-RL reference ρθ0 , limiting inter-round drift of this likelihood while leaving the action space free to explore. In parallel, we propose a lightweight reference-derived per-query weight that biases each per-query update toward queries typical under ρθ0 , reducing estimator variance and im-proving robustness under high-temperature de-coding—where LLMs are especially sensitive to the long tail of decoding distributions (Holtzman et al., 2020; Wang et al., 2023). Both compo-nents are estimator-agnostic and compatible with GRPO/PPO/REINFORCE-style implementations with minimal changes. Figure 2 sketches ERPO: on top of GRPO we replace the usual Policy-KL with a Query-KL term, and during advantage com-putation we reweight per-query contributions by a reference-derived prior, yielding an environment-aware update while preserving action-side explo-ration. We make four main contributions. (1) Query-environment control: We treat the model’s query likelihood as the regularizable input-side statis-tic, combining Query-KL (QKL) to bound its drift from a pre-RL reference ρθ0 with a dataset-static reference-derived per-query weight to reduce vari-ance and tame high-temperature behavior. (2) 
+
+Estimator-agnostic instantiation: The method adds a QKL term and a reference-derived per-query weight on top of GRPO/PPO/REINFORCE-style pipelines with minimal changes. (3) Stabil-ity evaluation: We assess RL stability via multi-temperature sampling paired with a multi-metric 
+
+suite (Pass@k, Pass@1, Avg@k), enabling com-prehensive capability and robustness evaluation. (4) Empirical gains: Across diverse reasoning benchmarks, the approach consistently improves accuracy. 
+
+2 Related Works 
+
+2.1 Reinforcement Learning with Verifiable Rewards (RLVR) 
+
+Reinforcement Learning with Verifiable Rewards represents a paradigm shift from traditional RLHF approaches by leveraging automatically verifiable outcomes rather than human preference annota-tions. This approach is particularly powerful for domains where ground truth can be objectively de-termined, such as mathematical reasoning, code generation, and logical problem solving. Models like AlphaCode (Li et al., 2022) and recent math-ematical reasoning (Jeannotte and Kieran, 2017; Xia et al., 2025) systems leverage execution re-sults and correctness verification as direct reward signals, eliminating the need for expensive human annotation. Process Reward Models (PRMs) have emerged as a sophisticated extension of RLVR, where in-termediate steps in reasoning processes are evalu-ated and rewarded based on their correctness (Ue-sato et al., 2022; Lightman et al., 2023). Recent developments include tool-augmented reasoning systems (Schick et al., 2023) and self-verification approaches (Kojima et al., 2022), which combine language models with external verification tools to enable automatic reward computation for broader task domains. While RLVR provides scalable and consistent training signals compared to subjective human pref-erences, it introduces unique challenges in handling high variance from sparse rewards and potential reward hacking behaviors. These stability issues motivate the need for robust training methodolo-gies that can effectively leverage verifiable rewards while maintaining training stability. 
+
+2.2 Reinforcement Learning Stability in Language Model Training 
+
+The stability of reinforcement learning algorithms in language model training has become a critical research area due to unique challenges posed by discrete action spaces, large parameter spaces, and complex reward landscapes (Sutton et al., 1998). Policy Model Reference Model query (s)    
+
+> Reward Model Group Computation …
+> ·
+> (a) Environmental constraints (b) GRPO (c) ERPO
+> o1 on …o1 on …
+
+Figure 2: The Proposed ERPO Overview. (a) For each query, the policy and reference induce current and reference query samplers, and we pre-compute a Query-KL to penalize environment drift. (b) For each query, the policy samples a response group scored by the reward model to produce the standard GRPO learning signal. (c) On top of GRPO we replace response-KL with pre-computed Query-KL and weight within-query advantages by the query’s occurrence probability, yielding an environment-aware update. 
+
+Recent works have identified specific stability is-sues including reward hacking (Gao et al., 2023) and the alignment tax problem (Dai et al., 2025), where policy optimization can degrade downstream performance while improving target metrics. Dis-tribution shift during training has been recognized as a fundamental source of instability in policy gra-dient methods (Reddy et al., 2020). In language model contexts, this manifests as shifts in the query distribution during training, leading to high vari-ance in gradient estimates and potential policy col-lapse (Wen et al., 2024). Existing approaches pri-marily focus on action-space regularization through trust region methods (Schulman et al., 2015a) and KL divergence penalties between current and refer-ence policies. Despite progress in understanding RL stability issues, there remains a notable gap in explicitly managing the input query distribution during train-ing. Most current approaches focus on output reg-ularization rather than addressing environmental shifts at the input level, leaving query distribution management as an underexplored avenue for im-proving training stability. 
+
+3 Preliminaries 
+
+3.1 RLVR setting and notation 
+
+We consider a standard generative–verify (RLVR) setting for training a large language model (LLM) with parameters θ. Given a query q ∈ Q , the LLM defines a response policy πθ(o | q) over o ∈ O ,and a verifier returns a scalar reward g(q, o ) ∈ R.The underlying RL objective is 
+
+JRL (θ) = Eq∼ρtrain , o ∼πθ (·| q)
+
+g(q, o ), (1) where ρtrain denotes the query distribution in the training set. In practice, group-based or advantage-based vari-ants of Eq. (1) are widely used (e.g., GRPO (Shao et al., 2024), RLOO (Ahmadian et al., 2024), DAPO (Yu et al., 2025)); our method is compatible with any such estimator. For concreteness in exper-iments we adopt the group-relative formulation of GRPO: 
+
+AGRPO 
+
+> θ
+
+ q, o (k) = g q, o (k) − mean( g)std( g) , (2) where g = {g(q, o (k))}Kk=1 are the rewards of K
+
+responses sampled from πθ(· | q) for the same query. 
+
+3.2 Policy-induced query distribution and environment drift 
+
+During LLM-RL training, the queries seen at each step are jointly shaped by the training corpus, cur-riculum design, difficulty filters, and active sam-pling schedulers. Rather than tying the analysis to such pipeline-specific factors, we introduce a policy-only notion: 
+
+ρθ is the policy-induced query distribution , defined by ρθ(q) = Pθ(q) — the model’s autoregressive se-quence likelihood of q treated as a self-terminating token sequence (see Section 4 for the autoregres-sive form). This model-induced distribution is dis-tinct from the exogenous ρtrain , which supplies queries to training batches and remains fixed in our experiments. By construction, ρθ depends only on θ, and the pre-RL reference ρθ0 inherits whatever data com-position shaped πθ0 (pretraining, SFT, or prior RL stages). As θ is updated, ρθ drifts away from ρθ0 ;without explicit constraint, this drift is unchecked. We call this policy-induced environment drift , and quantify it by the KL divergence 
+
+EnvShift( θ) := KL( ρθ ∥ ρθ0 )= Eq∼ρθ
+
+h
+
+log ρθ (q) 
+
+> ρθ0(q)
+
+i
+
+. (3) Empirically (Figure 1), under a fixed action-level KL budget the batch-estimated Query-KL keeps rising throughout training while the response-level Policy-KL stays nearly flat—constraining only the action distribution does not stabilize the in-put/query process. This motivates the two compo-nents in Section 4: a query-level KL that bounds en-vironment drift, and a per-query weighting scheme that stabilizes the empirical objective under arbi-trary pipeline biases. 
+
+4 Method 
+
+We treat the pre-RL model-induced query distri-bution ρθ0 as the reference environment . As θ
+
+changes, ρθ may drift while the exogenous ρtrain 
+
+remains fixed; our Environment-Regularized Pol-icy Optimization (ERPO) bounds the former while leaving response-side exploration unconstrained. 
+
+Working assumption (A1). We treat as apremise—not a theorem—that maintaining align-ment between the model-induced ρθ and its pre-RL reference ρθ0 better preserves the generalization ca-pabilities inherited from prior training stages than allowing unconstrained drift. A1 is examined em-pirically in Section 5. 
+
+Query likelihood. Our method relies on the au-toregressive sequence likelihood the model as-signs to a query. For a query q tokenized as 
+
+(x1, . . . , x T ), write Pθ(q) ≜ Q 
+
+> t
+
+Pθ(xt | x<t ) for this sequence likelihood and ℓθ(q) ≜ log Pθ(q) = P 
+
+> t
+
+log Pθ(xt | x<t ) for its log form, with Pθ0 (q)
+
+and ℓθ0 (q) defined analogously under the reference. The reference ℓθ0 is computed once over the training set and cached, while ℓθ is read off the per-step PG forward pass; the cached ℓθ0 table and the per-step ℓθ are the only inputs ERPO needs beyond what the underlying PG estimator already computes (see Appendix F for full computational notes). 
+
+4.1 Population objective and empirical loss 
+
+Let ¯gθ(q) := Eo∼πθ (·| q)[g(q, o )] be the per-query expected reward, so that JRL (θ) =
+
+Eq∼ρtrain [¯ gθ(q)] . ERPO adds a query-level regular-izer Rquery (θ) penalizing the divergence between the model-induced ρθ and ρθ0 :
+
+JERPO (θ) := JRL (θ) − α Rquery (θ), (4) where α > 0 controls regularization strength. On a mini-batch B = {qi}mi=1 , we additionally reweight per-query contributions by a dataset-static, reference-derived weight wB (q) (Section 4.2); to-gether with a batch-level KL estimate bRquery (θ),this gives the empirical loss 
+
+bLERPO (θ) := − 1
+
+m
+
+X
+
+> q∈B
+
+wB (q) ¯ gθ(q)+ α bRquery (θ).
+
+(5) 
+
+wB enters only at the estimator level; it shapes the SGD update direction toward queries typical under 
+
+ρθ0 but does not enter the target JERPO .
+
+4.2 Query-level KL and query reweighting Query-level KL. We instantiate the regularizer as the KL from the current query distribution to the reference: 
+
+Rquery (θ) := KL  ρθ ρθ0
+
+
+
+= Eq∼ρθ
+
+ log ρθ(q) − log ρθ0 (q).
+
+(6) QKL decouples regularization from exploration :the penalty acts solely on the query distribution through ℓθ(q), while imposing no direct constraint on πθ(o | q). Conventional Policy-KL, in con-trast, restricts response behavior and consumes the action-side exploration budget. 
+
+Proposition 1 (Structural Decoupling). For au-toregressive πθ, the gradient of Rquery (θ) admits the closed form 
+
+∇θRquery (θ) = Eq∼ρθ
+
+h ℓθ(q) − ℓθ0 (q)
+
+· ∇ θℓθ(q)
+
+i
+
+,
+
+(7) 
+
+which flows strictly through ∇θℓθ(q); the response score function ∇θ log πθ(o | q) used by PG esti-mators does not appear in the QKL loss, so the regularizer exerts no direct gradient pressure on the response distribution. Proof in Appendix H. 
+
+In our fixed-dataset implementation, we eval-uate a K3-style mini-batch surrogate using the per-step ℓθ(q) and cached ℓθ0 (q). It regularizes model-induced query-likelihood drift without treat-ing model likelihood as external query frequency. The resulting bRquery (θ) is used in Eq. (5). Query reweighting. Instead of optimizing the standard RL objective in Eq. (1) under the em-pirical query distribution ρtrain , ERPO targets the reference-aligned query prior ρθ0 :
+
+JERPO (θ) = Eq∼ρθ0 , o ∼πθ (·| q)[g(q, o )] . (8) Because stochastic training samples queries from 
+
+ρtrain , this objective can be written as an importance-weighted objective with ideal weight 
+
+w⋆(q) = ρθ0 (q)
+
+ρtrain (q) . (9) Under approximately uniform sampling from a dataset of size N , w⋆(q) = N ρ θ0 (q), so the query weight only needs to preserve the relative order-ing of the cached reference-induced query prior. We therefore use a bounded, dataset-static weight 
+
+w(q) ∝ ℓθ0 (q), leading to 
+
+LERPO (θ) = −E q∼ρtrain  
+
+> o∼πθ(·| q)
+
+[w(q)g(q, o )] + αRquery (θ). (10) The derivation is given in Appendix I. 
+
+PG-compatible surrogate. ERPO is agnostic to the inner PG estimator: any surrogate of the form 
+
+∇θ ¯gθ(q) ≈ Eo[uθ(q, o )A⋆θ(q, o )∇θ log πθ(o | q)] 
+
+recovers GRPO ( uθ ≡ 1, A⋆ from Eq. (2)), PPO (clipped ratios), or REINFORCE (sample reward) by appropriate choice of uθ, A ⋆θ. Plugging into Eq. (5) gives the ERPO mini-batch PG loss 
+
+LPG (θ) := − 1
+
+m
+
+X
+
+> q∈B
+
+wB (q)
+
+K
+
+X
+
+> o∈G (q)
+
+uθ(q, o ) A⋆θ(q, o )+ α bRquery (θ),
+
+(11) where G(q) is the K-response group sam-pled for q. Per-algorithm specializations (GRPO/PPO/REINFORCE) and the resulting loss decompositions are summarized in Appendix G. 
+
+5 Experiments 
+
+5.1 Experimental Setup Training We conduct experiments on mathemati-cal reasoning tasks using Level 3–5 problems from the MATH dataset (Hendrycks et al., 2021), total-ing approximately 8.5K examples. These are used to evaluate our proposed ERPO method, in compar-ison with the vanilla GRPO baseline. As described in Appendix A, the model must wrap its intermedi-ate reasoning in <think></think> tags, and place the final answer inside \boxed {} .
+
+Evaluation We follow standard practice and as-sess performance on six widely used benchmarks: AIME24, AIME25, AMC, MATH500 (Hendrycks et al., 2021), Minerva (Lewkowycz et al., 2022), and OlympiadBench (He et al., 2024). Prior work typically reports Avg@K (Yu et al., 2025), Pass@1 (Liu et al., 2025), and Pass@K (Hao et al., 2025) after RLVR training, often without speci-fying or controlling the inference-time sampling temperature. This omission can substantially af-fect reported performance and render results across studies not directly comparable. In preliminary experiments, we found that inference-time sam-pling temperature has a significant impact on per-formance, and that the effect intensifies as training progresses. To control for this factor, we fix the number of training steps across all models and eval-uate at temperatures from 0.1 to 1.5; performance is then aggregated over this range. 
+
+Implementation Details We conduct all ex-periments using the EasyR1 framework (Zheng et al., 2025), training the Qwen2.5-Math-7B and Qwen2.5-32B model (Yang et al., 2024; Qwen et al., 2025) with both GRPO and ERPO algorithms. Following prior work (Liu et al., 2025), we set the maximum sequence length to 3K tokens. For each problem, we sample eight responses at an inference temperature of 1.0. The rollout batch size is set to 512, and the update batch size to 128, for a total of 240 training steps. Token-level loss is applied throughout training. To ensure a fair comparison, we adopt the default KL divergence coefficient of 0.01. 
+
+5.2 Main Results 
+
+Figure 3 summarizes Avg@32 accuracy on six mathematical reasoning benchmarks, averaged over sampling temperatures from 0.1 to 1.5. ERPO consistently outperforms GRPO, with gains of up to 14.9% and an overall average improvement of 6.2%, highlighting its enhanced capability. Ta-ble 1 presents the detailed results for each bench-mark, grouped by evaluation metric (e.g., Pass@1, Pass@K). For both GRPO and ERPO, the prompts are identical to those used during training, whereas the Qwen base model adopts the default configu-ration from Dr.GRPO (Liu et al., 2025) to ensure optimal performance. Consistent with the aggre-gated results in Figure 3 and Table 1, ERPO sur-passes GRPO across all evaluation metrics, achiev-Figure 3: Avg@32 over Sampling Temperatures on Mathematical Reasoning Tasks Table 1: Performance comparison across mathematical reasoning benchmarks. Best results per column are highlighted in bold.                                                                       
+
+> Mean Avg@32
+> Method AIME24 AIME25 AMC MATH500 Minerva Olympiad Avg. Base 0.087 0.030 0.246 0.340 0.058 0.099 0.143 GRPO 0.174 0.072 0.398 0.528 0.207 0.266 0.274 ERPO 0.218 0.110 0.478 0.677 0.214 0.316 0.336 Mean Pass@32
+> Base 0.373 0.206 0.674 0.764 0.349 0.411 0.463 GRPO 0.471 0.287 0.768 0.850 0.516 0.558 0.575 ERPO 0.509 0.342 0.820 0.904 0.500 0.593 0.611 Mean Pass@1
+> Base 0.090 0.038 0.264 0.342 0.062 0.099 0.149 GRPO 0.169 0.084 0.398 0.533 0.201 0.263 0.275 ERPO 0.207 0.091 0.477 0.679 0.217 0.320 0.332
+
+ing improvements of 6.2% in Avg@32, 3.64% in Pass@32, and 5.69% in Pass@1. We also applied the concept of ERPO to other RLVR algorithms and observed similarly effective gains; details are provided in Appendix E. 
+
+5.3 Training Dynamics 
+
+Figure 4 illustrates the training dynamics of the ERPO method. For both approaches, the sampling accuracy on the training set remains largely consis-tent; however, their divergence from the reference model exhibits markedly different trajectories. In GRPO, constraints are imposed on the action distribution, causing the query distribution to drift away from the reference model at a substantially faster rate. Consequently, the KL divergence at the query level is an order of magnitude greater than at the policy level. This imbalance leads to pronounced discrepan-cies in performance between the training and eval-uation datasets. In contrast, ERPO applies con-straints directly to the query distribution and adjusts the loss according to the probability of the given problem. This design both limits the degree of di-vergence from the reference model during training and, by leveraging the independence between the problem and the response, allows unconstrained ex-ploration at the policy level. A quantitative analysis can be found in Appendix C. As a result, ERPO achieves superior generalization performance on general problems. To assess the stability of long-term RL training, we scale the training steps up to 1K and moni-tor changes in model performance over time. As shown in the figure 5 and 6, GRPO remains stable for sampling temperatures below 1.0 until approx-imately 240 steps (epoch=15). However, a pro-nounced performance degradation is first observed in the high-temperature sampling regime after 400 steps, and subsequently propagates to encompass Figure 4: Training Dynamics on ERPO 
+
+> Figure 5: Training Dynamics on Long-term RL
+> Figure 6: Performance Variation Across Training Steps
+
+sampling across all temperatures as the steps in-crease. In contrast, ERPO exhibits a modest perfor-mance decline; however, the overall deterioration is substantially smaller, and its performance even im-proves within the high-temperature range. Figure 6 presents the complete training trajectories for both GRPO and ERPO. Although ERPO is not entirely immune to the collapse phenomenon that may oc-cur during extended training—manifested as a sud-den increase in entropy and a loss of sampling capa-bility—it consistently outperforms vanilla GRPO and achieves a comparable degree of policy dis-tribution constraint without relying on an explicit policy-based KL divergence term. 
+
+5.4 Analysis Ablation Study We conduct ablation studies on the MATH500 benchmarks to assess reasoning efficiency. Table 2 summarizes the results for several commonly used sampling temperatures. Figure 7 further provides the complete perfor-mance–temperature variation curves across differ-ent experimental settings, along with the corre-sponding training dynamics. 
+
+Mechanisms Without modifying other hyperpa-rameters, replacing the policy-based KL divergence with query-based KL divergence yields the best overall performance 1, with an average improve-ment of 15.9% over GRPO. In contrast, GRPO with policy-based KL divergence shows its high-est performance only at a temperature of 1.0 (see Figure 7(a)). To further investigate, an ablation study is con-ducted on the two mechanisms of ERPO with their effects evaluated using KL divergence and entropy (Table 3 and Figure 7(d)). The term wB(s) down-weights gradients from low-probability queries, which often lead to low-probability responses, thereby increasing gradient variance and entropy (Quantitative analysis is provided in Appendix D). Introducing wB(s) allows sufficient training while concurrently reducing the policy KL divergence. Different regularization strengths α also exert a significant influence on performance. As the constraint strength increases (e.g., α = 5 × 10 −2), the model achieves further improvements in overall performance (see Table 2). It is worth noting that we did not conduct an exhaustive search for the optimal α; instead, we retained the default value to ensure a relatively fair comparison. 
+
+> 1We also experimented with completely removing all KL divergence constraints, which resulted in the training process failing to converge. Therefore, we only report GRPO results under the default-weight KL divergence constraint.
+
+Table 2: Performance Comparison Under Different Experimental Settings 
+
+Base Model Method α w(s) Rollout Count Temperature Metrics 0.1 0.6 1 1.5 ≤ 1.0 1.2–1.5 Baseline — — — — 52.40 46.80 32.80 0.40 44.44 6.15 
+
+Qwen-7B 
+
+GRPO 1 × 10 −2 — 8 66.80 68.40 73.80 0.40 68.80 12.50 GRPO ∗ 1 × 10 −2 ✓ 8 78.20 76.80 71.20 7.60 76.14 23.79 ERPO 1 × 10 −2 — 8 81.60 81.60 79.00 2.60 80.90 38.00 ERPO 
+
+1 × 10 −2 ✓ 8 79.40 80.60 75.20 8.60 78.74 37.90 
+
+5 × 10 −3 ✓ 8 53.80 60.60 66.20 15.40 59.94 39.30 
+
+5 × 10 −2 ✓ 8 78.80 81.00 76.00 15.00 79.00 43.35 Qwen-7B under n = 16 
+
+GRPO 1 × 10 −2 — 16 73.00 79.20 75.00 10.60 75.22 39.75 ERPO 1 × 10 −2 ✓ 16 80.40 78.80 74.40 56.20 77.82 66.25 
+
+Qwen-32B GRPO 1 × 10 −2 — 8 81.60 82.40 81.20 25.20 81.62 57.20 ERPO 1 × 10 −2 ✓ 8 85.00 84.80 83.60 80.80 84.60 82.80 
+
+Note: Within the Qwen-7B ( n = 8 ) setting, the best result in each column is highlighted in bold , while the second-best result is underlined. No highlighting is applied to the Qwen-7B ( n = 16 ) or Qwen-32B results. The first three Qwen-7B rows constitute the ablation study, comparing GRPO, GRPO ∗, and ERPO without query reweighting. The following three rows constitute the hyperparameter study, evaluating ERPO with query reweighting under different values of α. The columns ≤ 1.0 and 1.2–1.5 report the mean accuracy (Acc) over the corresponding temperature ranges. The w(s) column indicates whether query reweighting is applied ( ✓) or not (—). GRPO ∗ denotes GRPO using only query reweighting. 
+
+Figure 7: Pass@1 accuracy and training dynamics under different settings: (a)–(c) Model performance at various temperatures on MATH500; (d) Policy-KL divergence variation with GRPO using only Query-KL. Table 3: Influence of Query-KL and Query-Reweighting on Training Stability 
+
+Method Query-KL Policy-KL Entropy 
+
+GRPO (Avg@3) 0.9679 0.0601 0.5063 GRPO w/ wB(s) 0.5933 0.0113 0.2782 
+
+GRPO w/Query-KL 0.0041 0.1001 0.5674 ERPO (Avg@3) 0.0828 0.0728 0.4244 
+
+Rollouts We also analyze the effect of the num-ber of samples per query. By increasing the sam-pling number to 16, we achieve the best perfor-mance, with the average Pass@1 rising to 74 .6% .A higher sampling count also significantly im-proves sampling stability at high temperatures (see Table 2), without a noticeable increase in diver-gence from the reference model. Moreover, increas-ing the sampling count facilitates ERPO-based models in acquiring the correct reasoning format more effectively. 2
+
+6 Conclusion 
+
+By analyzing the coupling between the environ-ment and the policy space in large language mod-els, we decouple parameter regularization from the optimization objective during training. Specif-ically, we employ query-level KL divergence to bound the drift of the policy-induced query dis-tribution ρθ from a pre-RL reference ρθ0 . We further reweight the advantage by a dataset-static reference-derived per-query weight, biasing up-dates toward queries typical under ρθ0 and pre-venting premature convergence to suboptimal so-lutions. Experiments across multiple mathemat-ical reasoning benchmarks demonstrate that the proposed ERPO method can achieve comparable 
+
+> 2
+
+Across multiple experiments, the GRPO method consis-tently failed to capture the desired output format. Conse-quently, for all experiments, we report only the answer accu-racy. KL divergence control without explicit policy regu-larization, while delivering superior performance. Furthermore, by sampling at different temperatures, we examine the evolution of sampling capability over long-term RL training, providing additional evidence of ERPO’s stability during training. 
+
+Limitations 
+
+Our experiments focus primarily on mathematical reasoning benchmarks and Qwen-family models, so the extent to which ERPO transfers to broader instruction-following, dialogue, code-generation, and multilingual settings remains to be validated. ERPO also relies on estimating query-level likeli-hoods or prevalence statistics during training; the quality and computational cost of these estimates may vary with the data-selection mechanism and model scale. Finally, we did not conduct an ex-haustive sweep over the regularization coefficient, leaving more systematic hyperparameter analysis for future work. 
+
+References 
+
+Arash Ahmadian, Chris Cremer, Matthias Gallé, Marzieh Fadaee, Julia Kreutzer, Olivier Pietquin, Ahmet Üstün, and Sara Hooker. 2024. Back to basics: Revisiting reinforce style optimization for learning from human feedback in llms. Preprint ,arXiv:2402.14740. Yuntao Bai, Andy Jones, Kamal Ndousse, Amanda Askell, Anna Chen, Nova DasSarma, Dawn Drain, Stanislav Fort, Deep Ganguli, Tom Henighan, Nicholas Joseph, Saurav Kadavath, Jackson Kernion, Tom Conerly, Sheer El-Showk, Nelson Elhage, Zac Hatfield-Dodds, Danny Hernandez, Tristan Hume, and 12 others. 2022. Training a helpful and harmless assistant with reinforcement learning from human feedback. arXiv preprint arXiv:2204.05862 .Juntao Dai, Taiye Chen, Yaodong Yang, Qian Zheng, and Gang Pan. 2025. Mitigating reward over-optimization in rlhf via behavior-supported regular-ization. arXiv preprint arXiv:2503.18130 .Leo Gao, John Schulman, and Jacob Hilton. 2023. Scal-ing laws for reward model overoptimization. In In-ternational Conference on Machine Learning , pages 10835–10866. PMLR. Yaru Hao, Li Dong, Xun Wu, Shaohan Huang, Zewen Chi, and Furu Wei. 2025. On-policy rl with optimal reward baseline. arXiv preprint arXiv:2505.23585 .Chaoqun He, Renjie Luo, Yuzhuo Bai, Shengding Hu, Zhen Leng Thai, Junhao Shen, Jinyi Hu, Xu Han, Yujie Huang, Yuxiang Zhang, and 1 oth-ers. 2024. Olympiadbench: A challenging bench-mark for promoting agi with olympiad-level bilin-gual multimodal scientific problems. arXiv preprint arXiv:2402.14008 .Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song, and Jacob Steinhardt. 2021. Math. Cornell University -arXiv,Cornell University - arXiv .Ari Holtzman, Jan Buys, Li Du, Maxwell Forbes, and Yejin Choi. 2020. The curious case of neural text de-generation. In International Conference on Learning Representations (ICLR) .Garud N. Iyengar. 2005. Robust dynamic programming. 
+
+Mathematics of Operations Research , 30(2):257– 280. Doris Jeannotte and Carolyn Kieran. 2017. A con-ceptual model of mathematical reasoning for school mathematics. Educational Studies in mathematics ,96(1):1–16. Takeshi Kojima, Shixiang Shane Gu, Machel Reid, Yu-taka Matsuo, and Yusuke Iwasawa. 2022. Large lan-guage models are zero-shot reasoners. Advances in neural information processing systems , 35:22199– 22213. Minchan Kwon, Gaeun Kim, Jongsuk Kim, Haeil Lee, and Junmo Kim. 2024. Stableprompt: Automatic prompt tuning using reinforcement learning for large language model. In Proceedings of the 2024 Confer-ence on Empirical Methods in Natural Language Pro-cessing (EMNLP) , pages 9868–9884, Miami, Florida, USA. Association for Computational Linguistics. Aitor Lewkowycz, Anders Andreassen, David Dohan, Ethan Dyer, Henryk Michalewski, Vinay Ramasesh, Ambrose Slone, Cem Anil, Imanol Schlag, Theo Gutman-Solo, and 1 others. 2022. Solving quan-titative reasoning problems with language models. 
+
+Advances in neural information processing systems ,35:3843–3857. Yujia Li, David Choi, Junyoung Chung, Nate Kushman, Julian Schrittwieser, R’emi Leblond, Tom Eccles, James Keeling, Felix Gimeno, Agustin Dal Lago, and 1 others. 2022. Competition-level code generation with alphacode. Science , 378(6624):1092–1097. Hunter Lightman, Vineet Kosaraju, Yuri Burda, Harri-son Edwards, Bowen Baker, Teddy Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. 2023. Let’s verify step by step. In The Twelfth Inter-national Conference on Learning Representations .Zichen Liu, Changyu Chen, Wenjun Li, Penghui Qi, Tianyu Pang, Chao Du, Wee Sun Lee, and Min Lin. 2025. Understanding r1-zero-like training: A critical perspective. arXiv preprint arXiv:2503.20783 .Arnab Nilim and Laurent El Ghaoui. 2005. Robust control of markov decision processes with uncertain transition matrices. Operations Research , 53(5):780– 798. Long Ouyang, Jeff Wu, Xu Jiang, Diogo Almeida, Car-roll L. Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, John Schulman, Jacob Hilton, Fraser Kelton, Luke Miller, Maddie Simens, Amanda Askell, Peter Welinder, Paul Christiano, Jan Leike, and Ryan Lowe. 2022. Training language models to follow instructions with human feedback. In Advances in Neural Information Processing Systems (NeurIPS) .Sindhu Padakandla. 2021. A survey of reinforcement learning algorithms for dynamically varying envi-ronments. ACM Computing Surveys , 54(6):127:1– 127:25. Qwen, :, An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan Li, Dayiheng Liu, Fei Huang, Haoran Wei, Huan Lin, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jingren Zhou, and 25 oth-ers. 2025. Qwen2.5 technical report. Preprint ,arXiv:2412.15115. Rafael Rafailov, Archit Sharma, Eric Mitchell, Stefano Ermon, Christopher D. Manning, and Chelsea Finn. 2023. Direct preference optimization: Your language model is secretly a reward model. In Advances in Neural Information Processing Systems (NeurIPS) .Siddharth Reddy, Anca Dragan, Sergey Levine, Shane Legg, and Jan Leike. 2020. Learning human ob-jectives by evaluating hypothetical behavior. In In-ternational conference on machine learning , pages 8020–8029. PMLR. Stephane Ross and J. Andrew Bagnell. 2014. Reinforce-ment and imitation learning via interactive no-regret learning. arXiv preprint arXiv:1406.5979 .Stephane Ross, Geoffrey J. Gordon, and J. Andrew Bagnell. 2011. A reduction of imitation learning and structured prediction to no-regret online learn-ing. In Proceedings of the Fourteenth International Conference on Artificial Intelligence and Statistics (AISTATS) , volume 15 of Proceedings of Machine Learning Research , pages 627–635, Fort Lauderdale, FL, USA. PMLR. Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria Lomeli, Eric Hambro, Luke Zettle-moyer, Nicola Cancedda, and Thomas Scialom. 2023. Toolformer: Language models can teach themselves to use tools. Advances in Neural Information Pro-cessing Systems , 36:68539–68551. John Schulman, Sergey Levine, Pieter Abbeel, Michael Jordan, and Philipp Moritz. 2015a. Trust region pol-icy optimization. In International conference on ma-chine learning , pages 1889–1897. PMLR. John Schulman, Sergey Levine, Philipp Moritz, Michael I. Jordan, and Pieter Abbeel. 2015b. Trust region policy optimization. In Proceedings of the 32nd International Conference on Machine Learn-ing (ICML) , volume 37 of Proceedings of Machine Learning Research , pages 1889–1897, Lille, France. PMLR. John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. 2017. Proxi-mal policy optimization algorithms. arXiv preprint arXiv:1707.06347 .Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y. K. Li, Y. Wu, and Daya Guo. 2024. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 .Richard S Sutton, Andrew G Barto, and 1 others. 1998. 
+
+Reinforcement learning: An introduction . MIT press Cambridge. Prashant Trivedi, Souradip Chakraborty, Avinash Reddy, Vaneet Aggarwal, Amrit Singh Bedi, and George K. Atia. 2025. Align-pro: A principled approach to prompt optimization for llm alignment. In Proceed-ings of the AAAI Conference on Artificial Intelligence (AAAI) .Jonathan Uesato, Nate Kushman, Ramana Kumar, Fran-cis Song, Noah Siegel, Lisa Wang, Antonia Creswell, Geoffrey Irving, and Irina Higgins. 2022. Solv-ing math word problems with process-and outcome-based feedback. arXiv preprint arXiv:2211.14275 .Xuezhi Wang, Jason Wei, Dale Schuurmans, Quoc Le, Ed H. Chi, Sharan Narang, Aakanksha Chowdhery, and Denny Zhou. 2023. Self-consistency improves chain of thought reasoning in language models. In In-ternational Conference on Learning Representations (ICLR) .Jiaxin Wen, Ruiqi Zhong, Akbir Khan, Ethan Perez, Jacob Steinhardt, Minlie Huang, Samuel R Bow-man, He He, and Shi Feng. 2024. Language models learn to mislead humans via rlhf. arXiv preprint arXiv:2409.12822 .Shijie Xia, Xuefeng Li, Yixin Liu, Tongshuang Wu, and Pengfei Liu. 2025. Evaluating mathematical reasoning beyond accuracy. In Proceedings of the AAAI Conference on Artificial Intelligence , pages 27723–27730. An Yang, Beichen Zhang, Binyuan Hui, Bofei Gao, Bowen Yu, Chengpeng Li, Dayiheng Liu, Jianhong Tu, Jingren Zhou, Junyang Lin, and 1 others. 2024. Qwen2. 5-math technical report: Toward mathe-matical expert model via self-improvement. arXiv preprint arXiv:2409.12122 .Feng Yao, Liyuan Liu, Dinghuai Zhang, Chengyu Dong, Jingbo Shang, and Jianfeng Gao. 2025. Your efficient rl framework secretly brings you off-policy rl train-ing. Ziyu Ye, Rishabh Agarwal, Tianqi Liu, Rishabh Joshi, Sarmishta Velury, Quoc V. Le, Qijun Tan, and Yuan Liu. 2024. Scalable reinforcement post-training beyond static human prompts: Evolving alignment via asymmetric self-play. arXiv preprint arXiv:2411.00062 .Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gaohong Liu, Lingjun Liu, and 1 others. 2025. Dapo: An open-source llm reinforcement learning system at scale. arXiv preprint arXiv:2503.14476 .Yaowei Zheng, Junting Lu, Shenzhi Wang, Zhangchi Feng, Dongdong Kuang, and Yuwen Xiong. 2025. Easyr1: An efficient, scalable, multi-modality rl train-ing framework. https://github.com/hiyouga/ EasyR1 .Wenxuan Zhou, Ravi Agrawal, Shujian Zhang, Sathish Reddy Indurthi, Sanqiang Zhao, Kaiqiang Song, Silei Xu, and Chenguang Zhu. 2024. Wpo: En-hancing rlhf with weighted preference optimization. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing (EMNLP) ,pages 8328–8340, Miami, Florida, USA. Association for Computational Linguistics. A Prompt 
+
+{{ content | trim }} You FIRST think about the reasoning process as an internal monologue and then provide the final answer. The reasoning process MUST BE enclosed within <think> </think> tags. The final answer MUST BE put in \boxed {}. 
+
+B Variation of Metrics with Temperature 
+
+Figure 8 illustrates the model performance across different evaluation metrics and sampling tempera-tures. Our approach reduces the performance gap between different sampling temperatures, while in-creasing the likelihood of sampling correct outputs. 
+
+C Analysis of Reward Hacking 
+
+In the course of our experiments, we observed a severe reward hacking phenomenon when train-ing with the baseline GRPO method. Specifically, while the model consistently achieved high rewards on the training data, its performance on the evalu-ation set often plateaued or even degraded during the later stages of optimization. This pronounced discrepancy suggests that the model overfits to the specific characteristics of the reward signal during training sampling, failing to generalize to the stan-dard decoding distribution used during inference. To quantitatively investigate this issue, we moni-tored the Train–Evaluation Consistency throughout the training process. We periodically evaluated both the training accuracy and the evaluation ac-curacy every ten optimization steps. To ensure the robustness of our inference metrics, evaluation was conducted using vLLM under two different Tensor Parallelism settings (TP1 and TP2), a factor which has been shown in previous work (Yao et al., 2025) to impact model performance. Table 4 summarizes the average performance gap across six key checkpoints (Steps 40, 80, 120, 160, 200, and 240). The results confirm our hypoth-esis: • GRPO exhibits a substantial average gap of 
+
+6.47% , indicating a significant misalignment between training and inference behaviors. No-tably, as shown in the detailed trajectories in Table 5, GRPO’s evaluation accuracy drops sharply at Step-240 (from ≈ 75% to 58 .4% )despite maintaining high training accuracy, a classic signature of reward hacking. • ERPO, in contrast, demonstrates superior con-sistency. It reduces the average Train–Eval gap by approximately 51% (from 6.47% to 
+
+3.14% ). This significant reduction in the performance gap indicates that ERPO effectively regularizes the training process, preventing the model from ex-ploiting spurious patterns in the reward function and ensuring that improvements in training trans-late reliably to inference performance. 
+
+D Correlation analysis between query and response probabilities 
+
+We sampled over 8K questions from the training dataset at a temperature of 1.0 and independently computed the negative log-likelihood (NLL) for both the prompt and response parts: NLL (x) = − X log p(x)
+
+where x denotes the generation probabilities of tokens in the prompt or response. The resulting histogram is shown in Figure 9. We observe a positive correlation between the NLL of the prompt and that of the response. For 95% of the training samples (where the NLL of the prompt is less than 300), the correlation coefficient is close to 1. Low-probability responses appearing in positive samples contribute to an increase in entropy during training. 
+
+E ERPO On Different Algorithms 
+
+Additional experiments were conducted on DAPO(Yu et al., 2025) and RLOO(Ahmadian et al., 2024) with and without the global KL diver-gence constraint, yielding absolute improvements of 10.24% and 2.28% at temperatures below 1.0, respectively (see Table 6). These findings demon-strate that the proposed method can achieve signifi-cant gains when applied to other RLVR algorithms. 
+
+F Query Likelihood and the Cached Reference 
+
+This appendix expands the query likelihood ma-chinery and computational notes referenced from Section 4. 
+
+Autoregressive sequence likelihood. For aquery q with tokenization x = ( x1, . . . , x T ), the model’s sequence log-likelihood under parameters Figure 8: Variation of Metrics with Temperature Table 4: Quantification of Reward Hacking via Train–Inference Gap. The table compares the average accuracy during training sampling versus inference decoding. A larger gap indicates severe reward hacking (overfitting to training dynamics). ERPO reduces this gap by ≈ 51% , demonstrating robust generalization.                               
+
+> Method Avg. Train Acc Avg. Eval@TP1 Avg. Eval@TP2 Gap@TP1 Gap@TP2 Avg. Gap
+> GRPO 77.3 69.8 70.1 7.5 5.5 6.47 ERPO 77.1 74.1 73.8 3.0 3.3 3.14
+> Improvement –––↓4.5(60%) ↓2.2(40%) ↓3.33 (51%)
+
+Figure 9: Likelihood Relationship between Query and Response 
+
+θ is 
+
+ℓθ(q) ≜ log Pθ(x) = 
+
+> T
+
+X
+
+> t=1
+
+log Pθ(xt | x<t ).
+
+(12) This is well-defined for any token sequence, re-gardless of whether q is sampled on-policy from 
+
+ρθ, drawn from a fixed dataset, or written by a hu-man; computing ℓθ(q) requires a single forward pass of the LLM. The reference ℓθ0 (q) is defined analogously under πθ0 .
+
+Computational notes governing ERPO’s zero-overhead design. Two distinctions in how ℓθ and 
+
+ℓθ0 are obtained make ERPO essentially free rela-tive to the underlying PG estimator: • ℓθ0 (q) is computed once over the entire train-ing set using the reference model πθ0 , prior to RL, and cached. The per-query table is reused throughout training and does not change. Un-der backpropagation it is treated as a constant. • ℓθ(q) is computed per training step using the current θ. This forward pass is already per-formed by the underlying PG estimator (for per-query advantage evaluation), so QKL and QW reuse it at no additional forward cost. The cached ℓθ0 table and the per-step ℓθ are the only inputs ERPO needs beyond what the underlying PG estimator already computes. In particular, the query weight wB (q) from Eq. (9) is fully precomputed and contributes no gradient or extra forward pass; only the QKL estimator bRquery (θ) uses the per-step ℓθ(q), and even there the value is read from Table 5: Trajectory of Train vs. Inference Accuracy. Detailed performance recorded at 40-step intervals. Note the divergence in GRPO at Step-240, where Eval accuracy drops significantly while Train accuracy remains high—a clear sign of reward hacking. ERPO maintains consistency throughout. 
+
+Model / Metric Step-0 Step-40 Step-80 Step-120 Step-160 Step-200 Step-240 Avg. 
+
+GRPO (Baseline) 
+
+Train Acc 44.48 76.41 76.09 78.29 78.95 79.44 76.70 72.91 Eval@TP1 31.20 73.20 76.00 73.40 72.20 73.60 58.40 65.43 Eval@TP2 30.60 74.00 74.80 74.20 76.60 75.80 66.20 67.46 
+
+ERPO (Ours) 
+
+Train Acc 44.55 75.63 76.53 78.66 80.63 78.41 81.46 73.70 Eval@TP1 31.20 74.00 77.20 77.00 78.40 78.60 78.40 70.69 Eval@TP2 30.60 72.60 77.00 76.60 77.40 78.60 80.20 70.43 
+
+Table 6: Performance Comparison Under Different Experimental Settings                                                                                                    
+
+> Base Model Method D_KL Rollout Temperature 0.1 0.6 11.5 ≤1.0 1.2-1.5
+> Baseline –––52.4 46.8 32.8 0.4 44.44 6.15 Qwen-7B GRPO Policy 866.8 68.4 73.8 0.4 68.8 12.5 16 73.0 79.2 75.0 10.6 75.22 39.75 ERPO Query 879.4 80.6 75.2 8.6 78.74 (+9.94) 37.9 16 80.4 78.8 74.4 56.2 77.82 (+2.6) 66.25 DAPO –862.0 77.4 65.4 5.6 68.16 14.0 DAPO+ERPO Query 80.2 79.4 75.8 20.2 78.4 (+10.24) 36.93 RLOO Policy 877.6 78.4 75.4 12.4 77.28 35.93 RLOO+ERPO Query 81.2 80.4 79.4 17.6 79.56 (+2.28) 40.8 Qwen-32B GRPO Policy 881.6 82.4 81.2 25.2 81.62 57.2 ERPO Query 85.0 84.8 83.6 80.8 84.6 (+2.98) 82.8 Note: The columns ≤1.0 and 1.2–1.5 show the mean accuracy (Acc) over the corresponding temperature ranges. Values in parentheses indicate improvements over baseline methods. Best results per column are highlighted in bold , second-best results are underlined.
+
+the existing PG forward pass. 
+
+G PG-Compatible Surrogate: Per-Algorithm Specializations 
+
+The ERPO mini-batch loss LPG (θ) in Eq. (11) is instantiated by a particular choice of action-level weight uθ(q, o ) and advantage A⋆θ(q, o ), sum-marized below. The two ERPO modifications— adding the query-level KL term and reweighting the outer per-query sum by wB (q)—are orthogonal to the choice of (uθ, A ⋆θ) and act only on the outer query loop. 
+
+GRPO. Set uθ ≡ 1 and A⋆θ = AGRPO  
+
+> θ
+
+from Eq. (2). Substituting yields 
+
+LERPO -GRPO (θ) := − 1
+
+m
+
+X
+
+> q∈B
+
+wB (q)
+
+K
+
+X
+
+> o∈G (q)
+
+AGRPO  
+
+> θ
+
+(q, o ) log πθ(o | q)+ α bRquery (θ).
+
+(13) All GRPO engineering details (reward normaliza-tion, group size K, sampling temperature, etc.) remain unchanged. 
+
+PPO. We set 
+
+uθ(q, o ) = clip 
+
+ πθ(o | q)
+
+πθold (o | q) , 1 − ϵ, 1 + ϵ
+
+
+
+and A∗ 
+
+> θ
+
+to the (GAE-based or standard) PPO ad-vantage. The inner sum recovers the PPO clipped surrogate, with the outer wB (q) and the added 
+
+α bRquery providing the ERPO wrapping. 
+
+REINFORCE. Set uθ ≡ 1 and A⋆θ(q, o ) =
+
+g(q, o ) − bθ(q) for an arbitrary baseline bθ(q); the inner sum recovers the sample-wise REINFORCE estimator. 
+
+Drop-in modification recipe. Given an existing PG-style training pipeline using any of the above estimators, applying ERPO requires three steps: (i) precompute ℓθ0 once over the dataset (Appendix F); (ii) replace the per-query outer weight 1/m with 
+
+wB (q)/m from Eq. (9); (iii) add α bRquery (θ) (K3-estimated from the per-step ℓθ and the cached ℓθ0 )to the loss. No additional forward passes, no archi-tectural changes, and no modification to the inner PG estimator’s clip/baseline logic are required. 
+
+H Proof of Proposition 1: Structural Decoupling of Regularization and Exploration 
+
+This appendix provides the formal proof of Propo-sition 1 stated in Section 4.2. 
+
+Proposition 1 (restated). For the autoregressive generation process parameterized by θ, the gradi-ent of the Query-KL regularizer Rquery (θ) strictly flows through the query log-likelihood ∇θℓθ(q) and is entirely orthogonal to the response policy score function ∇θ log πθ(o | q).
+
+Proof. By definition, 
+
+Rquery (θ) = X
+
+> q
+
+ρθ(q) log ρθ(q) − log ρθ0 (q).
+
+Differentiating with respect to θ and applying the product rule, 
+
+∇θRquery (θ)= X
+
+> q
+
+∇θρθ(q) log ρθ(q)
+
+− log ρθ0 (q)
+
++ X
+
+> q
+
+ρθ(q) ∇θ
+
+ log ρθ(q)
+
+− log ρθ0 (q).
+
+(14) 
+
+Second sum collapses. Since ρθ0 does not de-pend on θ, we have ∇θ log ρθ0 (q) = 0 . Applying the identity ∇θ log ρθ(q) = ∇θρθ(q)/ρ θ(q) to the remaining term gives 
+
+X
+
+> q
+
+ρθ(q) ∇θ log ρθ(q) = X
+
+> q
+
+∇θρθ(q)= ∇θ
+
+X
+
+> q
+
+ρθ(q)
+
+!
+
+= ∇θ(1) = 0 ,
+
+(15) where the third equality uses the fact that ρθ is a probability distribution and therefore sums to one identically in θ.
+
+First sum simplifies via the log-derivative trick. Applying ∇θρθ(q) = ρθ(q) ∇θ log ρθ(q)
+
+and writing ℓθ(q) := log ρθ(q) and ℓθ0 (q) := log ρθ0 (q), we obtain the closed-form gradient 
+
+∇θRquery (θ)= Eq∼ρθ
+
+h ℓθ(q) − ℓθ0 (q)
+
+· ∇ θℓθ(q)
+
+i
+
+.
+
+(16) 
+
+Structural conclusion. The right-hand side of Eq. (16) depends on θ only through the query log-likelihood ℓθ(q) (and its gradient ∇θℓθ(q)); no factor of the response policy score function 
+
+∇θ log πθ(o | q) appears. Equivalently, perturba-tions to πθ(o | q) that leave the query marginal ρθ
+
+unchanged incur zero QKL gradient and are uncon-strained by Rquery . This establishes the structural decoupling between input-environment regulariza-tion (carried by QKL) and response-side explo-ration (left untouched). □
+
+I Derivation of Query Reweighting 
+
+The standard RL objective optimizes the expected reward under the empirical training query distribu-tion ρtrain . ERPO instead considers a reference-aligned objective in which queries are sampled from the cached reference-induced query prior ρθ0 :
+
+JERPO (θ) = Eq∼ρθ0 , o ∼πθ (·| q)
+
+g(q, o ). (17) Expanding the expectation gives 
+
+JERPO (θ) = X
+
+> q
+
+ρθ0 (q) X
+
+> o
+
+πθ(o | q)g(q, o ).
+
+(18) However, stochastic training samples queries from the empirical distribution ρtrain , rather than directly from ρθ0 . To express the same objective under ρtrain , we multiply and divide by ρtrain (q):
+
+JERPO (θ) = X
+
+> q
+
+ρtrain (q) ρθ0 (q)
+
+ρtrain (q)
+
+X
+
+> o
+
+πθ(o | q)g(q, o )= Eq∼ρtrain , o ∼πθ (·| q) [w⋆(q)g(q, o )] ,
+
+(19) where the ideal importance weight is 
+
+w⋆(q) = ρθ0 (q)
+
+ρtrain (q) . (20) If training queries are sampled approximately uniformly from a dataset of size N , then 
+
+ρtrain (q) = 1 /N . Therefore, 
+
+w⋆(q) = ρθ0 (q)
+
+ρtrain (q) = N ρ θ0 (q). (21) Since the multiplicative constant N is shared by all queries, it does not affect the relative weighting among queries. Thus, up to a global constant, 
+
+w⋆(q) ∝ ρθ0 (q). (22) In practice, ERPO estimates the reference-induced query prior using a cached reference score 
+
+ℓθ0 (q), which assigns larger values to queries that are more favored under the pretrained reference model. Hence we use a bounded, dataset-static query weight w(q) that is monotone in ℓθ0 (q):
+
+w(q) ∝ ℓθ0 (q). (23) Substituting this query weight into the negative optimization objective yields the ERPO training loss 
+
+LERPO (θ) = −Eq∼ρtrain , o ∼πθ (·| q) [w(q)g(q, o )] + αRquery (θ). (24) where Rquery (θ) denotes the query-level regular-ization term and α controls its strength. In practice, the exact reference-induced query prior ρθ0 (q) is not directly available on a finite train-ing set. Therefore, we use the cached reference-model log-probability as a practical monotone proxy for the relative query preference induced by the reference model. This approximation only aims to preserve the relative ordering of queries un-der the reference model, rather than to estimate the absolute density value. We emphasize that this im-plementation is not intended as an unbiased density-ratio estimator; rather, it is a bounded monotone ap-proximation to the ideal query importance weight in Eq. (20). For each query qi, let log pθ0 (qi) denote its cached sequence log-probability under the ref-erence model. We first define its negative log-probability as 
+
+si = − log pθ0 (qi). (25) A larger reference-model probability corresponds to a smaller si. To obtain a weight whose mag-nitude increases with the reference-model query probability, we use the inverse normalized negative log-probability. For a dataset with N queries, let 
+
+¯s = 1
+
+N
+
+> N
+
+X
+
+> j=1
+
+sj . (26) We define the unbounded query weight as 
+
+˜w(qi) = ¯ssi
+
+. (27) This normalization makes the weight dimension-less and centers its scale around the dataset av-erage, while preserving the monotonic relation-ship that higher-probability queries receive larger weights. Finally, to reduce the variance of impor-tance reweighting and prevent any single query from dominating optimization, we clip the weight to a fixed range: 
+
+w(qi) = clip ( ˜ w(qi), 0, 2) . (28)
