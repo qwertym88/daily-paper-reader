@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-30</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-06</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 21 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 28 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>15</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>13</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-30 23:20:55 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-06 22:40:54 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共读21篇论文，精读8篇、速读13篇，聚焦AI与机器人交叉前沿；最值得关注Core-KAN将Kolmogorov-Arnold网络用于连续视觉核，以及物理信息贝叶斯优化在小行星表面跳跃中的加速求解；建议优先精读这两篇，再结合速读中的风险敏感强化学习扩展视野。</p>
+<p>今日精读15篇、速读13篇，重点扫描模型结构搜索与人形机器人操控。最值得看：满分论文提出无模型替代物的变长密集块神经架构搜索，另有9分工作实现纯本体感觉的全身人形操作。普通读者可优先关注模型自动设计与人形机器人鲁棒控制两条交叉方向，后续结合速读中的离线轨迹规划做延伸。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">8 篇</strong>
+    <strong class="dpr-home-dashboard-count">15 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Core-KAN: Continuous Vision Kernels with Kolmogorov-Arnold Networks">Core-KAN: Continuous Vision Kernels with Kolmogorov-Arnold Networks</span></li><li><span class="dpr-home-dashboard-paper-title" title="Physics-Informed Bayesian Optimization Warm-Starts for Sequential Convex Programming in Asteroid Surface Hopping">Physics-Informed Bayesian Optimization Warm-Starts for Sequential Convex Programming in Asteroid Surface Hopping</span></li><li><span class="dpr-home-dashboard-paper-title" title="Unified Branch-and-Bound Search for the Steiner Traveling Salesman Problem on Graphs of Convex Sets">Unified Branch-and-Bound Search for the Steiner Traveling Salesman Problem on Graphs of Convex Sets</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Model-Free Surrogate-Assisted Neural Architecture Search for Evolving Variable-Length Dense Blocks">Model-Free Surrogate-Assisted Neural Architecture Search for Evolving Variable-Length Dense Blocks</span></li><li><span class="dpr-home-dashboard-paper-title" title="Blind Dexterity: Whole-Body Humanoid Manipulation via Pure Proprioception">Blind Dexterity: Whole-Body Humanoid Manipulation via Pure Proprioception</span></li><li><span class="dpr-home-dashboard-paper-title" title="NepScript Genesis: Neural Architecture Search for Handwritten Devanagari Digit Synthesis">NepScript Genesis: Neural Architecture Search for Handwritten Devanagari Digit Synthesis</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">neural-arch <strong>3</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>3</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>6</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>5</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>4</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,9 +87,9 @@
     <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Risk-Sensitive Reinforcement Learning with Smoothed Quantile Objectives">Risk-Sensitive Reinforcement Learning with Smoothed Quantile Objectives</span></li><li><span class="dpr-home-dashboard-paper-title" title="Spiking Neural Networks for Continuous Control: Neuromorphic Reinforcement Learning in Conventional Computing">Spiking Neural Networks for Continuous Control: Neuromorphic Reinforcement Learning in Conventional Computing</span></li><li><span class="dpr-home-dashboard-paper-title" title="Beyond the Stability-Exploration Dilemma: Environmental Regularization for LLM Policy Optimization">Beyond the Stability-Exploration Dilemma: Environmental Regularization for LLM Policy Optimization</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SPO++: Stream-Aligned Policy Optimization for Asynchronous Agentic RL">SPO++: Stream-Aligned Policy Optimization for Asynchronous Agentic RL</span></li><li><span class="dpr-home-dashboard-paper-title" title="Bayesian Flow Networks for Offline Trajectory Planning">Bayesian Flow Networks for Offline Trajectory Planning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Quantitative Analysis of $ω$-Regular Robust MDPs">Quantitative Analysis of $ω$-Regular Robust MDPs</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>11</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>9</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
 </div>
 
