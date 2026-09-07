@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-06</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-07</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 28 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 21 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>15</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>13</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-06 22:40:54 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-07 23:42:50 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读15篇、速读13篇，重点扫描模型结构搜索与人形机器人操控。最值得看：满分论文提出无模型替代物的变长密集块神经架构搜索，另有9分工作实现纯本体感觉的全身人形操作。普通读者可优先关注模型自动设计与人形机器人鲁棒控制两条交叉方向，后续结合速读中的离线轨迹规划做延伸。</p>
+<p>今日共筛选21篇论文，精读8篇、速读13篇，其中最高分9.0出自细粒度视觉识别与机器人控制两篇。</p>
+<p>最值得关注《ConCA》的浓度感知通道注意力与《SUN》的“语言→控制→学习→真实”策略，均获9.0高分。</p>
+<p>建议普通读者优先精读这两篇，再结合速读中强化学习、无人机控制等8.0分工作扩展视野。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +73,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">15 篇</strong>
+    <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Model-Free Surrogate-Assisted Neural Architecture Search for Evolving Variable-Length Dense Blocks">Model-Free Surrogate-Assisted Neural Architecture Search for Evolving Variable-Length Dense Blocks</span></li><li><span class="dpr-home-dashboard-paper-title" title="Blind Dexterity: Whole-Body Humanoid Manipulation via Pure Proprioception">Blind Dexterity: Whole-Body Humanoid Manipulation via Pure Proprioception</span></li><li><span class="dpr-home-dashboard-paper-title" title="NepScript Genesis: Neural Architecture Search for Handwritten Devanagari Digit Synthesis">NepScript Genesis: Neural Architecture Search for Handwritten Devanagari Digit Synthesis</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ConCA: Concentration-Aware Channel Attention for Fine-Grained Visual Recognition">ConCA: Concentration-Aware Channel Attention for Fine-Grained Visual Recognition</span></li><li><span class="dpr-home-dashboard-paper-title" title="SUN: Persistent Programs For Language-Grounded Control-to-Learning-to-Real Policies">SUN: Persistent Programs For Language-Grounded Control-to-Learning-to-Real Policies</span></li><li><span class="dpr-home-dashboard-paper-title" title="Arrive and Survive: Scaling Safe Goal-Conditioned Policy Learning from One-Bit Failure Signals">Arrive and Survive: Scaling Safe Goal-Conditioned Policy Learning from One-Bit Failure Signals</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>6</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>5</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>4</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">neural-arch <strong>3</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>3</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,9 +89,9 @@
     <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SPO++: Stream-Aligned Policy Optimization for Asynchronous Agentic RL">SPO++: Stream-Aligned Policy Optimization for Asynchronous Agentic RL</span></li><li><span class="dpr-home-dashboard-paper-title" title="Bayesian Flow Networks for Offline Trajectory Planning">Bayesian Flow Networks for Offline Trajectory Planning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Quantitative Analysis of $ω$-Regular Robust MDPs">Quantitative Analysis of $ω$-Regular Robust MDPs</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Towards Safe Reinforcement Learning with Reduced Conservativeness: A Case Study on Drone Flight Control">Towards Safe Reinforcement Learning with Reduced Conservativeness: A Case Study on Drone Flight Control</span></li><li><span class="dpr-home-dashboard-paper-title" title="Discrete eigenvalue optimization from entropic smoothing and first-order methods">Discrete eigenvalue optimization from entropic smoothing and first-order methods</span></li><li><span class="dpr-home-dashboard-paper-title" title="A Finite Sample Analysis for Quantile Temporal Difference Learning in Distributional Reinforcement Learning">A Finite Sample Analysis for Quantile Temporal Difference Learning in Distributional Reinforcement Learning</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>9</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>11</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span></div>
 </section>
 </div>
 
