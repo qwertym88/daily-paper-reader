@@ -41,7 +41,7 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-07</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-08</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 21 篇</strong>
@@ -51,7 +51,7 @@
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>13</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-07 23:42:50 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-08 23:02:51 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,10 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共筛选21篇论文，精读8篇、速读13篇，其中最高分9.0出自细粒度视觉识别与机器人控制两篇。</p>
-<p>最值得关注《ConCA》的浓度感知通道注意力与《SUN》的“语言→控制→学习→真实”策略，均获9.0高分。</p>
-<p>建议普通读者优先精读这两篇，再结合速读中强化学习、无人机控制等8.0分工作扩展视野。</p>
+<p>今日共生成 21 篇推荐（精读 8 篇，速读 13 篇）</p>
+<p>精读：《Policy Iteration for Domain Randomized Linear Quadratic Systems》（9.0/10）, 《Stochastic Nonlinear Model Predictive Control with Gaussian Mixture Uncertainty Propagation》（8.0/10）</p>
+<p>速读：《Tail-Likelihood Reinforcement Learning》（8.0/10）, 《Multi-step Proximal Policy Improvement in Offline Reinforcement Learning》（8.0/10）, 《PAVE: Predictive Alignment and Value-Guided Evolution for World-Action Policies》（7.0/10）</p>
+<p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -76,9 +77,9 @@
     <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ConCA: Concentration-Aware Channel Attention for Fine-Grained Visual Recognition">ConCA: Concentration-Aware Channel Attention for Fine-Grained Visual Recognition</span></li><li><span class="dpr-home-dashboard-paper-title" title="SUN: Persistent Programs For Language-Grounded Control-to-Learning-to-Real Policies">SUN: Persistent Programs For Language-Grounded Control-to-Learning-to-Real Policies</span></li><li><span class="dpr-home-dashboard-paper-title" title="Arrive and Survive: Scaling Safe Goal-Conditioned Policy Learning from One-Bit Failure Signals">Arrive and Survive: Scaling Safe Goal-Conditioned Policy Learning from One-Bit Failure Signals</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Policy Iteration for Domain Randomized Linear Quadratic Systems">Policy Iteration for Domain Randomized Linear Quadratic Systems</span></li><li><span class="dpr-home-dashboard-paper-title" title="Stochastic Nonlinear Model Predictive Control with Gaussian Mixture Uncertainty Propagation">Stochastic Nonlinear Model Predictive Control with Gaussian Mixture Uncertainty Propagation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Stochastic Optimal Control of Hawkes Jump-Diffusion Systems">Stochastic Optimal Control of Hawkes Jump-Diffusion Systems</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">neural-arch <strong>3</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>3</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>6</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -89,9 +90,9 @@
     <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Towards Safe Reinforcement Learning with Reduced Conservativeness: A Case Study on Drone Flight Control">Towards Safe Reinforcement Learning with Reduced Conservativeness: A Case Study on Drone Flight Control</span></li><li><span class="dpr-home-dashboard-paper-title" title="Discrete eigenvalue optimization from entropic smoothing and first-order methods">Discrete eigenvalue optimization from entropic smoothing and first-order methods</span></li><li><span class="dpr-home-dashboard-paper-title" title="A Finite Sample Analysis for Quantile Temporal Difference Learning in Distributional Reinforcement Learning">A Finite Sample Analysis for Quantile Temporal Difference Learning in Distributional Reinforcement Learning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Tail-Likelihood Reinforcement Learning">Tail-Likelihood Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Multi-step Proximal Policy Improvement in Offline Reinforcement Learning">Multi-step Proximal Policy Improvement in Offline Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="PAVE: Predictive Alignment and Value-Guided Evolution for World-Action Policies">PAVE: Predictive Alignment and Value-Guided Evolution for World-Action Policies</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>11</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>8</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
 </div>
 
