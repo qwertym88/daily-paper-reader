@@ -41,7 +41,7 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-09</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-10</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 21 篇</strong>
@@ -51,7 +51,7 @@
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>13</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-09 22:22:59 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-10 22:15:11 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,10 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共读21篇论文，其中精读8篇、速读13篇，覆盖机器人学习、控制理论等方向。</p>
-<p>最值得关注的是满分9.0的《SkillX》——面向人形足球的多技能统一策略学习，以及《Equivalence Between Continuous-Time Risk-Sensitive Control and Rényi Divergence Minimization》揭示的风险敏感控制与信息几何联系。</p>
-<p>建议普通读者优先浏览SkillX的多技能迁移思路，若偏好理论可关注第二篇的数学等价性证明框架。</p>
+<p>今日共生成 21 篇推荐（精读 8 篇，速读 13 篇）</p>
+<p>精读：《SwingBot: Learning Whole-Body Brachiation for Humanoid Robots》（9.0/10）, 《Learning Terrain-Adaptive Humanoid Locomotion on Granular Terrain》（9.0/10）</p>
+<p>速读：《Weak Convexity and Proximal Bundle Methods for Nonsmooth Policy Optimization in Robust Control》（8.0/10）, 《Mini-Batch Risk-Averse Deep Q-Learning: A Robot Navigation Case Study》（8.0/10）, 《Structured Positive-Definite Optimal Control Synthesis of Closed-Loop Recommendation Systems over Social Networks》（8.0/10）</p>
+<p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -76,9 +77,9 @@
     <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SkillX: Unified Multi-Skill Policy Learning for Humanoid Soccer">SkillX: Unified Multi-Skill Policy Learning for Humanoid Soccer</span></li><li><span class="dpr-home-dashboard-paper-title" title="Equivalence Between Continuous-Time Risk-Sensitive Control and Rényi Divergence Minimization">Equivalence Between Continuous-Time Risk-Sensitive Control and Rényi Divergence Minimization</span></li><li><span class="dpr-home-dashboard-paper-title" title="RoboDreamer: Anticipatory Humanoid Locomotion with Predictive State-Space Models">RoboDreamer: Anticipatory Humanoid Locomotion with Predictive State-Space Models</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SwingBot: Learning Whole-Body Brachiation for Humanoid Robots">SwingBot: Learning Whole-Body Brachiation for Humanoid Robots</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning Terrain-Adaptive Humanoid Locomotion on Granular Terrain">Learning Terrain-Adaptive Humanoid Locomotion on Granular Terrain</span></li><li><span class="dpr-home-dashboard-paper-title" title="SLA-Safe Energy Control for AI-Native NG-RAN Using Stability-Aware Constrained PPO">SLA-Safe Energy Control for AI-Native NG-RAN Using Stability-Aware Constrained PPO</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>4</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>5</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>2</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -89,9 +90,9 @@
     <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Unified Motion Retargeting for Humanoids with Learned Point Cloud Correspondence">Unified Motion Retargeting for Humanoids with Learned Point Cloud Correspondence</span></li><li><span class="dpr-home-dashboard-paper-title" title="Uncertainty-Guided Adverse Weather Restoration via Gated Transformer Network">Uncertainty-Guided Adverse Weather Restoration via Gated Transformer Network</span></li><li><span class="dpr-home-dashboard-paper-title" title="Projective Affine Body Dynamics for Multibody Systems">Projective Affine Body Dynamics for Multibody Systems</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Weak Convexity and Proximal Bundle Methods for Nonsmooth Policy Optimization in Robust Control">Weak Convexity and Proximal Bundle Methods for Nonsmooth Policy Optimization in Robust Control</span></li><li><span class="dpr-home-dashboard-paper-title" title="Mini-Batch Risk-Averse Deep Q-Learning: A Robot Navigation Case Study">Mini-Batch Risk-Averse Deep Q-Learning: A Robot Navigation Case Study</span></li><li><span class="dpr-home-dashboard-paper-title" title="Structured Positive-Definite Optimal Control Synthesis of Closed-Loop Recommendation Systems over Social Networks">Structured Positive-Definite Optimal Control Synthesis of Closed-Loop Recommendation Systems over Social Networks</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">neural-arch <strong>6</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>4</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>8</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>3</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span></div>
 </section>
 </div>
 
