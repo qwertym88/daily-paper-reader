@@ -1,0 +1,1412 @@
+Title: On BatchNorm Forward Modes in Value-Based Reinforcement Learning
+
+URL Source: https://arxiv.org/pdf/2609.06421v1
+
+Published Time: Wed, 09 Sep 2026 01:09:42 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# On BatchNorm Forward Modes in Value-Based Reinforcement Learning 
+
+Daniel Palenicek 1,2,3, Mikael Henaff 1, Scott Fujimoto 1, Koustuv Sinha 11FAIR at Meta, 2Technical University of Darmstadt, 3hessian.AI Batch normalization (BN) substantially improves sample efficiency in continuous-control actor-critic methods such as CrossQ, yet recent studies report performance degradation in discrete-action value learning on Atari. These failures are surprising because discrete Q-networks lack the action-input distribution mismatch identified by CrossQ. We show for target-based C51 and target-free PQN that the simple choice between running and batch statistics at specific forward passes can reverse this degradation. In C51, switching the BN bootstrap forward to batch-statistic mode significantly improves performance over unnormalized and LayerNorm baselines and scales stably with update-to-data ratios up to 12. In PQN, using batch-statistics for both action selection and bootstrapping recovers performance from the failing running-statistic configuration. Across 26 Atari games at 400M frames, this configuration achieves a higher final aggregate score than PQN with LayerNorm. Our results show that carefully configured BN can substantially improve discrete-action value learning, and that its forward protocols are an essential part of the algorithm specification.  
+
+> Correspondence:
+
+Daniel Palenicek at palenicek@robot-learning.de 
+
+## 1 Introduction 
+
+Before CrossQ (Bhatt et al., 2024), batch normalization (BN) was widely regarded as ineffective or unstable in deep reinforcement learning (RL), with prior works reporting degradation in learning performance (Salimans and Kingma, 2016; Hiraoka et al., 2022). CrossQ overturned this empirical picture in continuous-control actor–critic learning, showing that a carefully constructed BN forward pass can substantially improve sample efficiency. It evaluates replay and current-policy state–action pairs in one joined critic forward pass so that their different action distributions are normalized jointly. Subsequent methods successfully retain BN-based architectures while reintroducing target critics, adding fixed weight-norm projections, incorporating categorical critics, scaling to high-dimensional robotic control, leveraging prior expert-data and parallel simulators (Palenicek et al., 2025, 2026b,a; Kim et al., 2026). Together, these results show that BN can be highly effective in continuous-control RL when its interaction with the critic update is specified carefully. The current discrete-action value-based literature presents a sharply different picture. Salimans and Kingma (2016) report that minibatch-statistic noise destabilized DQN and that they could not make BN work without impractically large minibatch sizes. Later studies report BN degradation in DQN on MinAtar (Gogianu et al., 2021), in PQN on Atari (Gallici et al., 2025), and in a five-game Atari comparison (Vincent et al., 2026). These conflicting results are particularly surprising since the action distribution failure mode identified by CrossQ is entirely absent in discrete-action value learning. A continuous-action actor-critic critic-network receives both states and actions, Q(s, a ), and therefore processes replay actions and current-policy actions drawn from different populations. A discrete-action critic-network instead receives only a state and emits a vector of action-values, Q(s, ·). Therefore, the action-input mismatch cannot explain the reported failures. We show, that a different mismatch can arise between the stored BN running statistics and the activations encountered by a particular forward pass. When state distributions evolve during training, the stored running-statistics can become poorly matched to the target network’s current activations. More generally, prediction, bootstrapping, and action selection can each evaluate the network on different input populations. This motivates our central question: can the choice between running and batch statistics at these different forward passes determine whether BN helps or harms discrete-action value learning? 
+
+1arXiv:2609.06421v1 [cs.LG] 6 Sep 2026 We investigate this question in two complementary settings. C51 uses replay and periodically hard-copied target parameters, allowing us to study the bootstrap forward mode while retaining a conventional target-network architecture (Section 3). Our primary comparison changes the target-network BN forward mode from stored running statistics to statistics computed on the current next-state minibatch. We then ablate how quickly stored target moments track the bootstrap population. This sweep tests whether the performance gap between running statistics and batch statistics is accompanied by systematic sensitivity to the responsiveness of running statistics. Having established the effect of the bootstrap protocol, we examine its effectiveness for replay reuse. We fix training-mode bootstrapping and demonstrate how different C51 configurations respond as the update-to-data ratio (UTD) increases. BN based C51 variants significantly outperform the baselines, especially with increasing UTD. PQN provides a complementary setting with neither replay nor a separate target network (Section 4). It allows us to test whether sensitivity to BN forward protocols persists when those two features of C51 are absent. We demonstrate that the same switch to batch statistics recovers performance and the BN-based PQN variant outperforms vanilla PQN on the full 400 million frame budget. Our experiments establish three main findings: 1. Bootstrap statistics can reverse BN degradation in C51. Across 26 Atari games, replacing stored target moments with current-minibatch statistics produces large performance improvements and changes BN from underperforming vanilla C51 to significantly exceeding its performance. A tracking sweep further shows that performance depends on the responsiveness of stored target moments. 2. Batch-statistic bootstrapping supports effective learning with increased replay reuse. Across UTDs 
+
+∈ { 0.25 , 1, 2, 4, 8, 12 }, BN configurations continue to benefit from additional updates beyond the range where unnormalized C51 and LayerNorm peak. The projected-BN configuration remains effective through UTD 12. 3. Forward-protocol sensitivity persists in target-free PQN. Using batch statistics for action selection and bootstrap-target construction recovers performance from the failing running-statistic configuration originally reported in Gallici et al. (2025). Across 26 games at 400M frames, the selected configuration achieves comparable performance over training and a higher final score than LayerNorm. Together, these findings show that carefully configured BN can substantially improve discrete-action value learning. They also explain why specifying that an agent “uses BN” is insufficient: each prediction, bootstrap, acting, and evaluation forward must define its parameter source, input batch, normalization statistics, and treatment of running-state updates. These choices need to be carefully considered as they determine the function evaluated by the agent and can significantly impact performance. 
+
+## 2 Value Learning and BatchNorm Semantics 
+
+We consider a Markov decision process with finite action set A and discount γ ∈ [0 , 1) (Sutton and Barto, 2018). Deep Q-learning represents the action-value function with a network Qθ (Mnih et al., 2015). For a transition (s, a, r, s ′, d ), a one-step TD target has the form 
+
+y = r + γ(1 − d) max a′ Q¯θ (s′, a ′), (1) where ¯θ may be a separate target network. C51 implements the target distributionally with a categorical Bellman projection and hard-copied target parameters (Bellemare et al., 2017). PQN instead constructs multi-step Q(λ) targets from parallel rollouts without replay or target parameters (Gallici et al., 2025). For a BN layer ℓ, the relevant moments are properties of a network–population pair, 
+
+Mℓ(θ, D) = ( Ex∼D [hℓ(x; θ)] , Var x∼D [hℓ(x; θ)]) , (2) not of θ alone (Ioffe and Szegedy, 2015). A batch-statistic forward estimates these moments from its current input batch and uses them in the current output. A running-statistic forward instead reads an exponential average of moments produced by earlier network–batch pairs. This historical mixture is usually meaningful when supervised training repeatedly samples a stationary dataset and is followed by a separate deployment phase. In RL, network parameters and input populations co-evolve. Policy visitation changes, replay turns 2C51 LN                
+
+> BN running
+> BN running (0.001) BN running (0.01) BN running (0.1)
+> BN batch
+> 050 100 150 200
+> 100% 128% 48% 101% 114% 117% 154%
+> (a) Atari-26, 5M frames AUC IQM at UTD 0.25
+> C51 LN
+> BN running
+> BN running (0.001) BN running (0.01) BN running (0.1)
+> BN batch
+> 100% 87% 72% 92% 113% 120% 147%
+> (b) Atari-26, 5M frames Final IQM at UTD 0.25
+> 0.25 124812 250 500 750 1000 1250
+> (c) Atari-26, 5M frames AUC IQM across UTD
+> C51 = 100%
+> 0.25 124812
+> (d) Atari-26, 5M frames Final IQM across UTD
+> C51 = 100%
+> IQM (% of C51) update-to-data ratio (UTD)
+> C51 LN BN LN WN BN WN Figure 1 Bootstrap forward modes and replay scaling in C51.
+
+All panels report performance as a percentage of unnormalized C51 at UTD 0.25 , with C51 fixed to 100%. Panels (a,b) report AUC and final IQM at UTD 0.25 . BN running uses evaluation-mode bootstrapping and reads stored target moments. BN batch uses training-mode bootstrapping and statistics from the current next-state minibatch. The three BN running ( α) conditions update stored target moments from that minibatch with PyTorch update weight α ∈ { 0.001 , 0.01 , 0.1} before constructing the target in a separate evaluation-mode forward. Panels (c,d) report AUC and final IQM across UTD for C51, LayerNorm (LN), BN, and their fixed-norm projection variants (WN). C51, LN, and BN use a constant learning rate, whereas LN WN and BN WN use linear decay. Every displayed bar or arm–UTD point contains 26 games and three seeds per game, each trained for 5M frames. Bars and curves show IQM; error bars and bands are marginal 95% stratified bootstrap confidence intervals across 26 Atari games and 3 seeds each. 
+
+over, and prediction, bootstrap, and acting forwards consume different populations. Running statistics therefore chase a moving network–population target, as they can in continual learning (Pham et al., 2022). We characterize each forward by its network parameters, input population, statistic source, and whether it updates stored BN statistics. Framework “training” and “evaluation” modes typically couple the choice of statistics with updates to these buffers. Copying online parameters and BN buffers to a target network does not guarantee that the copied moments match the activations encountered by subsequent target forwards. 
+
+## 3 Bootstrap Forward Modes and Replay Scaling in C51 
+
+Our C51 study follows the two stages shown in Figure 1 from left to right. First, we ask whether the bootstrap-forward mode changes the negative BN result. We compare evaluation mode, which reads stored running moments, with training mode, which uses statistics from the current bootstrap minibatch. Additionally, we use a tracking-rate sweep to interpolate between them. Second, having fixed the direct training-mode bootstrap, we ask how complete C51 configurations respond to increased replay reuse. These experiments are based on the CleanRL C51 implementation (Huang et al., 2022; Bellemare et al., 2017). We run every agent for 5M frames on all 26 games with three seeds per game. We aggregate human-normalized scores with the interquartile mean (IQM) (Agarwal et al., 2021). Area under the learning curve (AUC) averages each run’s equally spaced evaluation grid, and the final statistic uses the evaluation at 5M frames. Confidence intervals use 5,000 stratified bootstrap resamples. Figure values are percentages of the unnormalized C51 point estimate at UTD 0.25 , not percentage improvements. 
+
+3.1 Evaluation-mode versus training-mode bootstrapping 
+
+When augmenting C51 with BN using running statistics, we see a significant drop in performance (Figure 1 (a,b)) to only 48% AUC and 72% final performance. This reproduces the reported failures of BN in value-based RL. Simply switching the target BN layer to training mode, using the batch statistics, performance increases 3dramatically to 154% AUC of C51 and 147% Final, respectively. All other hyperparameters remain at standard CleanRL settings. In summary, evaluation-mode bootstrapping reproduces the negative aggregate BN result, whereas training-mode bootstrapping significantly improves performance over C51. The training-mode BN even outperforms a C51 LN baseline. 
+
+3.2 Tracking interpolation between the endpoint modes 
+
+To further analyze the gap between fixed running statistics and batch statistics, we add an additional synthetic ablation to the failing BN running experiment (Figure 1 (a,b)). In this, we add an additional training-mode forward pass right before the running statistics forward pass. Before each bootstrap, a discarded training-mode pass over the next-state minibatch updates the target buffers with PyTorch update weight 
+
+α ∈ { 0.001 , 0.01 , 0.1}; a second, evaluation-mode pass then constructs the target. Larger α makes the stored moments more responsive to the current batch population. This experiment essentially interpolates between relying on historical running moments and relying on the current batch. Interestingly, performance monotonically increases the more online the running statistics get to the batch statistics. Using the actual batch statistics yields the strongest results and results in the most straight forward implementation. Making evaluation-mode bootstrapping work requires maintaining running statistics, choosing a tracking coefficient, and performing an additional update pass before constructing the target. Direct training-mode bootstrapping uses a single target call, requires no tracking hyperparameter, and makes the target output independent of historical running moments. Because direct training mode is both the simplest implementation and the strongest displayed AUC endpoint, we fix it for the replay-scaling study. 
+
+3.3 Scaling with replay reuse 
+
+With training-mode bootstrapping fixed, we sweep over UTD ∈ { 0.25 , 1, 2, 4, 8, 12 } for unnormalized C51, LN, BN, and LN and BN configurations with WN fixed-norm projection (Lyle et al., 2024; Palenicek et al., 2025). Every arm–UTD cell contains complete evaluation histories through 5M frames for all 26 games and three seeds. The WN variants in Figure 1 (c,d) use linear learning-rate decay, whereas the three unprojected configurations use a constant learning rate. Increasing replay reuse produces markedly different results across these configurations. Unnormalized C51 and LayerNorm improve through UTD 2, plateau through UTD 4, and then lose aggregate performance as the number of updates rises. Plain BN continues to improve in AUC through UTD 8 and remains above both unprojected controls at UTD 12 despite declining at the final point. Projected LayerNorm also benefits substantially from replay reuse, while projected BN shows the strongest high-UTD response: its AUC rises from about 1.3× the UTD-0.25 C51 reference to 11 .5× at UTD 8 and remains at that level at UTD 12. At UTD 8, projected BN has a higher three-seed per-game mean than matched unnormalized C51 on 25 of 26 games by AUC and all 26 games by final score. Taken together, the C51 results establish a sequence. Evaluation-mode bootstrapping reproduces severe BN degradation; increasing the responsiveness of stored moments interpolates toward the stronger batch-statistic result; and the simplest endpoint, a direct training-mode bootstrap, supports effective complete configurations as replay reuse increases. We next ask whether role-specific sensitivity persists when replay and separate target parameters are removed. 
+
+## 4 Forward Modes in Target-Free PQN 
+
+PQN (Gallici et al., 2025) provides a complementary test because it has neither a replay buffer nor a separate target network and the authors report BN to degrade performance in their experiments. The same parameters are reused for prediction, Q(λ) target construction, and acting, but these calls still consume different input populations. In particular, vectorized acting introduces a setting that is absent from the C51 intervention. We therefore ask which acting and bootstrap modes reproduce the reported BN failure, then test a simple selected protocol in a separate 400M-frame Atari-26 experiment. We use the official implementation of Gallici et al. (2025), which includes their BN ablation code, for a fair analysis. 40.999 0.99 0.9 0       
+
+> ¡20
+> ¡10 010 20
+> returns
+> (a) Atari Pong, 40M Returns AUC 0.999 0.99 0.9 0
+> (b) Atari Pong, 40M Final returns (last 4M) 0100 200 300 400
+
+frames (millions) 
+
+> 024
+> human-normalized IQM
+
+(c) Atari-26, 400M frames     
+
+> bootstrap: running batch acting  running batch BN momentum LN (PQN) LN + HL-Gauss BN BN + HL-Gauss BN running (Gallici et al., 2025) Figure 2 Forward-mode sensitivity in target-free PQN.
+
+Panels (a,b) report AUC and mean return over the last 4M frames of a 40M-frame Pong ablation. Gray uses running statistics for acting and bootstrapping, orange changes only bootstrapping to batch statistics, purple changes only acting to batch statistics, and blue uses batch statistics for both. The horizontal green line is LayerNorm; the gray star marks the released running/running configuration at Flax momentum 0.99 . Lines and points show means, and shaded regions show standard errors across five seeds each. Panel (c) full IQM training curves over 400M frames on Atari-26 aggregated across ten seed. Intervals are 95% stratified bootstrap confidence intervals within-game seed-bootstrap intervals. The dashed gray curve is the released running-statistic BN configuration from Gallici et al. (2025); green and blue show scalar-regression LayerNorm and batch-statistic BN, and orange and purple show their respective HL-Gauss variants. 
+
+4.1 Localizing acting and bootstrap sensitivity on Atari Pong 
+
+In Figure 2 (a,b), we replace PQN’s LayerNorm layers with BN and cross the statistic sources used for acting and bootstrapping; loss predictions always use batch statistics. Our 40M-frame Pong diagnostic compares running statistics for both roles, batch-statistic bootstrapping only, batch-statistic acting only, and batch statistics for both. Wherever a forward reads stored moments, we vary Flax momentum over 
+
+{0, 0.9, 0.99 , 0.999 } in comparison (note that Flax momentum convention is flipped compared to PyTorch). AUC averages 30 equal frame bins, the final statistic averages the last 4M frames. We run five seeds per configuration. The running/running configuration first reproduces the failure Gallici et al. (2025) report (Figure 2 (a,b)). At the released momentum of 0.99 , marked by the gray star, performance remains at random-policy performance and momentum 0.999 behaves similarly. Reducing momentum to 0.9 is insufficient, whereas momentum zero recovers to approximately LayerNorm performance. Thus, the negative result is not invariant to adding BN: it depends strongly on the forward protocol and the responsiveness of the stored moments. Changing the roles separately localizes this sensitivity. At momentum 0.9, changing only bootstrapping to batch statistics raises AUC from −13 .70 to 7.63 and final return from −2.77 to 17 .65 , but the configuration remains near the floor at momenta 0.99 and 0.999 . Changing only acting to batch statistics is more robust across this Pong sweep: it approximately matches LayerNorm at momenta 0 and 0.9 (AUC 15 .17 and 13 .94 ;final return 20 .62 and 20 .17 ) and retains a positive final return at momentum 0.99 (18 .40 ). These point estimates identify acting as the more sensitive remaining role in this diagnostic, while also showing that changing bootstrapping alone can provide a substantial partial recovery. Using batch statistics for both acting and bootstrapping reaches an AUC of 15 .62 and a final return of 
+
+20 .45 . Because prediction also uses batch statistics, no forward pass in this configuration depends on running statistics, and the configured BN momentum is therefore irrelevant to its outputs. This all-batch protocol is both the simplest tested configuration and the strongest Pong AUC point estimate, so we select it for the full-budget experiment. 50 1 2 3 4 5
+
+frames (M) 
+
+> 0.0 0.2 0.4 0.6
+
+(a) C51: Dormant fraction      
+
+> 012345
+
+frames (M) 
+
+> 20 25
+
+(b) C51: Effective rank   
+
+> 0200 400
+
+frames (M) 
+
+> 0.0 0.2 0.4
+
+(c) PQN: Dormant fraction   
+
+> 0200 400
+
+frames (M) 
+
+> 120 140 160 180
+
+(d) PQN: Effective rank  
+
+> C51 LN LN WN BN BN WN C51 PQN LN LN + HL-Gauss BN BN + HL-Gauss Figure 3 Representation diagnostics in hard-target C51 and target-free PQN.
+
+For each of the five C51 arms, panels (a,b) use all 78 matched game–seed identities at UTD 4. C51, LayerNorm, and BN use a constant learning rate and the two WN-projection arms (LN WN, BN WN) use a linear-decay learning rate, matching Figure 1. Panels (c,d) average PQN’s ten per-game seeds across 26 games. Both algorithms compute effective rank from centered post-ReLU 512-dimensional penultimate features. Confidence intervals are pointwise 95% stratified bootstrap confidence intervals obtained by resampling seed identities within each fixed game and recomputing the IQM. Color identifies the normalizer; in the C51 panels line style denotes the fixed-norm projection (WN), and in the PQN panels line style compares scalar regression and HL-Gauss for both normalizers. 
+
+4.2 PQN BN on Atari-26 at 400M frames 
+
+We next evaluate the selected all-batch protocol on all 26 Atari games using ten random seeds each. The primary comparison uses PQN’s standard scalar-regression objective and contrasts batch-statistic BN with LayerNorm. For comparison, we re-run Gallici et al. (2025)’s released running-statistic BN configuration to anchor the original negative result. We also add an additional HL-Gauss loss variant, where we replace the scalar regression loss with a Gaussian-smoothed categorical target and cross-entropy loss (Imani and White, 2018; Farebrother et al., 2024). The running-statistic BN configuration remains poor throughout the full horizon (Figure 2c) as previously reported by Gallici et al. (2025). Batch-statistic BN and LayerNorm attain final IQMs of 4.59 and 4.14 ,respectively. Under the tested online protocol, batch-statistic BN is therefore competitive with LayerNorm over the course of training and has a significantly higher final return. The matched HL-Gauss comparison provides a secondary objective check, with a slightly closer gap. While BN has a slight edge during training, both BN and LN final IQMs are ∼ 4.67 for HL-Gauss. Therefore, we demonstrate, that BN is competitive in PQN, if applied correctly. 
+
+4.3 What PQN BN establishes 
+
+The PQN experiments extend the forward-mode result beyond hard-target replay learning. The previously released running/running configuration reproduces severe BN degradation. Our Pong diagnostic shows that acting and bootstrap calls contribute differently to that degradation, and the selected all-batch protocol is competitive with LayerNorm over 400M frames. In particular, PQN shows that role-specific forward semantics remain consequential even when prediction, bootstrapping, and acting reuse one parameter set. The evidence therefore supports BN as a viable target-free PQN configuration under the tested protocol, not general BN superiority over LayerNorm. 
+
+## 5 Plasticity Diagnostics 
+
+Sokar et al. (2023) introduced the dormant-neuron score in deep RL, and prior value-learning work connected additional gradient updates to feature-rank collapse under bootstrapping (Kumar et al., 2021). Subsequent 6work used dormant-unit counts and feature-rank summaries to analyze loss of plasticity under nonstationarity and normalization (Lyle et al., 2024). CrossQ+WN subsequently tracked dead neurons together with parameter, gradient, and effective-learning-rate statistics when studying replay scaling, while XQC analyzed Hessian spectra and related conditioning statistics (Palenicek et al., 2025, 2026b). We include the same class of diagnostics as a sanity check: whether the qualitative representation patterns reported in that literature reoccur in hard-target C51 and target-free PQN. Across all 26 games with 3 seeds each at UTD 4, unnormalized C51 has the highest dormant fraction and lowest effective rank (Figure 3). Both BN variants have lower dormant-fraction IQMs than their LayerNorm counterparts throughout training and higher effective-rank IQMs after the first diagnostic. The two WN variants remain close to their unprojected counterparts relative to the difference between normalizers. The PQN diagnostics continue to evolve over 400M frames. Within each matched loss, BN generally has a lower dormant-fraction IQM than LayerNorm, and the HL-Gauss BN variant has a higher effective-rank IQM than its LayerNorm counterpart. Scalar BN and scalar LayerNorm have more similar effective ranks. The shared ordering reproduces the broad qualitative pattern reported in prior normalization studies (Palenicek et al., 2025, 2026b), but remains a descriptive regularity rather than a mechanism for the return results. 
+
+## 6 Conclusion 
+
+In this paper, we demonstrate that Batch normalization can substantially improve discrete-action value learning and is not uniformly harmful in value learning as often reported. Its success depends on the forward mode and careful application. If applied correctly, however, it can provide similar sample-efficiency benefits as previously reported in actor-critic settings. In C51, replacing stored target moments with current-minibatch statistics reverses BN degradation and allows stable update-to-data ratio scaling up to 12. In PQN, changing the acting and bootstrap protocols recovers BN performance even without replay or a separate target network. Across 26 Atari games at 400M frames, the selected batch-statistic configuration achieves comparable aggregate performance over training and a higher final aggregate score than LayerNorm. Together, these findings challenge the prevailing view that BN is ill-suited to discrete-action value learning and show that its reported failures can be reversed through appropriate forward-mode choices. 
+
+## References          
+
+> Rishabh Agarwal, Max Schwarzer, Pablo Samuel Castro, Aaron C. Courville, and Marc Bellemare. Deep reinforcement learning at the edge of the statistical precipice. In Advances in Neural Information Processing Systems , 2021. Marc G. Bellemare, Will Dabney, and Rémi Munos. A distributional perspective on reinforcement learning. In
+> International Conference on Machine Learning , 2017. Aditya Bhatt, Daniel Palenicek, Boris Belousov, Max Argus, Artemij Amiranashvili, Thomas Brox, and Jan Peters. CrossQ: Batch normalization in deep reinforcement learning for greater sample efficiency and simplicity. In
+> International Conference on Learning Representations , 2024. Jesse Farebrother, Jordi Orbay, Quan Vuong, Adrien Ali Taiga, Yevgen Chebotar, Ted Xiao, Alex Irpan, Sergey Levine, Pablo Samuel Castro, Aleksandra Faust, et al. Stop regressing: Training value functions via classification for scalable deep RL. In International Conference on Machine Learning , 2024. Scott Fujimoto, Herke van Hoof, and David Meger. Addressing function approximation error in actor-critic methods. In International Conference on Machine Learning , 2018. Scott Fujimoto, Pierluca D’Oro, Amy Zhang, Yuandong Tian, and Michael Rabbat. Towards general-purpose model-free reinforcement learning. In International Conference on Learning Representations , 2025. Matteo Gallici, Mattie Fellows, Benjamin Ellis, Bartomeu Pou, Ivan Masmitja, Jakob Nicolaus Foerster, and Mario Martin. Simplifying deep temporal difference learning. In International Conference on Learning Representations ,2025. Florin Gogianu, Tudor Berariu, Mihaela C. Rosca, Claudia Clopath, Lucian Busoniu, and Razvan Pascanu. Spectral normalisation for deep reinforcement learning: an optimisation perspective. In International Conference on Machine Learning , 2021.
+
+7Takuya Hiraoka, Takahisa Imagawa, Taisei Hashimoto, Takashi Onishi, and Yoshimasa Tsuruoka. Dropout Q-functions for doubly efficient reinforcement learning. In International Conference on Learning Representations , 2022. Shengyi Huang, Rousslan Fernand Julien Dossa, Chang Ye, Jeff Braga, Dipam Chakraborty, Kinal Mehta, and João G.M. Araújo. CleanRL: High-quality single-file implementations of deep reinforcement learning algorithms. 
+
+Journal of Machine Learning Research , 23(274):1–18, 2022. Ehsan Imani and Martha White. Improving regression performance with distributional losses. In International Conference on Machine Learning , 2018. Sergey Ioffe and Christian Szegedy. Batch normalization: Accelerating deep network training by reducing internal covariate shift. In International Conference on Machine Learning , 2015. Donghu Kim, Youngdo Lee, Minho Park, Kinam Kim, I Made Aswin Nahendra, Takuma Seno, Sehee Min, Daniel Palenicek, Florian Vogt, Danica Kragic, Jan Peters, Jaegul Choo, and Hojoon Lee. FlashSAC: Fast and stable off-policy reinforcement learning for high-dimensional robot control. In Robotics: Science and Systems , 2026. Aviral Kumar, Rishabh Agarwal, Dibya Ghosh, and Sergey Levine. Implicit under-parameterization inhibits data-efficient deep reinforcement learning. In International Conference on Learning Representations , 2021. Clare Lyle, Zeyu Zheng, Khimya Khetarpal, James Martens, Hado van Hasselt, Razvan Pascanu, and Will Dabney. Normalization and effective learning rates in reinforcement learning. In Advances in Neural Information Processing Systems , 2024. Volodymyr Mnih, Koray Kavukcuoglu, David Silver, et al. Human-level control through deep reinforcement learning. 
+
+Nature , 518:529–533, 2015. Daniel Palenicek, Florian Vogt, Joe Watson, and Jan Peters. Scaling off-policy reinforcement learning with batch and weight normalization. In Advances in Neural Information Processing Systems , 2025. Daniel Palenicek, Florian Vogt, Joe Watson, Ingmar Posner, Danica Kragic, and Jan Peters. XQCfD: Accelerating fast actor-critic algorithms with prior data and prior policies. arXiv preprint arXiv:2605.10734 , 2026a. Daniel Palenicek, Florian Vogt, Joe Watson, Ingmar Posner, and Jan Peters. XQC: Well-conditioned optimization accelerates deep reinforcement learning. In International Conference on Learning Representations , 2026b. Quang Pham, Chenghao Liu, and Steven C. H. Hoi. Continual normalization: Rethinking batch normalization for online continual learning. In International Conference on Learning Representations , 2022. Tim Salimans and Diederik P. Kingma. Weight normalization: A simple reparameterization to accelerate training of deep neural networks. In Advances in Neural Information Processing Systems , 2016. Ghada Sokar, Rishabh Agarwal, Pablo Samuel Castro, and Utku Evci. The dormant neuron phenomenon in deep reinforcement learning. In International Conference on Machine Learning , 2023. Richard S. Sutton and Andrew G. Barto. Reinforcement Learning: An Introduction . MIT Press, 2 edition, 2018. Théo Vincent, Yogesh Tripathi, Tim Faust, Abdullah Akgül, Yaniv Oren, Melih Kandemir, Jan Peters, and Carlo D’Eramo. Bridging the performance gap between target-free and target-based reinforcement learning. In International Conference on Learning Representations , 2026. 
+
+## A Implementation Details 
+
+This section specifies evaluation, Atari preprocessing, network architectures, optimizers, and training schedules that complement the role-specific BatchNorm semantics above. 
+
+A.1 Evaluation and uncertainty 
+
+We transform returns to human-normalized scores, 
+
+HNS( g) = R(g) − Rrandom (g)
+
+Rhuman (g) − Rrandom (g) , (3) and aggregate them with the interquartile mean (IQM) (Mnih et al., 2015; Agarwal et al., 2021). C51 AUC is the arithmetic mean HNS over each run’s evaluation grid, and the last evaluation occurs at 5M 80 1 2 3 4 50.00 0.05 0.10 0.15                               
+
+> (a) UTD 0.25
+> 0123450.0 0.1 0.2 0.3 0.4 0.5
+> (b) UTD 1
+> 0123450.0 0.2 0.4 0.6
+> (c) UTD 2
+> 0123450.0 0.2 0.4 0.6
+> (d) UTD 4
+> 0123450.0 0.2 0.4 0.6 0.8
+> (e) UTD 8
+> 0123450.0 0.2 0.4 0.6 0.8
+> (f) UTD 12
+> human-normalized IQM frames (M)
+> C51 LN BN LN WN BN WN Figure 4 Aggregate C51 learning curves across replay ratios.
+
+Human-normalized IQM over 26 games and three seeds at UTD 0.25 , 1, 2, 4, 8, and 12 . Each panel uses its own vertical scale. All BN arms use batch statistics at the bootstrap forward; “WN” denotes the fixed-norm projection. C51, LayerNorm, and BN use a constant learning rate, while the two fixed-norm-projection arms (LN WN, BN WN) use a linear-decay learning rate, matching Figure 1. Bands are marginal 95% seed-stratified bootstrap intervals conditional on the fixed game set. These curves are the longitudinal counterparts of Figure 1c,d. 
+
+frames. Marginal 95% intervals use 5,000 seed-stratified resamples conditional on the fixed 26-game set, while target-mode contrasts resample matched seeds within game. Relative UTD results divide by unnormalized C51 at UTD 0.25 .The Pong diagnostic uses 30 frame bins; AUC averages all bins, the final statistic averages the last 4M frames, and error bars are standard errors over five seeds. The 400M PQN archives contain 60 complete bins for every one of the ten seeds in each displayed arm–game cell. AUC averages the 60 human-normalized bin values within each run, while the endpoint uses the last bin. AUC, final IQM, curve intervals, and paired differences use 5,000 within-game seed resamples; paired contrasts use the same sampled seed identities for both arms. 
+
+A.2 Atari environments 
+
+Both studies use the same 26 games: Alien, Amidar, Assault, Asterix, BankHeist, BattleZone, Boxing, Breakout, ChopperCommand, CrazyClimber, DemonAttack, Freeway, Frostbite, Gopher, Hero, Jamesbond, Kangaroo, Krull, KungFuMaster, MsPacman, Pong, PrivateEye, Qbert, RoadRunner, Seaquest, and UpNDown. Human normalization uses the random and human reference scores of Mnih et al. (2015), following Agarwal et al. (2021). 9Table 1 C51 shared training hyperparameters (Atari 26-game suite). 
+
+Hyperparameter Value 
+
+Architecture 
+
+Convolutional encoder Conv (32 , 8×8, s4) –Conv (64 , 4×4, s2) –Conv (64 , 3×3, s1) 
+
+Dense (penultimate) layer 512 units Output head per-action, 51 atoms Hidden activation ReLU Initialization Kaiming-normal (ReLU gain); biases 0
+
+Distributional objective 
+
+Atoms 51 Support [vmin , v max ] [−10 , 10] 
+
+Bootstrap one-step return 
+
+Optimizer 
+
+Optimizer Adam Learning rate 2.5 × 10 −4
+
+Adam ϵ 0.01 /32 ≈ 3.13 × 10 −4
+
+Adam (β1, β 2) (0 .9, 0.999) 
+
+Discount γ 0.99 
+
+Replay and updates 
+
+Replay buffer size 10 6 transitions Minibatch size 32 
+
+Warm-up (learning starts) 20 ,000 decisions Target network update hard copy every 10 ,000 decisions Total budget 1.25 M decisions ( = 5 M frames) Parallel environments 1
+
+Exploration ( ϵ-greedy) 
+
+Start → end ϵ 1.0 → 0.01 
+
+Decay fraction first 10% of training 
+
+Evaluation 
+
+Frequency every 100 ,000 decisions Episodes per evaluation 10 
+
+Evaluation ϵ 0.001 
+
+Seeds per game 3 (over 26 games) 
+
+A.3 Hyperparameter tables 
+
+For reference, Table 1 collects the C51 configuration and Table 2 the PQN configuration. Values are as run; where the code retains a CleanRL default that the launchers override (e.g. the total budget and warm-up), the as-run value is listed. 10 Table 2 PQN hyperparameters (target-free, on-policy; 40 M Pong diagnostic and 400 M Atari-26 experiment). 
+
+Hyperparameter Value 
+
+Architecture 
+
+Convolutional encoder Conv (32 , 8, 4) –Conv (64 , 4, 2) –Conv (64 , 3, 1) 
+
+Dense (penultimate) layer 512 units Normalization every hidden layer (LayerNorm or BatchNorm); head unnormalized Output head scalar (regression) or 51-atom (HL-Gauss) 
+
+Optimizer 
+
+Optimizer RAdam Learning rate 2.5 × 10 −4 (constant) Gradient clipping global norm 10 
+
+Discount γ 0.99 
+
+Q(λ) trace λ 0.65 
+
+Rollout and updates (no replay, no target network) 
+
+Parallel environments 128 
+
+Rollout length 32 steps Transitions per update 128 × 32 = 4096 
+
+Minibatches per epoch 32 (size 128 )Epochs per update 2 (= 64 optimizer steps/update) 
+
+Exploration ( ϵ-greedy) 
+
+Start → end ϵ 1.0 → 0.001 
+
+Decay fraction first 10% of updates 
+
+BatchNorm 
+
+BN ϵ 10 −5
+
+Running momentum (Flax) 0.99 (running baseline); batch arms 0.9
+
+HL-Gauss objective (matched-objective arms) 
+
+Bins 51 
+
+Target clip [−10 , 20] 
+
+Gaussian width 0.75 bins 
+
+Horizons and evaluation 
+
+Pong diagnostic 40 M frames ( = 10 M transitions), 5 seeds Atari-26 experiment 400 M frames ( = 100 M transitions), 10 seeds Coupled greedy test 8 additional zero-ϵ environments 
+
+11 B Additional C51 Results 
+
+B.1 Per-environment learning curves 
+
+The following grids report the complete per-game view behind the aggregate UTD sweep. Each grid uses the same three seed identities and 5M-frame horizon as the corresponding point in Figure 1c,d. 0 1 2 3 4 5300 600 900 
+
+> eval return
+
+Alien      
+
+> 012345050 100
+
+Amidar      
+
+> 012345400 800
+
+Assault      
+
+> 012345400 800
+
+Asterix      
+
+> 012345020 40
+
+Bank Heist      
+
+> 01234504000 8000
+
+Battle Zone      
+
+> 012345
+> ¡80
+> ¡40 0
+> eval return
+
+Boxing      
+
+> 012345080 160
+
+Breakout      
+
+> 012345600 1200
+
+Chopper Command      
+
+> 012345025000 50000
+
+Crazy Climber      
+
+> 01234505000 10000
+
+Demon Attack      
+
+> 0123450612
+
+Freeway      
+
+> 012345400 800
+> eval return
+
+Frostbite      
+
+> 0123450300 600
+
+Gopher      
+
+> 01234501500 3000
+
+Hero      
+
+> 0123450200 400
+
+Jamesbond      
+
+> 0123450200 400
+
+Kangaroo      
+
+> 0123452000 4000
+
+Krull      
+
+> 01234506000 12000
+> eval return
+
+Kung Fu Master       
+
+> 0123451000 2000 3000
+
+Ms Pacman      
+
+> 012345
+
+frames (M) 
+
+> ¡20
+> ¡15
+> ¡10
+
+Pong      
+
+> 012345
+
+frames (M) 
+
+> ¡800
+> ¡400 0
+
+Private Eye      
+
+> 012345
+
+frames (M) 
+
+> 0800 1600
+
+Qbert      
+
+> 012345
+
+frames (M) 
+
+> 02500 5000
+
+Road Runner      
+
+> 012345
+
+frames (M) 
+
+> 200 400
+> eval return
+
+Seaquest      
+
+> 012345
+
+frames (M) 
+
+> 02500 5000
+
+Up N Down 
+
+Method 
+
+C51 LN BN LN+WN BN+WN 
+
+Figure 5 Per-environment C51 learning curves at UTD 0.25 . Curves are raw evaluation returns, averaged over three seeds; bands are one standard error. All BN arms use batch statistics at the bootstrap forward. WN denotes the fixed-norm projection. C51, LayerNorm, and BN use a constant learning rate, while LN+WN and BN+WN use a linear-decay learning rate, matching Figure 1. 
+
+12 0 1 2 3 4 5400 800 
+
+> eval return
+
+Alien 
+
+0 1 2 3 4 5060 120 
+
+Amidar 
+
+0 1 2 3 4 5500 1000 1500 
+
+Assault 
+
+0 1 2 3 4 51000 2000 
+
+Asterix 
+
+0 1 2 3 4 5020 40 
+
+Bank Heist 
+
+0 1 2 3 4 53000 6000 
+
+Battle Zone 
+
+0 1 2 3 4 5050 
+
+> eval return
+
+Boxing 
+
+0 1 2 3 4 50150 300 
+
+Breakout 
+
+0 1 2 3 4 5500 1000 
+
+Chopper Command 
+
+0 1 2 3 4 5050000 100000 
+
+Crazy Climber 
+
+0 1 2 3 4 505000 10000 
+
+Demon Attack 
+
+0 1 2 3 4 50816 
+
+Freeway 
+
+0 1 2 3 4 5400 800 
+
+> eval return
+
+Frostbite 
+
+0 1 2 3 4 502000 4000 
+
+Gopher 
+
+0 1 2 3 4 502500 5000 
+
+Hero 
+
+0 1 2 3 4 5050 100 
+
+Jamesbond 
+
+0 1 2 3 4 50500 1000 
+
+Kangaroo 
+
+0 1 2 3 4 52500 5000 7500 
+
+Krull 
+
+0 1 2 3 4 5015000 30000 
+
+> eval return
+
+Kung Fu Master 
+
+0 1 2 3 4 51000 2000 
+
+Ms Pacman 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+¡15 0
+
+Pong 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+¡800 0800 
+
+Private Eye 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+02000 4000 
+
+Qbert 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+08000 16000 
+
+Road Runner 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+500 1000 
+
+> eval return
+
+Seaquest 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+02500 5000 
+
+Up N Down 
+
+Method 
+
+C51 LN BN LN+WN BN+WN 0 1 2 3 4 5400 800 1200 
+
+> eval return
+
+Alien 
+
+0 1 2 3 4 5060 120 
+
+Amidar 
+
+0 1 2 3 4 5500 1000 1500 
+
+Assault 
+
+0 1 2 3 4 51000 2000 
+
+Asterix 
+
+0 1 2 3 4 50200 400 
+
+Bank Heist 
+
+0 1 2 3 4 505000 10000 
+
+Battle Zone 
+
+0 1 2 3 4 5025 50 
+
+> eval return
+
+Boxing 
+
+0 1 2 3 4 50100 200 
+
+Breakout 
+
+0 1 2 3 4 5400 800 1200 
+
+Chopper Command 
+
+0 1 2 3 4 5050000 100000 
+
+Crazy Climber 
+
+0 1 2 3 4 503000 6000 
+
+Demon Attack 
+
+0 1 2 3 4 5010 20 
+
+Freeway 
+
+0 1 2 3 4 5250 500 
+
+> eval return
+
+Frostbite 
+
+0 1 2 3 4 502000 4000 
+
+Gopher 
+
+0 1 2 3 4 503000 6000 
+
+Hero 
+
+0 1 2 3 4 5040 80 
+
+Jamesbond 
+
+0 1 2 3 4 501000 2000 
+
+Kangaroo 
+
+0 1 2 3 4 54000 6000 8000 
+
+Krull 
+
+0 1 2 3 4 5010000 20000 
+
+> eval return
+
+Kung Fu Master 
+
+0 1 2 3 4 5800 1600 2400 
+
+Ms Pacman 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+¡20 020 Pong 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+¡500 0500 
+
+Private Eye 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+2000 4000 
+
+Qbert 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+015000 30000 
+
+Road Runner 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+0800 1600 
+
+> eval return
+
+Seaquest 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+2000 4000 6000 Up N Down 
+
+Method 
+
+C51 LN BN LN+WN BN+WN Figure 6 Per-environment C51 learning curves at UTD 1 and 2. The top grid reports UTD 1 and the bottom grid UTD 
+
+2. Curves are raw evaluation returns, averaged over three seeds; bands are one standard error. Conventions follow Figure 5. 
+
+13 0 1 2 3 4 5400 800 1200 
+
+> eval return
+
+Alien 
+
+0 1 2 3 4 5080 160 
+
+Amidar 
+
+0 1 2 3 4 5500 1000 1500 
+
+Assault 
+
+0 1 2 3 4 51000 2000 3000 Asterix 
+
+0 1 2 3 4 50300 600 
+
+Bank Heist 
+
+0 1 2 3 4 56000 12000 
+
+Battle Zone 
+
+0 1 2 3 4 5020 40 
+
+> eval return
+
+Boxing 
+
+0 1 2 3 4 50150 300 
+
+Breakout 
+
+0 1 2 3 4 5500 1000 1500 
+
+Chopper Command 
+
+0 1 2 3 4 5050000 100000 
+
+Crazy Climber 
+
+0 1 2 3 4 502500 5000 
+
+Demon Attack 
+
+0 1 2 3 4 5010 20 
+
+Freeway 
+
+0 1 2 3 4 5300 600 
+
+> eval return
+
+Frostbite 
+
+0 1 2 3 4 52000 4000 
+
+Gopher 
+
+0 1 2 3 4 503000 6000 
+
+Hero 
+
+0 1 2 3 4 5080 160 
+
+Jamesbond 
+
+0 1 2 3 4 501500 3000 
+
+Kangaroo 
+
+0 1 2 3 4 54000 6000 8000 
+
+Krull 
+
+0 1 2 3 4 510000 20000 
+
+> eval return
+
+Kung Fu Master 
+
+0 1 2 3 4 5800 1600 2400 
+
+Ms Pacman 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+¡20 020 
+
+Pong 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+¡600 0600 
+
+Private Eye 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+02000 4000 
+
+Qbert 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+020000 40000 
+
+Road Runner 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+0800 1600 
+
+> eval return
+
+Seaquest 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+2000 4000 
+
+Up N Down 
+
+Method 
+
+C51 LN BN LN+WN BN+WN 0 1 2 3 4 5500 1000 
+
+> eval return
+
+Alien 
+
+0 1 2 3 4 5080 160 
+
+Amidar 
+
+0 1 2 3 4 5500 1000 1500 Assault 
+
+0 1 2 3 4 51500 3000 
+
+Asterix 
+
+0 1 2 3 4 50250 500 
+
+Bank Heist 
+
+0 1 2 3 4 54000 8000 
+
+Battle Zone 
+
+0 1 2 3 4 5025 50 
+
+> eval return
+
+Boxing 
+
+0 1 2 3 4 50150 300 
+
+Breakout 
+
+0 1 2 3 4 5400 800 1200 
+
+Chopper Command 
+
+0 1 2 3 4 5050000 100000 
+
+Crazy Climber 
+
+0 1 2 3 4 502500 5000 
+
+Demon Attack 
+
+0 1 2 3 4 5015 30 Freeway 
+
+0 1 2 3 4 5250 500 750 
+
+> eval return
+
+Frostbite 
+
+0 1 2 3 4 502000 4000 
+
+Gopher 
+
+0 1 2 3 4 504000 8000 
+
+Hero 
+
+0 1 2 3 4 50150 300 
+
+Jamesbond 
+
+0 1 2 3 4 502500 5000 
+
+Kangaroo 
+
+0 1 2 3 4 54000 6000 8000 
+
+Krull 
+
+0 1 2 3 4 58000 16000 
+
+> eval return
+
+Kung Fu Master 
+
+0 1 2 3 4 51000 2000 
+
+Ms Pacman 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+¡20 020 Pong 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+¡600 
+
+¡300 0
+
+Private Eye 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+03000 6000 
+
+Qbert 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+020000 40000 
+
+Road Runner 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+01000 2000 
+
+> eval return
+
+Seaquest 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+2000 4000 
+
+Up N Down 
+
+Method 
+
+C51 LN BN LN+WN BN+WN Figure 7 Per-environment C51 learning curves at UTD 4 and 8. The top grid reports UTD 4 and the bottom grid UTD 
+
+8. Curves are raw evaluation returns, averaged over three seeds; bands are one standard error. Conventions follow Figure 5. 
+
+14 0 1 2 3 4 5400 800 1200 
+
+> eval return
+
+Alien 
+
+0 1 2 3 4 5080 160 
+
+Amidar 
+
+0 1 2 3 4 5600 1200 
+
+Assault 
+
+0 1 2 3 4 51500 3000 
+
+Asterix 
+
+0 1 2 3 4 50400 800 
+
+Bank Heist 
+
+0 1 2 3 4 55000 10000 
+
+Battle Zone 
+
+0 1 2 3 4 5030 
+
+> eval return
+
+Boxing 
+
+0 1 2 3 4 50150 300 
+
+Breakout 
+
+0 1 2 3 4 5800 1600 
+
+Chopper Command 
+
+0 1 2 3 4 5050000 100000 
+
+Crazy Climber 
+
+0 1 2 3 4 502500 5000 
+
+Demon Attack 
+
+0 1 2 3 4 5015 30 Freeway 
+
+0 1 2 3 4 5500 1000 
+
+> eval return
+
+Frostbite 
+
+0 1 2 3 4 52000 4000 
+
+Gopher 
+
+0 1 2 3 4 505000 10000 
+
+Hero 
+
+0 1 2 3 4 50100 200 
+
+Jamesbond 
+
+0 1 2 3 4 501500 3000 
+
+Kangaroo 
+
+0 1 2 3 4 54000 6000 8000 
+
+Krull 
+
+0 1 2 3 4 58000 16000 
+
+> eval return
+
+Kung Fu Master 
+
+0 1 2 3 4 51000 2000 3000 
+
+Ms Pacman 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+¡20 020 
+
+Pong 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+0800 
+
+Private Eye 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+03000 6000 
+
+Qbert 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+020000 40000 
+
+Road Runner 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+01500 3000 
+
+> eval return
+
+Seaquest 
+
+0 1 2 3 4 5
+
+frames (M) 
+
+02000 4000 
+
+Up N Down 
+
+Method 
+
+C51 LN BN LN+WN BN+WN Figure 8 Per-environment C51 learning curves at UTD 12 . Curves are raw evaluation returns, averaged over three seeds; bands are one standard error. Conventions follow Figure 5. 
+
+15 C Additional PQN Results 
+
+Figure 9 shows the PQN per-game learning curves. 0 200 400 02500 5000 7500 
+
+Alien   
+
+> 0200 400 01000 2000
+
+Amidar    
+
+> 0200 400 012
+> £10 4
+
+Assault    
+
+> 0200 400 024
+> £10 5
+
+Asterix   
+
+> 0200 400 0500 1000 1500
+
+BankHeist   
+
+> 0200 400 0246
+> £10 4
+
+BattleZone   
+
+> 0200 400 050 100
+
+Boxing   
+
+> 0200 400 0200 400
+
+Breakout   
+
+> 0200 400 02
+> £10 5
+
+ChopperCommand   
+
+> 0200 400 01
+> £10 5
+
+CrazyClimber   
+
+> 0200 400 0.0 0.5 1.0
+> £10 5
+
+DemonAttack   
+
+> 0200 400 010 20 30
+
+Freeway   
+
+> 0200 400 0.0 0.5 1.0
+> £10 4
+
+Frostbite    
+
+> 0200 400 0.0 2.5 5.0 7.5
+> £10 4
+
+Gopher    
+
+> 0200 400 024
+> £10 4
+
+Hero   
+
+> 0200 400 0.0 0.5 1.0 1.5
+> £10 4
+
+Jamesbond   
+
+> 0200 400 0.0 0.5 1.0
+> £10 4
+
+Kangaroo    
+
+> 0200 400 0.25 0.50 0.75 1.00
+> £10 4
+
+Krull   
+
+> 0200 400 0246
+> £10 4
+
+KungFuMaster   
+
+> 0200 400 02000 4000
+
+MsPacman   
+
+> 0200 400
+> ¡20 020
+
+Pong   
+
+> 0200 400 01000 2000
+
+PrivateEye    
+
+> 0200 400 0123
+> £10 4
+
+Qbert   
+
+> 0200 400 0123
+> £10 5
+
+RoadRunner   
+
+> 0200 400 0.0 0.5 1.0
+> £10 4
+
+Seaquest   
+
+> 0200 400 0123
+> £10 5
+
+UpNDown LN BN running BN LN + HL-Gauss BN + HL-Gauss 
+
+frames (millions) greedy-test episode return 
+
+Figure 9 Per-environment coupled greedy-test learning curves over 400M Atari frames. For each game, curves show the mean raw return and one standard error across all ten seeds. The gray curve (crosses) shows the released running-statistic BN configuration from Gallici et al. (2025). Green and orange identify scalar-regression and HL-Gauss LayerNorm; blue and purple show the corresponding batch-statistic BN configurations. Circles and triangles distinguish the scalar and HL-Gauss objectives. 
+
+16 D Discrete-Action Actor-Critic Instantiation on Atari 
+
+The main paper studies BatchNorm forward modes in value-based learners. For completeness, we report an actor–critic instantiation of the same BN recipe for discrete actions using MR.Q’s (Fujimoto et al., 2025) Gumbel-Softmax trick. XQC (Palenicek et al., 2026b) pairs a CrossQ-style batch-statistic BN critic with a fixed-norm weight projection in a TD3-style actor–critic agent; we run it on discrete-action Atari against two baselines: MR.Q (Fujimoto et al., 2025), a stronger and considerably more complex agent, and TD3 (Fujimoto et al., 2018). All three use the same protocol: 26 games, five seeds, and 5 × 10 6 frames ( 1.25 × 10 6 policy steps at action repeat 4), with evaluation every 2 × 10 5 frames. These results lie outside the paper’s value-based scope and are included only to indicate that the recipe transfers to the actor–critic setting; they are not part of the paper’s claims. Figure 10 reports the human-normalized IQM over the 26 games. At 5M frames the final IQMs are 1.30 
+
+(95% interval [1 .24 , 1.37] ) for MR.Q, 1.02 ([0 .93 , 1.13] ) for XQC, and 0.55 ([0 .50 , 0.60] ) for TD3: XQC reaches roughly human-level aggregate performance and clearly exceeds TD3, while the more complex MR.Q remains ahead. Figure 11 reports four aggregate metrics with 95% stratified bootstrap intervals (Agarwal et al., 2021): XQC and MR.Q are close on the median ( 1.05 versus 1.11 ) and optimality gap ( 0.28 versus 0.25 ), while MR.Q’s advantage is larger on the IQM and mean, which weight its large gains on high-ceiling games. The per-environment curves in Figure 12 show the heterogeneity behind the aggregate—XQC exceeds TD3 on 24 of the 26 games and outperforms MR.Q on 9. 0 1 2 3 4 5
+
+frames (millions)  
+
+> 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4
+> human-normalized IQM
+> XQC MR.Q TD3
+> Figure 10 Actor–critic Atari aggregate.
+
+Human-normalized IQM over 26 games (five seeds) for XQC, MR.Q, and TD3 to 5M frames ( 5 × 10 6 frames at action repeat 4). Bands are 95% seed-bootstrap intervals; the dotted line marks human-level performance. 0.50 0.75 1.00 1.25           
+
+> TD3 XQC MR.Q
+> Median
+> 0.50 0.75 1.00 1.25
+> IQM
+> 1.2 1.6 2.0
+> Mean
+> 0.24 0.32 0.40 0.48
+> Optimality Gap Human-normalized score
+> Figure 11 Aggregate metrics (actor–critic Atari).
+
+Median, IQM, mean, and optimality gap of the human-normalized score at 5M frames over 26 games (five seeds), with 95% stratified bootstrap intervals (Agarwal et al., 2021). Higher is better except for the optimality gap. 
+
+17 0 2 41000 2000 3000 4000 
+
+Alien 
+
+0 2 40200 400 600 800 
+
+Amidar 
+
+0 2 4250 500 750 1000 1250 1500 
+
+Assault 
+
+0 2 41000 2000 3000 
+
+Asterix 
+
+0 2 40250 500 750 1000 
+
+BankHeist 
+
+0 2 4010000 20000 30000 40000 
+
+BattleZone 
+
+0 2 4020 40 60 80 100 
+
+Boxing 
+
+0 2 4020 40 60 
+
+Breakout 
+
+0 2 42000 4000 6000 
+
+ChopperCommand 
+
+0 2 4025000 50000 75000 100000 125000 
+
+CrazyClimber 
+
+0 2 402000 4000 6000 
+
+DemonAttack 
+
+0 2 4010 20 30 
+
+Freeway 
+
+0 2 401000 2000 3000 4000 
+
+Frostbite 
+
+0 2 405000 10000 15000 
+
+Gopher 
+
+0 2 4010000 20000 
+
+Hero 
+
+0 2 40200 400 600 
+
+Jamesbond 
+
+0 2 402500 5000 7500 10000 12500 
+
+Kangaroo 
+
+0 2 42000 4000 6000 8000 10000 
+
+Krull 
+
+0 2 4010000 20000 30000 
+
+KungFuMaster 
+
+0 2 41000 2000 3000 4000 5000 
+
+MsPacman 
+
+0 2 4
+
+¡20 
+
+¡10 010 
+
+Pong 
+
+0 2 402000 4000 6000 
+
+PrivateEye 
+
+0 2 405000 10000 
+
+Qbert 
+
+0 2 4010000 20000 30000 40000 50000 
+
+RoadRunner 
+
+0 2 401000 2000 3000 4000 
+
+Seaquest 
+
+0 2 4020000 40000 60000 80000 
+
+UpNDown 
+
+XQC MR.Q TD3 
+
+frames (millions) episode return Figure 12 Per-environment actor–critic Atari curves. Raw evaluation return for XQC, MR.Q, and TD3 on each of the 26 games, averaged over five seeds; bands are one standard error. Evaluation is every 2 × 10 5 frames to 5 × 10 6 frames. 
+
+18
