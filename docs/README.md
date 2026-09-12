@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-11</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-12</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 18 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 14 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>5</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>13</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-11 21:53:42 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-12 22:02:43 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,10 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今天筛完 18 篇论文，精读 5 篇、速读 13 篇，头条是拿下满分 10.0 的 CoRA-NAS 与 9.0 的 CAP。</p>
-<p>最值得看的两条线：一是用“粗排序+锚点残差精修”做神经架构搜索的 CoRA-NAS，二是靠学习去噪实现连续自适应感知盲人形机器人行走的 CAP。</p>
-<p>普通读者建议先从这两篇精读的摘要与方法图入手，再按兴趣挑 MSCA-UNet、扩散策略离线强化学习等速读篇目补背景。</p>
+<p>今日共生成 14 篇推荐（精读 1 篇，速读 13 篇）</p>
+<p>精读：《Morphology-Aware Human Motion Retargeting for Wheeled-Humanoid Loco-Manipulation》（8.0/10）</p>
+<p>速读：《How to Make the Gradient Mapping Small for Constrained Stochastic Min-Max Problems and Beyond》（7.0/10）, 《HaWMPO: Hallucination-Aware World Model-based Policy Optimization for Generalist Robot Policy》（7.0/10）, 《Geometric Distributional Control: Learning Progress with Partial Structural Knowledge》（6.0/10）</p>
+<p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +74,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">5 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="CoRA-NAS: Coarse Ranking and Anchor-Residual Refinement for Neural Architecture Search">CoRA-NAS: Coarse Ranking and Anchor-Residual Refinement for Neural Architecture Search</span></li><li><span class="dpr-home-dashboard-paper-title" title="CAP: Continuously Adaptive Perception-Blind Humanoid Locomotion via Learned Denoising">CAP: Continuously Adaptive Perception-Blind Humanoid Locomotion via Learned Denoising</span></li><li><span class="dpr-home-dashboard-paper-title" title="Mind the Phase: Effective Rank and Representation Health in Legged Locomotion">Mind the Phase: Effective Rank and Representation Health in Legged Locomotion</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Morphology-Aware Human Motion Retargeting for Wheeled-Humanoid Loco-Manipulation">Morphology-Aware Human Motion Retargeting for Wheeled-Humanoid Loco-Manipulation</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>2</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -89,9 +90,9 @@
     <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="MSCA-UNet: Multi-Scale Context and Attention U-Net for Image Segmentation">MSCA-UNet: Multi-Scale Context and Attention U-Net for Image Segmentation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Convex optimization on moment polytopes: Hadamard mirror descent and efficient algorithms for quantum functionals and other tensor parameters">Convex optimization on moment polytopes: Hadamard mirror descent and efficient algorithms for quantum functionals and other tensor parameters</span></li><li><span class="dpr-home-dashboard-paper-title" title="Noisy-Space Policy Gradient for Diffusion Policies in Offline Reinforcement Learning">Noisy-Space Policy Gradient for Diffusion Policies in Offline Reinforcement Learning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="How to Make the Gradient Mapping Small for Constrained Stochastic Min-Max Problems and Beyond">How to Make the Gradient Mapping Small for Constrained Stochastic Min-Max Problems and Beyond</span></li><li><span class="dpr-home-dashboard-paper-title" title="HaWMPO: Hallucination-Aware World Model-based Policy Optimization for Generalist Robot Policy">HaWMPO: Hallucination-Aware World Model-based Policy Optimization for Generalist Robot Policy</span></li><li><span class="dpr-home-dashboard-paper-title" title="Geometric Distributional Control: Learning Progress with Partial Structural Knowledge">Geometric Distributional Control: Learning Progress with Partial Structural Knowledge</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>8</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>4</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>9</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span></div>
 </section>
 </div>
 
