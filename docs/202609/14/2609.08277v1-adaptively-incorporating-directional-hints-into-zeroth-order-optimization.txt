@@ -1,0 +1,2168 @@
+Title: Adaptively Incorporating Directional Hints into Zeroth-Order Optimization
+
+URL Source: https://arxiv.org/pdf/2609.08277v1
+
+Published Time: Wed, 09 Sep 2026 02:59:59 GMT
+
+Number of Pages: 22
+
+Markdown Content:
+# Adaptively Incorporating Directional Hints into Zeroth-Order Optimization 
+
+Alexander Ryabchenko 
+
+University of Toronto and Vector Institute 
+
+alex.rbch.research@gmail.com 
+
+Jian Qian 
+
+University of Hong Kong 
+
+jianqian@hku.hk 
+
+Wenlong Mou 
+
+University of Toronto and Vector Institute 
+
+wenlong.mou@utoronto.ca 
+
+# Abstract 
+
+We study zeroth-order optimization of non-convex functions with the aid of directional hints, which are cheap but potentially inaccurate approximations of the true gradient direction, given by linear subspaces at each iteration. To leverage these hints adaptively while maintaining robustness to their quality, we introduce Control-Variate Zeroth-Order Descent (CV-ZOD), a new framework that refines the classical zeroth-order gradient estimator with a control variate that can be set based on the directional hints. We first show that the oracle algorithm that optimally sets the reference vector and step size at each iteration achieves a convergence rate that interpolates between the first-order O(1 /T ) rate and the zeroth-order O(d/T ) rate, depending on the quality of the hints along the trajectory. We then develop a practical variant of CV-ZOD that achieves the same oracle guarantee up to logarithmic factors, without any prior knowledge of the hint quality. We validate the method empirically on simulation-based scientific optimization tasks, demonstrating sustained progress on nonconvex landscapes where zeroth-order descent is slower and existing guided methods stall as guidance deteriorates. 
+
+# 1 Introduction 
+
+Many real-world optimization problems involve non-convex objectives whose gradients are unavailable or pro-hibitively expensive to compute. In scientific applications, the objective may be defined by a simulator or experimental pipeline that cannot be differentiated end-to-end [LMW19]. In machine learning, the model itself may be accessible only through an API, as in black-box adversarial attacks on deployed classifiers [CZS +17, IEAL18], prompt optimization for API-gated language models [ZCD +24], or memory-efficient fine-tuning of large models, where backpropagation is replaced by forward-pass-only updates [MGN +23]. Zeroth-order methods, which rely only on function evaluations, are a natural tool in these settings. However, their convergence rates typically scale with the dimension d, making them impractical in high-dimensional problems. At the same time, auxiliary information about the objective is often available. A pretrained surrogate, a smaller related model, or a low-rank approximation may suggest promising descent directions. For example, the gradient of a distilled model can provide a cheap proxy for the gradient of a large target model in prompt optimization, while a differentiable foundation model can guide black-box optimization in scientific experiments. Using such information effectively, however, is delicate. Blindly following the suggested directions can lead to rapid early progress when they are well aligned with the true gradient, but the resulting bias may ultimately limit convergence. Conversely, ignoring this information altogether reverts to the standard dimension-dependent cost of zeroth-order optimization. Ideally, we would like to use directional hints when they are informative and adaptively fall back to unbiased zeroth-order descent when they are not, without any prior knowledge of their quality along the trajectory. The idea of incorporating prior directional information into zeroth-order optimization has been explored in several works [MMT +19, CWZ21]. These methods bias the search distribution toward the suggested directions, which can accelerate convergence when the guidance is well aligned with the true gradient. However, this modification also biases the resulting gradient estimators: they no longer target the gradient of the original objective, but rather a reweighted version of it. Consequently, the optimization dynamics are distorted by the guidance, which can limit progress. Moreover, existing convergence analyses for these approaches are restricted to convex objectives. This motivates the central question: Can we incorporate directional hints into non-convex zeroth-order optimization in a way that adapts to their quality along the trajectory without altering the underlying optimization dynamics? 
+
+In this paper, we answer this question affirmatively. We study a general interaction model in which the hints are revealed as low-dimensional linear subspaces at each iteration, allowing different sources of directional information 1arXiv:2609.08277v1 [cs.LG] 8 Sep 2026 to be treated within a common framework. Our contributions are as follows: 1. Control-Variate Zeroth-Order Descent (CV-ZOD) framework (Section 3). We introduce a new zeroth-order descent scheme, CV-ZOD, built on a control-variate gradient estimator [AL24, Owe13, GBB04] that uses a reference vector to reduce variance while remaining unbiased for the smoothed gradient. The variance of the estimator is governed by the accuracy of the reference vector relative to the true gradient. By instantiating the reference vector through projection of the true gradient onto the hint subspace and choosing the optimal stepsize, the resulting oracle algorithm interpolates between the first-order O(1 /T ) rate when the hints are well-aligned and the zeroth-order O(d/T ) rate when they are uninformative. 2. A fully zeroth-order adaptive instantiation (Section 4). In practice, the oracle information of projected gradient and optimal stepsize is unavailable. We develop a practical variant of CV-ZOD that estimates these quantities using only function evaluations, and show that it achieves the same adaptive convergence guarantee, up to logarithmic factors, with O(k + log T ) queries per iteration. As a result, the adaptive version of CV-ZOD can achieve the interpolating convergence rates without any prior knowledge of the hint quality along the trajectory. 3. Simulation-based scientific optimization tasks (Section 5). We validate the framework on scientific optimization tasks arising from fluid dynamics and computational chemistry, using cheap surrogate models to generate directional hints. We show that CV-ZOD achieves significant speedup over existing zeroth-order methods, and much lower final error than existing guided methods that rely on biased gradient estimation. 
+
+Related work. Prior theoretical work has explored incorporating surrogate gradient information into zeroth-order optimization, but the existing analyses have so far been limited to convex objectives and relied on biased gradient estimators that reshape the optimization dynamics around the surrogate; the resulting algorithms do not follow the gradient flow of f , but one shaped by the surrogate. Specifically, [MMT +19] introduce Guided Evolutionary Strategies (GES), which bias the search distribution along the guiding subspace and analyze the bias-variance tradeoff of the resulting estimator, but provide no convergence guarantees. [CWZ21] analyze the Prior-Guided Random Gradient-Free (PRGF) method, which uses a similar biased gradient estimator, and obtain convergence rates that improve with the cosine similarity between the prior and the true gradient; however, their analysis relies essentially on convexity and a bounded level set assumption, precluding a direct extension to non-convex objectives. See Appendix A for a more detailed discussion. A complementary approach in scientific optimization is Bayesian optimization, which selects experiments through a probabilistic model of objective values. Applications include reaction optimization [SSL +21] and the discovery of improved photocatalyst formulations [BMG +20]. CV-ZOD instead uses directional hints to reduce the variance of a zeroth-order gradient estimator while retaining its smoothed-gradient expectation. The black-box machine-learning applications discussed above provide further settings in which cheap surrogate gradients may supply such hints. 
+
+# 2 Problem Setting 
+
+This paper considers the unconstrained minimization problem 
+
+f ∗ := min 
+
+> x∈Rd
+
+f (x),
+
+where d ∈ N is the dimension and f : Rd → R is the differentiable objective. Throughout, f is taken to be 
+
+B-Lipschitz, i.e., ∥∇ f (x)∥ ≤ B for all x ∈ Rd, and L-smooth, i.e., 
+
+f (y) − f (x) − ⟨∇ f (x), y − x⟩ ≤ L 
+
+> 2
+
+∥y − x∥2 for all x, y ∈ Rd.
+
+We study iterative algorithms that access f only through a zeroth-order oracle , which returns the scalar value 
+
+f (x) for any query x ∈ Rd, and that, at each iteration, are provided with a directional hint in the form of a low-dimensional linear subspace of Rd. Figure 1 depicts the resulting interaction. Formally, the algorithm is initialized at an arbitrary point x1 ∈ Rd and runs for T ∈ N iterations. At iteration 
+
+t ∈ [T ], the environment reveals a hint subspace St ∈ Gr k(Rd), where Gr k(Rd) denotes the set of k-dimensional linear subspaces of Rd. The algorithm then issues a batch of zeroth-order queries and selects the next iterate xt+1 .After T iterations, it returns an output point ¯x ∈ Rd based on the information collected during the interaction. For the descent schemes considered below, every step size αt is strictly positive. 2Zeroth-Order Optimization with Directional Hints 
+
+Parameters : horizon T , hint subspace dimension k ∈ [d].
+
+Input : initial point x1 ∈ Rd.For each iteration t = 1 , 2, . . . , T :1. The environment reveals a hint subspace St ∈ Gr k(Rd).2. The algorithm makes queries to the zeroth-order oracle and selects the next iterate xt+1 .
+
+Output : point ¯x ∈ Rd selected using the information collected over the T iterations. Figure 1: Zeroth-order optimization with directional hints. Performance is measured by the stationarity of the output : specifically, we seek to control E[∥∇ f (¯ x)∥2]. Here, the expectation is with respect to all randomness that can affect the output point ¯x: the algorithm’s internal randomization and the hint-generation process that generates hints (St)Tt=1 , as specified in the next paragraph. 
+
+Hint generation model. We impose no distributional or structural assumptions on the mechanism that produces hint subspaces. The sequence (St)Tt=1 may be deterministic or random, and may be chosen adaptively, subject only to a non-anticipation condition. Formally, let (Ft)Tt=1 be a filtration such that Ft captures all randomness available before iteration t, including the iterate xt. We require only that St be Ft-measurable. Equivalently, the hint revealed at iteration t may depend on the current iterate and all past information, but not on the algorithm’s internal randomness within the same iteration. For example, given access to differentiable surrogates f ′
+
+> 1
+
+, . . . , f ′
+
+> k
+
+,our framework accommodates the natural hint choice St = span {∇ f ′
+
+> 1
+
+(xt), . . . , ∇f ′
+
+> k
+
+(xt)}.We quantify the quality of the hint St via the principal angle between St and the current gradient, defined as 
+
+θt := ∠(∇f (xt), St) = arccos 
+
+ ∥PSt ∇f (xt)∥∥∇ f (xt)∥
+
+
+
+,
+
+with the convention θt := 0 when ∇f (xt) = 0 . The angle θt measures how much of the current gradient is captured by St. The sequence (θt)Tt=1 is itself a stochastic process adapted to (Ft)Tt=1 , and our convergence guarantees are stated in terms of its realized distribution along the trajectory rather than any worst-case bound. 
+
+Additional notation. We write [n] := {1, . . . , n } for n ∈ N. For a subspace S ⊆ Rd, we denote by PS the orthogonal projector onto S and by S⊥ its orthogonal complement, with the shorthand P ⊥S := PS⊥ . For vectors 
+
+v1, . . . , v m ∈ Rd, we write span {v1, . . . , v m} for their linear span. For k ∈ { 0, . . . , d }, we denote by Gr k(Rd) the Grassmannian of k-dimensional linear subspaces of Rd, with Gr 0(Rd) consisting of the trivial subspace {0} alone. 
+
+# 3 Control-Variate Framework for Zeroth-Order Descent 
+
+This section introduces the Control-Variate Zeroth-Order Descent (CV-ZOD) framework. Section 3.1 constructs a gradient estimator (2) that, given an arbitrary reference vector, refines it into an unbiased estimate of the smoothed gradient with variance controlled by how close the reference vector is to the true gradient. Section 3.2 embeds this estimator into an iterative descent scheme in which a fresh reference vector and step size are chosen at each iteration, and establishes a convergence guarantee (Theorem 3.4) governed by the interplay between the two along the trajectory. The framework is agnostic to how reference vectors and step sizes are chosen; Section 3.3 specializes it to directional hints and identifies the oracle choices that serve as a benchmark for Section 4, where we match this benchmark using only function evaluations. 
+
+## 3.1 Gradient Estimation with Control Variates 
+
+We recall standard zeroth-order tools [GL13, NS17, BG19] before introducing our control-variate estimator. 
+
+Preliminaries: Gaussian smoothing and the classical gradient estimator. For a smoothing parameter τ > 0,we define the τ -smoothed objective by 
+
+f τ (x) := Eu∼N (0 ,I d) [f (x + τ u )] for all x ∈ Rd.
+
+3The following lemma records the basic approximation properties of this Gaussian smoothing. 
+
+Lemma 3.1 (Theorems 1-3 in [NS17]) The function f τ is differentiable, L-smooth, and, for all x ∈ Rd, satisfies 
+
+|f τ (x) − f (x)| ≤ τ 2
+
+2 Ld and ∥∇ f τ (x) − ∇ f (x)∥ ≤ τ
+
+2 L(d + 3) 3/2.
+
+Moreover, for all x ∈ Rd, ∇f τ (x) = Eu∼N (0 ,I d)
+
+ f (x+τ u ) 
+
+> τ
+
+u.
+
+By taking τ sufficiently small, the smoothed objective f τ and its gradient ∇f τ can be made arbitrarily close to f
+
+and ∇f , respectively. The final identity expresses ∇f τ (x) through function evaluations alone and motivates the classical (two-point) zeroth-order gradient estimator :
+
+G(x; u) := f (x + τ u ) − f (x)
+
+τ u, where u ∼ N (0 , I d), (1) whose properties are summarized below. 
+
+Lemma 3.2 (Theorem 3.1 in [GL13]) For all x ∈ Rd, Eu∼N (0 ,I d)[G(x; u)] = ∇f τ (x) and 
+
+Eu∼N (0 ,I d)
+
+∥G(x; u) − ∇ f (x)∥2 ≤ 4( d + 5) ∥∇ f (x)∥2 + τ 2L2(d + 6) 3.
+
+The d-factor in the first term of the mean-squared error bound reflects the cost of isotropic exploration: (1) probes all directions equally, without any mechanism to prioritize the gradient direction. 
+
+The control-variate gradient estimator. For every x ∈ Rd, define the control-variate gradient estimator parameterized by a reference vector m ∈ Rd as 
+
+G(x, m ; u) := m + f (x + τ u ) − f (x) − ⟨ m, τ u ⟩
+
+τ u, where u ∼ N (0 , I d). (2) The construction applies the classical zeroth-order estimator to f (·) − ⟨ m, ·⟩ , estimating the residual ∇f (x) − m
+
+and adding m back. Equivalently, rearranging gives G(x, m ; u) = G(x; u)+( Id −uu ⊤)m. The term (Id −uu ⊤)m
+
+is a zero-mean control variate: it leaves the bias unchanged while reducing variance when m approximates ∇f (x).The next lemma makes this precise. 
+
+Lemma 3.3 For all x, m ∈ Rd, it holds that Eu∼N (0 ,I d) [G(x, m ; u)] = ∇f τ (x). Moreover, 
+
+Eu∼N (0 ,I d)
+
+∥G(x, m ; u) − ∇ f (x)∥2 ≤ 2( d + 1) ∥m − ∇ f (x)∥2 + 8 τ 2L2d3
+
+When m closely approximates ∇f (x), the leading term d∥m − ∇ f (x)∥2 becomes small, substantially improving over Lemma 3.2 in which the corresponding term scales as d ∥∇ f (x)∥2.
+
+## 3.2 Descent Scheme and General Convergence Guarantee 
+
+We now embed the control-variate estimator into an iterative descent scheme (Algorithm 1). At each iteration t, the algorithm selects a reference vector mt and a step size αt, draws a fresh exploration direction ut ∼ N (0 , I d), and takes a gradient step using the control-variate estimator G(xt, m t; ut). The final output is sampled from the iterates with probabilities proportional to the step sizes taken. 
+
+Algorithm 1: Control-Variate Zeroth-Order Descent (CV-ZOD) 
+
+Input : Initial point x1 ∈ Rd.For each iteration t = 1 , 2, . . . , T :1. Select the reference vector mt and step-size αt > 0.2. Update xt+1 = xt − αtG(xt, m t; ut) for independently sampled ut ∼ N (0 , I d).
+
+Output : ¯x = xR, where R ∈ [T ] is sampled conditionally on the realized run with probabilities αt/ PTs=1 αs.The exploration direction ut is sampled from N (0 , I d) independently of all information available when it is drawn, including (xt, m t, α t). The reference vector and step size may depend arbitrarily on the history, including the current iterate and any external available information. 4The convergence of Algorithm 1 is governed by the interplay between the step sizes αt and the quality of the reference vectors mt. By Lemma 3.3, taking a step of size αt incurs estimation variance proportional to 
+
+α2 
+
+> t
+
+d ∥mt − ∇ f (xt)∥2 up to smoothing. Larger step sizes amplify this variance, while more accurate reference vectors reduce it. To quantify whether the step sizes are justified by the reference quality along the trajectory, we introduce the variance-descent balance 
+
+BγT := PTt=1 
+
+
+
+α2 
+
+> t
+
+d ∥mt − ∇ f (xt)∥2 − αt 
+
+> γL
+
+∥∇ f (xt)∥2
+
+
+
+, (3) which accumulates, over iterations, the variance cost of each step minus a descent credit, with the scale parameter 
+
+γ ≥ 1 controlling the relative weight between the two. We fix γ = C0 log(2 T 2) for most of our applications, where 
+
+C0 is the absolute constant from the following theorem. This theorem shows that, for a B-Lipschitz and L-smooth objective f , the sign and magnitude of BγT govern the convergence rate of Algorithm 1. 
+
+Theorem 3.4 (Convergence of CV-ZOD) Suppose Algorithm 1 uses a fresh standard Gaussian direction ut,conditionally on all information available before its draw, for every t ∈ [T ], and that max t∈[T ]∥mt∥ ≤ 2B almost surely. Then there exist absolute constants C0, C > 0 such that the following holds. For any δ ∈ (0 , 1) , set 
+
+ι := log(2 T /δ ), and suppose d ≥ ι and 0 < α t ≤ 1  
+
+> C0L ι
+
+for all t ∈ [T ]. Then, for γ = C0ι, with probability at least 1 − δ,
+
+> 1
+> L
+
+PTt=1 αt∥∇ f (xt)∥2 ≤ C
+
+
+
+D2 
+
+> f
+
++ B2 
+
+> L2
+
++ τ 2 T d 3 + BγT ι
+
+
+
+,
+
+where D2 
+
+> f
+
+:= 2 
+
+> L
+
+(f (x1) − f ∗). Moreover, if d ≥ log(2 T 2), γ = C0 log(2 T 2), 0 < α t ≤ 1/(γL ) for all t ∈ [T ],and τ ≤ B/L  
+
+> √T d 3
+
+, then x satisfies  
+
+> 1
+> L
+
+E∥∇ f (x)∥2 ≤ C E
+
+h D2   
+
+> f+B2/L 2+BγTlog(2 T2)
+> AT
+
+i
+
+,
+
+where AT := PTt=1 αt denotes the cumulative step size. 
+
+The proof, which appears in Appendix C, is based on careful control of self-normalized martingales arising from the interaction between the step sizes and the control-variate estimation error. The condition d ≥ ι = log(2 T /δ ) is mild in the high-dimensional regime we consider; when it fails, one may replace d by d + ι in all bounds. The bound interpolates between two familiar regimes. When the reference vectors are uninformative ( mt = 0 for all t), taking αt = 1 /(γLd ) ensures BγT ≤ 0 and recovers the standard zeroth-order rate O(d/T ) up to the factor γ, which is logarithmic for our choice γ = C0 log(2 T 2). When the reference vectors match the gradient ( mt = ∇f (xt) for all t), taking αt = 1 /(γL ) again gives BγT ≤ 0 and recovers the first-order rate O(1 /T ) up to the same logarithmic factor. In general, the quality of the reference vectors determines how large the step sizes can be while keeping BγT
+
+controlled, and thus the degree of acceleration beyond the zeroth-order baseline. 
+
+Remark 3.5 (The B2/L 2 term) The quantities D2 
+
+> f
+
+= 2 
+
+> L
+
+(f (x1) − f ∗) and B2/L 2 are not generally comparable. The former is the standard initial suboptimality and satisfies D2 
+
+> f
+
+≥ ∥∇ f (x1)∥2/L 2. The latter arises from the high-probability martingale concentration used in the proof. 
+
+## 3.3 Locally optimal choices from directional hints 
+
+Theorem 3.4 holds for arbitrary reference vectors and step sizes. To understand the best achievable rate given the hint subspaces (St)Tt=1 , consider the idealized choice mt = PSt ∇f (xt), which minimizes ∥m − ∇ f (xt)∥2 over 
+
+m ∈ S t. Under this choice, the residual satisfies ∥mt − ∇ f (xt)∥2 = sin 2 θt ∥∇ f (xt)∥2, and each summand of 
+
+BγT is non-positive whenever αt ≤ 1   
+
+> γLd sin 2θt
+
+.This motivates defining, for any realization of the trajectory, the oracle reference vector and step size: 
+
+m∗ 
+
+> t
+
+:= PSt ∇f (xt), α∗ 
+
+> t
+
+:= 1 
+
+> L
+
+min 
+
+n
+
+1, 1  
+
+> dsin 2θt
+
+o
+
+∈  1 
+
+> Ld
+
+, 1
+
+> L
+
+ . (4) They serve as a natural benchmark: α∗ 
+
+> t
+
+/γ is the largest step size for which the t-th summand of BγT remains non-positive under the best reference vector from St. An algorithm using (m∗ 
+
+> t
+
+, α ∗ 
+
+> t
+
+/γ ) at each iteration would ensure BγT ≤ 0, and Theorem 3.4 would yield  
+
+> 1
+> L
+
+E∥∇ f (x)∥2 ≤ C E
+
+h γ (D2 
+
+> f+B2/L 2)
+> A∗
+> T
+
+i
+
+, (5) 5where A∗ 
+
+> T
+
+:= PTt=1 α∗ 
+
+> t
+
+. This rate interpolates with the hint quality: when θt = 0 for all t, we have α∗ 
+
+> t
+
+= 1 /L and recover O(1 /T ); when θt = π/ 2, we have α∗ 
+
+> t
+
+= 1 /(Ld ) and recover O(d/T ).The quantities m∗ 
+
+> t
+
+and α∗ 
+
+> t
+
+can be viewed as locally optimal in the sense that they minimize the variance-descent balance at each iteration given only the current pair (xt, St), without knowledge of the future trajectory. While they depend on the unknown gradient and cannot be computed directly, approximating them from function evaluations is a natural goal. The following section shows that this can be done. 
+
+# 4 Main Results: Adaptive Convergence from Directional Hints 
+
+This section constructs a fully zeroth-order instantiation of CV-ZOD. Section 4.1 estimates the projected gradient and the squared norms of the full gradient and its component orthogonal to the hint subspace. Section 4.2 uses these estimates to choose the reference vector and an adaptive step size. Theorem 4.4 establishes a convergence bound governed by the cumulative oracle step size A∗ 
+
+> T
+
+evaluated along the algorithm’s realized trajectory. Proofs appear in Appendix D. 
+
+## 4.1 Zeroth-Order Estimation Primitives 
+
+Estimating the in-subspace gradient component. To construct the reference vector, we estimate the projected gradient PS ∇f (x) by probing the function once along each vector in an orthonormal basis of S. Algorithm 2 therefore uses k + 1 oracle queries, and its approximation guarantee is deterministic under L-smoothness. 
+
+Algorithm 2: P τf (x, S)
+
+Input : Point x ∈ Rd, subspace S of dimension k ∈ [d].1. Construct B = [ b1, . . . , b k] ∈ Rd×k with orthonormal columns spanning S.2. For j ∈ [k], compute byj = f (x+τ b j )−f (x) 
+
+> τ
+
+.3. Output Bby, where by = ( by1, . . . , byk)⊤.
+
+Lemma 4.1 (Deterministic projection estimation) For every x ∈ Rd and S ∈ Gr k(Rd), Algorithm 2 satisfies 
+
+∥P τf (x, S) − PS ∇f (x)∥2 ≤ kL 2τ 2
+
+4 .
+
+The bound follows directly by applying the smoothness remainder to each basis direction; in particular, no concentration argument or logarithmic oversampling is needed. 
+
+Estimating gradient norms. To set the step size adaptively, we estimate ∥∇ f (xt)∥2 and ∥PS⊥ 
+
+> t
+
+∇f (xt)∥2.Both quantities are squared norms of gradient projections, which can be approximated via a common primitive: Algorithm 3 computes a constant-factor approximation by averaging estimates from N Gaussian probes. 
+
+Algorithm 3: N τf (x, S, N )
+
+Input : Point x ∈ Rd, linear subspace S of Rd, number of sampled directions N .1. For i ∈ [N ], sample ui
+
+> iid
+
+∼ N (0 , I d) and compute byi = f (x+τ P S ui)−f (x) 
+
+> τ
+
+.2. Output 1
+
+> N
+
+PNi=1 by2 
+
+> i
+
+.
+
+Lemma 4.2 (Norm estimation) There exist absolute constants C, c > 0 such that for every x ∈ Rd, linear subspace S of Rd, τ > 0, δ ∈ (0 , 1) , and N ≥ C log(2 /δ ), it holds with probability at least 1 − δ that 
+
+N τf (x, S, N ) ∈  12 ∥PS ∇f (x)∥2 − cε, 32 ∥PS ∇f (x)∥2 + cε  ,
+
+where ε = τ 2L2(d2 + log 2(2 N/δ )) .
+
+The constant-factor accuracy suffices: the adaptive rule below uses these estimates only to identify the correct scale of α∗ 
+
+> t
+
+up to a constant factor. 64.2 Adaptive guarantees 
+
+We now combine the two estimation primitives. The reference vector mt is set using Algorithm 2. The next lemma defines the adaptive step size αt via the norm estimates from Algorithm 3 and establishes two properties: it tracks the oracle step size α∗ 
+
+> t
+
+up to a constant factor, and it keeps the descent balance controlled. 
+
+Lemma 4.3 There exist absolute constants C, c 0, c 1 > 0 such that the following holds. For any δ ∈ (0 , 1) and 
+
+N ≥ C log(2 T /δ ), set ε := τ 2L2(d2 + log 2(2 N T /δ )) and define 
+
+αt := 1 
+
+> γ L
+
+min 
+
+
+
+1, N τf (xt,Rd,N )+ c1ε     
+
+> 16 dmax {0, N τf(xt,S⊥
+> t,N )−c1ε}
+
+
+
+, (6) 
+
+If the denominator is zero, define αt := 1 /(γL ). Then with probability at least 1 − δ, for all t ∈ [T ] simultaneously: 1. (Local Optimality) αt ≥ α∗ 
+
+> t
+> c0γ
+
+;2. (Balance Control) α2 
+
+> t
+
+d∥P ⊥St ∇f (xt)∥2 ≤ αt 
+
+> 2γL
+
+∥∇ f (xt)∥2 + c0 τ 2(d3 + d log 2(2 N T /δ )) .
+
+Local optimality ensures that the realized step sizes are within a constant factor of the locally optimal ones (oracle α∗ 
+
+> t
+
+); balance control ensures that BγT is dominated by smoothing terms. Substituting both mt and αt into Theorem 3.4 yields our main convergence result. 
+
+Theorem 4.4 There exist absolute constants C, c > 0 such that, if d ≥ log(2 T 2), Algorithm 1 is run with 
+
+mt = P τf (xt, St) and step sizes αt from (6) with γ = C0 log(2 T 2) and N = ⌈C log(2 T )⌉, and the smoothing radius satisfies τ ≤ B/L 
+
+√T (d3+dk ) log(2 T 2) , then  
+
+> 1
+> L
+
+E∥∇ f (x)∥2 ≤ c E
+
+h (D2  
+
+> f+B2/L 2) log(2 T)
+> A∗
+> T
+
+i
+
+,
+
+where A∗ 
+
+> T
+
+= PTt=1 α∗ 
+
+> t
+
+for α∗ 
+
+> t
+
+in (4) .
+
+Thus, the algorithm matches the locally optimal rate up to logarithmic factors. The cumulative oracle step size A∗
+
+> T
+
+governs the rate: the bound interpolates between O(1 /T ) and O(d/T ) depending on how well the hint subspaces align with the gradient along the trajectory. Algorithm 2 uses k + 1 queries, while the norm estimates in Algorithm 3 use O(log T ) queries. Hence the total per-iteration query cost beyond the single control-variate gradient query is 
+
+O(k + log T ) — modest when the hint dimension k is small relative to d.
+
+Remark 4.5 (Variance reduction by batching) Our analysis uses a single perturbation ut per iteration for the control-variate gradient step, with the remaining queries allocated to the estimation primitives. The framework extends directly to a batch of b independent directions u1 
+
+> t
+
+, . . . , u bt
+
+> iid
+
+∼ N (0 , I d). From Lemmas 3.1 and 3.3, 
+
+E
+
+
+
+> 1
+> b
+
+Pbi=1 G(xt, m t; uit) − ∇ f (xt) 2
+
+xt, m t
+
+
+
+≤ 4db ∥mt − ∇ f (xt)∥2 + 24 τ 2L2d3.
+
+Thus batching reduces estimator’s variance by a factor of b, up to Gaussian-smoothing bias. The convergence analysis can be modified accordingly with a proportional improvement in the convergence bound. 
+
+# 5 Simulations 
+
+We evaluate CV-ZOD on two simulation-based optimization tasks where a cheap surrogate provides directional hints of varying quality: a fluid inverse problem (Section 5.1) and molecular geometry optimization (Section 5.2). In both, the optimization updates access the expensive objective f through function evaluations, while the differentiable surrogate f ′ supplies rank-one hint subspaces St = span {∇ f ′(xt)}. We compare against classical zeroth-order descent (ZOD) [GL13], which uses no hints, and Guided Evolutionary Strategies (GES) [MMT +19], which incorporates the hint subspace through a biased estimator. All these methods share the same per-iteration query budget. For reference, we also include surrogate gradient descent (SurGD), which takes gradient steps along 
+
+∇f ′(xt), effectively optimizing the surrogate rather than f .
+
+Remark 5.1 (Implementation of the adaptive step size) In practice, we found it more stable and query-efficient to smooth the norm estimates over time using exponential discounting. Let at := N τf (xt, Rd, N full ) and bt := 
+
+7N τf (xt, S⊥ 
+
+> t
+
+, N ⊥), where Nfull and N⊥ are the numbers of probes allocated to the two norm estimates, and fix a discount factor γdisc ∈ [0 , 1) . Starting from A0 = B0 = 0 , we update 
+
+At = γdisc At−1 + at, Bt = γdisc Bt−1 + bt, αexp  
+
+> t
+
+= At
+
+Bt
+
+.
+
+In our simulations, we use this smoothed, recency-biased approximation to the adaptive rule. We support this implementation choice with an ablation experiment in Appendix B. 
+
+## 5.1 Fluid Inverse Problem 
+
+Fluid dynamics model. Recovering initial conditions from terminal observations in fluid systems is a classical PDE-constrained inverse problem with applications in geophysics and weather forecasting [Gun03]. We study a concrete instance: a passive dye is released into a two-dimensional incompressible fluid governed by the Navier– Stokes equations, discretized on an n × n spatial grid via the semi-Lagrangian advection–projection scheme of [Sta99]. The dye density ρs ∈ Rn×n evolves jointly with a velocity field vs ∈ Rn×n×2 over s = 0 , . . . , T sim time steps. Given a fixed initial density ρ0 and a prescribed target ρ⋆ ∈ Rn×n, the goal is to find an initial velocity field 
+
+v0 ∈ Rn×n×2 that minimizes f (v0) := ∥ρTsim (v0) − ρ⋆∥2F, where ρTsim (v0) is the terminal density obtained by evolving the dynamics from (ρ0, v 0). We identify the decision variable v0 with a vector x ∈ Rd for d = 2 n2 and view f : Rd → R accordingly. 
+
+Oracle and surrogate. To simulate the dynamics, we use the differentiable fluid solver provided by NVIDIA Warp [Mac22]. The solver supports reverse-mode automatic differentiation, but backpropagating through the full 
+
+Tsim -step rollout naively requires storing all intermediate density and velocity fields, at O(Tsim · n2) memory cost. Gradient checkpointing [GW00] can reduce this to O(√Tsim · n2) at the cost of additional forward recomputation, but the memory overhead remains substantial for long time horizons. Forward passes, used by our algorithm as zeroth-order oracle calls, require no intermediate storage. To construct the directional hints, we use a coarse surrogate f ′ : Rd → R defined by the same solver over a shorter time horizon Tsur ≪ Tsim . Since Tsur is small, backpropagation through f ′ is cheap. 
+
+Experimental setup. We set the grid size to n = 64 (d = 2 n2 = 8192 ), the simulation horizon to Tsim = 64 
+
+steps, and the surrogate horizon to Tsur = 16 steps. Each zeroth-order method receives a per-iteration budget of 16 
+
+function evaluations. ZOD and GES use all 16 queries for batching, while CV-ZOD allocates 12 to the batched control-variate gradient step, 2 to the gradient projection (Algorithm 2), and 2 to the norm estimates used by the adaptive step-size rule (Remark 5.1). Appendix B reports ablations over the discount factor and query allocation for this fluid problem; we present the best-performing configuration here. We use 15 paired seeds and run each trajectory for 100 optimization steps. All runs start from a low-variance Gaussian perturbation of zero initial velocity to avoid the nondifferentiable stationary point. The initial density ρ0
+
+and target ρ⋆ are a vertical and horizontal rectangle, respectively, centered on the grid (Figure 2, right). 0.00 0.02 0.04 0.06 0.08 0.10 0.12 0.14         
+
+> Objective
+> CV-ZOD ZOD GES SurGD 020 40 60 80 100
+> Iteration
+> 0.0 0.5 1.0
+> cos( θt)
+> Initial density Target density
+> SurGD (0.0895) GES (0.0466)
+> ZOD (0.0260) CV-ZOD (0.0119)
+
+Figure 2: Fluid inverse problem. Left: objective averaged over 15 runs (top) and cosine similarity between the surrogate and true gradients averaged over the same runs (bottom). Right: sample terminal density fields produced by each method, alongside the initial density and target. 8Results. Figure 2 (left) shows the objective value averaged over 15 paired runs, alongside cos( θt) for CV-ZOD and GES. Figure 2 (right) shows terminal density fields from a common seed. Early in optimization, when the surrogate gradient is well-aligned with the true gradient, CV-ZOD descends at a rate comparable to GES and surrogate descent. As the alignment deteriorates, GES plateaus and SurGD loses much of its early improvement. CV-ZOD, by contrast, transitions smoothly to zeroth-order exploration and reaches the lowest final objective. 
+
+## 5.2 Molecular Geometry Optimization 
+
+Conformation problem and energy surrogates. Finding low-energy molecular conformations is a central task in computational chemistry [Haw17]. Given a molecule with N atoms, the goal is to find atomic positions x ∈ R3N
+
+minimizing the potential energy. In practice, the true energy surface is accessed through expensive quantum-mechanical calculations. For our experiments, we substitute the MACE-OFF23 machine-learned interatomic potential [KMB +25] as a realistic proxy, setting f (x) := EMACE (x) and treating it as a zeroth-order oracle. As surrogate, we use the MMFF94 classical force field [Hal96], an analytic potential with closed-form gradients. Since MACE-OFF23 is itself a differentiable PyTorch model, its gradients are available as a diagnostic, allowing us to compute the true principal angle ∠(∇f (xt), St) along each trajectory for post-hoc analysis. 
+
+Experimental setup. We select three molecules spanning a range of dimensions ( d = 3 N ): efavirenz ( N = 30 ), adenosine ( N = 32 ), and benzylpenicillin ( N = 41 ). Starting geometries are taken from Wiggle150, a benchmark of highly strained molecular conformations [BNB +25], with ten conformations per molecule. Each trajectory runs for 100 optimization steps, with starting coordinates and seeds shared across the algorithms and the SurGD reference. We test the same algorithms with the same query allocations as in the fluid experiments (Section 5.1). 
+
+Results. Figure 3 shows energy changes and running cosine similarities for each molecule, averaged over 10 paired runs. In this setting, the surrogate gradient retains useful alignment with the true gradient throughout optimization, and both CV-ZOD and GES outperform unguided ZOD. The SurGD reference steadily reduces the true energy, illustrating the quality of the surrogate. CV-ZOD achieves a similar energy reduction and outperforms GES. −3 −2 −1 0            
+
+> Energy change (eV)
+> Efavirenz
+> N= 30 Adenosine
+> N= 32 Benzylpenicillin
+> N= 41
+> 050 100
+> Iteration
+> 0.0 0.5 1.0
+> cos( θt)
+> 050 100
+> Iteration
+> 050 100
+> Iteration CV-ZOD ZOD GES SurGD
+
+Figure 3: Molecular geometry optimization. MACE energy change from initialization (top; lower is better) and cosine similarity between surrogate and true gradients along CV-ZOD and GES trajectories (bottom) for efavirenz (d = 90 ), adenosine ( d = 96 ), and benzylpenicillin ( d = 123 ). Curves average ten paired runs, with shared vertical scales across molecules. CV-ZOD remains close to the surrogate-only reference (SurGD, dotted). 
+
+# 6 Discussion and Future Work 
+
+We introduced CV-ZOD, a framework for incorporating directional hints into zeroth-order optimization through control-variate gradient estimation. The key property of the framework is that hints affect only the variance of the gradient estimator, not its bias, so the optimization trajectory tracks the true objective regardless of hint quality. The adaptive step-size rule matches the oracle rate up to logarithmic factors without requiring any prior knowledge of the alignment between the hints and the gradient along the trajectory, at a per-iteration query cost of only O(k + log T ).9Several directions remain open. First, the current framework processes a single low-dimensional hint subspace per iteration. In practice, one may have access to multiple surrogates whose gradients accumulate over iterations; naively taking their span as the hint subspace causes the dimension k to grow, eroding low-dimensionality and increasing the required number of queries. A natural question is whether one can adaptively aggregate a fixed number of surrogate gradients in an optimal way—for instance, through an online learning scheme over the surrogates. Second, the most compelling test of the framework’s scalability would be in large-scale settings such as memory-efficient fine-tuning or prompt optimization of language models, where zeroth-order methods are already in use and surrogate gradients from smaller or distilled models arise naturally. Validating CV-ZOD in these high-dimensional regimes is an important direction for future work. 
+
+# References 
+
+[AL24] Sohei Arisaka and Qianxiao Li. Accelerating legacy numerical solvers by non-intrusive gradient-based meta-solving. In Proceedings of the 41st International Conference on Machine Learning , volume 235 of Proceedings of Machine Learning Research , pages 1689–1708. PMLR, 2024. [BG19] Krishnakumar Balasubramanian and Saeed Ghadimi. Zeroth-order nonconvex stochastic optimization: Handling constraints, high-dimensionality and saddle-points, 2019. [BMG +20] Benjamin Burger, Phillip M. Maffettone, Vladimir V. Gusev, Catherine M. Aitchison, Yang Bai, Xiaoyan Wang, Xiaobo Li, Ben M. Alston, Buyi Li, Rob Clowes, Nicola Rankin, Brandon Harris, Reiner Sebastian Sprick, and Andrew I. Cooper. A mobile robotic chemist. Nature , 583(7815):237– 241, 2020. [BNB +25] Rebecca R. Brew, Ian A. Nelson, Meruyert Binayeva, Amlan S. Nayak, Wyatt J. Simmons, Joseph J. Gair, and Corin C. Wagen. Wiggle150: Benchmarking density functionals and neural network potentials on highly strained conformers. Journal of Chemical Theory and Computation , 21(8):3922– 3929, 2025. https://doi.org/10.1021/acs.jctc.5c00015 .[CWZ21] Shuyu Cheng, Guoqiang Wu, and Jun Zhu. On the convergence of prior-guided zeroth-order optimiza-tion algorithms. In Advances in Neural Information Processing Systems (NeurIPS) , volume 34, pages 14620–14631, 2021. [CZS +17] Pin-Yu Chen, Huan Zhang, Yash Sharma, Jinfeng Yi, and Cho-Jui Hsieh. ZOO: Zeroth order optimization based black-box attacks to deep neural networks without training substitute models. In 
+
+Proceedings of the 10th ACM Workshop on Artificial Intelligence and Security (AISec) , pages 15–26, 2017. [FGL15] Xiequan Fan, Ion Grama, and Quansheng Liu. Exponential inequalities for martingales with applica-tions. Electronic Journal of Probability , 20(1):1–22, 2015. [GBB04] Evan Greensmith, Peter L. Bartlett, and Jonathan Baxter. Variance reduction techniques for gradient estimates in reinforcement learning. Journal of Machine Learning Research , 5:1471–1530, 2004. [GL13] Saeed Ghadimi and Guanghui Lan. Stochastic first- and zeroth-order methods for nonconvex stochastic programming. SIAM Journal on Optimization , 23(4):2341–2368, 2013. [Gun03] Max D. Gunzburger. Perspectives in Flow Control and Optimization , volume 5 of Advances in Design and Control . SIAM, Philadelphia, 2003. [GW00] Andreas Griewank and Andrea Walther. Algorithm 799: Revolve: An implementation of checkpointing for the reverse or adjoint mode of computational differentiation. ACM Transactions on Mathematical Software , 26(1):19–45, 2000. [Hal96] Thomas A Halgren. Merck molecular force field. I. Basis, form, scope, parameterization, and performance of MMFF94. Journal of Computational Chemistry , 17(5–6):490–519, 1996. [Haw17] Paul CD Hawkins. Conformation generation: The state of the art. Journal of Chemical Information and Modeling , 57(8):1747–1756, 2017. 10 [IEAL18] Andrew Ilyas, Logan Engstrom, Anish Athalye, and Jessy Lin. Black-box adversarial attacks with limited queries and information. In Proceedings of the 35th International Conference on Machine Learning (ICML) , volume 80 of Proceedings of Machine Learning Research , pages 2137–2146. PMLR, 2018. [KMB +25] Dávid Péter Kovács, J. Harry Moore, Nicholas J. Browning, Ilyes Batatia, Joshua T. Horton, Yixuan Pu, Venkat Kapil, William C. Witt, Ioan-Bogdan Magd˘ au, Daniel J. Cole, and Gábor Csányi. MACE-OFF: Short-range transferable machine learning force fields for organic molecules. Journal of the American Chemical Society , 147(21):17598–17611, 2025. [LMW19] Jeffrey Larson, Matt Menickelly, and Stefan M. Wild. Derivative-free optimization methods. Acta Numerica , 28:287–404, 2019. [Mac22] Miles Macklin. Warp: A high-performance Python framework for GPU simulation and graphics. 
+
+https://github.com/nvidia/warp , March 2022. NVIDIA GPU Technology Conference (GTC). [MGN +23] Sadhika Malladi, Tianyu Gao, Eshaan Nichani, Alex Damian, Jason D. Lee, Danqi Chen, and Sanjeev Arora. Fine-tuning language models with just forward passes. In Advances in Neural Information Processing Systems (NeurIPS) , 2023. [MMT +19] Niru Maheswaranathan, Luke Metz, George Tucker, Dami Choi, and Jascha Sohl-Dickstein. Guided evolutionary strategies: Augmenting random search with surrogate gradients. In Proceedings of the 36th International Conference on Machine Learning (ICML) , volume 97, pages 4264–4273. PMLR, 2019. [NS17] Yurii Nesterov and Vladimir Spokoiny. Random gradient-free minimization of convex functions. 
+
+Foundations of Computational Mathematics , 17(2):527–566, 2017. [Owe13] Art B. Owen. Monte Carlo Theory, Methods and Examples . 2013. [SSL +21] Benjamin J. Shields, Jason Stevens, Jun Li, Marvin Parasram, Farhan Damani, Jesus I. Martinez Al-varado, Jacob M. Janey, Ryan P. Adams, and Abigail G. Doyle. Bayesian reaction optimization as a tool for chemical synthesis. Nature , 590(7844):89–96, 2021. [Sta99] Jos Stam. Stable fluids. In Proceedings of the 26th Annual Conference on Computer Graphics and Interactive Techniques (SIGGRAPH) , pages 121–128, 1999. [ZCD +24] Heshen Zhan, Congliang Chen, Tian Ding, Ziniu Li, and Ruoyu Sun. Unlocking black-box prompt tuning efficiency via zeroth-order optimization. In Findings of the Association for Computational Linguistics: EMNLP 2024 , pages 14825–14838, 2024. 11 A Prior Work on Zeroth-Order Optimization with Directional Hints 
+
+This section analyzes the gradient-estimation techniques used by the two prior approaches for incorporating directional guidance into zeroth-order optimization: Guided Evolutionary Strategies (GES) [MMT +19] and Prior-Guided Random Gradient-Free (PRGF) methods [CWZ21]. Both reduce exploration variance along a guided subspace by modifying the search distribution, but in doing so introduce bias into the gradient estimator. We show that this bias creates a fundamental step-size dilemma that the control-variate construction in CV-ZOD avoids. 
+
+Guided Evolutionary Strategies. The approach of [MMT +19] replaces isotropic perturbations with anisotropic ones whose covariance allocates more variance to directions in the hint subspace S ∈ Gr k(Rd). Concretely, one uses the same estimator G(x; u), but samples perturbations according to 
+
+u ∼ N (0 , Σ) , where Σ := γ I d + (1 − γ) dk PS ,
+
+with γ ∈ [0 , 1] interpolating between isotropic exploration (γ = 1) and exploration supported entirely on S (γ = 0) ,while preserving the total variance tr(Σ) = d.The main drawback is that this introduces an anisotropic bias. Defining f τ
+
+> Σ
+
+(x) := Eu∼N (0 ,Σ) [f (x + τ u )] , a direct calculation shows that 
+
+Eu∼N (0 ,Σ) [G(x; u)] = Σ ∇f τ
+
+> Σ
+
+(x) τ →0
+
+−−−→ Σ∇f (x) = γ ∇f (x) + (1 − γ) dk PS ∇f (x).
+
+Thus the estimator no longer targets ∇f (x) itself, but applies different gains to its S and S⊥ components, amplifying the former by a factor of order d/k . This creates a fundamental step-size dilemma: a step size chosen to remain stable along S is overly conservative on S⊥, while one tuned for S⊥ is too aggressive along S. Anisotropic exploration does not simply reduce variance; it changes the optimization geometry itself, making it ill-suited as a robust mechanism for incorporating directional hints whose alignment with the gradient may vary across iterations. 
+
+Prior-Guided Random Gradient-Free methods. [CWZ21] propose a related approach in a more restrictive setting. Their guidance takes the form of a single vector p ∈ Rd, or equivalently the one-dimensional subspace 
+
+S = span {p}, and they assume access to directional derivatives ⟨∇ f (x), u ⟩ rather than zeroth-order feedback 
+
+f (x). Their estimator with batch size q ∈ N can be written as 
+
+GPRGF (x, S; {ui}qi=1 ) = PS ∇f (x) + 
+
+> q
+
+X
+
+> i=1
+
+⟨∇ f (x), u i⟩ui,
+
+where u1, . . . , u q follow a Haar-uniform orthonormal q-frame in S⊥. This estimator is generally biased: 
+
+EU [GPRGF (x, S; U )] = PS ∇f (x) + qd−1 P ⊥S ∇f (x) = qd−1 ∇f (x) + 
+
+
+
+1 − qd−1
+
+
+
+PS ∇f (x).
+
+As with GES, the estimator applies different effective gains to the S and S⊥ gradient components. 
+
+Summary. Both GES and PRGF incorporate directional guidance by modifying the search distribution, which unavoidably biases the gradient estimator. The bias introduces two coupled scales in the update — one along S and one along S⊥ — that cannot be simultaneously controlled by a single step size. By contrast, the control-variate estimator in CV-ZOD remains unbiased for all reference vectors, so the step size controls a single scale (the residual variance), enabling the adaptive tuning developed in Section 4. 
+
+# B Ablations of the Discount Factor and Query Allocation 
+
+Using the same fluid setup as in Section 5.1, we vary γdisc ∈ { 0, 0.6, 0.7, 0.8, 0.9} and compare query partitions 
+
+12 /2/2, 7/7/2, and 2/12 /2.12 Table 1: Final fluid objective: mean ± sample standard deviation over 15 paired seeds. Columns give query allocations (update / norm / projection). Lower is better. 
+
+CV-ZOD ZOD 
+
+γdisc 12 /2/2 7/7/2 2/12 /2 16 /0/00 0.0764 ± 0.0219 0.0686 ± 0.0274 0.0846 ± 0.0003 0.0258 ± 0.0040 0.6 0.0149 ± 0.0029 0.0169 ± 0.0041 0.0797 ± 0.0149 0.0258 ± 0.0040 0.7 0.0136 ± 0.0025 0.0153 ± 0.0028 0.0796 ± 0.0137 0.0258 ± 0.0040 0.8 0.0153 ± 0.0037 0.0149 ± 0.0030 0.0749 ± 0.0197 0.0258 ± 0.0040 0.9 0.0176 ± 0.0063 0.0150 ± 0.0022 0.0759 ± 0.0175 0.0258 ± 0.0040 
+
+Table 1 shows that temporal smoothing has its largest benefit when enough queries remain for the control-variate update. With the 12 /2/2 allocation, setting γdisc = 0 .7 reduces the mean final objective from 0.07635 to 0.01363 ;all 15 runs finish below 0.020 . For both 12 /2/2 and 7/7/2, every displayed positive discount factor gives a lower mean final objective than ZOD. Increasing the norm-estimation allocation to 12 leaves only two update directions and gives much poorer results throughout the sweep. Among the displayed configurations, the 12 /2/2 allocation with γdisc = 0 .7 has both the lowest mean final objective and the earliest mean crossing of 0.020 , at update 61 . We use this setting for the fluid comparison in Figure 2; selection and evaluation use the same 15 seeds. 
+
+# C Proofs for Section 3: CV-ZOD Framework 
+
+This section contains the proofs of Lemma 3.3 and Theorem 3.4. The proof of Theorem 3.4 relies on two concentration results for self-normalized martingales (Theorem C.1 and Corollary C.2), which adapt the exponential inequalities of [FGL15] to our setting via a peeling argument; these are stated and proved after the main argument. 
+
+## C.1 Proof of Lemma 3.3 
+
+Lemma 3.3 (Restated) For all x, m ∈ Rd, it holds that Eu∼N (0 ,I d) [G(x, m ; u)] = ∇f τ (x). Moreover, 
+
+Eu∼N (0 ,I d)
+
+∥G(x, m ; u) − ∇ f (x)∥2 ≤ 2( d + 1) ∥m − ∇ f (x)∥2 + 8 τ 2L2d3
+
+Proof Fix x, m ∈ Rd. The unbiasedness follows immediately from Lemma 3.2 and Fact E.1: 
+
+Eu [G(x, m ; u)] = Eu [G(x; u)] + Eu
+
+(Id − uu ⊤)m = ∇f τ (x) + 0 .
+
+To bound the mean-squared estimation error, we write 
+
+G(x, m ; u) − ∇ f (x) =  Id − uu ⊤ (m − ∇ f (x)) + f (x + τ u ) − f (x) − ⟨∇ f (x), τ u ⟩
+
+τ u. 
+
+Consequently, we have 
+
+Eu
+
+∥G(x, m ; u) − ∇ f (x)∥2 ≤ 2( m − ∇ f (x)) ⊤ Eu
+
+(Id − uu ⊤)2 (m − ∇ f (x)) + 2 Eu
+
+ f (x+τ u )−f (x)−⟨∇ f (x),τ u ⟩
+
+> τ
+
+2
+
+∥u∥2
+
+
+
+> (a)
+
+≤ 2( d + 1) ∥m − ∇ f (x)∥2 + 12 τ 2L2 E[∥u∥6]
+
+> (b)
+
+≤ 2( d + 1) ∥m − ∇ f (x)∥2 + 8 τ 2L2d3,
+
+where (a) follows from L-smoothness and Fact E.1 and (b) from Fact E.2. ■
+
+## C.2 Proof of Theorem 3.4 
+
+Theorem 3.4 (Restated) Suppose Algorithm 1 uses a fresh standard Gaussian direction ut, conditionally on all information available before its draw, for every t ∈ [T ], and that max t∈[T ]∥mt∥ ≤ 2B almost surely. Then there 
+
+13 exist absolute constants C0, C > 0 such that the following holds. For any δ ∈ (0 , 1) , set ι := log(2 T /δ ), and suppose d ≥ ι and 0 < α t ≤ 1  
+
+> C0L ι
+
+for all t ∈ [T ]. Then, for γ = C0ι, with probability at least 1 − δ,
+
+> 1
+> L
+
+PTt=1 αt∥∇ f (xt)∥2 ≤ C
+
+
+
+D2 
+
+> f
+
++ B2 
+
+> L2
+
++ τ 2 T d 3 + BγT ι
+
+
+
+,
+
+where D2 
+
+> f
+
+:= 2 
+
+> L
+
+(f (x1) − f ∗). Moreover, if d ≥ log(2 T 2), γ = C0 log(2 T 2), 0 < α t ≤ 1/(γL ) for all t ∈ [T ],and τ ≤ B/L  
+
+> √T d 3
+
+, then x satisfies  
+
+> 1
+> L
+
+E∥∇ f (x)∥2 ≤ C E
+
+h D2   
+
+> f+B2/L 2+BγTlog(2 T2)
+> AT
+
+i
+
+,
+
+where AT := PTt=1 αt denotes the cumulative step size. 
+
+Proof For each t ∈ [T ], let Ft contain all information available before iteration t, including the current iterate and hint, and let FT +1 contain all information after the final iteration. Let Gt additionally contain all information available when αt and mt have been chosen, just before drawing ut. These sigma-algebras are nested as Ft ⊆Gt ⊆ F t+1 . Throughout, set gt := ∇f τ (xt), wt := mt − ∇ f (xt), βt := αt − Lα 2 
+
+> t
+
+, Gt := G(xt, m t; ut), and 
+
+∆t := Gt − gt. Thus xt, αt, and mt are Gt-measurable, while ut is conditionally standard Gaussian given Gt.Hence Lemma 3.3 gives E[∆ t | G t] = 0 . Since ι ≥ log 2 and we take C0 ≥ 4, the cap αt ≤ 1 
+
+> C0Lι
+
+≤ 12L implies 
+
+βt ∈ [ 12 αt, α t]. We also write 
+
+ST := PTt=1 αt∥∇ f (xt)∥2, VT := d PTt=1 α2 
+
+> t
+
+∥wt∥2, H := D2 
+
+> f
+
++ B2/L 2.
+
+We record two approximation bounds from Lemma 3.1 used repeatedly: 
+
+sup 
+
+> x∈Rd
+
+∥∇ f τ (x) − ∇ f (x)∥ ≤ c0 τ Ld 3/2, (7) 
+
+f τ (x1) − f ∗ ≤ L 
+
+> 2
+
+D2 
+
+> f
+
++ τ 2Ld  
+
+> 2
+
+. (8) 
+
+Step 1: Descent inequality. By L-smoothness of f τ and Gt = gt + ∆ t,
+
+f τ (xt+1 ) ≤ f τ (xt) − αt⟨gt, G t⟩ + Lα 2 
+
+> t
+> 2
+
+∥Gt∥2
+
+= f τ (xt) − (αt − Lα 2 
+
+> t
+> 2
+
+)
+
+| {z } 
+
+> ≥αt/2
+
+∥gt∥2 − (αt − Lα 2 
+
+> t
+
+)
+
+| {z } 
+
+> =βt
+
+⟨gt, ∆t⟩ + Lα 2 
+
+> t
+> 2
+
+∥∆t∥2.
+
+Telescoping over t = 1 , . . . , T and using f τ (xT +1 ) ≥ f ∗ with (8), 
+
+> 12
+
+PTt=1 αt∥gt∥2 ≤ L 
+
+> 2
+
+D2 
+
+> f
+
++ τ 2Ld  
+
+> 2
+
+− MT + L 
+
+> 2
+
+QT , (9) where MT := PTt=1 βt⟨gt, ∆t⟩ and QT := PTt=1 α2 
+
+> t
+
+∥∆t∥2.
+
+Step 2: Pathwise bound on QT . The proof of Lemma 3.3 gives 
+
+Gt − ∇ f (xt) = ( Id − utu⊤ 
+
+> t
+
+) wt + ϵt ut, |ϵt| ≤ Lτ  
+
+> 2
+
+∥ut∥2.
+
+Since ∆t = ( Gt − ∇ f (xt)) + ( ∇f (xt) − gt), we have 
+
+∥∆t∥2 ≤ 2∥(Id − utu⊤ 
+
+> t
+
+)wt + ϵtut∥2 + 2 c20 τ 2L2d3. (10) We establish pathwise control on ut. Since ∥ut∥2 ∼ χ2 
+
+> d
+
+conditioned on Gt, the Laurent–Massart inequality (Lemma E.3) gives Pr( ∥ut∥2 > d + 2 √dℓ ′ + 2 ℓ′) ≤ e−ℓ′
+
+for all ℓ′ > 0. Similarly, ⟨wt, u t⟩ | G t ∼ N (0 , ∥wt∥2),so the standard Gaussian tail yields Pr( |⟨ wt, u t⟩| > ∥wt∥√2ℓ′) ≤ 2e−ℓ′
+
+. Set ℓ := log(12 T /δ ) ≤ 4ι. A union bound over t ∈ [T ] gives total failure probability at most 3T e −ℓ = δ/ 4. Thus the following event E holds with probability at least 1 − δ/ 4: for all t ∈ [T ] simultaneously, 
+
+∥ut∥2 ≤ 4( d + ℓ) and ⟨wt, u t⟩2 ≤ 2∥wt∥2 ℓ. (11) 14 We work on E for the remainder of the step. 
+
+Bounding the two components. Expanding and applying (11): 
+
+∥(Id − utu⊤ 
+
+> t
+
+)wt∥2 = ∥wt∥2 − 2⟨wt, u t⟩2 + ⟨wt, u t⟩2∥ut∥2
+
+≤ ∥ wt∥2 + 8 ∥wt∥2 ℓ (d + ℓ)
+
+≤ c ∥wt∥2 d ι, 
+
+and 
+
+ϵ2 
+
+> t
+
+∥ut∥2 ≤ L2τ 2 
+
+> 4
+
+∥ut∥6 ≤ c L 2τ 2d3.
+
+Substituting into (10), 
+
+∥∆t∥2 ≤ c d ι ∥wt∥2 + c τ 2L2d3. (12) Multiplying by α2 
+
+> t
+
+and summing: 
+
+QT ≤ c d ι PTt=1 α2 
+
+> t
+
+∥wt∥2 + c τ 2L2d3 PTt=1 α2 
+
+> t
+
+.
+
+Since P 
+
+> t
+
+α2 
+
+> t
+
+≤ T /L 2, this gives 
+
+QT ≤ c ιV T + c τ 2T d 3. (13) We retain the nonnegative quantity VT until the final step, where we use the identity ιBγT = ιV T − ST /(C0L).
+
+Step 3: Martingale concentration. Dominant martingale. Define 
+
+ξt := βt (⟨∇ f (xt), w t⟩ − ⟨∇ f (xt), u t⟩⟨ wt, u t⟩) .
+
+Since βt, ∇f (xt), w t are Gt-measurable and E[⟨∇ f (xt), u t⟩⟨ wt, u t⟩ | G t] = ⟨∇ f (xt), w t⟩, each ξt is conditionally mean zero. It is measurable with respect to Ft+1 , so the partial sums of fMT := PTt=1 ξt form a martingale with respect to the post-draw filtration (Gt+1 )Tt=0 , where GT +1 := FT +1 . By Lemma E.4 with a = ∇f (xt) and 
+
+Σ = wtw⊤ 
+
+> t
+
+,
+
+E[ξ2 
+
+> t
+
+| G t] = β2
+
+> t
+
+ ∥∇ f (xt)∥2∥wt∥2 + ⟨∇ f (xt), w t⟩2 < ∞.
+
+MGF condition. Conditioned on Gt, ξt is a centered degree-two polynomial in ut ∼ N (0 , I d). By the Hanson– Wright inequality, there exists an absolute constant c1 > 0 such that 
+
+log Eeλξ t | G t
+
+ ≤ c21λ2β2 
+
+> t
+
+∥∇ f (xt)∥2∥wt∥2 for |λ| ≤ 1  
+
+> c1βt∥∇ f(xt)∥∥ wt∥
+
+.
+
+Since ex ≤ 1 + 2 x for x ∈ [0 , 1] and E[ξ2 
+
+> t
+
+| G t] ≥ β2 
+
+> t
+
+∥∇ f (xt)∥2∥wt∥2 by Lemma E.4, 
+
+Eeλξ t | G t
+
+ ≤ 1 + 2 c21λ2 E[ξ2 
+
+> t
+
+| G t] for |λ| ≤ 1  
+
+> c1βt∥∇ f(xt)∥∥ wt∥
+
+.
+
+If βt∥∇ f (xt)∥∥ wt∥ = 0 , then ξt = 0 and the MGF bound holds for every λ. Otherwise the displayed range applies. The boundedness assumptions give ∥wt∥ ≤ 3B and hence c1βt∥∇ f (xt)∥∥ wt∥ ≤ 3c1B2/(C0Lι ). Set 
+
+ε := max {3c1, 18 } B2
+
+C0Lι .
+
+The hypothesis of Theorem C.1 then holds with this ε and its constant c0 = 4 c21.
+
+Bounding fMT . Using βt ≤ αt, ∥wt∥ ≤ 3B, and αt ≤ 1/(C0Lι ):
+
+E[ξ2 
+
+> t
+
+| G t] ≤ 18 α2 
+
+> t
+
+∥∇ f (xt)∥2B2 ≤ 18 B2 
+
+> C0Lι
+
+· αt∥∇ f (xt)∥2 ≤ ε · αt∥∇ f (xt)∥2.
+
+Setting rt := αt∥∇ f (xt)∥2, Corollary C.2 gives, with probability at least 1 − δ/ 2,
+
+| fMT | ≤ 18
+
+PTt=1 αt∥∇ f (xt)∥2 + c B 2 
+
+> L
+
+, (14) 15 where we used ε log(2 e/δ ) ≤ cB 2/L , since log(2 e/δ ) ≤ cι .
+
+Smoothing residual. Since ∆t = ( Id − utu⊤ 
+
+> t
+
+)wt + ϵtut + ( ∇f (xt) − gt),
+
+βt⟨gt, ∆t⟩ − ξt = βt⟨gt − ∇ f (xt), ∆t⟩ + βt⟨∇ f (xt), (∇f (xt) − gt) + ϵtut⟩.
+
+On E, using (7), (12), |ϵt| ≤ cLτ (d + ι), ∥ut∥ ≤ c√d + ι, and βt ≤ αt ≤ 1/(C0Lι ):
+
+|βt⟨gt, ∆t⟩ − ξt| ≤ c α tτ Ld 3/2∥∆t∥ + c α t∥∇ f (xt)∥τ L (d + ι)3/2.
+
+Applying Young’s inequality to the first term with quadratic contribution Lα 2 
+
+> t
+
+∥∆t∥2/2 and to the second with contribution αt∥∇ f (xt)∥2/32 , then summing and using P 
+
+> t
+
+αt ≤ T /L , gives 
+
+|MT − fMT | ≤ L 
+
+> 2
+
+QT + 132 ST + c τ 2T d 3L. (15) Combining (14) and (15): 
+
+|MT | ≤ 532 ST + c B 2 
+
+> L
+
++ L 
+
+> 2
+
+QT + c τ 2T d 3L. (16) 
+
+Step 4: Combining. Intersecting E with the martingale event gives an event H with probability at least 1−3δ/ 4 ≥
+
+1 − δ. On H, substituting (16) into (9) and using −MT ≤ | MT | gives 
+
+> 12
+
+PTt=1 αt∥gt∥2 ≤ L 
+
+> 2
+
+D2 
+
+> f
+
++ c B 2 
+
+> L
+
++ 532 ST + L Q T + c τ 2T d 3L. 
+
+The gradient approximation (7) and P 
+
+> t
+
+αt ≤ T /L imply 
+
+> 12
+
+PTt=1 αt∥gt∥2 ≥ 14 ST − c τ 2T d 3L. 
+
+Consequently,  
+
+> 332
+
+ST ≤ L 
+
+> 2
+
+D2 
+
+> f
+
++ cB 2 
+
+> L
+
++ LQ T + c τ 2T d 3L. 
+
+Applying (13) and dividing by L therefore gives an absolute constant K ≥ 1, independent of C0 once C0 ≥ 4,such that  
+
+> ST
+> L
+
+≤ K  H + τ 2T d 3 + ιV T
+
+ . (17) Set K2 := 2 K + 1 , and choose C0 ≥ max {4, 2K2} and C := 2 K2. The balance identity and (17) give, on H,
+
+H + τ 2T d 3 + ιBγT = H + τ 2T d 3 + ιV T − ST
+
+> C0L
+
+≥ (1 − K/C 0)  H + τ 2T d 3 + ιV T
+
+
+
+≥ 12
+
+ H + τ 2T d 3 + ιV T
+
+ .
+
+Combining this inequality with (17) proves the high-probability conclusion with the chosen C.For the expected conclusion, first suppose T ≥ 2 and apply the preceding argument with δ = 1 /T , so ι = log(2 T 2).Since the step sizes are positive, AT > 0. Define 
+
+Y := ST
+
+LAT
+
+, X := H + ιV T
+
+AT
+
+, W := H + ιBγT
+
+AT
+
+= X − YC0
+
+.
+
+The output rule gives E Y = L−1 E∥∇ f (x)∥2. The smoothing condition implies τ 2T d 3 ≤ B2/L 2, so (17) gives 
+
+Y ≤ 2KX on H. Moreover, X ≥ 0 and 0 ≤ Y ≤ B2/L everywhere. Taking expectations while retaining the nonnegative X, we obtain 
+
+E Y ≤ 2K E X + B2
+
+LT ≤ K2 E X. 
+
+The last inequality uses AT ≤ T / (C0ιL ), which implies X ≥ B2/(L2AT ) ≥ B2/(LT ). If E X < ∞, then 
+
+E W = E X − E YC0
+
+≥ (1 − K2/C 0) E X ≥ 12 E X. 
+
+16 Thus E Y ≤ C E W , as claimed. If E X = ∞, the same conclusion holds in the extended sense because Y is bounded and W ≥ − B2/(C0L).Finally, when T = 1 , the output is x1. With ι = log 2 and the same definitions of Y, X, W , positivity and the step-size cap give 
+
+W ≥ B2
+
+L2α1
+
+− YC0
+
+≥
+
+
+
+C0 log 2 − 1
+
+C0
+
+ B2
+
+L ≥ Y. 
+
+This proves the expected conclusion for every T ∈ N and completes the proof. ■
+
+Theorem C.1 Let (Sk, Fk)k=0 ,...,n be a martingale with S0 = 0 and differences ξi = Si − Si−1. Let c0 > 0.Suppose there exists ε > 0 such that for all i ∈ [n] and all |λ| ≤ 1/ε ,
+
+Eeλξ i | F i−1
+
+ ≤ 1 + c0λ2 
+
+> 2
+
+Eξ2 
+
+> i
+
+| F i−1
+
+ .
+
+Then for all x, w > 0,
+
+Pr( Sn ≥ x and ⟨S⟩n ≤ w) ≤ exp 
+
+
+
+− x2
+
+> 2( c0w+εx )
+
+
+
+,
+
+where ⟨S⟩n = Pni=1 E[ξ2 
+
+> i
+
+| F i−1].
+
+Proof We apply Theorem 2.1 of [FGL15] with g(λ) = 0 , f (λ) = c0λ2 
+
+> 2
+
+, Vi−1 = E[ξ2 
+
+> i
+
+| F i−1], and v → ∞ . Their bound (2.3) gives, for any λ ∈ (0 , 1/ε ),
+
+Pr( Sn ≥ x and ⟨S⟩n ≤ w) ≤ exp 
+
+
+
+−λx + c0λ2 
+
+> 2
+
+w
+
+
+
+.
+
+Substituting λ = xc0w+εx ∈ (0 , 1/ε ):
+
+−λx + c0λ2
+
+2 w = − x2
+
+c0w + εx + x2
+
+(c0w + εx )2 · c0w
+
+2
+
+≤ − x2
+
+c0w + εx + x2
+
+2( c0w + εx ) = − x2
+
+2( c0w + εx ) ,
+
+which yields the result. ■
+
+Corollary C.2 Under the conditions of Theorem C.1, suppose further that there exist non-negative Fi−1-measurable random variables r1, . . . , r n such that 
+
+Eξ2 
+
+> i
+
+| F i−1
+
+ ≤ ε r i for all i ∈ [n] almost surely .
+
+Let R = Pni=1 ri. Then for any δ ∈ (0 , 1) , with probability at least 1 − δ,
+
+|Sn| ≤ R
+
+8 + cε log( e/δ ),
+
+where c > 0 depends only on c0.
+
+Proof It suffices to prove the upper-tail bound, since the lower-tail bound follows by applying the same argument to −Sn. For j ≥ 1, define 
+
+Ej = {2j−1ε < R ≤ 2j ε}, xj = 2j−1ε
+
+8 + r, wj = ε22j ,
+
+and also set E0 = {R ≤ ε}, x0 = r, and w0 = ε2. On Ej , we have ⟨S⟩n ≤ εR ≤ wj and R/ 8 + r ≥ xj .Therefore, by Theorem C.1, 
+
+Pr( Sn ≥ R/ 8 + r) ≤ X
+
+> j≥0
+
+exp − x2
+
+> j
+
+2( c0wj + εx j )
+
+!
+
+.
+
+We now bound the summands. For j ≥ 1, since xj ≥ 2j ε/ 16 , we have 
+
+c0wj = c0ε22j ≤ 16 c0εx j .
+
+17 Hence, for a constant C > 0 depending only on c0,
+
+x2
+
+> j
+
+2( c0wj + εx j ) ≥ xj
+
+Cε ≥ 2j−1
+
+C + rCε .
+
+For the term j = 0 , after increasing C if necessary, the same bound gives 
+
+x20
+
+2( c0w0 + εx 0) = r2
+
+2( c0ε2 + εr ) ≥ rCε ,
+
+provided r ≥ c0ε, which will be true for the choice of r below. Thus 
+
+Pr( Sn ≥ R/ 8 + r) ≤ exp  − rCε 
+
+ 
+
+1 + P 
+
+> j≥1
+
+exp( − 2j−1 
+
+> C
+
+)
+
+
+
+≤ C′ exp  − rCε 
+
+ ,
+
+where C′ > 0 depends only on c0. Taking 
+
+r = Cε log(2 C′/δ )
+
+gives 
+
+Pr( Sn ≥ R/ 8 + r) ≤ δ/ 2.
+
+The same argument applied to −Sn gives the lower tail, and a union bound yields 
+
+Pr( |Sn| ≥ R/ 8 + r) ≤ δ. 
+
+Finally, increasing the constant once more, r ≤ cε log( e/δ ). ■
+
+# D Proof of Theorem 4.4 
+
+This section proves the adaptive convergence results of Section 4. We first prove Theorem 4.4 using Theorem 3.4 and the estimation primitives, then prove the supporting Lemmas 4.1, 4.2, and 4.3. 
+
+Theorem 4.4 (Restated) There exist absolute constants C, c > 0 such that, if d ≥ log(2 T 2), Algorithm 1 is run with mt = P τf (xt, St) and step sizes αt from (6) with confidence parameter δ = 1 /(2 T ), γ = C0 log(2 T 2), and 
+
+N = ⌈C log(2 T )⌉, and the smoothing radius satisfies τ ≤ B/L 
+
+√T (d3+dk ) log(2 T 2) , then  
+
+> 1
+> L
+
+E∥∇ f (x)∥2 ≤ c E
+
+h (D2  
+
+> f+B2/L 2) log(2 T)
+> A∗
+> T
+
+i
+
+,
+
+where A∗ 
+
+> T
+
+= PTt=1 α∗ 
+
+> t
+
+for α∗ 
+
+> t
+
+in (4) .
+
+Proof When T = 1 , the output is x1 and the conclusion follows directly from ∥∇ f (x1)∥2 ≤ B2, A∗ 
+
+> 1
+
+≤ 1/L , and 
+
+c ≥ 1/ log 2 . We therefore assume T ≥ 2. Set δ := 1 /T and ι := log(2 T /δ ) = log(2 T 2), so that γ = C0ι.
+
+Step 0: High-probability events. Choose the sample constant C at least twice the corresponding constant in Lemma 4.3; then N = ⌈C log(2 T )⌉ meets its sample requirement at failure probability 1/(2 T ), since log(4 T 2) = 2 log(2 T ). Let E1 be the event from Lemma 4.3 applied with failure probability δ/ 2 = 1 /(2 T ), on which local optimality and balance control hold simultaneously for all t ∈ [T ]. By Lemma 4.1, deterministically, 
+
+∥mt − PSt ∇f (xt)∥2 ≤ kL 2τ 2
+
+4 for all t ∈ [T ].
+
+The assumed upper bound on τ also ensures 
+
+∥mt∥ ≤ ∥ PSt ∇f (xt)∥ + Lτ √k
+
+2 ≤ 2B, 
+
+so the reference-vector condition in Theorem 3.4 holds. Let E2 be the event from that theorem applied with failure probability δ; its logarithmic parameter is precisely ι. Thus, for E := E1 ∩ E 2, we have Pr( E) ≥ 1 − 3δ/ 2.18 Step 1: Controlling BγT on E1. Because mt − PSt ∇f (xt) ∈ S t and P ⊥St ∇f (xt) ∈ S ⊥ 
+
+> t
+
+, for each t ∈ [T ],
+
+∥mt − ∇ f (xt)∥2 = ∥mt − PSt ∇f (xt)∥2 + ∥P ⊥St ∇f (xt)∥2
+
+≤ kL 2τ 2
+
+4 + ∥P ⊥St ∇f (xt)∥2.
+
+On E1, substituting this bound and applying the balance control from Lemma 4.3 with failure probability δ/ 2 gives 
+
+α2 
+
+> t
+
+d ∥mt − ∇ f (xt)∥2 ≤ α2 
+
+> t
+
+d ∥P ⊥St ∇f (xt)∥2 + α2 
+
+> t
+
+dkL 2τ 2
+
+4
+
+≤ αt
+
+2γL ∥∇ f (xt)∥2 + c τ 2 d3 + d log 2(4 N T /δ ) + dk  .
+
+Here we also used αt ≤ 1/(γL ). Since N = O(log T ) and d ≥ ι, we have log(4 N T /δ ) ≤ cd . Dropping the remaining negative descent credit from each summand and summing over t therefore yields 
+
+BγT ≤ c τ 2T (d3 + dk ). (18) 
+
+Step 2: Applying Theorem 3.4 on E. Deterministically, the step sizes satisfy αt ≤ 1/(γL ) = 1 /(C0ιL ), which is precisely the hypothesis of Theorem 3.4. On E2, the high-probability bound gives 
+
+> 1
+> L
+
+PTt=1 αt∥∇ f (xt)∥2 ≤ C
+
+
+
+D2 
+
+> f
+
++ B2 
+
+> L2
+
++ τ 2T d 3 + BγT ι
+
+
+
+.
+
+Substituting (18) and using ι = log(2 T 2),
+
+> 1
+> L
+
+PTt=1 αt∥∇ f (xt)∥2 ≤ c
+
+
+
+D2 
+
+> f
+
++ B2 
+
+> L2
+
++ τ 2T (d3 + dk ) log(2 T 2)
+
+
+
+. (19) 
+
+Step 3: Taking expectations. On E (probability ≥ 1 − 3/(2 T )), local optimality gives αt ≥ α∗ 
+
+> t
+
+/(c0γ) for all t, so 
+
+AT ≥ A ∗ 
+
+> T
+
+/(γc 0). Dividing (19) by AT and using the output rule, 
+
+IE · ER
+
+∥∇ f (x)∥2 ≤ cγL 
+
+> A∗
+> T
+
+
+
+D2 
+
+> f
+
++ B2 
+
+> L2
+
++ τ 2T (d3 + dk ) log(2 T 2)
+
+
+
+.
+
+On Ec (probability ≤ 3/(2 T )), we bound ∥∇ f (x)∥2 ≤ B2. Taking full expectations,  
+
+> 1
+> L
+
+E∥∇ f (x)∥2 ≤ c γ E
+
+"      
+
+> D2
+> f+B2
+> L2+τ2T(d3+dk ) log(2 T2)
+> A∗
+> T
+
+#
+
++ 3B2 
+
+> 2LT
+
+.
+
+The assumed bound on τ makes the smoothing term at most B2/L 2. Finally, γ = O(log(2 T )) and A∗ 
+
+> T
+
+≤ T /L , so the failure-event term is absorbed into the first term, proving the claim. ■
+
+## D.1 Proof of Lemma 4.1 
+
+Lemma 4.1 (Restated) For every x ∈ Rd and S ∈ Gr k(Rd), Algorithm 2 satisfies 
+
+∥P τf (x, S) − PS ∇f (x)∥2 ≤ kL 2τ 2
+
+4 .
+
+Proof Let B = [ b1, . . . , b k] be the orthonormal basis matrix used by Algorithm 2, and let y := B⊤∇f (x). For each j ∈ [k], L-smoothness gives 
+
+|byj − ⟨∇ f (x), b j ⟩| = 1
+
+τ |f (x + τ b j ) − f (x) − τ ⟨∇ f (x), b j ⟩| ≤ Lτ 
+
+2 ,
+
+where we used ∥bj ∥ = 1 . Since PS = BB ⊤ and B⊤B = Ik,
+
+∥P τf (x, S) − PS ∇f (x)∥2 = ∥B(by − y)∥2 =
+
+> k
+
+X
+
+> j=1
+
+|byj − ⟨∇ f (x), b j ⟩| 2 ≤ kL 2τ 2
+
+4 .
+
+■
+
+19 D.2 Proofs of Lemmas 4.2 and 4.3 
+
+We first establish the norm estimation guarantee (Lemma 4.2), then use it to prove Lemma 4.3. 
+
+Lemma 4.2 (Restated) There exist absolute constants C, c > 0 such that for every x ∈ Rd, linear subspace S of 
+
+Rd, τ > 0, δ ∈ (0 , 1) , and N ≥ C log(2 /δ ), it holds with probability at least 1 − δ that 
+
+N τf (x, S, N ) ∈  12 ∥PS ∇f (x)∥2 − cε, 32 ∥PS ∇f (x)∥2 + cε  ,
+
+where ε = τ 2L2(d2 + log 2(2 N/δ )) .
+
+Proof Let v = PS ∇f (x). By L-smoothness of f ,
+
+byi = ⟨∇ f (x), P S ui⟩ + τ ϵ i = ⟨v, u i⟩ + τ ϵ i,
+
+with |ϵi| ≤ L 
+
+> 2
+
+∥PS ui∥2 ≤ L 
+
+> 2
+
+∥ui∥2. Decompose the estimator as follows 
+
+1
+
+N
+
+> N
+
+X
+
+> i=1
+
+by2 
+
+> i
+
+= 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+⟨v, u i⟩2 + 2τN
+
+> N
+
+X
+
+> i=1
+
+⟨v, u i⟩ ϵi + τ 2
+
+N
+
+> N
+
+X
+
+> i=1
+
+ϵ2 
+
+> i
+
+.
+
+Let S1 = 1
+
+> N
+
+PNi=1 ⟨v, u i⟩2 and S2 = 1
+
+> N
+
+PNi=1 ∥ui∥4. Using the fact that ϵ2 
+
+> i
+
+≤ L2 
+
+> 4
+
+∥ui∥4,
+
+1
+
+N
+
+> N
+
+X
+
+> i=1
+
+by2 
+
+> i
+
+− S1 ≤ S1
+
+4 + 5τ 2
+
+N
+
+> N
+
+X
+
+> i=1
+
+ϵ2 
+
+> i
+
+≤ S1
+
+4 + 5τ 2L2S2
+
+4 . (20) 
+
+Step 1: Concentrating S1 around ∥v∥2. When v = 0 , S1 = 0 holds almost surely. When v̸ = 0 , ⟨v, u i⟩2/∥v∥2 iid 
+
+∼
+
+χ21. By Laurent-Massart (Lemma E.3), for N ≥ 256 log(4 /δ ),
+
+P  |S1 − ∥ v∥2| ≤ 15 ∥v∥2 ≥ 1 − δ/ 2.
+
+Step 2: Bounding S2. Since ∥ui∥2 iid 
+
+∼ χ2
+
+> d
+
+, by the union bound of Laurent-Massart (Lemma E.3), 
+
+Pr 
+
+
+
+max   
+
+> i∈[N]
+
+|∥ ui∥2 − d| ≤ 2pd log(4 N/δ ) + 2 log(4 N/δ )
+
+
+
+≥ 1 − δ/ 2.
+
+Consequently, as S2 ≤ max i∈[N ]∥ui∥4 = (max i∈[N ]∥ui∥2)2, we have 
+
+Pr  S2 ≤ 18( d2 + log 2(4 N/δ ))  ≥ 1 − δ/ 2.
+
+Conclusion. Combining (20) with a union-bound over events in Steps 1 and 2, we have that with probability at least 1 − δ,
+
+1
+
+N
+
+> N
+
+X
+
+> i=1
+
+by2 
+
+> i
+
+∈
+
+ 3S1
+
+4 − 5τ 2L2S2
+
+4 , 5S1
+
+4 + 5τ 2L2S2
+
+4
+
+
+
+⊂
+
+ ∥v∥2
+
+2 − 25 τ 2L2(d2 + log 2(4 N/δ )) , 3∥v∥2
+
+2 + 25 τ 2L2(d2 + log 2(4 N/δ )) 
+
+
+
+.
+
+Here (3 /4)(4 /5) = 3 /5 ≥ 1/2, (5 /4)(6 /5) = 3 /2, and (5 /4) · 18 ≤ 25 . Since log(4 /δ ) ≤ 2 log(2 /δ ) and 
+
+log(4 N/δ ) ≤ 2 log(2 N/δ ), the stated constants may be taken as C = 512 and c = 100 . This proves the lemma. ■
+
+Lemma 4.3 (Restated) There exist absolute constants C, c 0, c 1 > 0 such that the following holds. For any 
+
+δ ∈ (0 , 1) and N ≥ C log(2 T /δ ), set ε := τ 2L2(d2 + log 2(2 N T /δ )) and define 
+
+αt := 1 
+
+> γ L
+
+min 
+
+
+
+1, N τf (xt,Rd,N )+ c1ε     
+
+> 16 dmax {0, N τf(xt,S⊥
+> t,N )−c1ε}
+
+
+
+,
+
+If the denominator is zero, define αt := 1 /(γL ). Then with probability at least 1 − δ, for all t ∈ [T ] simultaneously: 
+
+20 1. (Local Optimality) αt ≥ α∗ 
+
+> t
+> c0γ
+
+;2. (Balance Control) α2 
+
+> t
+
+d∥P ⊥St ∇f (xt)∥2 ≤ αt 
+
+> 2γL
+
+∥∇ f (xt)∥2 + c0 τ 2(d3 + d log 2(2 N T /δ )) .
+
+Proof Let cNE be the error constant in Lemma 4.2, take c1 = 4 cNE , and abbreviate c := c1 within this proof. Write at := N τf (xt, Rd, N ) and bt := N τf (xt, S⊥ 
+
+> t
+
+, N ), which target ∥∇ f (xt)∥2 and ∥P ⊥St ∇f (xt)∥2, respectively. Apply Lemma 4.2 conditionally on the information available before each call, with failure probability δ/ (2 T ). Its error radius is at most 4ε, since log(4 N T /δ ) ≤ 2 log(2 N T /δ ). A union bound over the 2T calls therefore gives, for N ≥ C log(2 T /δ ) with C sufficiently large, with probability at least 1 − δ,
+
+at ∈  12 ∥∇ f (xt)∥2 − cε, 32 ∥∇ f (xt)∥2 + cε 
+
+and similarly for bt targeting ∥P ⊥St ∇f (xt)∥2, simultaneously for all t ∈ [T ]. We work on this event throughout the rest of the proof. 
+
+Local optimality. The bounds at + cε ≥ 12 ∥∇ f (xt)∥2 and max {0, b t − cε } ≤ 32 ∥P ⊥St ∇f (xt)∥2 yield 
+
+αt ≥ 1 
+
+> γL
+
+min 
+
+
+
+1, ∥∇ f (xt)∥2    
+
+> 64 d∥P⊥St∇f(xt)∥2
+
+
+
+≥ α∗ 
+
+> t
+> 64 γ
+
+.
+
+(When bt − cε ≤ 0 or ∇f (xt) = 0 , αt = 1 /(γL ) ≥ α∗ 
+
+> t
+
+/γ directly.) 
+
+Balance Control. We bound α2 
+
+> t
+
+d ∥P ⊥St ∇f (xt)∥2 in two cases. 
+
+Case 1: cε ≤ 18 ∥P ⊥St ∇f (xt)∥2. Then bt − cε ≥ 14 ∥P ⊥St ∇f (xt)∥2 and at + cε ≤ 32 ∥∇ f (xt)∥2 + 2 cε , which guarantees 
+
+αt ≤ 1 
+
+> γL
+
+min 
+
+
+
+1, ∥∇ f (xt)∥2    
+
+> 2d∥P⊥St∇f(xt)∥2
+
+
+
++ cε      
+
+> 2γLd ∥P⊥St∇f(xt)∥2
+
+.
+
+Multiplying by αtd ∥P ⊥St ∇f (xt)∥2 and using αt ≤ 1/(γL ),
+
+α2 
+
+> t
+
+d ∥P ⊥St ∇f (xt)∥2 ≤ αt 
+
+> 2γL
+
+∥∇ f (xt)∥2 + cε  
+
+> 2L2
+
+≤ αt 
+
+> 2γL
+
+∥∇ f (xt)∥2 + c τ 2(d2 + log 2(2 N T /δ )) .
+
+Case 2: cε > 18 ∥P ⊥St ∇f (xt)∥2. Then ∥P ⊥St ∇f (xt)∥2 < 8cε and, using αt ≤ 1/(γL ) ≤ 1/L ,
+
+α2 
+
+> t
+
+d ∥P ⊥St ∇f (xt)∥2 ≤ 1 
+
+> γ2L2
+
+· d · 8cε ≤ 8c τ 2(d3 + d log 2(2 N T /δ )) .
+
+Combining both cases and taking c0 = max {64 , 8c} proves both claims of the lemma. ■
+
+# E Technical Preliminaries 
+
+Fact E.1 Let u ∼ N (0 , I d). For k ∈ N, it holds that 
+
+E(uu ⊤)k =
+
+> k−1
+
+Y
+
+> j=1
+
+(d + 2 j) Id.
+
+Fact E.2 Let u ∼ N (0 , I d). For k > −d, it holds that 
+
+E∥u∥k ≤ 2k/ 2 Γ( d+k 
+
+> 2
+
+)Γ( d 
+
+> 2
+
+) ≤ (d + k)k/ 2.
+
+In particular, for m ∈ N, E∥u∥2m = d(d + 2) . . . (d + 2 m − 2) .
+
+Lemma E.3 (Laurent–Massart) Let X1, . . . , X N
+
+> iid
+
+∼ χ2 
+
+> d
+
+and ¯X = 1
+
+> N
+
+PNi=1 Xi. For every δ ∈ (0 , 1) ,
+
+P ¯X − d ≤ 2
+
+r d log(2 /δ )
+
+N + 2 log(2 /δ )
+
+N
+
+!
+
+≥ 1 − δ. 
+
+Lemma E.4 (Isserlis) For fixed a ∈ Rd and Σ ∈ Rd×d,
+
+Ez∼N (0 ,I d)
+
+(a⊤z)2(z⊤Σz) = ∥a∥2 tr(Σ) + 2 a⊤Σ a. 
+
+21 Proof Write (a⊤z)2(z⊤Σz) = P 
+
+> i,j,k,l
+
+aiaj Σkl zizj zkzl. Since z ∼ N (0 , I d), Isserlis’ theorem gives E[zizj zkzl] = 
+
+δij δkl + δik δjl + δil δjk . Substituting and summing over each pairing: 
+
+X
+
+> i,j,k,l
+
+aiaj Σkl δij δkl =
+
+X 
+
+> i
+
+a2
+
+> i
+
+X 
+
+> k
+
+Σkk 
+
+
+
+= ∥a∥2 tr(Σ) ,
+
+X
+
+> i,j,k,l
+
+aiaj Σkl δik δjl = X
+
+> i,j
+
+aiaj Σij = a⊤Σ a, 
+
+X
+
+> i,j,k,l
+
+aiaj Σkl δil δjk = X
+
+> i,j
+
+aiaj Σji = a⊤Σ a, 
+
+where the last equality uses symmetry of Σ. Summing the three terms yields the result. ■
+
+22

@@ -1,0 +1,1617 @@
+Title: Robust Policy Optimization via Adversarial Importance Sampling
+
+URL Source: https://arxiv.org/pdf/2609.13044v1
+
+Published Time: Mon, 14 Sep 2026 01:18:03 GMT
+
+Number of Pages: 24
+
+Markdown Content:
+# Robust Policy Optimization via Adversarial Importance Sampling 
+
+Amine Andam 
+
+Mohammed VI Polytechnic University 
+
+andamamine83@gmail.com 
+
+Jamal Bentahar 
+
+Khalifa University Concordia University 
+
+jamal.bentahar@ku.ac.ae 
+
+Mustapha Hedabou 
+
+Mohammed VI Polytechnic University 
+
+mustapha.hedabou@um6p.ma 
+
+## Abstract 
+
+Significant progress has been made in safeguarding deep reinforcement learning (DRL) policies against input perturbations. Developing robust DRL involves three main stages: algorithm design, implementation, and evaluation. In this work, we identify and address a key limitation at each stage. First, we introduce Ad-versarial Importance Sampling (Advis), a method that uses importance sampling over trajectories from standard training to estimate and optimize verifiable worst-case returns. Advis satisfies three desirable criteria not jointly achieved by prior work: it requires no additional environment interactions, no auxiliary networks, and captures long-term robustness. Second, we introduce advrl, a modular Py-Torch library that provides clean, single-file implementations of existing robustness methods and adversarial attacks, facilitating rapid prototyping and enabling re-producible and traceable evaluations. Third, we revisit evaluation under learned adversaries and show that optimal adversarial hyperparameters do not transfer across agents, which can lead to an overestimation of robustness when using a limited set of attacker configurations. Accordingly, we evaluate policies against a large and diverse set of attackers, using 6–14× more configurations than prior work. Finally, we evaluate our approach on continuous control environments, demonstrating its effectiveness relative to existing baselines. The code is available at: https://github.com/AmineAndam04/advrl 
+
+## 1 Introduction 
+
+Deep Reinforcement Learning (DRL) agents are known to be vulnerable to adversarially crafted input perturbations that cause them to take suboptimal or even catastrophic decisions [1, 2, 3]. Typically, to robustify a DRL algorithm, one either modifies how samples are collected by adding perturbed samples [4, 5, 6], or modifies the learning objective by adding a regularization term designed to promote robustness [7, 8, 9]. An analysis of the current literature shows that most existing methods suffer from at least one of the following issues (see Table 1): (1) they require collecting additional samples from the environment, usually to train an adversary using DRL (2) they require training additional neural networks to estimate worst-case performance or to learn an adversarial policy (3) they focus on single-step robustness, overlooking the long-term effects of adversarial perturbations. Our main contribution is an algorithm that avoids these three limitations by combining two techniques: convex relaxation of neural networks [10] and importance sampling [11, 12]. Given a policy π, convex relaxation is used to compute a provably worst-case policy distribution πwc ( i.e., the policy an agent 
+
+> Preprint. arXiv:2609.13044v1 [cs.LG] 11 Sep 2026
+
+Table 1: Comparison of robust DRL methods. # Samples : whether more samples than vanilla training are needed; # Networks : whether additional networks are required; Long-term : whether the method optimizes for long-term robustness. ↑/=: more/same as vanilla training; ✓/✗: yes/no. Method # Samples # Networks Long-term SA-ATLA [5] ↑ ↑ ✓
+
+PA-ATLA [6] ↑ ↑ ✓
+
+SA-Reg [13, 7] = = ✗
+
+Radial [8] = = ✗
+
+WocaR-RL [9] = ↑ ✓
+
+ACoE [14] = ↑ ✓
+
+Ours = = ✓
+
+would follow under an optimal adversary). We then estimate the discounted return under πwc via importance sampling from trajectories already collected under π during standard DRL training. By optimizing this worst-case estimate during training, the agent learns policies that are robust to adversarial perturbations. This approach allows us to reuse existing trajectories, avoid training additional networks, and explicitly optimize long-term worst-case performance. Beyond the algorithmic perspective, we also examine the current literature from an implementation standpoint. We found that existing codebases are often complex and not well suited for prototyping. New methods are typically implemented on top of existing codebases, which themselves are built on earlier implementations. This results in monolithic code structures where a single file contains entangled implementations of multiple robustness methods, while also handling both training and evaluation. Furthermore, there is no unified codebase that implements most standard baselines and adversarial attacks. Thus, benchmarking and adversarial evaluations often require combining multiple codebases. To address these issues, we introduce advrl , a modular PyTorch library that provides clean single file implementations of existing methods, along with tools for running large-scale evaluations. We design the library to support fast prototyping and reproducible evaluations. Finally, we identify a methodological concern in how existing work benchmarks robustness against learned adversaries (i.e., adversaries that train neural networks or policies to generate perturbations). The effectiveness of a learned adversary depends heavily on the hyperparameters used during its training, consequently, adversarial evaluation strongly depends on how these hyperparameters are tuned. Importantly, we show that the hyperparameter configurations that produce the strongest adver-saries against one algorithm are often ineffective against another algorithm. As a result, evaluating robustness against a small set of adversarial configurations can lead to misleading conclusions: an agent may appear robust simply because the adversaries it was tested against were insufficiently tuned, not because the agent is inherently robust. To address this, we evaluate against a large and diverse population of adversarial configurations: between 432 and 1296 distinct attackers per agent, compared to the 30 to 200 typically used in prior work. We focus on robustifying policy optimiza-tion algorithms and run extensive experiments on MuJoCo environments. We demonstrate that our approach consistently outperforms existing methods. 
+
+## 2 Background and related work 
+
+2.1 Preliminaries Deep Reinforcement Learning A Markov Decision Process (MDP) [15] is defined by the tuple 
+
+(S, A, P, R, ρ 0, γ ), where S and A denote the state and action spaces, P : S × A → ∆( S) is the transition probability distribution, R : S × A → R is the reward function, ρ0 : S → [0 , 1] is the distribution of the initial state, and γ ∈ [0 , 1) is the discount factor . A policy π : S → ∆( A) specifies a distribution over actions conditioned on the current state. We write τ ∼ π to denote that a trajectory 
+
+τ = ( s0, a 0, r 1, s 1, a 1, . . . ) is generated by following policy π, where s0 ∼ ρ0, at ∼ π(· | st), and 
+
+st+1 ∼ P (· | st, a t) ∀t ≥ 0. The goal of reinforcement learning is to find a policy π that maximizes the expected discounted return J (π) = Eτ ∼π [R(τ )] = Eτ ∼π [P∞ 
+
+> t=0
+
+γtR(st, a t)] . Policy gradient methods address this problem by directly optimizing a parameterized policy πθ via gradient ascent on 
+
+J (πθ ). Proximal Policy Optimization (PPO) [16] is a widely used policy optimization method with 2state-of-the-art performance. Its core idea is to increase the probability of actions that are better than average ( Aπ (s, a ) > 0) while decreasing that of actions that are worse than average ( Aπ (s, a ) ≤ 0), in a stable manner using the following loss: 
+
+LPPO (θ) = E(st,a t)
+
+
+
+− min 
+
+ πθ (at | st)
+
+πθold (at | st) At, clip( πθ (at | st)
+
+πθold (at | st) , 1 − ϵ, 1 + ϵ)At
+
+ 
+
+(1) 
+
+Importance sampling (IS) IS [11, 12, 17] is a technique commonly used in RL to estimate the performance of a target policy π using trajectories generated by a different policy b. Given trajectories 
+
+{τi ∼ b}Ni=1 collected under the behavior policy b, we estimate the performance of π as follows: 
+
+ˆJIS (π) = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+ρT −1(τi) R(τi), (2) where ρt(τ ) = Qtk=0      
+
+> π(ak|sk)
+> b(ak|sk)
+
+is the importance weight, and R(τi) is the return of trajectory τi.
+
+Adversarial reinforcement learning We consider standard adversarial attacks on the observations of DRL agents [7, 6, 9], in which an adversary perturbs the agent’s state observations within a bounded region during test-time. Instead of receiving the true state of the environment s, the agent receives a perturbed state ˜s and selects actions according to π(.|˜s) rather than π(.|s). We specify an attack budget ϵ and restrict the perturbations to be ℓ∞-bounded: ˜s ∈ B ϵ(s) = {x ∈ S : ∥x − s∥∞ ≤ ϵ}.The interaction between the agent and the environment in the presence of such an adversary can be formalized using State Adversarial MDP (SA-MDP) [7], which extends the standard MDP by incorporating an adversary that perturbs the observed states. Formally, given an MDP and an adversary 
+
+v : S → ∆( S), the resulting SA-MDP is defined by the tuple (S, A, Bϵ, P, R, ρ 0, γ ), where Bϵ
+
+specifies the threat model, i.e., v(s) ∈ B ϵ(s), and the agent selects actions according to π (.|v(s)) .
+
+Convex relaxation of neural networks Convex relaxation methods [10] enable the computation of provable bounds of neural network outputs. Given a network f : Rn → Rk and a perturbation set 
+
+Bϵ(x0) around the input x0, we can find element-wise bounds f , f ∈ Rk such that: 
+
+f ≤ f (x) ≤ f ∀x ∈ B ϵ(x0) (3) Computing exact output bounds is NP-complete [18], thus practical methods rely on relaxations of the exact problem. Interval Bound Propagation (IBP) [19] propagates interval bounds layer by layer and is computationally efficient but loose. In contrast, linear relaxation methods such as CROWN [20] approximate nonlinear activations with linear constraints, yielding tighter but more costly bounds. 
+
+2.2 Related work 
+
+We study the problem of training DRL agents robust to state perturbations. Existing approaches can be broadly divided into two families: regularization-based and attack-driven methods. Regularization-based methods augment the standard DRL objective with a robustness term: 
+
+LDRL + κLrobust , κ > 0 (4) These methods differ mainly in the design of Lrobust . Typical choices include losses that optimize worst-case performance under perturbations, or penalize discrepancies between policy distributions on clean and perturbed inputs. Attack-driven methods instead modify how training data is collected: the agent is trained on adversar-ial trajectories generated under a state adversary v: ˜τ = ( . . . , ˜st = v(st), a t ∼ π(.| ˜st), r t, . . . ) The main focus of this line of work is to design optimal adversaries v. By exposing the agent to strong perturbations during training, the resulting policy becomes robust and maintains high performance under attack at test time. Below, we review both categories in detail. 
+
+SA-Reg [13, 7] The core idea of SA-Reg is to minimize the discrepancy between π(.|st) and π(.| ˜st)
+
+using a divergence measure D :
+
+LSA −Reg robust = max  
+
+> ˜st∈B ϵ(st)
+
+D(π(.|s), π (.|˜s)) (5) 3Radial [8] : Radial minimizes an upper bound LRadial of the standard DRL objective under adversarial perturbations: LPPO (˜ s; θ) ≤ L Radial (s; θ), ∀˜s ∈ B ϵ(s). To construct this bound for policy gradient methods, Radial replaces the current policy πθ in the loss with a worst-case policy 
+
+πwc  
+
+> θ
+
+. For PPO: 
+
+LRadial (θ) = E(st,a t)
+
+
+
+− min 
+
+ πwc  
+
+> θ
+
+(at | st)
+
+πθold (at | st) At, clip   πwc  
+
+> θ
+
+(at | st)
+
+πθold (at | st) , 1 − ϵ, 1 + ϵAt
+
+ 
+
+(6) Radial constructs πwc by assigning minimal probability to favorable actions ( At > 0) and maximal probability to unfavorable ones ( At ≤ 0). For a Gaussian policy πθ (.|s) = N (μθ (s), Σθ ), and a perturbation set Bϵ(s), the worst-case policy has the following closed form [8]: 
+
+πwc  
+
+> θ
+
+(at | st) = 
+
+N (at; μ+ 
+
+> θ
+
+(st), Σθ ), if At > 0
+
+N (at; μ− 
+
+> θ
+
+(st), Σθ ), otherwise (7) where μ+ 
+
+> θ
+
+= arg max μ∈[μθ (s); μθ (s)] ∥at −μ∥2Σθ , μ− 
+
+> θ
+
+= arg min μ∈[μθ (s); μθ (s)] ∥at −μ∥2Σθ . And μθ
+
+, μθ denote the lower and upper bound computed using convex relaxation tools. ∥x∥2Σ = x⊤Σ−1x.
+
+SA-ATLA [5] : SA-ATLA is an attack-driven method that learns optimal adversaries using DRL. The core idea is to construct an adversarial MDP M = ( S, Aadv , P, R, γ ) whose optimal policy 
+
+v generates perturbations that maximally degrade the performance of a fixed victim policy π. In SA-ATLA, the adversary’s action space matches the state space: Aadv = S. At each timestep, the adversary observes the current state st and outputs a perturbed state ˜st = v(st). The agent then selects an action at ∼ π(· | ˜st) and receives reward rt, while the adversary receives the negated reward 
+
+rt = −rt. Training follows an alternating optimization scheme, where the adversary v is optimized against a fixed policy π, and π is subsequently updated using trajectories generated under the learned adversary. Although this formulation provides theoretical guarantees to find optimal adversaries, it has two main limitations. First, the adversarial action space has the same dimensionality as the original state space, leading to prohibitive sample complexity and computational cost in high-dimensional environments. Second, SA-ATLA requires training a second RL agent, effectively doubling the cost by running two DRL algorithms. 
+
+PA-ATLA [6] : PA-ATLA uses the same alternating training method as SA-ATLA, but uses a more efficient adversary. It constructs an adversarial MDP M = ( S, Aadv , P, R, γ ) where the adversarial action space matches the agent’s action space Aadv = A. Rather than learning high dimensional state perturbations, the adversary outputs a worst-case action at each state v(st) = ˆ at. Subsequently, a targeted FGSM attack is performed to find the state perturbation that pushes the agent to select the adversarial action ˆat. For a deterministic policy π, this corresponds to solving: 
+
+˜st = argmin 
+
+> s∈B ϵ(st)
+
+∥π(s) − ˆat∥2 (8) 
+
+WocaR-RL [9] : WocaR-RL is a regularization-based approach that evaluates and optimizes the worst-case performance of a policy under adversarial perturbations. This is achieved by training a worst-case action-value network Qπϕ using updates similar to Bellman updates: 
+
+LQ(ϕ) = 1
+
+N
+
+> N
+
+X
+
+> t=1
+
+
+
+yt − Qπϕ(st, a t)
+
+2
+
+, where yt = rt + γ min   
+
+> ˆa∈A adv (st+1 ,π )
+
+Qπϕ− (st+1 , ˆa). (9) Here, Aadv (s, π ) = {a ∈ A : ∃ ˜s ∈ B ϵ(s) s.t. a ∼ π(· | ˜s)} denotes the set of actions an adversary can induce via state perturbations. It can be computed efficiently using convex relaxation. The minimization min ˆa∈A adv is solved using 50-step projected gradient descent. The policy π is then optimized to favor actions with higher worst-case values by minimizing the following worst-case policy loss: 
+
+LDRL-robust (θ) = E(st,a t)
+
+h
+
+− min 
+
+
+
+r(θ) ( At + κQ t), clip( r(θ), 1 − ϵ, 1 + ϵ) ( At + κQ t)
+
+i 
+
+(10) In addition, WocaR-RL uses a weighted SA-Reg loss to prioritize critical states , where suboptimal actions can have catastrophic consequences. The state importance weight is: 
+
+w(s) = V (s) − min  
+
+> a∈A
+
+Q(s, a ), (11) 4where the inner minimization is solved via gradient descent. The final WocaR-RL loss is: 
+
+L(θ) = LDRL-robust (θ) + β X
+
+> s
+
+w(s) max  
+
+> ˜s∈B ϵ(s)
+
+DKL (π(· | s), π (· | ˜s)) (12) Other representative approaches include Adversarial Counterfactual Error (ACoE) [14], which minimizes the difference between π’s returns under adversarial and normal settings. However, it requires training two additional networks: one to estimate a counterfactual error and another to learn a reward model over neighboring states (i.e., R(˜ s, a ), ∀ ˜s ∈ B ϵ(s)). We exclude ACoE [14] from our result, as it did not converge after 2 million training steps (see Section 5). Other work explores related directions, such as analyzing the effect of adversarial training on policies [21, 22], designing robust neural architectures [23], and studying action-space robustness [24, 25]. Synthesizing prior work suggests that an ideal robustness method should (1) require no additional samples, (2) avoid auxiliary networks, and (3) account for long-term robustness. Table 1 summarizes existing methods and shows that none satisfy all three simultaneously: SA-Reg and Radial do not account for worst-case returns, WocaR-RL estimates worst-case returns using an additional network, SA-ATLA and PA-ATLA train an additional agent. We address this gap with a regularization approach that requires no extra samples or networks while explicitly optimizing long-term robustness. 
+
+## 3 Importance sampling for robustness 
+
+In this section, we present Adversarial Importance Sampling (Advis) . We describe how to design IS-based robust objectives, and address two key challenges associated with IS: high variance and distribution mismatch. 
+
+3.1 Robust training objectives 
+
+The core idea of our approach is to use convex relaxation to derive a provable worst-case policy 
+
+πwc , and to re-use trajectories collected under the policy π to estimate the expected cumulative return of πwc via importance sampling. Specifically, given the current policy and attack budget ϵ, we compute the output bounds of π to construct πwc using the closed form in Eq. 7. We then estimate the performance of πwc using the importance weights ρadvis  
+
+> t
+
+(τ ) = Qtk=0      
+
+> πwc (ak|sk)
+> π(ak|sk)
+
+.Our approach is sample-efficient, as it reuses existing trajectories, and it does not require training additional networks to estimate worst-case performance. By estimating returns over trajectories, it naturally captures long-term robustness. We present three training objectives, each one encodes a different inductive bias for robustness. 
+
+Maximize worst-case performance: A direct approach is to maximize the estimated performance of the worst-case policy, encouraging high returns even under adversarial perturbations: 
+
+Ladvis-wc  
+
+> robust
+
+= − ˆJ(πwc ) (13) 
+
+Minimize return divergence: We minimize the Mean Squared Error (MSE) between clean and worst-case returns, encouraging similar performance in both settings: 
+
+Ladvis-mse  
+
+> robust
+
+=
+
+
+
+J(τ ) − ˆJ(πwc )
+
+2
+
+(14) 
+
+Minimize performance degradation: Unlike the MSE loss, we only penalize drops in returns, ignoring cases where the worst-case return exceeds the clean return, which can occur early in training due to exploration: 
+
+Ladvis-relu  
+
+> robust
+
+= max 
+
+
+
+0, J (τ ) − ˆJ(πwc )
+
+
+
+(15) 
+
+3.2 Variance and distribution mismatch 
+
+Importance sampling estimators suffer from high variance, especially under distribution mismatch between behavior and target policies [17]. In our setting, this mismatch is amplified since the target policy is the worst-case policy πwc , which can significantly deviate from π. As a result, importance weights ρadvis can collapse to zero or explode to large values, leading to unstable training. 5We address this in two ways. First, we reduce distribution mismatch using ϵ-scheduling: we gradually increase the attack budget during training, limiting the deviation between π and πwc in the early stages. As the policy becomes more robust over the course of training, it naturally becomes less sensitive to adversarial perturbations, and the distribution mismatch shrinks accordingly. Second, we use IS estimators that have lower variance than ordinary importance sampling (OIS) (Eq 2), namely Per-Decision IS (PDIS), Weighted IS (WIS), and Weighted Per-Decision IS (WPDIS). PDIS is an unbiased estimator with lower variance than OIS [26]. WIS and WPDIS are biased but consistent [11, 26], and exhibit significantly lower variance than OIS [17]. We further stabilize training by computing these estimators over sampled trajectory windows rather than full trajectories, mitigating the sensitivity of IS estimators to trajectory length (i.e., the Curse of Horizon [27, 28]). Finally, to prevent numerical instability, we truncate importance weights for PDIS and apply the log-sum-exp trick for WIS. See Appendix B.6 for more details. 
+
+3.3 Variance and trajectory regularization 
+
+Methods such as SA-Reg enforce robustness at the state level by penalizing policy discrepancies at individual states. Such step-wise regularization may fail to capture the compounding effect of perturba-tions along a trajectory. In RL, it is more natural to measure discrepancies at the trajectory level by min-imizing the divergence between clean and worst-case trajectory distributions: D p(.|πwc ), p (.|π).However, this divergence is intractable to compute in model-free settings, as the trajectory distribution depends on the unknown transition dynamics: p(.|π) = ρ0(s0) QT −1 
+
+> t=0
+
+π(at|st)P (st+1 |st, a t).Using Lemma 1, we show that selecting the Rényi divergence as the trajectory-level discrepancy measure, together with the importance weights ρadvis , yields an efficient estimator of the divergence between clean and worst-case trajectory distributions. Moreover, minimizing this divergence reduces an upper bound on the variance of the IS estimator (Eq. 16), thereby improving both robustness and stability. Lemma 1 follows from results in [29, 17] and the proof is provided in the Appendix B.6. 
+
+Lemma 1 Let τ = {τi}Ni=1 be a set of N > 0 trajectories collected using π. Let R : T → R denote the discounted return of a trajectory. The variance of OIS estimator of πwc satisfies: 
+
+Var 
+
+h ˆJIS 
+
+i
+
+≤ ∥R∥2
+
+> ∞
+
+N d2 (p(.|πwc ), p (.|π)) (16) 
+
+Moreover, the exponentiated 2-Rényi Divergence d2 can be efficiently estimated using : 
+
+bd2 (p(.|πwc ), p (.|π)) = N
+
+> N
+
+X
+
+> i=0
+
+ρadvis   
+
+> T−1
+
+(τi)
+
+PNj=1 ρadvis   
+
+> T−1
+
+(τj )
+
+!2
+
+(17) 
+
+## 4 Revisiting robust DRL implementations and evaluations 
+
+4.1 The codebase landscape of robust DRL 
+
+Despite recent progress in robust DRL, existing implementations remain difficult to use for prototyp-ing and extensive evaluations. First, current codebases are often recursive and monolithic: newer methods build on top of earlier ones (e.g., WocaR-RL builds on SA-ATLA, itself built on SA-Reg), and a single file ( agent.py ) implements multiple algorithms together with the adversarial evaluation. This makes it difficult to trace the behavior of individual algorithms and complicates prototyping. Moreover, the recursive design can propagate errors across codebases. For example, an incorrect implementation of SGLD in SA-Reg is inherited by all the other codebases. Second, inconsistencies exist between published pseudocode and implementations: some components are not implemented (e.g., state importance weights, Eq. 11 in WocaR-RL), or different training objectives are used (e.g., Radial, FGSM loss in PA-ATLA for continuous actions). Third, existing implementations rely on legacy MuJoCo versions that are no longer maintained (-v2). Finally, how checkpoints are saved limits portability. They can only be loaded with the current codebases and are tied to legacy MuJoCo. To address these challenges, we introduce advrl , an open-source PyTorch library that provides re-implementations of existing robustness algorithms and adversarial attacks. The library offers: (1) clean and modular single-file implementations, (2) reproducibility via standardized configurations, controlled seeds, and portable checkpoints, (3) parallel evaluations across CPU cores, (4) traceability 60 80 160 240 320 400 Attack scenario 02000 4000 6000 Episode return    
+
+> (a)
+> Mean Median Min CVaR 1%
+> CVaR 5%
+> #1
+> #2
+> #3
+> #4
+> #5 Rank (1 = best)
+> Agent 1 Agent 2 Agent 3 Agent 4
+> Agent 5
+> (b)
+
+Figure 1: (a) Return distributions of five agents across 432 PA-AD attacks, sorted in ascending order. (b) Ranking of agents by different metrics. through detailed logging during evaluations, and (5) easy integration of new methods. We also revisit several implementation details from prior work. Additional details are in the Appendix A and B. 
+
+4.2 How to evaluate against learned adversaries 
+
+We evaluate the robustness of agents by testing them against a suite of adversarial attacks, including: (1) Random attacks (2) Critic attacks [7] (3) Maximal Action Difference [7] (4) Robust SARSA (RS) [7] (5) SA-RL [5] and (6) PA-AD [6]. The last three are learned adversaries that require training either a Q-network (RS) or a policy (SA-RL, PA-AD), which makes the evaluation sensitive to the choice of hyperparameters. SA-Reg Radial SA-ATLA PA-ATLA WocaR-RL ADVIS SA-Reg Radial SA-ATLA PA-ATLA WocaR-RL ADVIS 
+
+> 1.00 0.05 0.05 0.05 0.05 0.11 0.05 1.00 0.05 0.00 0.02 0.05 0.05 0.05 1.00 0.08 0.00 0.17 0.05 0.00 0.08 1.00 0.05 0.05 0.05 0.02 0.00 0.05 1.00 0.00 0.11 0.05 0.17 0.05 0.00 1.00
+> 0.0 0.2 0.4 0.6 0.8 1.0
+
+Figure 2: Jaccard similarity of top-5% strongest PA-AD configurations across six defenses. We identify two key requirements for fair and meaning-ful evaluation against learned adversaries. First, evalua-tion must consider a large and diverse set of adversaries (i.e., hyperparameter configurations), as configurations ef-fective against one defense often fail against others. To demonstrate this, we train six defenses and evaluate them against 432 PA-AD attackers obtained via grid search (1 hyperparameter configuration = 1 attacker). For each defense, we select the top 5% strongest configurations (lowest return) and measure their overlap using Jaccard similarity. Results are shown in Figure 2. The low sim-ilarity shows that optimal adversarial configurations do not transfer across defenses. Prior work evaluates against relatively few adversaries (e.g., 30, 50, or 216) and often does not report the tuned hyperparameters or the search space. In contrast, we evaluate against a large set of ad-versaries: 1296 PA-AD attackers (432 configurations × 3seeds), 600 SA-RL attackers, and 432 RS attackers. We report the search space in Appendix C.2. The second key aspect is the evaluation metric. Mean or median returns across hyperparameter configurations can be misleading: an agent that performs well on average may still suffer catastrophic failures. This is illustrated in Figure 1 (left), which shows the returns of five agents across 432 PA-AD attacks, sorted in ascending order. Agent 5 (black) is the most robust because of the absence of catastrophic returns (near x=0). Yet, as shown in Figure 1 (right), mean and median fail to rank it first, and instead select an agent with catastrophic failures (Agent 1). This motivates the use of tail-sensitive metrics such as the minimal return and Conditional Value-at-Risk CVaR α [30, 31] (the average return over the worst α% of attackers). CVaR α allows us to assess robustness at different risk levels: in safety-critical settings, where rare failures are unacceptable, we should use small α,whereas in less adversarial environments, larger α are more appropriate. 7Table 2: Minimal episodic reward ± standard deviation using 1000 episodes. The gray rows indicate the most robust algorithm.                                                                                                                                                                                                                                                                                                                                                                                                                  
+
+> Env. ϵMethod Natural Reward Attack Reward Best Attack Random Critic MAD RS SA-RL PA-AD HalfCheetah-v5 0.15
+> SA-Reg [7] 4903.3 ±36 4638.8 ±43 4824.4 ±37 4317.2 ±1334 3795.7 ±92 3940.0 ±601 3796.9 ±41 3795.7 Radial [8] 4053.8 ±522 4036.7 ±470 4047 ±476 4038.3 ±482 4028.1 ±533 4037.2 ±472 4033.1 ±536 4028.1 SA-ATLA [5] 5400.8 ±794 4742.5 ±1336 4914.2 ±739 2588.2 ±1612 973.7 ±131.6 342.6 ±470 446.8 ±607 342.6 PA-ATLA [6] 4293.5 ±735 3665.1 ±1079 4305.8 ±281 3582.2 ±1178 2576.7 ±1423 1933.8 ±1098 2115.4 ±1130 1933.8 WocaR-RL [9] 5666.4 ±412 3369.7 ±1650 5202.2 ±135 793.8 ±555 401.4 ±252 -88.8 ±162 50.85 ±903 -88.8 Advis 4781.1 ±183 4747.6 ±193 4686.5 ±469 4579.8 ±676 4118.8 ±62 4282.4 ±539 4111.2 ±729 4111.2
+> Hopper-v5 0.075
+> SA-Reg [7] 3555.2 ±53424.2 ±13 3545.6 ±16 3531.3 ±410 1363.32 ±265 1128.5 ±917 1140.5 ±656 1128.5 Radial [8] 3487.2 ±76 2545.3 ±849 3493.6 ±13 1730.4 ±801 858.6 ±52 888.07 ±118 937 ±162 858.6 SA-ATLA [5] 3261.34 ±23235.8 ±93250.3 ±33229.5 ±373 868.8 ±52 1451.9 ±112 896.3 ±33 868.8 PA-ATLA [6] 3105.9 ±33094.6 ±33089.4 ±20 3056.1 ±216 614.5 ±71 772.3 ±100 856.2 ±593 614.5 WocaR-RL [9] 3317.3 ±13292.2 ±23322.3 ±93170.2 ±698 595.9 ±499 761.4 ±60 727.3 ±150 595.9 Advis 2599.9 ±413 2104.2 ±309 2772.2 ±225 2306 ±534 1613.1 ±307 1569.2 ±267 1641.5 ±235 1569.2
+> Walker2d-v5 0.05
+> SA-Reg [7] 6129 ±883 5183 ±1433 6110 ±1159 5959.3 ±1202 802.6 ±1691 400.9 ±2097 591 ±2123 400.9 Radial [8] 3114 ±188 2508.4 ±829 2750 ±577 3048.7 ±487 543.3 ±658 792.3 ±408 824.4 ±425 543.3 SA-ATLA [5] 6132.4 ±344 5803.6 ±1480 6091.2 ±323 5994 ±677 222.1 ±1862 379 ±2010 418 ±2289 222.1 PA-ATLA [6] 5781.4 ±127 5746 ±1067 5637.9 ±165 5750.2 ±527 1623.9 ±1286 4701.1 ±1779 3736.6 ±1368 1623.9 WocaR-RL [9] 6402.7 ±294 6176 ±720 6320.6 ±431 6320.2 ±1110 184.9 ±1907 257 ±1603 284.3 ±2294 184.9 Advis 4626.8 ±907 4629 ±952 4609.2 ±904 4593.9 ±858.1 3189.6 ±1222.9 2155.3 ±1463 3619.6 ±1081 2155.3 0.025 0.050 0.075 0.100
+
+α
+
+> 01000 2000 3000 4000
+> CVaR
+
+HalfCheetah    
+
+> 0.025 0.050 0.075 0.100
+
+α
+
+> 02000 4000 6000
+
+Walker2d    
+
+> 0.025 0.050 0.075 0.100
+
+α
+
+> 1000 1500 2000
+
+Hopper      
+
+> SA-Reg Radial SA-ATLA PA-ATLA WocaR-RL Advis
+
+Figure 3: CVaR α curves of the baselines and Advis in each environment. The shaded area denotes ±
+
+standard deviation. Advis dominates in most environment, especially in low α values. 
+
+## 5 Experiments 
+
+Experimental setup: We perform extensive experiments on three MuJoCo environments [32]. For a fair comparison, all methods are trained for the same number of steps (2 million steps) using PPO. We use an identical network architecture: MLP of 2 layers with 64 neurons each. To isolate each method’s contribution, we evaluate them independently (e.g., no SA-Reg loss is added to other methods as in previous work). For each algorithm, we use a grid search to identify optimal hyperparameters. To select the best hyperparameters, we first discard agents with poor clean performance. We then evaluate the remaining agents against 20 randomly sampled learned adversaries and eliminate non-robust ones. Finally, we evaluate the retained agents against the full set of learned attacks and select the configuration with the best robust performance. All agents are trained with three random seeds. Each attack is evaluated over 1000 episodes (20 seeds, 50 episodes per seed). We report the interquartile mean (IQM) [33] and standard deviation of episodic returns. Experiments are conducted on Intel Xeon Platinum CPUs. 
+
+Main results: Table 2 reports the minimal performance achieved under each attack. The last column (“Best Attack”) shows the worst-case return across all attacks. We see that our method consistently achieves the strongest robust performance across all environments. In Figure 3, we report CVaR α
+
+curves for α ∈ [0 .01 , 0.1] . In HalfCheetah and Hopper, Advis dominates all baselines across the entire range of α. Walker2d shows a more nuanced behavior: for small α ≤ 0.02 (extreme tail events), Advis outperforms SA-Reg, whereas for α > 0.02 , the opposite is true. This illustrates that the ranking of algorithms can change depending on risk preferences. 
+
+Ablations: We ablate two critical components of our method: the importance sampling technique and the adversarial loss. Figure 4a compares the CVaR α curves for three IS estimators: PDIS, WIS, and WPDIS. In general, the weighted variants (WIS and WPDIS) outperform PDIS, particularly at small α values. Moreover, WPDIS exhibits significantly lower variance than the other techniques. In Figure 4b, we evaluate the impact of different adversarial losses introduced in Section 3.1. No single loss consistently outperforms the others across all environments. The best loss depends on the environment, highlighting the importance of tuning the adversarial loss. 80.025 0.050 0.075 0.100         
+
+> α
+> 2500 3000 3500 4000 CVaR
+> HalfCheetah
+> 0.025 0.050 0.075 0.100
+> α
+> 2500 3000 3500 4000
+> Walker2d
+> 0.025 0.050 0.075 0.100
+> α
+> 1000 2000 3000
+> Hopper WPDIS PDIS WIS
+
+(a) Ablation: importance sampling technique. 0.025 0.050 0.075 0.100         
+
+> α
+> 3400 3600 3800 4000 4200 CVaR
+> HalfCheetah
+> 0.025 0.050 0.075 0.100
+> α
+> 2500 3000 3500 4000
+> Walker2d
+> 0.025 0.050 0.075 0.100
+> α
+> 1400 1600 1800 2000 2200
+> Hopper advis-wc advis-relu advis-mse
+
+(b) Ablation: adversarial loss. 
+
+Figure 4: Ablation study results. (a) we ablate the importance sampling estimator. (b) we ablate the adversarial loss. wc is the loss in Eq. 13, MSE for Eq. 14, and ReLU for Eq. 15 0 100 200 300 400 Attack scenario 3000 4000 5000 IQM             
+
+> Halfcheetah
+> 0100 200 300 400 Attack scenario 02000 4000 6000
+> Walker2d
+> 0100 200 300 400 Attack scenario 01000 2000 3000 4000
+> Hopper
+> 714 28 56 432
+
+Figure 5: Grid search vs random search. We plot sorted attack performance for both methods. None of the random search trials found stronger attacks than grid search. 
+
+Grid search vs random search : From a red-teaming perspective, we are interested in running a full grid search over the hyperparameters of learned adversaries to ensure a thorough, fair, and reproducible evaluation. Unlike random search, the determinism of grid search avoids introducing additional randomness into the evaluation of RL agents. However, random search can be more efficient, as it may find competitive attacks with far fewer configurations [34]. To assess this, we compare the two methods by training RS attacks against PA-ATLA agents (we select PA-ATLA to test whether random search can find stronger attacks than those reported in Table 2). We use Random search with budgets of 7, 14, 28, and 56 configurations, sampled from the same hyperparameter domain as the grid search. In Figure 5, we report the sorted attack performance for both methods. None of the random search trials find stronger attacks than grid search. As the number of sampled configurations increases, random search approaches the strongest attacks found by grid search. 
+
+Limitations and future work: We focused on policy optimization methods in continuous control environments. We made this choice to be able to run extensive experiments. In future work, we will extend our approach to other RL paradigms. For advrl , We will continue integrating newly proposed robustness methods as they appear. Moreover, we will add support for automated hyperparameter tuning for learned adversaries. 96 Conclusion 
+
+In this paper, we proposed Advis, a method for training robust DRL agents against input perturbations. Advis combines importance sampling and convex relaxation to estimate and optimize the worst-case performance of DRL policies. In contrast to prior work, it does not require collecting additional environment trajectories or training auxiliary neural networks, while explicitly accounting for long-term robustness. We also introduced advrl , a modular library that provides clean implementations of existing methods and facilitates experimentation. Moreover, we conducted evaluations over a large population of adversarial configurations for a reliable robustness assessment. Empirically, Advis achieves strong and consistent robustness across multiple environments, particularly in worst-case scenarios. 
+
+## References 
+
+[1] Yen-Chen Lin, Zhang-Wei Hong, Yuan-Hong Liao, Meng-Li Shih, Ming-Yu Liu, and Min Sun. Tactics of adversarial attack on deep reinforcement learning agents. In Carles Sierra, editor, Proceedings of the Twenty-Sixth International Joint Conference on Artificial Intelligence, IJCAI 2017, Melbourne, Australia, August 19-25, 2017 , pages 3756–3762. ijcai.org, 2017. [2] Sandy H. Huang, Nicolas Papernot, Ian J. Goodfellow, Yan Duan, and Pieter Abbeel. Adversarial attacks on neural network policies. In 5th International Conference on Learning Representations, ICLR 2017, Toulon, France, April 24-26, 2017, Workshop Track Proceedings . OpenReview.net, 2017. [3] Jernej Kos and Dawn Song. Delving into adversarial attacks on deep policies. In 5th International Conference on Learning Representations, ICLR 2017, Toulon, France, April 24-26, 2017, Workshop Track Proceedings . OpenReview.net, 2017. [4] Anay Pattanaik, Zhenyi Tang, Shuijing Liu, Gautham Bommannan, and Girish Chowdhary. Robust deep reinforcement learning with adversarial attacks. CoRR , abs/1712.03632, 2017. [5] Huan Zhang, Hongge Chen, Duane S. Boning, and Cho-Jui Hsieh. Robust reinforcement learning on state observations with learned optimal adversary. In 9th International Conference on Learning Representations, ICLR 2021, Virtual Event, Austria, May 3-7, 2021 . OpenReview.net, 2021. [6] Yanchao Sun, Ruijie Zheng, Yongyuan Liang, and Furong Huang. Who is the strongest enemy? towards optimal and efficient evasion attacks in deep RL. In The Tenth International Conference on Learning Representations, ICLR 2022, Virtual Event, April 25-29, 2022 . OpenReview.net, 2022. [7] Huan Zhang, Hongge Chen, Chaowei Xiao, Bo Li, Mingyan Liu, Duane S. Boning, and Cho-Jui Hsieh. Robust deep reinforcement learning against adversarial perturbations on state observations. In Advances in Neural Information Processing Systems 33 , 2020. [8] Tuomas P. Oikarinen, Wang Zhang, Alexandre Megretski, Luca Daniel, and Tsui-Wei Weng. Robust deep reinforcement learning through adversarial loss. In Advances in Neural Information Processing Systems 34 , pages 26156–26167, 2021. [9] Yongyuan Liang, Yanchao Sun, Ruijie Zheng, and Furong Huang. Efficient adversarial training without attacking: Worst-case-aware robust reinforcement learning. In Sanmi Koyejo, S. Mohamed, A. Agarwal, Danielle Belgrave, K. Cho, and A. Oh, editors, Advances in Neural Information Processing Systems 35: Annual Conference on Neural Information Processing Systems 2022, NeurIPS 2022, New Orleans, LA, USA, November 28 - December 9, 2022 , 2022. [10] Kaidi Xu, Zhouxing Shi, Huan Zhang, Yihan Wang, Kai-Wei Chang, Minlie Huang, Bhavya Kailkhura, Xue Lin, and Cho-Jui Hsieh. Automatic perturbation analysis for scalable certified robustness and beyond. In Advances in Neural Information Processing Systems 33 , 2020. [11] Art B Owen. Monte Carlo theory, methods and examples . Stanford, 2013. [12] Richard S. Sutton and Andrew G. Barto. Reinforcement learning - an introduction, 2nd Edition . MIT Press, 2018. [13] Qianli Shen, Yan Li, Haoming Jiang, Zhaoran Wang, and Tuo Zhao. Deep reinforcement learning with robust and smooth policy. In Proceedings of the 37th International Conference on Machine Learning, ICML 2020, 13-18 July 2020, Virtual Event , Proceedings of Machine Learning Research, pages 8707–8718. PMLR, 2020. 
+
+10 [14] Roman Belaire, Arunesh Sinha, and Pradeep Varakantham. On minimizing adversarial counterfactual error in adversarial reinforcement learning. In The Thirteenth International Conference on Learning Representations, ICLR 2025, Singapore, April 24-28, 2025 . OpenReview.net, 2025. [15] Martin L. Puterman. Markov Decision Processes: Discrete Stochastic Dynamic Programming . Wiley Series in Probability and Statistics. Wiley, 1994. [16] John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms. CoRR , abs/1707.06347, 2017. [17] Alberto Maria Metelli, Matteo Papini, Nico Montali, and Marcello Restelli. Importance sampling tech-niques for policy optimization. J. Mach. Learn. Res. , 21:141:1–141:75, 2020. [18] Guy Katz, Clark W. Barrett, David L. Dill, Kyle Julian, and Mykel J. Kochenderfer. Reluplex: An efficient SMT solver for verifying deep neural networks. In Rupak Majumdar and Viktor Kuncak, editors, Computer Aided Verification - 29th International Conference, CAV 2017, Heidelberg, Germany, July 24-28, 2017, Proceedings, Part I , Lecture Notes in Computer Science, pages 97–117. Springer, 2017. [19] Sven Gowal, Krishnamurthy Dvijotham, Robert Stanforth, Rudy Bunel, Chongli Qin, Jonathan Uesato, Relja Arandjelovic, Timothy A. Mann, and Pushmeet Kohli. On the effectiveness of interval bound propagation for training verifiably robust models. CoRR , abs/1810.12715, 2018. [20] Huan Zhang, Tsui-Wei Weng, Pin-Yu Chen, Cho-Jui Hsieh, and Luca Daniel. Efficient neural network robustness certification with general activation functions. In Advances in Neural Information Processing Systems 31 , pages 4944–4953, 2018. [21] Ezgi Korkmaz. Understanding and diagnosing deep reinforcement learning. In Ruslan Salakhutdinov, Zico Kolter, Katherine A. Heller, Adrian Weller, Nuria Oliver, Jonathan Scarlett, and Felix Berkenkamp, editors, 
+
+Forty-first International Conference on Machine Learning, ICML 2024, Vienna, Austria, July 21-27, 2024 ,Proceedings of Machine Learning Research, pages 25265–25275. PMLR / OpenReview.net, 2024. [22] Ezgi Korkmaz. Adversarial robust deep reinforcement learning requires redefining robustness. In Brian Williams, Yiling Chen, and Jennifer Neville, editors, Thirty-Seventh AAAI Conference on Artificial Intelligence, AAAI 2023, Thirty-Fifth Conference on Innovative Applications of Artificial Intelligence, IAAI 2023, Thirteenth Symposium on Educational Advances in Artificial Intelligence, EAAI 2023, Washington, DC, USA, February 7-14, 2023 , pages 8369–8377. AAAI Press, 2023. [23] Buqing Nie, Jingtian Ji, Yangqing Fu, and Yue Gao. Improve robustness of reinforcement learning against observation perturbations via l ∞ lipschitz policy networks. In Michael J. Wooldridge, Jennifer G. Dy, and Sriraam Natarajan, editors, Thirty-Eighth AAAI Conference on Artificial Intelligence, AAAI 2024, Thirty-Sixth Conference on Innovative Applications of Artificial Intelligence, IAAI 2024, Fourteenth Symposium on Educational Advances in Artificial Intelligence, EAAI 2014, February 20-27, 2024, Vancouver, Canada ,pages 14457–14465. AAAI Press, 2024. [24] Xian Yeow Lee, Sambit Ghadai, Kai Liang Tan, Chinmay Hegde, and Soumik Sarkar. Spatiotemporally constrained action space attacks on deep reinforcement learning agents. In The Thirty-Fourth AAAI Conference on Artificial Intelligence, AAAI 2020, The Thirty-Second Innovative Applications of Artificial Intelligence Conference, IAAI 2020, The Tenth AAAI Symposium on Educational Advances in Artificial Intelligence, EAAI 2020, New York, NY, USA, February 7-12, 2020 , pages 4577–4584. AAAI Press, 2020. [25] Guanlin Liu and Lifeng Lai. Provably efficient black-box action poisoning attacks against reinforcement learning. In Marc’Aurelio Ranzato, Alina Beygelzimer, Yann N. Dauphin, Percy Liang, and Jennifer Wort-man Vaughan, editors, Advances in Neural Information Processing Systems 34: Annual Conference on Neural Information Processing Systems 2021, NeurIPS 2021, December 6-14, 2021, virtual , pages 12400–12410, 2021. [26] Doina Precup, Richard S. Sutton, and Satinder Singh. Eligibility traces for off-policy policy evaluation. In Pat Langley, editor, Proceedings of the Seventeenth International Conference on Machine Learning (ICML 2000), Stanford University, Stanford, CA, USA, June 29 - July 2, 2000 , pages 759–766. Morgan Kaufmann, 2000. [27] Cameron Voloshin, Hoang Minh Le, Nan Jiang, and Yisong Yue. Empirical study of off-policy policy evaluation for reinforcement learning. In Joaquin Vanschoren and Sai-Kit Yeung, editors, Proceedings of the Neural Information Processing Systems Track on Datasets and Benchmarks 1, NeurIPS Datasets and Benchmarks 2021, December 2021, virtual , 2021. 
+
+11 [28] Qiang Liu, Lihong Li, Ziyang Tang, and Dengyong Zhou. Breaking the curse of horizon: Infinite-horizon off-policy estimation. In Samy Bengio, Hanna M. Wallach, Hugo Larochelle, Kristen Grauman, Nicolò Cesa-Bianchi, and Roman Garnett, editors, Advances in Neural Information Processing Systems 31: Annual Conference on Neural Information Processing Systems 2018, NeurIPS 2018, December 3-8, 2018, Montréal, Canada , pages 5361–5371, 2018. [29] Alberto Maria Metelli, Matteo Papini, Francesco Faccio, and Marcello Restelli. Policy optimization via importance sampling. In Samy Bengio, Hanna M. Wallach, Hugo Larochelle, Kristen Grauman, Nicolò Cesa-Bianchi, and Roman Garnett, editors, Advances in Neural Information Processing Systems 31: Annual Conference on Neural Information Processing Systems 2018, NeurIPS 2018, December 3-8, 2018, Montréal, Canada , pages 5447–5459, 2018. [30] Yinlam Chow and Mohammad Ghavamzadeh. Algorithms for cvar optimization in mdps. In Zoubin Ghahramani, Max Welling, Corinna Cortes, Neil D. Lawrence, and Kilian Q. Weinberger, editors, Advances in Neural Information Processing Systems 27: Annual Conference on Neural Information Processing Systems 2014, December 8-13 2014, Montreal, Quebec, Canada , pages 3509–3517, 2014. [31] Yinlam Chow, Aviv Tamar, Shie Mannor, and Marco Pavone. Risk-sensitive and robust decision-making: a cvar optimization approach. In Corinna Cortes, Neil D. Lawrence, Daniel D. Lee, Masashi Sugiyama, and Roman Garnett, editors, Advances in Neural Information Processing Systems 28: Annual Conference on Neural Information Processing Systems 2015, December 7-12, 2015, Montreal, Quebec, Canada , pages 1522–1530, 2015. [32] Mark Towers, Ariel Kwiatkowski, Jordan K. Terry, John U. Balis, Gianluca De Cola, Tristan Deleu, Manuel Goulão, Andreas Kallinteris, Markus Krimmel, Arjun KG, Rodrigo Perez-Vicente, Andrea Pierré, Sander Schulhoff, Jun Jet Tai, Hannah Tan, and Omar G. Younis. Gymnasium: A standard interface for reinforcement learning environments. CoRR , abs/2407.17032, 2024. [33] Rishabh Agarwal, Max Schwarzer, Pablo Samuel Castro, Aaron C. Courville, and Marc G. Bellemare. Deep reinforcement learning at the edge of the statistical precipice. In Marc’Aurelio Ranzato, Alina Beygelzimer, Yann N. Dauphin, Percy Liang, and Jennifer Wortman Vaughan, editors, Advances in Neural Information Processing Systems 34: Annual Conference on Neural Information Processing Systems 2021, NeurIPS 2021, December 6-14, 2021, virtual , pages 29304–29320, 2021. [34] James Bergstra and Yoshua Bengio. Random search for hyper-parameter optimization. J. Mach. Learn. Res. , 13:281–305, 2012. [35] Anay Pattanaik, Zhenyi Tang, Shuijing Liu, Gautham Bommannan, and Girish Chowdhary. Robust deep reinforcement learning with adversarial attacks. In Elisabeth André, Sven Koenig, Mehdi Dastani, and Gita Sukthankar, editors, Proceedings of the 17th International Conference on Autonomous Agents and MultiAgent Systems, AAMAS 2018, Stockholm, Sweden, July 10-15, 2018 , pages 2040–2042. International Foundation for Autonomous Agents and Multiagent Systems Richland, SC, USA / ACM, 2018. [36] Takeru Miyato, Shin-ichi Maeda, Masanori Koyama, and Shin Ishii. Virtual adversarial training: A regularization method for supervised and semi-supervised learning. IEEE Trans. Pattern Anal. Mach. Intell. , 41(8):1979–1993, 2019. [37] Andrew G. Lamperski. Projected stochastic gradient langevin algorithms for constrained sampling and non-convex learning. In Mikhail Belkin and Samory Kpotufe, editors, Conference on Learning Theory, COLT 2021, 15-19 August 2021, Boulder, Colorado, USA , Proceedings of Machine Learning Research, pages 2891–2937. PMLR, 2021. 
+
+12 A Introduction to advrl library 
+
+advrl is a library built using Pytorch that provides clean implementations of adversarial Deep Reinforcement Learning robustness and attack algorithms. It focuses on perturbations against inputs of the policy networks, a widely studied problem. Our goal is to provide a tool that facilitates research and investigation of adversarial DRL. To the best of our knowledge, advrl is the first project to give researcher a single library that has ready implementations of the main methods in one place. Moreover, our library provides modular and clean implementation, which facilitates prototyping. In addition, our library ensures reproducibility and traceability of results for responsible research. In the following, we will provide information on how to use our library details regarding the implemented baselines. advrl will be maintained by the authors, and it will keep implementing new SOTA algorithm as they appear. 
+
+advrl provides the implementations of the following algorithms: • Vanilla training: Proximal Policy Optimization (PPO) [16] • Defensive training: SA-Reg [13, 7], Radial [8], SA-ATLA [5], PA-ATLA [6], WocaR-RL [9], and ADVIS (ours). • Adversarial attacks: Random perturbations (Uniform, Gaussian and fixed), Maximal Action Difference (MAD) attack [7], Robust Sarsa (RS) attack [7], Critic attack [35, 7], State-Adversarial attacker learned using RL (SA-RL) [5], Policy Adversarial Actor Director (PA-AD) [6]. 
+
+A.1 How to use advrl 
+
+Each algorithm in advrl is associated with a dedicated configuration file created using 
+
+ml_collections . Each configuration file fully specifies the training setup, including the neu-ral network architecture, environment, adversarial training parameters, optimization hyperparameters, and logging options. See Figure 6, for an example of the config file of SA-Reg algorithm. All the hyperparameters can be overridden directly via command-line flags without modifying the config file. Figure 7 shows an example of a command to training SA-Reg. 
+
+A.1.1 Adversarial attacks 
+
+Adversarial attacks in advrl follow the same configuration style as defense algorithms. Each attack is specified through a dedicated configuration file, which defines the attack parameters, evaluation settings, and logging options. Learned attacks such as RS, SA-RL and PA-AD rely on training a Q-network or an adversarial policy. For these methods, the configuration file additionally includes training hyperparameters. Figure 8 shows examples of config file of MAD and RS attacks. Attacks can be executed via the command line by specifying a configuration file and overriding hyperparameters if necessary. Figure 9 and 10 shows example commands for running MAD and RS attacks respectively. 
+
+A.1.2 Checkpointing and Reproducibility 
+
+For adversarial training, advrl saves a checkpoint under a directory path of the form 
+
+runs/env_id/algorithm/run_name . Each checkpoint contains neural network weights, list of environment wrappers, the full environment normalization statistics, and the complete run configura-tion and launched command. When running adversarial attacks, advrl saves the evaluation results under a directory path of the form evals/env_id/algorithm/run_name/run_id . All the random seeds used across evaluation runs are stored in seeds.json . The complete per-seed, per-episode rewards are saved in metadata.json , preserving the full evaluation trajectory for traceability. The 
+
+metrics.json file contains aggregate statistics computed across all seeds and episodes, including the mean, median, interquartile mean (IQM), interquartile range (IQR), standard deviation, minimum, and maximum returns. Full details are in table 3. 13 from ml_collections import ConfigDict def get_config(): config = ConfigDict() config.name = "sa_ppo_with_mlp" # config id # Neural nets 
+
+config.actor = "pi_mlp" config.critic = "vf_mlp" config.pi_net = (64, 64) config.vf_net = (64, 64) config.pi_act_fun = "tanh" config.vf_act_fun = "tanh" ... 
+
+# Env 
+
+config.env_id = "HalfCheetah-v5" config.norm_obs = True config.clip_obs = True .... 
+
+#! Adversarial training 
+
+config.solver = "relax" #sgld or "relax" 
+
+config.eps_schedule = "linear" config.start_val = 0.0 config.end_val = 0.15 config.rb_coef = 0.01 # robust coefficient 
+
+.... 
+
+# Training 
+
+config.num_envs = 2 # Number of parallel environments 
+
+config.lr_actor = 0.00005 config.lr_critic = 0.00005 config.batch_size = 64 ... 
+
+# Logging 
+
+config.logger = "tensorboard" # "tensorboard", "wandb", "aim", or "console" 
+
+... 
+
+# Evaluation 
+
+config.eval_every = 200 # evaluate every 'eval_every' episode 
+
+.... 
+
+# Save 
+
+config.checkpoint = True return config Figure 6: Configuration file of SA-Reg. $ python mujoco_sa.py --config=advrl/configs/sa_ppo_mlp.py \ --config.env_id="HalfCheetah-v5" --config.log_std_init=-1 \ --config.lr_actor=0.00025 --config.lr_critic=0.00025 \ --config.pi_act_fun="tanh" --config.vf_act_fun="tanh" --config.rb_coef=0.1 --config.solver="relax" 
+
+Figure 7: Command to train SA-Reg. 14 ... config.attack_name = "mad"    
+
+> # Attack params
+> config.eps = 0.15 config.solver = "sgld" # sgld or pi
+> config.deterministic = True ...
+> # Evaluation params
+> config.num_envs = 10 config.num_episodes = 20 config.num_seeds = 10 ...
+> # Logging
+> config.logger = "" # Options: "aim", or ""
+> ...
+
+(a) MAD config. ... config.attack_name = "sarsa"  
+
+> # Attack params
+> ...
+> # Evaluation params
+> ....
+> # Training params
+> config.train = True training.num_envs = 1 training.net_arch = (64, 64) training.act_fun = "tanh" training.n_steps = 2048 training.batch_size = 64 training.lr = 0.0001 ...
+> # Logging
+> ....
+
+(b) RS config. 
+
+Figure 8: Configuration files of (a) MAD and (b) RS attacks. $ python mujoco_attack.py --config=advrl/configs/attacks/mad.py \ --agent=runs/Hopper-v5/sa/SA-PPO-MLP-v1_42__2026-04-19_11-28-14 \ --config.num_envs=10 --config.num_episodes=50 --config.num_seeds=10 
+
+Figure 9: Command to run MAD attack. python mujoco_attack.py --config=advrl/configs/attacks/sarsa.py \ --agent=runs/Hopper-v5/sa/SA-PPO-MLP-v1_42__2026-04-19_11-28-14 \ --config.num_envs=10 --config.num_episodes=50 --config.num_seeds=10 \ --config.training.lr=0.0005 --config.training.total_timesteps=100000 
+
+Figure 10: Command to run RS attack. 
+
+## B Implementation details 
+
+In this section we will present the implementation details of each algorithm. We will provide how we implemented each algorithm, what are the design choices we made, and how our implementation is different than the one in the previous codebases. In the following we will assume that the policy is a multivariable Gaussian distribution. The policy network output the vector mean μθ (s) and a diagonal covariance matrix Σθ independent of the input s.
+
+B.1 SA-Reg 
+
+SA-Reg was independently proposed in two works [13] and [7]. The goal of [13] is to learn smooth policies with respect to states, while [7] provides a theoretical justification by showing that the performance degradation under an optimal adversary v∗ is bounded by this discrepancy: 
+
+max  
+
+> s∈S
+
+[Vπ (s) − Vπ◦v∗ (s)] ≤ α max  
+
+> s∈S
+
+max  
+
+> ˜s∈B ϵ(s)
+
+DTV (π(.|s) ∥ π(.|˜s)) , (18) 15 Table 3: Files saved by advrl for defensive training and adversarial attack evaluation. 
+
+Context File Description 
+
+Training 
+
+policy.pt / critic.pt Neural Network weights 
+
+envparams.npz Environment normalization statistics (running mean, variance, count). 
+
+wrappers.json List of active environment wrappers. 
+
+config.json Full training configuration. 
+
+command.txt Exact command used to launch the experiment. Attack 
+
+agent.json Configuration of the victim policy under attack. 
+
+config.json Configuration of the attack. 
+
+seeds.json List of random seeds used across evaluation runs. 
+
+metadata.json Per-seed, per-episode rewards for the full evalua-tion. 
+
+metrics.json Aggregate statistics: mean, median, IQM, IQR, std, min, max. 
+
+Algorithm 1: Proximal Policy Optimization (PPO) 
+
+Input: Total steps N , rollout length T , epochs K, mini-batch size M , policy network πθ , value network Vϕ. 
+
+> 1
+
+n ← 0, ;  
+
+> 2
+
+while n < N do  
+
+> 3
+
+DATA COLLECTION : 
+
+> 4
+
+Collect rollout D = {(st, a t, r t, s t+1 )}Tt=1 using πθ , and update n ← n + T 
+
+> 5
+
+Compute rewards-to-go ˆRt and advantages ˆAt 
+
+> 6
+
+for epoch = 1 , . . . , K do  
+
+> 7
+
+Sample mini-batch B ⊂ D of size M 
+
+> 8
+
+POLICY UPDATE : 
+
+> 9
+
+Update policy network using:  
+
+> 10
+
+Lactor (θ) = P 
+
+> B
+
+min 
+
+
+
+rt(θ) ˆAt, clip( rt(θ), 1 ± ϵ) ˆAt
+
+ 
+
+> 11
+
+CRITIC UPDATE : 
+
+> 12
+
+Update value network using: Lcritic (ϕ) = P
+
+> B
+
+(Vϕ(st) − ˆRt)2
+
+where DTV denotes the total variation distance and α is a constant independent of the policy π. Thus, minimizing Eq 5 reduces the performance gap between the clean and adversarial settings. In practice, the Kullback–Leibler (KL) divergence is used and the loss is computed over a batch of sampled states: 
+
+LSA −Reg robust = X
+
+> s
+
+max  
+
+> ˜st∈B ϵ(st)
+
+DKL (π(.|s), π (.|˜s)) (19) To compute the inner maximization max ˜s∈B ϵ(s), we can either us convex relaxation tools [10] or Stochastic Gradient Langevin Dynamics (SGLD) [7]. The full pseudocode of SA-Reg as we implemented it is in Algorithm 18. Compared to vanilla PPO in Algorithm 12, SA-Reg modifies the policy update step by adding a regularization term. The authors in [7] proposed two methods to compute max ˜s∈B ϵ(s) DKL (π(.|s), π (.|˜s)) : convex-relaxation tools and SGLD. In addition to these two approaches, we added power iteration (PI) method [36]. In the following we will explain each method. 16 Convex relaxation tools: 
+
+Given the input state s and the current value of attack budget ϵt. we use auto_LIRPA [10] library to get the lower and upper bounds of the mean vector μθ (s) and μθ (s).
+
+max  
+
+> ˜s∈B ϵ(s)
+
+DKL (π(.|s), π (.|˜s)) ≈
+
+> A
+
+X
+
+> i=1
+
+max[ μθ (s) − μθ (s), μ θ (s) − μθ (s)] i
+
+Σii 
+
+(20) 
+
+Stochastic Gradient Langevin Dynamics 
+
+SGLD solves the problem in 21 using an iterative approach. SGLD [37] is similar to gradient descent but it adds a noise factor to the update to escape the zero gradient at ˜s0 = s.
+
+max  
+
+> ˜s∈B ϵ(s)
+
+DKL (π(.|˜s), π (.|˜s)) = max 
+
+> ˜s∈B ϵ(s)
+> A
+
+X
+
+> i=1
+
+[μθ (˜ s) − μθ (s)] 2
+
+> i
+
+Σii 
+
+= max  
+
+> ˜s∈B ϵ(s)
+
+R(˜ s) (21) 
+
+˜sk+1 = proj 
+
+
+
+sk − η∇˜sk R(˜ sk) + 
+
+r 2ηβ ζ
+
+
+
+, ˜s0 = s, k = 0 , . . . K − 1 (22) Here ζ ∼ N (0 , 1) , η = ϵt 
+
+> K
+
+is the step size parameter and β > 0 is a noise parameter. The original codebase of SA-Reg has a bug in the way it implemented SGLD. SGLD was implemented as in Eq 23. As most previous codebases are built on top of SA-Reg codebase, they all inherited this bug. 
+
+˜sk+1 = proj 
+
+
+
+sk − η∇˜sk R(˜ sk) + η×
+
+r 2ηβ ζ
+
+
+
+, ˜s0 = s, k = 0 , . . . K − 1 (23) Given that SA-Reg uses an ϵ-scheduler during training, where the maximum size of the perturbations slowly increases until it reaches ϵ, this leads to having very small step sizes in the early stages of training. In that case, SGLD is nearly equivalent to gradient descent which is problematic given that the gradient at the first step is zero ∇˜s0=sR(˜ s0) = 0 .
+
+Power Iteration method 
+
+To solve the maximization problem in 21 using PI [36] we do the following: 
+
+max  
+
+> ˜s∈B ϵ(s)
+
+DKL (π(.|˜s), π (.|˜s)) = R(s + dK ) (24) Where: 
+
+dk+1 = sign (∇ξd k R(s + dk)) , d 0 ∼ N (0 , 1) , k = 0 , . . . , K − 1 (25) Here ξ is a small number (e.g., 10 −3, 10 −5).PI has the advantage of needing only one iteration to have good performance. In figure 11 we keep track of the estimations of PI with 1 iteration and SGLD with 10 iterations when training using convex relaxation. There is a huge gap between convex relaxations and SGLD. PI gives a better estimation while using just 1 iteration. 
+
+B.2 Radial 
+
+Radial original codebase used a different robustness loss than the one reported in the original paper. The paper reports the following loss: 
+
+LRadial (θ) = E(st,a t)
+
+
+
+− min 
+
+ πwc  
+
+> θ
+
+(at | st)
+
+πθold (at | st) At, clip   πwc  
+
+> θ
+
+(at | st)
+
+πθold (at | st) , 1 − ϵ, 1 + ϵAt
+
+ 
+
+(26) However, the codebase used the following loss: 17 0.00 0.25 0.50 0.75 1.00 1.25 1.50 1.75 2.00    
+
+> Training Steps 1e6
+> 0.0 0.2 0.4 0.6 0.8
+> DKL
+> Convex SGLD PI
+
+Figure 11: Comparison between convex relaxation, PI and SGLD. 
+
+Algorithm 2: SA-Reg 
+
+Input: Total steps N , rollout length T , epochs K, mini-batch size M , policy network πθ , value network Vϕ, attack budget ϵ, robustness coefficient κ. 
+
+> 1
+
+n ← 0 
+
+> 2
+
+Initialize the ϵ-scheduler ϵt(ϵ, n ). 
+
+> 3
+
+while n < N do  
+
+> 4
+
+DATA COLLECTION : 
+
+> 5
+
+Collect rollout D = {(st, a t, r t, s t+1 )}Tt=1 using πθ , and update n ← n + T 
+
+> 6
+
+Compute rewards-to-go ˆRt and advantages ˆAt 
+
+> 7
+
+Update the ϵ-scheduler ϵt(ϵ, n ) 
+
+> 8
+
+for epoch = 1 , . . . , K do  
+
+> 9
+
+Sample mini-batch B ⊂ D of size M 
+
+> 10
+
+POLICY UPDATE : 
+
+> 11
+
+Compute the regularization loss (convex-relax, SGLD, or PI):  
+
+> 12
+
+Lrobust (θ) = P 
+
+> s∈B
+
+max ˜s∈B ϵ(s) DKL (π(.|s), π (.|˜s))  
+
+> 13
+
+Compute standard PPO loss:  
+
+> 14
+
+LDRL (θ) = P 
+
+> B
+
+min 
+
+
+
+rt(θ) ˆAt, clip( rt(θ), 1 ± ϵ) ˆAt
+
+ 
+
+> 15
+
+Update policy network using:  
+
+> 16
+
+L(θ) = LDRL (θ) + κLrobust (θ) 
+
+> 17
+
+CRITIC UPDATE : 
+
+> 18
+
+Update value network using: Lcritic (ϕ) = P
+
+> B
+
+(Vϕ(st) − ˆRt)2
+
+LRadial (θ) = E(st,a t)
+
+"
+
+− min 
+
+
+
+r(θ)At, clip  r(θ), 1 ± ϵAt,r(θ)At, clip  r(θ), 1 ± ϵAt,r(θ)At, clip  r(θ), 1 ± ϵAt
+
+# (27) Moreover, the policy network is updated using a convex combination between the standard DRL loss and the Radial loss : 
+
+L(θ) = κLDRL (θ) + (1 − κ)Lrobust (θ), κ ∈ (0 , 1] (28) We report the pseudocode of Radial in Algorithm 18. We implemented the loss as the one in the original paper. And users can choose if they want to use convex combination loss or not. 18 Algorithm 3: Radial 
+
+Input: Total steps N , rollout length T , epochs K, mini-batch size M , policy network πθ , value network Vϕ, attack budget ϵ, robustness coefficient κ. 
+
+> 1
+
+n ← 0 
+
+> 2
+
+Initialize the ϵ-scheduler ϵt(ϵ, n ). 
+
+> 3
+
+while n < N do  
+
+> 4
+
+DATA COLLECTION : 
+
+> 5
+
+Collect rollout D = {(st, a t, r t, s t+1 )}Tt=1 using πθ , and update n ← n + T 
+
+> 6
+
+Compute rewards-to-go ˆRt and advantages ˆAt 
+
+> 7
+
+Update the ϵ-scheduler ϵt(ϵ, n ) 
+
+> 8
+
+for epoch = 1 , . . . , K do  
+
+> 9
+
+Sample mini-batch B ⊂ D of size M 
+
+> 10
+
+POLICY UPDATE : 
+
+> 11
+
+Compute the worst case policy πwc using Equation 7, and compute the regularization loss:  
+
+> 12
+
+Lrobust (θ) = P 
+
+> B
+
+min 
+
+
+
+rwc  
+
+> t
+
+(θ) ˆAt, clip( rwc  
+
+> t
+
+(θ), 1 ± ϵ) ˆAt
+
+ 
+
+> 13
+
+Compute standard PPO loss:  
+
+> 14
+
+LDRL (θ) = P 
+
+> B
+
+min 
+
+
+
+rt(θ) ˆAt, clip( rt(θ), 1 ± ϵ) ˆAt
+
+ 
+
+> 15
+
+Update policy network using:  
+
+> 16
+
+L(θ) = LDRL (θ) + βLrobust (θ) 
+
+> 17
+
+CRITIC UPDATE : 
+
+> 18
+
+Update value network using: Lcritic (ϕ) = P
+
+> B
+
+(Vϕ(st) − ˆRt)2
+
+B.3 SA-ATLA 
+
+The Alternating Training with Learned Adversary pseudocode is in Algorithm 4. In our implementa-tion of SA-ATLA, we provide two design for the adversarial policy: • Squashed: Wa add a Tanh activation function at the last layer of the policy network so the outputs of the policy are in [−1, 1] . The perturbed states is ˜st = st + ϵt × v(st). We correct the probabilities. • No squashing: We do not constrain the output of the policy, but we constrain the perturbation to not exceed the attack budget. Moreover, use use ϵ-scheduling to collect rollouts to train the robust agent. The adversary is instead trained with the full attack budget. The scheduling is important to ensure the convergence of the agent. The original implementation did not use scheduling. 
+
+B.4 PA-ATLA 
+
+PA-ATLA follows the same training framework as SA-ATLA. The difference is that the adversary learns the worst-action, which is then used to conducted a targeted attacking using FGSM. To conduct the FGSM, we use the adversarial losses recommended in the original paper for continuous actions (Section C.3 in [6]). The original paper used the following to generate the perturbations: 
+
+argmax 
+
+> ˜s∈B ϵ(s)
+
+∥π(˜ s) − π(s)∥2 + CosineSim (π(˜ s) − π(s), ˆa) (29) This loss is was recommended for discrete actions. advrl uses the following loss against deterministic policy. We also support PGD generation. 
+
+argmax 
+
+> ˜s∈B ϵ(s)
+
+∥π(˜ s) − π(s)∥2 (30) 19 Algorithm 4: ATLA 
+
+Input: Total steps N , rollout length T , epochs K, mini-batch size M , policy network πθ , value network Vϕ, adversary policy network vθadv , adversary value network Vϕadv ,attack budget ϵ, robustness coefficient κ. 
+
+> 1
+
+n ← 0, nadv ← 0 
+
+> 2
+
+Initialize the ϵ-scheduler ϵt(ϵ, n ). 
+
+> 3
+
+while n < N and nadv < N do  
+
+> 4
+
+TRAIN THE ADVERSARY : 
+
+> 5
+
+DATA COLLECTION : 
+
+> 6
+
+Collect rollout Dadv = {(st, v θadv (st), −rt, s t+1 )}Tt=1 using vθadv as perturbation of size ϵ and πθ to step the environment, and update nadv ← nadv + T 
+
+> 7
+
+Compute rewards-to-go ˆRadv  
+
+> t
+
+and advantages ˆAadv  
+
+> t
+> 8
+
+Update the ϵ-scheduler ϵt(ϵ, n ) 
+
+> 9
+
+for epoch = 1 , . . . , K do  
+
+> 10
+
+Sample mini-batch B ⊂ D adv of size M 
+
+> 11
+
+POLICY UPDATE : 
+
+> 12
+
+Update policy network using:  
+
+> 13
+
+Lactor (θadv ) = P 
+
+> B
+
+min 
+
+
+
+rt(θadv ) ˆAadv  
+
+> t
+
+, clip( rt(θadv ), 1 ± ϵ) ˆAadv 
+
+> t
+
+ 
+
+> 14
+
+CRITIC UPDATE : 
+
+> 15
+
+Update value network using: Lcritic (ϕadv ) = P
+
+> B
+
+(V adv  
+
+> ϕ
+
+(st) − ˆRadv  
+
+> t
+
+)2 
+
+> 16
+
+DATA COLLECTION : 
+
+> 17
+
+Collect rollout under attack D = {(vθadv (st), a t, r t, v θadv (st+1 )) }Tt=1 using πθ , and update n ← n + T 
+
+> 18
+
+Compute rewards-to-go ˆRt and advantages ˆAt 
+
+> 19
+
+Update the ϵ-scheduler ϵt(ϵ, n ) 
+
+> 20
+
+for epoch = 1 , . . . , K do  
+
+> 21
+
+Sample mini-batch B ⊂ D of size M 
+
+> 22
+
+POLICY UPDATE : 
+
+> 23
+
+Update policy network using:  
+
+> 24
+
+Lactor (θ) = P 
+
+> B
+
+min 
+
+
+
+rt(θ) ˆAt, clip( rt(θ), 1 ± ϵ) ˆAt
+
+ 
+
+> 25
+
+CRITIC UPDATE : 
+
+> 26
+
+Update value network using: Lcritic (ϕ) = P
+
+> B
+
+(Vϕ(st) − ˆRt)2
+
+B.5 WocaR-RL 
+
+The pseudocode of WocaR-RL is provided in Algorithm 5. The worst-case critic network is updated using a loss similar to Double Q-learning error : q-network Qψ is used to select the minimum action and evaluated using the target q-network: 
+
+Lworst-case (ψ) = rt + γQ ψ− (st+1 , argmin  
+
+> a∈A adv (st+1 ,π )
+
+Qψ (st+1 , a )) − Qψ (st, a t)
+
+In the original implementation, Aadv (s, π ) = [ μθ (s), μ θ (s)] is computed using Interval Bound Propagation (IBP) with a fixed perturbation ϵ = 0 .01 across all the environments. The minimum is computed using 50-step PGD with a step size of (μθ (s) − μθ (s)) /50 . We follow the same logic, except that (1) the user can use IBP, CROWN or CROWN-IBP (2) the perturbations is not fixed at 
+
+0.01 and we use ϵt-scheduling. 20 Algorithm 5: WocaR-RL 
+
+Input: Total steps N , rollout length T , epochs K, mini-batch size M , policy network πθ , value network Vϕ, attack budget ϵ, robustness coefficients κ1 and κ2, worst-case critic Qψ and target worst-case critic Qψ− 
+
+> 1
+
+n ← 0, 
+
+> 2
+
+Initialize the ϵ-scheduler ϵt(ϵ, n ) 
+
+> 3
+
+while n < N do  
+
+> 4
+
+DATA COLLECTION : 
+
+> 5
+
+Collect rollout D = {(st, a t, r t, s t+1 )}Tt=1 using πθ , and update n ← n + T 
+
+> 6
+
+Compute rewards-to-go ˆRt and advantages ˆAt 
+
+> 7
+
+WORST -C ASE CRITIC UPDATE : 
+
+> 8
+
+Compute Aadv : lower πθ and upper πθ bound of the policy with pertubations of size ϵt 
+
+> 9
+
+Compute target actions ˆa using PGD: 
+
+ˆa = argmin  
+
+> a∈A adv (st+1 ,π )
+
+Qψ (st+1 , a )
+
+Update the worst-case critic using: 
+
+Lworst-case (ψ) = P
+
+> B
+
+ rt + γQ ψ− (st+1 , ˆat+1 ) − Qψ (st, a t)2 
+
+> 10
+
+for epoch = 1 , . . . , K do  
+
+> 11
+
+Sample mini-batch B ⊂ D of size M 
+
+> 12
+
+POLICY UPDATE : 
+
+> 13
+
+Compute state importance weights using PGD: 
+
+w(s) = Vϕ(s) − min  
+
+> a∈A
+
+Qψ (s, a )
+
+Compute the weighted SA-Reg loss: 
+
+LSA −Reg (θ) = P 
+
+> s∈B
+
+w(s) max ˜s∈B ϵ(s) DKL (π(.|s), π (.|˜s))  
+
+> 14
+
+Compute the robust PPO loss:  
+
+> 15
+
+Lwc (θ) = 
+
+P 
+
+> B
+
+min 
+
+
+
+rt(θ) ˆAt + κ1Qψ (st, a t), clip( rt(θ), 1 ± ϵ) ˆAt + κ1Qψ (st, a t)
+
+ 
+
+> 16
+
+Update policy network using: L(θ) = Lwc (θ) + κ2LSA −Reg (θ) 
+
+> 17
+
+CRITIC UPDATE : 
+
+> 18
+
+Update value network using: Lcritic (ϕ) = P
+
+> B
+
+(Vϕ(st) − ˆRt)2
+
+B.6 Advis 
+
+The pseudocode of Advis is presented in Algorithm 6. We implemented three importance sampling techniques that have lower variance that the ordinary importance sampling estimator: Per-Decision IS (PDIS) (Eq 31), Weighted IS (WIS) (Eq 32), and Weighted Per-Decision IS (WPDIS) (Eq 33). 
+
+ˆJPDIS (π) = 1
+
+N
+
+> N
+
+X 
+
+> i=1
+> T−1
+
+X
+
+> t=0
+
+ρt(τi) γtrit (31) 
+
+ˆJWIS (π) = 
+
+> N
+
+X
+
+> i=1
+
+ρT −1(τi)
+
+PNj=1 ρT −1(τj ) R(τi) (32) 
+
+ˆJWPDIS (π) =  
+
+> T−1
+
+X
+
+> t=0
+
+γtNX
+
+> i=1
+
+ρt(τi)
+
+PNj=1 ρt(τj ) rit (33) In contrast to previous algorithms, Advis collect full episodes rather than a fixed number of steps. The training is done using mini- batches: consecutive windows of the collected episodes. We provide two 21 options to compute the importance weights: (1) importance weights only consider the probabilities of states in the sampled mini-batch, or (2) the importance weights of the current mini-batch are initialized using importance weights from the previous mini-batch, except for the first mini-batch. However, the gradients are propagated only through the probabilities of the sampled window. We additionally give the option to use average rewards ( γ = 1 ), as it may otherwise cause estimates to vanish to zero in environments with long episodes (e.g., 0.99 999 ≈ 4.3 × 10 −5). To ensure numerical stability, we can clip the log-importance weights when using PDIS or WPDIS. For WIS estimators, we compute normalized importance weights from the log-importance weights log-sum-exp trick for numerical stability. 
+
+Algorithm 6: Advis 
+
+Input: Total steps T , number of episodes N , epochs K, mini-batch size M , policy network πθ ,value network Vϕ, attack budget ϵ, robustness coefficient κ. 
+
+> 1
+
+t ← 0 
+
+> 2
+
+Initialize the ϵ-scheduler ϵt(ϵ, n ). 
+
+> 3
+
+while t < T do  
+
+> 4
+
+DATA COLLECTION : 
+
+> 5
+
+Collect rollout N episodes D = {(si
+
+> 0
+
+, a io, . . . , s it, a it, r it, . . . , s iLi )}Ni=1 using πθ , and update t ← t + P 
+
+> i
+
+Li 
+
+> 6
+
+Compute rewards-to-go ˆRt and advantages ˆAt 
+
+> 7
+
+Update the ϵ-scheduler ϵt(ϵ, n ) 
+
+> 8
+
+for epoch = 1 , . . . , K do  
+
+> 9
+
+Sample mini-batch B ⊂ D of size M 
+
+> 10
+
+POLICY UPDATE : 
+
+> 11
+
+Compute the worst case policy πwc using Equation 7  
+
+> 12
+
+Compute worst-case performance using importance sampling ˆJIS (πwc ) 
+
+> 13
+
+Compute adversarial loss Ladvis robust (Eq 13, 14, or 15)  
+
+> 14
+
+Compute standard PPO loss:  
+
+> 15
+
+LDRL (θ) = P 
+
+> B
+
+min 
+
+
+
+rt(θ) ˆAt, clip( rt(θ), 1 ± ϵ) ˆAt
+
+ 
+
+> 16
+
+Update policy network using:  
+
+> 17
+
+L(θ) = LDRL (θ) + βLadvis robust  
+
+> 18
+
+CRITIC UPDATE : 
+
+> 19
+
+Update value network using: Lcritic (ϕ) = P
+
+> B
+
+(Vϕ(st) − ˆRt)2
+
+In the following, we provide the proof for Lemma 1. The proof is based on results presented in [29, 17]. We make use of the existing general results and apply them to the context of worst-case performance estimation. 
+
+Proof Let P ≡ p(.|πwc ) and Q ≡ p(.|π), we know from Equation 7 in [17] that: 
+
+d2(P |Q) = d2(p(.|πwc )|p(.|π)) = N
+
+dESS = N
+
+> N
+
+X
+
+> i=0
+
+ρadvis   
+
+> T−1
+
+(τi)
+
+PNj=1 ρadvis   
+
+> T−1
+
+(τj )
+
+!2
+
+(34) Moreover, from Lemma 4.1 in [29], and using f ≡ R : T → R the discounted return of trajectories (we assume they are finite), we have 
+
+Var 
+
+h ˆJIS 
+
+i
+
+≤ ∥R∥2
+
+> ∞
+
+N d2 (p(.|πwc ), p (.|π)) (35) 
+
+□
+
+advrl supports using the exponentiated 2-Rényi Divergence in Eq 17 as an additional regularization loss when using ordinary IS but also WIS estimators. The exponentiated 2-Rényi appears also in the 22 upper bound of the Mean Squared Error of the weighted importance sampling estimator, as indicated in Proposition 8 in [17]. We conduced experiments using this additional regularization term and present the CVaR α curves in Figure 12. In HalfCheetah and Walker2d adding the regularization improves the performance by 600. Similar to SA-Reg performance in Hopper ( as reported in Table 2) ,the trajectory-level regularization did not achieve satisfactory results in this particular environment. 0.02 0.04 0.06 0.08 0.10          
+
+> 4200 4400 4600 4800
+> CVaR HalfCheetah
+> 0.02 0.04 0.06 0.08 0.10
+> 2500 3000 3500 4000 4500
+> Walker2d
+> 0.02 0.04 0.06 0.08 0.10
+> 1000 1200 1400 1600 1800 2000 2200
+> Hopper without Traj-Reg with Traj-Reg
+
+Figure 12: Effect of adding trajectory-level regularization. 
+
+## C Experiment details 
+
+C.1 Adversarial evaluation 
+
+All the agents are trained for 2 million steps. We use the same network architecture across all the algorithms and environments: MLP network with 2 layers, each with 64 neurons. We use Adam optimizer. We use the same ϵ-scheduler for all the agents: we slowly increase ϵt from zero until it reaches the full attack budget ϵ after 75% of the total training steps. For the baselines, training is done using 2 environment, while Advis uses 5 environments. For SA-Reg, the grid search considers robustness coefficient κ in {0.001 , 0.01 , 0.05 , 0.1} ,actor and critic learning rate in {0.0001 , 0.00025 , 0.0004 } and entropy coefficient in {0, 0.001 }. We use the same values for Radial. For WocaR-RL, we consider the actor, the critic, and the worst-case Q-network learning rates in {0.0001 , 0.00025 , 0.0004 }, robust coefficient in {0.1, 0.5, 0.8}, soft polyak coefficient in {0.001 , 0.05 } and entropy coefficient in {0, 0.001 }.For SA-ATLA and PA-ATLA, we consider actor and critic learning rates in 
+
+{0.0001 , 0.00025 , 0.0004 }, adversary’s actor and critic learning rates in {0.0001 , 0.00025 , 0.001 },entropy coefficient in {0, 0.001 }, and adversary’s entropy coefficient in {0, 0.001 }. For SA-ATLA we consider squashing the actions of the adversary in {True , False }.For Advis, we use actor learning rates in {0.00025 , 0.0004 , 0.0006 } (we need higher learn-ing rates because Advis uses more environments that the baselines) critic learning rates in 
+
+{0.0001 , 0.00025 , 0.0004 }, robust coefficient in {0.01 , 0.3, 0.5, 1, 1.5}, use discounted returns in 
+
+{True , False }, if we do not use discounted returns we add the variant where we compute the impor-tance weights over the full trajectory. 
+
+C.2 Adversarial evaluation Non-trainable attacks: To generate random attacks we use uniform distribution, gaussian distri-bution, fixed perturbations, and discrete perturbations. For Critic attacks, we use 10-step PGD to generate perturbations. For MAD attacks, we use SGLD with β ∈ { 10 3, 10 4, 10 5} for 10 iterations and PI with ξ ∈ { 0.0001 , 0.00001 , 0.01 }.
+
+Learned adversaries: We perform a grid search over the hyperparameters of the learned adversaries. Table 4 summarizes the search spaces considered for Robust Sarsa (RS), SA-RL and PA-AD. SA-RL 23 and PA-AD adversary are trained for 2 million steps using PPO. For RS attacks, we train the for 200000 steps where the robust coefficient is zero, otherwise we train for 1 million step. It takes 1h20min to evaluate against SA-RL or PA-AD attacker. This duration includes both the training of the adversary and final evaluations using 1000 episodes. RS require less than 30min. 
+
+Random search: For the random search used in Section 5 , we sample hyperparameters from log-uniform distributions: lr ∼ log U(10 −4, 5 · 10 −3) and polyak ∼ log U(10 −3, 5 · 10 −2). The robustness coefficient is set to zero with probability 1/6, and otherwise sampled as log U(10 −3, 1) .Table 4: Hyperparameter search spaces for learned attacks. 
+
+Method Hyperparameter Values 
+
+RS Learning rate {1e-4, 2.5e-4, 5e-4, 1e-3, 2.5e-3, 5e-3}
+
+Activations {relu , tanh }
+
+Robust coefficients {0, 0.001 , 0.01 , 0.1, 0.5, 1}
+
+Polyak updates {0.001 , 0.005 , 0.01 , 0.05 }
+
+SA-RL Actor learning rate {1e-4, 5e-4, 1e-3, 2.5e-3, 5e-3}
+
+Critic learning rate {1e-4, 5e-4, 1e-3, 2.5e-3, 5e-3}
+
+Entropy coefficient {0, 1e-5}
+
+Squash actions {True , False }
+
+Initial standard deviation {− 1, −2}
+
+PA-AD Actor learning rate {1e-4, 5e-4, 1e-3, 2.5e-3, 5e-3, 1e-2}
+
+Critic learning rate {1e-4, 5e-4, 1e-3, 2.5e-3, 5e-3, 1e-2}
+
+Activation {relu , tanh }
+
+Entropy coefficient {0, 1e-3, 1e-4}
+
+Clip range {0.2, 0.3}
+
+24
