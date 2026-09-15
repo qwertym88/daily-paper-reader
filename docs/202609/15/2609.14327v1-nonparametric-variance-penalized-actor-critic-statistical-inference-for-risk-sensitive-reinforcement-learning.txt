@@ -1,0 +1,2702 @@
+Nonparametric Variance-Penalized Actor-Critic:
+Statistical Inference for Risk-Sensitive Reinforcement Learning
+Saunak Kumar Panda∗, Tong Li†, Yisha Xiang†, and Ruiqi Liu‡
+September 15, 2026
+Abstract
+Variance penalization is a principled approach to risk-sensitive reinforcement learning (RL)
+that explicitly trades expected return for policy stability.
+Existing methods require a ded-
+icated second critic to estimate return variance online, adding architectural complexity and
+compounding estimation error during learning. We propose a nonparametric variance-penalized
+actor-critic (VPAC) framework that replaces the variance critic with statistically grounded on-
+line estimators based on bootstrapping and random scaling, techniques drawn from the statis-
+tical inference literature for stochastic approximation. These estimators require no auxiliary
+network, maintain a single-critic architecture, and produce variance penalties that are bounded
+by construction, enabling clean convergence analysis.
+We establish almost-sure convergence
+for both a variance-penalized Q-learning algorithm and a two-timescale actor-critic variant via
+the ordinary differential equation (ODE) method, requiring only that variance estimates re-
+main bounded rather than consistent. Empirically, we evaluate across discrete and continuous
+stochastic environments, demonstrating that the proposed methods match or exceed the variance
+reduction achieved by the existing dual-critic VPAC baseline [1] while eliminating the overhead
+of a second critic. We further validate on a high-temperature superconductor (HTS) manufac-
+turing case study, where VPAC-RS (Random Scaling) achieves a 74% reduction in steady-state
+critical current variability and a 63% reduction in episode return standard deviation, translating
+directly to improved yield consistency. Our results establish nonparametric statistical inference
+as a practical and theoretically sound alternative to auxiliary critics for risk-sensitive RL.
+Keywords: Risk-sensitive reinforcement learning, variance penalization, nonparametric estima-
+tion, actor-critic, stochastic approximation, manufacturing control.
+1
+Introduction
+Reinforcement learning (RL) has emerged as a powerful framework for sequential decision-making,
+with demonstrated successes spanning game-playing, robotics, and autonomous systems [2, 3, 4].
+The dominant objective in nearly all of this work is the maximization of expected cumulative reward,
+an objective that is mathematically convenient via Bellman optimality equations and empirically
+effective in domains where occasional large losses are tolerable. A growing class of high-stakes
+∗Saunak Kumar Panda is with the Human-Centered AI Institute, C.T. Bauer College of Business, University of
+Houston, Houston, TX 77204 USA.
+†Tong Li and Yisha Xiang are with the Department of Industrial and Systems Engineering, University of Houston,
+Houston, TX 77204 USA.
+‡Ruiqi Liu is with the Department of Mathematics and Statistics, Texas Tech University, Lubbock, TX 79409
+USA.
+1
+arXiv:2609.14327v1  [cs.LG]  13 Sep 2026
+
+
+applications, however, cannot tolerate unpredictable outcomes. In industrial manufacturing, a pol-
+icy that achieves high average product quality but occasionally drives the process into unstable
+operating regions causes equipment damage, material waste, or off-specification product. Similar
+constraints arise in financial portfolio management [5], autonomous driving [6], clinical decision
+support [7], and energy grid operation [8]: consistency of outcome is as valuable as average perfor-
+mance, and a risk-sensitive learner is therefore required.
+Among the risk criteria studied in the RL literature, the mean-variance objective
+Jvar(π) = E[Gπ] −β · Var(Gπ),
+β > 0,
+(1)
+holds a particularly prominent position. It is transparent: the practitioner directly controls the
+risk-return tradeoff via the scalar β; it is interpretable as a sequential generalization of Markowitz’s
+classical portfolio theory [9]; and it is tractable in the sense that it does not require modeling the
+entire return distribution. Variance-penalized formulations have consequently been a workhorse of
+risk-sensitive RL since the foundational work of Sobel [10] and White [11], and continue to attract
+attention in modern actor-critic settings [12, 13, 1, 14].
+Despite its appeal, variance penalization carries a practical cost that is rarely discussed explic-
+itly. Unlike expected returns, which satisfy a recursive Bellman equation and can be estimated
+eﬀiciently by temporal-difference (TD) methods, return variance does not admit a simple recursive
+formulation without explicit second-moment tracking or state augmentation [10, 15]. The dominant
+strategy in prior work is to introduce a dedicated variance critic that learns the second moment of
+returns in parallel with the primary value function [1, 13, 16, 12]. This dual-critic design carries
+three practical costs. First, the number of learned function approximators doubles, with a corre-
+sponding increase in memory, computation, and hyperparameters. Second, variance-critic errors
+propagate into the policy update; in high-noise environments, an inaccurate estimate can mislead
+the actor and produce oscillations or overly conservative behaviour. Third, theoretical analyses of
+dual-critic methods typically assume that the variance critic is consistent, a strong condition that
+is rarely verifiable in practice under function approximation, and that creates a gap between theory
+and deployment.
+A parallel body of work on statistical inference for stochastic approximation [17, 18, 19, 20,
+21] has developed nonparametric tools for constructing confidence intervals around TD iterates.
+Two techniques have proved particularly effective: random scaling [18, 20], which constructs self-
+normalized variance estimates from the trajectory of iterates themselves; and online bootstrap-
+ping [19], which maintains a small ensemble of perturbed iterates whose spread provides a non-
+parametric variance estimate. Both are computationally inexpensive, require no auxiliary network,
+and carry statistical validity guarantees derived from functional central limit theorems for the TD
+learning setting. We identify a key reuse opportunity: the same empirical variance estimates can be
+repurposed as a risk-sensitivity signal, plugged directly into (1) as an empirical proxy for Var(Gπ).
+The result is an algorithm that is risk-sensitive by design and architecturally simple, requiring only
+that the variance estimate be bounded rather than consistent with the true variance, a strictly
+weaker condition than that assumed by dual-critic methods.
+This paper makes four contributions. We introduce a unified nonparametric variance-penalized
+RL framework instantiated as a tabular Q-learning algorithm and a two-timescale actor-critic, both
+supplied by online bootstrapping (VPAC-BS) or random scaling (VPAC-RS) instead of a learned
+variance critic. We establish almost-sure convergence of both variants via the ODE method of
+Borkar [22], requiring only that the variance penalty remain bounded: this eliminates the third
+timescale and the consistency assumption required by [1] and replaces them with a boundedness
+condition enforced algorithmically by variance clipping. We demonstrate empirically across discrete
+2
+
+
+and continuous stochastic environments that the proposed methods match or exceed the variance
+reduction of the dual-critic VPAC baseline (up to 83% reduction in steady-state return variance)
+while maintaining a single-critic architecture. We further validate on a high-temperature supercon-
+ductor (HTS) manufacturing case study, where VPAC-RS achieves a 74% reduction in steady-state
+critical current variability and a 63% reduction in episode return standard deviation, with the
+risk-return tradeoff characterized explicitly by a Pareto analysis across penalty coeﬀicients.
+The remainder of this paper is organized as follows.
+Section II reviews related work on
+risk-sensitive RL, adaptive dynamic programming, distributional RL, and statistical inference for
+stochastic approximation. Section III introduces the notation and Markov decision process frame-
+work. Section IV presents the proposed variance-penalized framework and associated algorithms.
+Section V establishes the convergence properties of the proposed methods. Section VI reports ex-
+perimental results on the Puddle World benchmarks, and Section VII presents a high-temperature
+superconducting (HTS) manufacturing case study. Finally, Section VIII concludes the paper and
+discusses limitations, extensions to deep RL, and directions for future research.
+2
+Related Work
+We review four threads of literature that intersect at the contribution of this paper: risk-sensitive RL
+with variance criteria; adaptive dynamic programming and actor-critic methods with convergence
+guarantees; distributional RL as an alternative paradigm for outcome variability; and statistical
+inference for stochastic approximation.
+2.1
+Risk-Sensitive Reinforcement Learning
+Risk-sensitive RL encompasses a broad class of methods that go beyond expected return by explic-
+itly accounting for outcome variability [23, 24]. Utility-based criteria form one family: Howard and
+Matheson [25] pioneered the use of exponential utility functions to encode risk preferences in MDPs,
+producing what is now called the risk-sensitive Bellman equation, and Borkar [26, 27] subsequently
+established convergence of Q-learning under exponential utility with applications in financial and
+inventory control. While theoretically elegant, exponential utilities have practical limitations: the
+risk parameter carries no direct interpretation in terms of return variance, and the value function
+can grow exponentially with the risk parameter, causing numerical diﬀiculties in moderate-scale
+problems [23]. A second family, coherent risk measures such as Conditional Value-at-Risk (CVaR)
+and Value-at-Risk (VaR), has gained popularity for its interpretability as a tail-risk measure; Chow
+et al. [28] developed a unified framework for CVaR-optimal MDPs, Tamar et al. [29] proposed gra-
+dient methods for CVaR optimization in continuous control, and subsequent work extended these
+ideas to deep RL via distributional value functions [30, 31]. CVaR and variance control address
+related but distinct concerns: CVaR focuses on tail behavior, whereas variance control suppresses
+overall spread, and for manufacturing and process control applications in which practitioners want
+a single, interpretable risk parameter, the mean-variance objective remains preferred because of its
+direct connection to the engineering notion of process variability.
+The mean-variance approach that this paper builds on dates to Sobel [10] and White [11], who
+introduced indirect variance estimation via second-moment tracking in policy evaluation. Tamar
+et al. [12, 32] developed actor-only and actor-critic methods that estimate value variance along-
+side returns, establishing the two-timescale framework that underlies most subsequent variance-
+penalized algorithms, and Prashanth and Ghavamzadeh [16, 13] extended this work with asymp-
+totic convergence guarantees for the discounted setting. Bisi et al. [33] introduced a per-step reward
+variance formulation that admits a Bellman-like recursion, trading generality for tractability. The
+3
+
+
+Variance-Penalized Actor-Critic (VPAC) of Jain et al. [1] introduced a direct variance estimator
+updated incrementally via TD methods, eliminating second-moment tracking and providing local
+convergence guarantees; this is the closest prior work to our approach. The Variance-Constrained
+Actor-Critic (VCAC) [14] casts variance control as a Lagrangian saddle-point problem and proves
+convergence for overparameterized neural networks. Sherstan et al. [15] compared direct and in-
+direct variance estimators for general value functions, motivated by auxiliary task learning, and
+Sangadi et al. [34] recently provided finite-sample bounds for mean-variance actor-critic using si-
+multaneous perturbation stochastic approximation (SPSA), pushing the theoretical frontier toward
+non-asymptotic guarantees. All of these methods introduce additional learned components, a vari-
+ance critic, Lagrange multiplier dynamics, or a perturbation-based estimator with its own hyper-
+parameters, to estimate the variance signal. Our contribution is to show that this architectural
+overhead is avoidable when nonparametric statistical estimators are used.
+2.2
+Adaptive Dynamic Programming and Actor-Critic Convergence
+The convergence analysis of actor-critic algorithms via stochastic approximation has been a central
+theme in the adaptive dynamic programming (ADP) community [35, 36, 37], with Borkar’s two-
+timescale framework [22] providing the foundational machinery for almost-sure convergence proofs.
+Al-Dabooni and Wunsch [38] extended this framework to heuristic dynamic programming with
+eligibility traces, establishing uniformly-ultimately-bounded stability under neural network function
+approximation, a result directly relevant to our setting because it shows that bounded perturbations
+of the Bellman operator, as introduced by our clipped variance estimator, do not destroy stability.
+Finite-sample analyses have emerged more recently [39, 40], but typically require i.i.d. sampling or
+architectural assumptions not satisfied under the empirical variance estimation setting we consider;
+our work uses the asymptotic ODE framework, suﬀicient to establish almost-sure convergence, and
+we discuss the extension to finite-sample rates as an open direction in Section 8.
+2.3
+Distributional RL and Statistical Inference for SA
+A complementary approach to handling return variability is distributional RL, which models the
+full distribution of returns rather than just its first moment. Bellemare et al. [41] introduced the
+C51 algorithm and the distributional Bellman operator, and subsequent advances include quan-
+tile regression-based methods (QR-DQN) [30] and implicit quantile networks (IQN) [31], which
+derive risk measures such as CVaR from the learned distribution at deployment time. Distribu-
+tional methods aim to represent the return distribution accurately, with variance and tail behavior
+emerging as derived quantities, whereas variance-penalized methods directly shape the policy to re-
+duce return variance without a full distributional representation; for a single risk-averse policy with
+a transparent risk parameter, the variance-penalized approach is typically more sample-eﬀicient,
+while distributional methods offer richer post-hoc analysis at the cost of higher representational
+complexity [42].
+The statistical inference literature for iterative algorithms provides the technical foundation
+for our nonparametric variance estimators. Chen et al. [17] developed batch-means estimators for
+stochastic gradient descent (SGD) with asymptotic validity under functional central limit condi-
+tions, and Zhu et al. [21] provided plug-in estimators for the asymptotic variance with finite-sample
+guarantees. Xie et al. [18] introduced random scaling as a self-normalized estimator requiring no
+nuisance parameter estimation, and Li et al. [20] extended random scaling to constant-step-size SGD
+and nonlinear stochastic approximation with Markovian data, closely matching the TD learning
+updates used in RL. Panda et al. [43] applied the FCLT and random scaling directly to a sample-
+4
+
+
+averaged Q-learning algorithm, establishing asymptotic normality of the Q-iterate and constructing
+confidence intervals without estimating the asymptotic covariance. Ramprasad et al. [19] devel-
+oped online bootstrap procedures for Q-learning and TD value estimation, proving consistency for
+both tabular and linear function approximation settings. These methods were designed for uncer-
+tainty quantification, with the original goal of providing valid confidence intervals around learned
+estimates. We identify the connection that the same empirical variance estimates can be directly
+repurposed as a risk signal within the policy update; to our knowledge this connection has not been
+made previously in the risk-sensitive RL literature, and it provides a path to variance-penalized
+RL that avoids the architectural and analytical complications of dual-critic methods.
+3
+Preliminaries
+We consider an infinite-horizon discounted Markov decision process (MDP) defined by the tuple
+⟨S, A, P, R, γ⟩, where S is the state space, A is the action space, P(s′|s, a) is the transition proba-
+bility kernel, R(s, a) ∈R is the bounded reward function, and γ ∈[0, 1) is the discount factor. A
+stochastic policy π(a|s) specifies the probability of selecting action a in state s.
+The return from time t is the discounted cumulative reward:
+Gt =
+∞
+X
+ℓ=0
+γℓRt+1+ℓ.
+(2)
+The state-value and action-value functions under policy π are:
+V π(s) = Eπ
+
+Gt | St = s
+
+,
+(3)
+Qπ(s, a) = Eπ
+
+Gt | St = s, At = a
+
+.
+(4)
+The variance of return from a state-action pair (s, a) under policy π is:
+σπ(s, a) = Eπ
+h Gt −Qπ(s, a)
+2  St = s, At = a
+i
+.
+(5)
+This variance can be estimated either indirectly via second-moment tracking, Eπ[G2
+t ]−(Qπ(s, a))2 [10],
+or directly via the TD-based recursive formula of Jain et al. [1] and Sherstan et al. [15]. Our frame-
+work adopts neither approach as a learned function; instead it replaces σπ(s, a) with nonparametric
+online estimates described in Section 4.
+In the off-policy setting, a behavior policy b(a|s) generates experience used to improve a target
+policy πθ(a|s). The importance sampling ratio at step t is ρt = πθ(At|St)/b(At|St), and the off-
+policy return is Gt,π,b = Rt+1+γρt+1Gt+1,π,b [1]. For the parametric actor-critic, θ ∈Rd denotes the
+policy parameters and w ∈Rm denotes the critic parameters. Step sizes satisfy the Robbins-Monro
+conditions P
+t αt = ∞, P
+t α2
+t < ∞.
+4
+Nonparametric Variance-Penalized Framework
+4.1
+The Variance-Penalized Objective
+We adopt the mean-variance objective:
+Jvar(π) = E[Gπ] −β Var(Gπ),
+β > 0,
+(6)
+where β is the risk-aversion parameter.
+Setting β = 0 recovers the standard expected-return
+objective.
+5
+
+
+To incorporate the variance penalty into Bellman-style updates, we define the variance-penalized
+value function:
+F π(s) =
+X
+a
+π(a|s)
+h
+Qπ(s, a) −β ˆσclip(s, a)
+i
+,
+(7)
+where ˆσclip(s, a) is a clipped nonparametric estimate of σπ(s, a) defined in Section 4.2.3. Using F π,
+the penalized Bellman operator K acts on Q : S × A →R as:
+(KQ)(s, a) = E
+h
+R(s, a) + γ max
+π
+F π(S′)
+ S = s, A = a
+i
+,
+(8)
+where the maximization is over the choice of policy π at the next state S′. Because ˆσclip is bounded
+by construction (see Section 4.2.3), the operator K is a contraction in the weighted maximum norm
+for γ < 1, and its unique fixed point Q∗is the target of the variance-penalized Q-learning algorithm.
+Remark 1. The operator K in (8) differs from the standard Bellman operator only in the substi-
+tution maxa′ Q(S′, a′) →maxπ F π(S′). This single modification embeds the risk penalty into every
+TD backup without requiring any additional learned component.
+4.2
+Nonparametric Variance Estimators
+The central contribution of this framework is the replacement of a learned variance critic with two
+nonparametric online estimators drawn from the statistical inference literature. Both are computed
+incrementally from the observed Q-iterate and require no auxiliary network or additional gradient-
+updated parameter.
+4.2.1
+Random Scaling Estimator (VPAC-RS)
+The random scaling (RS) method was introduced by Xie and Zhang [18] for constant step-size
+stochastic approximation and is grounded in a functional central limit theorem (FCLT) for the
+Q-learning iterates viewed as a Markov chain. The key object is the self-normalized matrix
+ˆVn = 1
+n
+n
+X
+j=1
+ 
+1
+√n
+j
+X
+i=1
+(Qi −¯Qn)
+! 
+1
+√n
+j
+X
+i=1
+(Qi −¯Qn)
+!⊤
+,
+(9)
+where ¯Qn = n−1 Pn
+i=1 Qi is the Polyak-Ruppert average of the Q-iterate and Qi ∈R|S||A| denotes
+the full Q-table at step i, flattened into a vector. Under the FCLT established in Theorem 3.3 of Xie
+and Zhang [18] (see also Li et al. [20] for the nonlinear SA extension), the diagonal of ˆVn provides
+a consistent, nuisance-free estimate of the per-coordinate asymptotic variance of the Q-iterate.
+The matrix ˆVn is computed in a single pass using the following online recursion. At iteration i
+(starting from i = 0), the running mean is updated as
+¯Qi = ¯Qi−1 ·
+i
+i + 1 + Qi ·
+1
+i + 1,
+(10)
+and two diagonal accumulators are maintained:
+Adiag,i = Adiag,i−1 + (i + 1)2 [ ¯Qi]2,
+(11)
+bmat,i = bmat,i−1 + (i + 1)2 ¯Qi,
+(12)
+6
+
+
+where squaring and multiplication are element-wise. The variance estimate at iteration i is then:
+ˆVRS,i = Adiag,i −2 ¯Qi · bmat,i + Si [ ¯Qi]2
+(i + 1)2
+,
+(13)
+where Si = (i+1)(i+2)(2i+3)/6 is the cubic correction term equal to Pi+1
+j=1 j2. The quantity [ ˆVRS,i]j
+is the j-th diagonal element of ˆVn and measures how much the j-th coordinate of the Q-iterate
+has varied around its running mean over the entire history of updates. High values at coordinate
+(s, a) indicate that the Q-estimate at that state-action pair is uncertain, which corresponds to high
+return variance there.
+The RS estimator requires storing only three vectors of size |S||A| (i.e., ¯Q, Adiag, and bmat) and
+involves O(|S||A|) operations per update. Under the FCLT conditions of [18], the resulting statistic
+is a pivotal quantity whose asymptotic distribution does not depend on any nuisance parameter,
+so no additional estimation step is required.
+4.2.2
+Online Bootstrap Estimator (VPAC-BS)
+The online bootstrap (BS) estimator follows the ensemble approach of Ramprasad et al. [19]. An
+ensemble of K independent Q-tables {Q(k)}K
+k=1 is maintained in parallel alongside the primary Q-
+table Q. At each transition (St, At, Rt+1, St+1), each replicate Q(k) decides independently whether
+to learn from that transition by drawing a Bernoulli(0.5) mask m(k)
+t
+∈{0, 1}:
+Q(k)
+t+1(St, At) = Q(k)
+t (St, At) + m(k)
+t
+αt
+ yt −Q(k)
+t (St, At)
+
+,
+m(k)
+t
+∼Bernoulli(0.5),
+(14)
+where yt = Rt+1 + γ maxa′ Q(St+1, a′) is the TD target computed from the primary table and the
+masks are i.i.d. across replicates and time steps. The variance estimate at state-action pair (s, a)
+is the cross-replicate sample variance:
+ˆVBS,t(s, a) =
+1
+K −1
+K
+X
+k=1
+
+Q(k)
+t (s, a) −¯Qens
+t
+(s, a)
+2
+,
+(15)
+where ¯Qens
+t
+(s, a) = K−1 PK
+k=1 Q(k)
+t (s, a). The Bernoulli subsampling introduces independent per-
+turbations across replicates: each table sees a different random subset of the experience stream,
+so their predictions diverge in proportion to the uncertainty in the value estimate at (s, a). Ram-
+prasad et al. [19] prove that statistics of this form are consistent for both tabular and linear function
+approximation settings under Markovian data. We use K = 10 replicates in all experiments. The
+memory cost is K copies of the primary Q-table; the per-step update cost is O(K) scalar operations.
+4.2.3
+Variance Clipping
+Both estimators produce non-negative values but can exhibit transient large values early in training
+before the Q-estimates stabilize. To ensure that the variance penalty remains a bounded perturba-
+tion of the standard Bellman operator (which is required for the convergence analysis in Section 5),
+we apply element-wise clipping:
+ˆσclip(s, a) = min
+  ˆV (s, a), cmax
+
+,
+(16)
+where ˆV is either [ ˆVRS](s,a) or ˆVBS(s, a), and cmax > 0 is a hyperparameter. In our experiments,
+cmax is set adaptively as a fraction of the current mean |Q| magnitude to prevent the penalty from
+7
+
+
+Table 1: Architectural comparison: VPAC [1] versus the proposed nonparametric variants.
+Method
+Learned components
+Timescales
+Extra hyperparameters
+VPAC
+ˆQ, ˆσ, πθ
+3
+αz, z-architecture
+VPAC-RS (ours)
+ˆQ, πθ
+2
+ασ, cmax
+VPAC-BS (ours)
+ˆQ, {Q(k)}, πθ
+2
+K, cmax
+overwhelming the value signal during early training. Once the iterates stabilize, both estimators
+remain well below cmax, so clipping has no effect on the long-run behavior. Its role is purely to
+provide the uniform bound on the variance penalty that Theorem 1 and Theorem 2 require.
+4.3
+Architectural Comparison with VPAC
+The primary architectural difference between our framework and the dual-critic Variance-Penalized
+Actor-Critic (VPAC) of Jain et al. [1] is summarized in Table 1. VPAC maintains three separate
+learned components updated on three different timescales: the value critic ˆQ(s, a, w), the variance
+critic ˆσ(s, a, z), and the policy πθ.
+The step sizes must satisfy αθ < αz < αw to ensure that
+each component converges before the next is updated.
+Our framework eliminates the variance
+critic entirely. The variance estimate is computed nonparametrically from the TD-error trajec-
+tory (VPAC-RS) or from an ensemble of Q-table replicates (VPAC-BS), reducing the system to
+two timescales and removing the hyperparameter αz and the architecture choice for the variance
+network.
+4.4
+Variance-Penalized Q-Learning
+The tabular variance-penalized Q-learning update replaces the standard greedy Bellman target
+with the penalized operator K in (8):
+Qt+1(s, a) ←Qt(s, a) + αt
+
+Rt+1
++ γ max
+π
+F π(St+1) −Qt(s, a)
+
+,
+(17)
+where F π(St+1) is computed via (7) using the current Q-table and the clipped variance estimate.
+Algorithm 1 presents the complete procedure.
+4.5
+Variance-Penalized Off-Policy Actor-Critic
+We extend the framework to a continuous-state off-policy actor-critic with a parameterized policy
+πθ(a|s) and a single value critic Qw(s, a). Following Jain et al. [1], the off-policy mean-variance
+objective is:
+Jd0(θ) = Es∼d0, a∼b
+
+ρ(s, a)
+ Qπ(s, a) −β ˆσclip(s, a)
+
+,
+(18)
+where ρ(s, a) = πθ(a|s)/b(a|s) is the importance sampling ratio and d0 is an initial state distribution.
+Our departure from Jain et al. is that ˆσclip is supplied nonparametrically by RS or BS rather than
+by a learned ˆσ(s, a, z).
+The variance-penalized policy gradient is:
+∇θJ(θ) = E
+ Qw(s, a) −β ˆσclip(s, a)
+
+∇θ log πθ(a|s)
+
+.
+(19)
+8
+
+
+Algorithm 1 Variance-Penalized Q-Learning (VPAC-RS / VPAC-BS)
+1: Input: penalty β, discount γ, step sizes {αt}, clip bound cmax, estimator choice ∈{RS, BS}
+2: Initialize: Q(s, a) ←0, ˆσ(s, a) ←0 for all (s, a)
+3: for episode = 1 to Nep do
+4:
+Observe initial state S
+5:
+for step = 1 to Niter do
+6:
+Select A ∼ϵ-greedy w.r.t. Q
+7:
+Execute A; observe R, S′
+8:
+Compute TD error: δ ←R + γ maxa′ Q(S′, a′) −Q(S, A)
+9:
+Update variance estimate ˆσ(S, A) via (13) (RS) or (15) (BS)
+10:
+Clip: ˆσclip(S′, a′) = min(ˆσ(S′, a′), cmax) for all a′
+11:
+Compute penalized next-state value: F(S′) = maxa′
+Q(S′, a′) −β ˆσclip(S′, a′)
+
+12:
+Update Q-table: Q(S, A) ←Q(S, A) + αt
+ R + γF(S′) −Q(S, A)
+
+13:
+S ←S′
+14:
+end for
+15: end for
+The critic is updated toward the variance-penalized TD target:
+yt = Rt+1 + γ (1 −dt) F(St+1),
+(20)
+where dt ∈{0, 1} is the episode-termination flag and
+F(St+1) =
+X
+a′
+πθ(a′|St+1)
+
+Qw(St+1, a′) −β ˆσclip(St+1, a′)
+
+.
+(21)
+Algorithm 2 presents the complete off-policy procedure. The algorithm uses two timescales:
+αw ≫αθ so that the critic converges before the actor parameters are significantly moved, consistent
+with the standard two-timescale actor-critic analysis [22, 36]. The same algorithm applies to the
+on-policy setting by setting ρ ≡1 and removing the importance-sampling corrections in the TD
+target.
+5
+Convergence Analysis
+We establish almost-sure convergence for both algorithms introduced in Section 4.
+Theorem 1
+shows that the variance-penalized Q-learning iterates converge to the unique fixed point Q∗of the
+penalized Bellman operator K. Theorem 2 shows that the actor parameters in the two-timescale
+actor-critic converge to a stationary point of the variance-penalized objective Jvar(θ).
+Both proofs use the ordinary differential equation (ODE) method of Borkar [22], which es-
+tablishes almost-sure convergence of a stochastic approximation (SA) recursion by analyzing the
+asymptotic behavior of an associated deterministic ODE. The key observation that enables the
+proofs is that the nonparametric variance estimate ˆσclip appears identically in both arguments of
+any difference KQ1 −KQ2, so it cancels when establishing the contraction property of K. As a
+consequence, the convergence analysis requires only that ˆσclip be uniformly bounded, not that it
+be consistent. This is a strict relaxation of the assumptions used by dual-critic methods such as
+VPAC [1], where the variance critic must converge to the true second moment. We analyze the
+on-policy setting in detail here; the off-policy extension with importance sampling follows by the
+same argument with appropriately modified martingale conditions, and its proof is deferred to the
+appendix.
+9
+
+
+Algorithm 2 Nonparametric Variance-Penalized Off-Policy Actor-Critic (VPAC-RS / VPAC-BS)
+1: Input: penalty β, discount γ, learning rates αw ≫αθ, clip bound cmax, estimator ∈{RS, BS},
+behavior policy b
+2: Initialize: policy parameters θ, critic parameters w, variance estimates ˆσ(s, a) ←0
+3: for episode n = 1 to N do
+4:
+Sample S0 ∼d0, A0 ∼b(·|S0)
+5:
+for step t = 0, 1, . . . until termination do
+6:
+Execute At; observe Rt+1, St+1, done flag dt
+7:
+Compute ρt = πθ(At|St)/b(At|St)
+8:
+Update variance estimate ˆσ(St, At) via (13) (RS) or (15) (BS)
+9:
+Clip: ˆσclip(s, a) = min(ˆσ(s, a), cmax) for relevant (s, a)
+10:
+Compute penalized next-state value F(St+1) via (21)
+11:
+Compute TD target: yt = Rt+1 + γ(1 −dt)F(St+1)
+12:
+Update critic: w ←w −αw∇w
+ Qw(St, At) −yt
+2
+13:
+Compute variance-adjusted advantage: ˆAt = Qw(St, At) −β ˆσclip(St, At)
+14:
+Update actor: θ ←θ + αθ ˆAt ∇θ log πθ(At|St)
+15:
+St ←St+1; sample At+1 ∼b(·|St+1)
+16:
+end for
+17: end for
+5.1
+Assumptions
+Assumption 1 (Ergodicity). For any fixed stationary policy π, the Markov chain (St, At)t≥0 is
+irreducible and aperiodic, with a unique stationary distribution µπ over S × A.
+Assumption 1 ensures that time averages of functions of the trajectory converge to their expec-
+tations under µπ, which is necessary for the noise terms in the SA recursion to satisfy the martingale
+condition required by the ODE method. It is standard in convergence analyses of Q-learning and
+actor-critic algorithms [22, 36].
+Assumption 2 (Bounded Rewards). The reward function satisfies |R(s, a)| ≤Rmax < ∞for all
+(s, a) ∈S × A.
+Assumption 2 ensures that the martingale difference noise Mt+1 in the Q-learning recursion has
+bounded conditional variance, which is required for the noise condition in Borkar’s Theorem 2.2 [22].
+Under this assumption, the optimal Q-function satisfies ∥Q∗∥∞≤Rmax/(1 −γ).
+Assumption 3 (Bounded Variance Estimates). The clipped variance estimate satisfies 0 ≤ˆσclip(s, a) ≤
+cmax < ∞for all (s, a) and all t ≥0.
+Assumption 3 is enforced algorithmically by the clipping operation in (16) and holds by con-
+struction for both the RS and BS estimators.
+Critically, this assumption does not require the
+estimate to be accurate or consistent; it requires only that the variance penalty remain bounded,
+ensuring that the penalized Bellman operator K is a well-defined contraction.
+Assumption 4 (Step-Size Conditions). The learning rate sequences {αt} (Q-learning), {αw,t}
+(critic), and {αθ,t} (actor) are positive and satisfy the Robbins-Monro conditions:
+∞
+X
+t=0
+αt = ∞,
+∞
+X
+t=0
+α2
+t < ∞.
+(22)
+10
+
+
+For the two-timescale actor-critic, the step sizes additionally satisfy the separation condition:
+lim
+t→∞
+αθ,t
+αw,t
+= 0,
+(23)
+so that the critic update operates on a strictly faster timescale than the actor update.
+The conditions in (22) are the classical Robbins-Monro conditions that prevent the step size
+from decaying too quickly (sum to infinity) while ensuring eventual convergence (square-summable).
+The separation condition (23) is the standard requirement for two-timescale SA [22, 36]: from the
+actor’s perspective the critic appears to have converged, and from the critic’s perspective the actor
+moves infinitely slowly.
+Assumption 5 (Bounded Iterates). The Q-learning and actor-critic iterates are almost surely
+bounded: supt ∥Qt∥∞< ∞a.s. and supt(∥wt∥+ ∥θt∥) < ∞a.s.
+Assumption 5 is standard in the SA literature and corresponds to condition (A4) of Borkar [22].
+In the tabular setting with bounded rewards and γ < 1, the Q-iterates are naturally bounded by
+Rmax/(1 −γ) under any reasonable initialization and step-size schedule.
+The assumption may
+alternatively be enforced by projecting iterates onto a compact set at each step without affecting
+the convergence argument [36].
+Assumption 6 (Smooth Policy Parameterization). The policy πθ(a|s) is differentiable in θ for all
+(s, a), and the score function is Lipschitz: there exists Lθ < ∞such that
+∥∇θ log πθ(a|s) −∇θ log πθ′(a|s)∥≤Lθ∥θ −θ′∥
+(24)
+for all (s, a) and all θ, θ′.
+Assumption 6 ensures that the drift function of the actor ODE is Lipschitz continuous, which
+is required for the ODE limit to uniquely track the SA recursion.
+It is satisfied by standard
+parameterizations including softmax policies and Gaussian policies with bounded covariance.
+5.2
+Convergence of Variance-Penalized Q-Learning
+Theorem 1 (Almost-Sure Convergence of Variance-Penalized Q-Learning). Under Assumptions 1–
+5, the iterates {Qt} generated by Algorithm 1 converge almost surely to the unique fixed point Q∗
+of the penalized Bellman operator K defined in (8):
+lim
+t→∞Qt(s, a) = Q∗(s, a)
+a.s.,
+∀(s, a) ∈S × A.
+(25)
+Proof Sketch. We verify the the conditions of Borkar’s Theorem 2.2 [22] for the SA recursion
+Qt+1 = Qt + αt(h(Qt) + Mt+1), where h(Q) = KQ −Q and
+Mt+1(st, at) =
+ Rt+1 + γ max
+π
+F π(St+1)
+
+−(KQt)(st, at)
+(26)
+is the martingale difference sequence.
+Step 1: Contraction of K and global stability of the ODE. Let Q1, Q2 be any two Q-functions
+and let π1 = arg maxπ F π
+Q1(s′) and π2 = arg maxπ F π
+Q2(s′). Since ˆσclip is the same in both F π
+Q1 and
+11
+
+
+F π
+Q2, it cancels in the difference:
+|(KQ1)(s, a) −(KQ2)(s, a)| ≤γ E
+hF π1
+Q1(S′) −F π1
+Q2(S′)
+
+ s, a
+i
+= γ E
+h
+X
+a′
+π1(a′|S′)
+ Q1(S′, a′)
+−Q2(S′, a′)
+
+ s, a
+i
+≤γ∥Q1 −Q2∥∞.
+(27)
+Thus K is a γ-contraction in ∥· ∥∞and has a unique fixed point Q∗by Banach’s theorem. The
+drift function h(Q) = KQ −Q is Lipschitz with constant 1 + γ and the ODE ˙Q(t) = h(Q(t)) has
+Q∗as its unique globally asymptotically stable equilibrium.
+Step 2: Martingale difference condition. Because E[Mt+1 | Ft] = 0 (where Ft = σ(Q0, . . . , Qt, S0, A0, . . . , St, At))
+and rewards and ˆσclip are both bounded (Assumptions 2 and 3), the conditional second moment
+satisfies E[M2
+t+1 | Ft] ≤C(1 + ∥Qt∥2
+∞) for a constant C > 0.
+Step 3: Step-size and boundedness conditions. These are directly supplied by Assumptions 4
+and 5.
+Conclusion. All conditions of Borkar’s Theorem 2.2 are satisfied. Therefore Qt →Q∗almost
+surely. The full proof, including verification of the noise growth condition and the stable equilibrium
+argument, is given in Appendix B.
+Remark 2. The contraction in Step 1 holds for any bounded ˆσclip, regardless of whether it is close
+to the true σπ. This is the key distinction from dual-critic methods: in VPAC, the variance critic
+must converge to the true second moment for the operator to be well-defined, requiring a third
+timescale and a consistency assumption. Here, the fixed point Q∗depends on the specific realization
+of ˆσclip, but its existence and uniqueness are guaranteed by boundedness alone.
+5.3
+Convergence of the Two-Timescale Actor-Critic
+In the on-policy actor-critic setting, the critic parameters wt track the variance-penalized TD target
+and the actor parameters θt follow the policy gradient. The step-size separation in Assumption 4
+means that from the critic’s perspective the actor is quasi-static, and from the actor’s perspective
+the critic has converged. We make this precise via Borkar’s two-timescale framework (Chapter 6
+of [22]).
+Theorem 2 (Almost-Sure Convergence of the Variance-Penalized Actor-Critic). Under Assump-
+tions 1–6, bounded features and policy scores on the relevant compact parameter set, and the
+standard linear TD stability condition that the on-policy system matrix G(θ) = A(θ) −γC(θ) is
+uniformly positive definite, the critic parameters wt in Algorithm 2 track the equilibrium induced
+by the current policy:
+wt −w∗(θt) →0
+a.s.
+(28)
+The actor iterates θt track the ODE
+˙θ = g(θ, w∗(θ)) = ∇θJvar(θ),
+(29)
+12
+
+
+where
+∇θJvar(θ) = E(s,a)∼µπθ
+h Qw∗(θ)(s, a) −β ˆσclip(s, a)
+
+× ∇θ log πθ(a|s)
+i
+.
+(30)
+Consequently, the limit set of {θt} is almost surely contained in the set of stationary points of Jvar.
+If the stationary points of Jvar are isolated, then θt converges almost surely to a single stationary
+point θ∗satisfying ∇θJvar(θ∗) = 0.
+Proof Sketch. We decompose the analysis into the two timescales.
+Faster timescale (critic). For a quasi-static actor parameter θ, the critic update
+wt+1 = wt −αw,t ∇w
+ Qw(St, At) −yt
+2
+(31)
+is a stochastic approximation recursion with Markovian observation noise. Under linear function
+approximation, its mean field takes the form
+hw(w, θ) = bvar(θ) −G(θ)w,
+G(θ) = A(θ) −γC(θ),
+(32)
+where the variance penalty enters only through bvar(θ) and G(θ) retains the structure of the standard
+on-policy linear TD system matrix. Under the assumed uniform positive definiteness of G(θ), the
+critic ODE has the unique globally asymptotically stable equilibrium
+w∗(θ) = G(θ)−1bvar(θ),
+(33)
+and wt →w∗(θ) almost surely by Borkar’s Theorem 2.2. The map θ 7→w∗(θ) is continuous by the
+implicit function theorem under Assumption 6.
+Slower timescale (actor). Because αθ,t/αw,t →0, the actor sees the critic as already at equi-
+librium w∗(θt). Treating ˆσclip as a fixed bounded penalty within each mean-field evaluation, the
+same convention used for θ being quasi-static from the critic’s perspective, the actor update ap-
+proximately tracks the ODE
+˙θ(t) = Eµπθ(t)
+h
+ˆQvar(s, a) ∇θ log πθ(t)(a|s)
+i
+,
+(34)
+where ˆQvar(s, a) = Qw∗(θ)(s, a) −β ˆσclip(s, a). Because ˆσclip is bounded (Assumption 3) and the
+critic features and policy score are bounded on the compact parameter set under Assumption 6, ˆQvar
+is bounded and the drift function of (65) is Lipschitz. The right-hand side of (65) equals ∇θJvar(θ),
+so the actor ODE is the gradient flow of the variance-penalized objective, and its equilibria satisfy
+∇θJvar(θ∗) = 0. The sample noise in both the critic and actor recursions satisfies the bounded
+Markov-noise conditions of Borkar’s two-timescale framework under Assumptions 1, 2, 3, and 5.
+Conclusion. By Borkar’s two-timescale theorem (Theorem 2, Chapter 6 of [22]), the coupled
+iterates (wt, θt) satisfy wt −w∗(θt) →0 almost surely, and the limit set of {θt} is almost surely
+contained in the stationary set of the actor ODE. When the stationary points of Jvar are isolated,
+this limit set is a single point θ∗. The full proof is given in Appendix C.
+Remark 3. Theorem 2 guarantees convergence to the stationary set of Jvar, and to a single
+stationary point under isolated equilibria, not necessarily a global maximum, which is standard for
+policy gradient methods in non-convex settings [1]. The induced stationary points generally need
+not coincide with those obtained using the true variance σπ; the discrepancy is controlled by the
+magnitude of the penalty term and vanishes as β →0. The proof requires only two timescales,
+compared to the three required by VPAC [1]. Within each mean-field evaluation, ˆσclip is treated
+as a fixed bounded penalty; under this convention, consistency of the variance estimator with the
+true return variance is not required for convergence to a stationary point of the induced penalized
+objective.
+13
+
+
+5.4
+Discussion
+Finite-sample analysis.
+Theorems 1 and 2 establish almost-sure asymptotic convergence but do
+not provide finite-sample rates. Deriving such rates in the present setting faces two obstacles. First,
+the nonparametric variance estimates are functions of the entire trajectory history, so bounding
+their finite-sample bias and variance under Markovian data requires tools from the functional CLT
+literature [18] that are not directly compatible with existing finite-sample SA frameworks. Second,
+the two-timescale structure introduces an additional coupling between the critic and actor conver-
+gence rates. Recent work [34, 39, 40] has made progress on finite-sample actor-critic rates under
+specific architectural assumptions; extending these results to accommodate bounded-nonparametric
+variance penalties is an important open direction that we discuss further in Section 8.
+Off-policy extension.
+The convergence argument for the off-policy actor-critic (Algorithm 2
+with ρt̸ = 1) follows the same two-timescale structure, with the importance sampling ratios ρt
+modifying the martingale difference terms in the SA recursion. Provided ρt is clipped to a finite
+maximum ratio (a standard practice in off-policy RL), the noise conditions are unchanged and
+Borkar’s theorem applies without modification. The formal proof, including the modified martingale
+conditions and the off-policy policy gradient expression of Theorem 4 in Jain et al. [1], is given in
+Appendix D.
+6
+Numerical Experiments
+We evaluate the proposed nonparametric variance-penalized framework in two benchmark settings
+of increasing complexity: a discrete 12 × 12 noisy puddle world and its continuous-state extension.
+These environments are the canonical benchmarks for variance-sensitive RL because the ground-
+truth variance structure is computable by design, allowing direct verification that the learned
+policies avoid the correct high-variance regions [1, 15]. Standard continuous control benchmarks
+such as MuJoCo mix model uncertainty with environment stochasticity in ways that obscure the
+variance-reduction signal, so we follow the experimental protocol of Jain et al. [1] and Prashanth
+and Ghavamzadeh [13] in using puddle world as the primary testbed.
+6.1
+Experimental Setup
+6.1.1
+Environment
+The puddle world environment contains a 12×12 grid (discrete setting) or a unit-square continuous
+state space (continuous setting), with a contiguous region of frozen states in the center. In normal
+states the agent receives a reward of 0; in frozen states the reward is drawn from a stochastic
+distribution, creating a high-variance zone the agent can learn to avoid. The goal state yields a
+reward of +50.
+Because the expected reward in frozen and normal states is equal on average,
+a risk-neutral agent has no incentive to avoid the frozen region; only a variance-penalized agent
+learns to do so. Uniform noise on frozen rewards is used in the discrete setting, consistent with the
+off-policy variant of [1], and Gaussian noise is used in the continuous setting. The discount factor
+is γ = 0.99 throughout.
+6.1.2
+Baselines
+We compare four methods: AC (vanilla actor-critic, β = 0, risk-neutral baseline), VPAC (Jain
+et al. [1], dual-critic with a learned variance network), VPAC-RS (proposed, random scaling
+14
+
+
+estimator), and VPAC-BS (proposed, bootstrap ensemble estimator).
+6.1.3
+Penalty Coeﬀicient Selection
+Each method is evaluated at its best-performing β value, identified by a grid search over β ∈
+{0.001, 0.002, 0.005, 0.01, 0.05, 0.1, 0.3} with the criterion of minimising return variance subject to
+at most a 5% reduction in mean return. We do not fix β equal across methods because β multiplies
+fundamentally different quantities in each case: in VPAC it scales a learned TD-based variance
+estimate whose magnitude is on the order of (Rmax/(1 −γ))2, in VPAC-RS it scales the diagonal
+of the partial-sum matrix ˆVn whose magnitude depends on the step size and trajectory length,
+and in VPAC-BS it scales a cross-replicate sample variance of Q-table predictions. Setting β equal
+across methods would therefore produce incommensurable risk-aversion levels rather than a fair
+comparison. The selected β values are reported in Table 3.
+6.1.4
+Implementation Details
+All experiments are run with 10 independent random seeds.
+Results are reported as mean ±
+one standard deviation across seeds, with learning curves smoothed using an exponential moving
+average with coeﬀicient αsmooth = 0.03 for returns and αsmooth = 0.05 for variance. Smoothing is
+applied identically across all methods and does not affect the summary statistics reported in tables,
+which are computed from unsmoothed rollouts of the converged policy.
+In the discrete setting, agents are trained for 1,000 episodes with a maximum of 500 steps per
+episode. In the continuous setting, training runs for 2,000 episodes with a maximum of 5,000 steps
+per episode, using tile coding with 10 tilings and 5 bins per dimension over a 1,024-dimensional
+feature vector. Variance estimates are updated every 20 steps in both settings. For VPAC-RS,
+a warm-up of 5 episodes is applied before the variance penalty is activated, allowing the running
+statistics to accumulate a suﬀicient history before influencing the policy. For VPAC-BS, the ensem-
+ble of K = 10 Q-tables is initialised identically and begins receiving Bernoulli(0.5)-masked updates
+from the first episode. Full hyperparameter settings are given in Table 3 in Appendix A.
+6.2
+Discrete (Tabular) Setting
+6.2.1
+Q-Learning with Empirical Variance Penalties
+We first evaluate the variance-penalized Q-learning algorithm (Algorithm 1) in isolation, compar-
+ing the two nonparametric estimators across a range of penalty coeﬀicients. The tabular setting
+provides a controlled baseline because the Q-function is exact (no function approximation error), al-
+lowing the effect of the variance estimator to be evaluated without confounding from approximation
+bias.
+Figure 1 shows results for VPAC-RS. The left panel shows that mean episodic return remains
+approximately stable across all penalty coeﬀicients (β ∈{0, 0.01, 0.1, 0.3}), converging to roughly
+35–40 in all cases, confirming that the variance penalty does not significantly degrade expected-
+return performance. The right panel shows a monotone reduction in return variance as β increases:
+the baseline (β = 0) reaches a steady-state variance of approximately 3,000, while β = 0.1 achieves
+approximately 500, an 83% reduction.
+At β = 0.3, variance is reduced further but at a mild
+cost to mean return, reflecting excessive avoidance of the frozen region. The best risk-adjusted
+configuration is β = 0.1.
+Figure 2 shows corresponding results for VPAC-BS. The bootstrapping estimator produces
+qualitatively similar behaviour: higher β suppresses policy excursions into the frozen region and
+15
+
+
+
+	
+	
+	
+
+	
+	
+	
+  
+
+
+
+
+
+ !"
+# !"  #     
+
+  
+
+  	
+
+  
+
+  	
+
+  
+
+	
+	
+	
+
+	
+	
+	
+  
+
+	
+
+	
+
+	
+  !" 
+  !"  #     
+
+  
+
+  	
+
+  
+
+  	
+
+  
+Figure 1: Q-learning with random scaling variance penalties (VPAC-RS) in the discrete puddle
+world. Left: mean episodic return (smoothed) across penalty coeﬀicients β ∈{0, 0.01, 0.1, 0.3}.
+Right: return variance over training.
+The baseline (β = 0) reaches a steady-state variance of
+∼3,000; β = 0.1 achieves ∼500 (83% reduction) while maintaining comparable mean return. Error
+bars show ±1 standard error of the mean across 10 seeds, plotted at sampled intervals for clarity.
+produces more stable convergence, with comparable mean return across all penalty values. The
+variance reduction is consistent with VPAC-RS but tends to be more gradual early in training,
+reflecting the time required for the bootstrap ensemble to accumulate suﬀicient cross-replicate
+disagreement before the penalty is informative.
+6.2.2
+Sensitivity to β
+The monotone relationship between β and variance reduction visible in Figures 1 and 2 confirms
+that the variance penalty is well-behaved across a broad range of coeﬀicient values. Both VPAC-RS
+and VPAC-BS achieve meaningful variance reduction (greater than 30%) for any β ≥0.01, with
+the mean return degrading by less than 5% for β ≤0.1. A practical grid search over one order of
+magnitude is therefore suﬀicient to identify a performant β for both methods.
+6.2.3
+Actor-Critic Comparison
+Figure 3 presents the four-way actor-critic comparison (AC, VPAC, VPAC-RS, VPAC-BS) on mean
+return (left) and return variance (right). All three variance-penalized methods achieve substantially
+lower steady-state return variance than the risk-neutral AC baseline. VPAC-RS and VPAC-BS
+match or exceed the variance reduction of VPAC while eliminating the learned variance critic:
+VPAC-RS requires no additional learned parameters beyond the primary Q-table, and VPAC-BS
+requires K additional Q-tables but no additional gradient-updated parameter or step-size schedule.
+Figure 4 illustrates the qualitative behaviour of the four converged policies via representative
+trajectories from a common initial state. The risk-neutral AC policy traverses the frozen region
+directly, while VPAC, VPAC-RS, and VPAC-BS all learn to circumnavigate the frozen zone, taking
+a longer but lower-variance path to the goal.
+To provide population-level evidence of avoidance behaviour beyond representative trajectories,
+Figure 5 shows state-visitation frequency heatmaps accumulated across 10 seeds and 98 trajectory
+rollouts per seed for each converged policy. The AC policy visits the frozen zone on a substantial
+proportion of trajectories, with clearly elevated counts inside the red boundary, consistent with the
+absence of any variance penalty. VPAC learns partial avoidance via a bottom routing strategy:
+16
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 
+
+
+
+
+	
+
+
+ !
+" !"  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ !
+ !"  
+
+
+
+
+
+Figure 2: Q-learning with bootstrap variance penalties (VPAC-BS) in the discrete puddle world.
+Higher β values suppress early-training policy excursions into the frozen region and produce more
+stable convergence. Error bars show ±1 standard error of the mean across 10 seeds, plotted at
+sampled intervals for clarity.
+0
+200
+400
+600
+800
+1000
+Episodes
+−30
+−20
+−10
+0
+10
+20
+30
+40
+50
+Return
+Average Re urns: VPAC Varian s Comparison
+VPAC
+VPAC-RS
+AC
+VPAC-BS
+0
+200
+400
+600
+800
+1000
+Episodes
+400
+600
+800
+1000
+1200
+Variance in Re urn
+Variance Comparison: VPAC Varian s
+VPAC
+VPAC-RS
+AC
+VPAC-BS
+Figure 3: Actor-critic comparison in the discrete puddle world. Left: mean episodic return. Right:
+return variance. VPAC-RS and VPAC-BS match or exceed the variance reduction of the dual-critic
+VPAC baseline while requiring no learned variance critic. Error bars show ±1 standard error of
+the mean across 10 seeds, plotted at sampled intervals for clarity.
+visitation concentrates along the lower perimeter of the grid, largely bypassing the frozen zone,
+though at the cost of longer and more variable trajectories. VPAC-RS and VPAC-BS both achieve
+near-complete avoidance of the frozen zone, with the interior uniformly pale across all seeds, and
+visitation concentrated along the upper-right path toward the goal. The heatmaps confirm that the
+variance-reduction behaviour reported in Figures 1–3 reflects a population-level policy shift and is
+not an artefact of individual trajectories.
+6.3
+Continuous-State Setting
+The evaluation extends to the continuous puddle world to assess whether the variance-reduction
+behaviour transfers beyond the tabular setting.
+The state space is the unit square [0, 1]2, the
+frozen region is a circular puddle centered at (0.5, 0.5) with radius 0.2, and the tile-coded feature
+representation introduces approximation error absent in the tabular setting.
+Figure 6 shows mean return and return variance over training for all four methods. All methods
+17
+
+
+Figure 4: Representative trajectories from a common initial state in the discrete puddle world (left
+to right: AC, VPAC, VPAC-RS, VPAC-BS). The risk-neutral AC policy traverses the frozen region
+(grey center block); all three variance-penalized policies route around it.
+Figure 5: State-visitation frequency heatmaps in the discrete puddle world, averaged over 10 seeds
+and 98 trajectory rollouts per seed per method (left to right: AC, VPAC, VPAC-RS, VPAC-BS).
+Darker shading indicates higher visitation frequency; the red rectangle marks the boundary of the
+frozen zone. The goal state is excluded from the colour normalisation. AC exhibits frequent frozen
+zone traversal. VPAC adopts a bottom routing strategy that largely avoids the frozen zone. VPAC-
+RS and VPAC-BS both achieve near-complete frozen zone avoidance, with visitation concentrated
+on an upper-right route to the goal.
+converge to comparable expected returns (approximately 35–40), confirming that variance penalisa-
+tion does not sacrifice task performance. VPAC-RS and VPAC-BS both achieve lower steady-state
+return variance than the AC baseline, with approximately 40–50% reduction relative to AC and
+performance competitive with VPAC. The variance reduction is less pronounced than in the tabular
+setting, which is expected: the tile-coded approximation introduces background noise in the value
+estimates that partially attenuates the variance signal.
+Figure 7 shows representative trajectories in the continuous state space. The AC policy fre-
+quently passes through the puddle region, while VPAC-RS and VPAC-BS both learn to route
+around it, reaching the goal via a longer but lower-variance path.
+6.4
+Discussion
+6.4.1
+Comparison of VPAC-RS and VPAC-BS
+Both nonparametric estimators achieve consistent variance reduction across the discrete and con-
+tinuous settings. A structural difference emerges in environments with predominantly aleatoric
+uncertainty versus epistemic uncertainty. The RS estimator measures trajectory-level variability
+of the Q-iterate around its running mean, which is directly tied to fluctuations in the Bellman
+18
+
+
+
+
+
+	
+
+
+
+	
+
+  
+ 
+ 
+ 
+
+
+
+!"
+#!" 
+!  
+
+
+
+
+
+
+
+	
+
+
+
+	
+
+  
+
+
+
+
+!"
+ 
+! 
+
+
+
+
+Figure 6: Performance in the continuous-state puddle world. Left: mean episodic return. Right:
+return variance over training. VPAC-RS and VPAC-BS achieve 40–50% variance reduction relative
+to the AC baseline while maintaining comparable mean return. Error bars show ±1 standard error
+of the mean across 10 seeds, plotted at sampled intervals for clarity.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+	
+%
+$"$
+ 
+!
+
+
+
+
+
+
+
+	
+%
+$"$
+ 
+!
+
+
+
+
+
+
+
+	
+%
+$"$
+ 
+!
+
+
+
+
+
+
+
+	
+
+%
+$"$
+ 
+!
+	 	!"$ " $# "$!"#   ! $ %!%# % !"
+Figure 7: Representative trajectories in the continuous puddle world. The shaded region indicates
+the high-variance puddle. The risk-neutral AC policy (left) passes through the puddle; VPAC-RS
+and VPAC-BS (right) route consistently around it.
+target caused by stochastic rewards.
+It is therefore well matched to the puddle world setting,
+where the dominant noise source is the stochastic frozen-zone reward. The BS estimator measures
+cross-replicate disagreement among Q-table predictions, which reflects the sensitivity of the value
+estimate to random subsampling of the experience stream. In settings where epistemic uncertainty
+is the primary source of outcome variability (for example, sparse data or nonstationarity), BS
+may be better suited. This distinction is examined further in the HTS manufacturing case study
+(Section 7), where the aleatoric dominance of sensor noise makes RS the more effective estimator.
+6.4.2
+Computational Overhead
+Table 1 (Section 4) summarises the architectural comparison across methods. In the tabular discrete
+setting, VPAC-RS adds effectively zero computational overhead relative to vanilla AC: the RS
+recursion requires three vector additions and one element-wise division per step. VPAC-BS incurs
+the cost of maintaining and updating K = 10 additional Q-tables, a constant-factor overhead
+of approximately 10× the per-step update cost of AC but with no additional gradient-updated
+parameter or convergence monitoring. VPAC, by contrast, requires a full third learned function
+approximator with its own step-size schedule. In the continuous tile-coded setting, the overhead
+structure is identical: VPAC-RS adds no additional computation, and VPAC-BS adds K parallel
+tile-coded value function evaluations per step.
+19
+
+
+6.4.3
+Consistency with Convergence Theory
+The empirical results are consistent with the convergence guarantees established in Section 5. Both
+VPAC-RS and VPAC-BS achieve stable convergence across all evaluated configurations using the
+same step-size schedules as AC, consistent with the contraction property of the penalized Bellman
+operator K in Theorem 1. The variance clipping mechanism in (16) limits the influence of early-
+training transients on the policy update, as required by the bounded perturbation condition in
+Assumption 3, and both estimators remain well below cmax once the Q-estimates stabilise.
+7
+Case Study: Risk-Sensitive RL for HTS Manufacturing
+Industrial process control provides a natural application domain for risk-sensitive RL because con-
+sistency of outcome is operationally critical [44]. Reinforcement learning has been applied to energy
+management in buildings and grids [8] and to semiconductor and materials manufacturing [42], with
+risk-sensitive variants typically using CVaR or chance-constrained formulations. To our knowledge,
+no prior work has applied a nonparametric variance-penalized RL method to a real industrial
+manufacturing dataset of the scale considered here.
+The experiments in Section 6 establish variance reduction in controlled synthetic environments
+where ground-truth noise structure is known by design. To evaluate practical applicability, we now
+present a case study in high-temperature superconductor (HTS) wire manufacturing using real
+industrial sensor data. The HTS domain is selected for three reasons. First, the process involves
+continuous adjustments to two coupled control parameters, testing whether the framework scales
+beyond the discrete 12×12 grid of Section 6. Second, the dataset comprises 58,240 real sensor
+measurements across 970 minutes of production, with complex temporal dependencies and non-
+stationary dynamics that provide a realistic challenge for empirical variance estimation. Third,
+reducing variability in the critical current Ic directly improves manufacturing yield and equipment
+reliability, providing a concrete, interpretable downstream metric for evaluating risk-sensitive learn-
+ing.
+7.1
+Dataset and Surrogate Environment
+The dataset originates from a multi-zone HTS wire production line and records both control pa-
+rameters and process outputs at 10-second intervals. The primary quality metric is the critical
+current Ic [A], the maximum current a superconducting tape can carry without resistive loss. High
+Ic is commercially desirable; variability in Ic across a production run is equally damaging, as it
+reduces the proportion of tape meeting specification and complicates downstream engineering.
+The two actuatable control parameters are DHPS_I and DHPS_V, which govern the deposi-
+tion heater power supply current and voltage respectively, with feasible operating ranges DHPS_I
+∈[23.14, 23.19] A and DHPS_V ∈[47.44, 49.33] V. A Ridge Regression surrogate model (regulari-
+sation λ = 1.0) trained on the full dataset predicts Ic from the current state with R2 = 0.9964 and
+RMSE = 0.0071, providing a reliable reward signal for policy learning. Feature importance analysis
+confirms that recent Ic history and the DHPS control parameters are the dominant predictors.
+7.2
+MDP Formulation
+We formulate the HTS process as an MDP with the following components.
+20
+
+
+7.2.1
+State Space
+The state st ∈R8 encodes the current manufacturing conditions:
+st =
+
+^
+DHPS_It,
+^
+DHPS_Vt, Ic,t−1,
+Ic,t−2, Ic,t−3, sin
+  2πt
+T
+
+,
+cos
+  2πt
+T
+
+,
+t
+L
+
+.
+(35)
+where tildes denote min-max normalisation, T is the dominant production cycle period, and L =
+3,203 cm is the line length. The three lagged Ic values capture the strong autoregressive dynamics
+arising from thermal inertia in the deposition zone. The two trigonometric features encode cyclic
+patterns in zone-temperature controllers, and the linear trend t/L accounts for spatial drift along
+the production line.
+7.2.2
+Action Space
+The agent selects incremental adjustments at = (∆DHPS_It, ∆DHPS_Vt) ∈[−0.5, 0.5]2, scaled by
+an action-gain parameter κ > 0 that controls the physical magnitude of each adjustment. Primary
+results are reported at κ = 1.5, identified through a sensitivity analysis over κ ∈{0.75, 1.5, 2.0}.
+At κ = 0.75, the DHPS adjustments are insuﬀicient to produce meaningful Ic changes within a
+200-step episode; at κ = 2.0, boundary noise dominates the variance signal and variance reduction
+degrades to 13% at the best β, compared to 63% at κ = 1.5.
+7.2.3
+Reward and Noise Model
+At each step the agent receives
+rt = ˆIc(st, at) + ϵt,
+ϵt ∼N
+ 0, σ2(st, at)
+
+,
+(36)
+where ˆIc is the surrogate model prediction. The state-dependent noise variance is
+σ2(st, at) = σ2
+0 + ηb · max
+ 0, δb −dmin(st)
+
++ ηa · max
+ 0, ∥at −at−1∥−δa
+
+,
+(37)
+where σ2
+0 is the baseline noise variance, dmin(st) is the normalised distance from st to the nearest
+DHPS parameter bound, and δb, δa > 0 are boundary and action-volatility thresholds. The param-
+eter values used are σ0 = 1.0, ηb = 8.0, δb = 0.4, and δa = 0.1; their selection is described below.
+The boundary term activates when the operating point approaches within a normalised distance δb
+of the DHPS parameter limits, reflecting the physical observation that operation near parameter
+bounds introduces thermal transients that corrupt deposition quality. The action-volatility term
+activates when the magnitude of consecutive control changes exceeds δa, penalising rapid heater
+adjustments.
+This noise structure is purely aleatoric, arising from inherent process variability
+rather than from uncertainty about the model. The distinction between aleatoric and epistemic
+uncertainty is examined in Section 7.3.4.
+Threshold selection.
+The boundary threshold δb = 0.4 corresponds to the outer 40% of the
+normalised DHPS operating range, identified from the dataset as the region where Ic variability
+increases markedly as the process approaches its physical limits. The action-volatility threshold
+δa = 0.1 represents a normalised step change of 10% of the action range, below which consecutive
+adjustments produce negligible thermal transients in the surrogate model. Both values were fixed
+prior to any policy training and held constant across all experiments.
+21
+
+
+Table 2: VPAC-RS evaluation metrics at κ = 1.5, averaged over 10 seeds × 40 rollouts. SS IC std:
+steady-state Ic standard deviation (steps 140–200). CVaR-10%: mean of worst 10% of episode
+returns (higher is better). Best non-baseline entry per column in bold.
+β
+Mean Ic [A]
+Ret mean
+Ret std
+SS IC std [A]
+CVaR-10%
+0.000 (baseline)
+339.7
+58.84
+6.78
+55.4
+50.77
+0.001
+332.7
+57.95
+5.11
+28.2
+50.77
+0.010
+318.3
+56.59
+2.52
+14.1
+52.55
+0.100
+322.6
+57.03
+2.52
+9.6
+52.20
+1.000
+329.3
+58.04
+4.16
+21.3
+53.43
+7.2.4
+Training Protocol
+All agents are trained for 500 episodes of up to 200 steps each, across 10 independent random seeds
+per (method, β) combination. The 2D action space is discretised into 42 = 16 bins per dimension,
+and tile-coded state features are used (10 tilings, 5 bins, 1,024 features). The variance penalty
+coeﬀicient β is tuned independently per method over the grid {0.001, 0.01, 0.1, 1.0}. The selection
+criterion is the largest episode-return standard-deviation reduction subject to a mean-return drop
+of at most 5% relative to the β = 0 baseline. Per-method β tuning is necessary because β multiplies
+quantities with different units and scales across estimators, so a common value would not represent
+equal risk aversion across methods, as discussed in Section 6.1.
+7.3
+Results
+Table 2 reports evaluation metrics for VPAC-RS across all β values at κ = 1.5. Each row summarises
+400 greedy rollouts (40 per seed, 10 seeds) of the converged policy evaluated in the stochastic
+environment.
+The primary metrics are the episode return standard deviation (Ret std), which
+directly reflects what the variance penalty acts on during training, and the steady-state Ic standard
+deviation (SS IC std), measured over the last 30% of episode steps (steps 140–200) across rollouts.
+CVaR-10% reports the mean of the worst 10% of episode returns; higher values indicate better
+tail-risk performance.
+7.3.1
+VPAC-RS: Variance Reduction and Performance Trade-off
+At β = 0.01, VPAC-RS achieves a steady-state Ic standard deviation of 14.1 A against 55.4 A for
+the risk-neutral baseline, a 74% reduction. Episode return standard deviation falls from 6.78 to
+2.52, a 63% reduction, confirming that the variance signal propagated through VPAC-RS during
+training translates to lower variability in converged policy behaviour. CVaR-10% improves from
+50.77 to 52.55, indicating that VPAC-RS also lifts the lower tail of the return distribution, reducing
+the incidence of severely underperforming episodes.
+The risk reduction comes at a cost in mean Ic: β = 0.01 yields 318.3 A versus 339.7 A for the
+baseline, a drop of 21.4 A (6.3%). VPAC-RS has learned to operate in a lower-volatility region
+of the DHPS parameter space, sacrificing some mean current to avoid the high-variance boundary
+regions penalised by the noise model. The Pareto analysis in Section 7.3.3 supports practitioners
+in selecting an operating point that reflects their specific yield and consistency requirements.
+22
+
+
+7.3.2
+Beta Sensitivity
+The relationship between β and variance reduction is non-monotonic. The sharpest improvement
+occurs between β = 0.001 and β = 0.01: SS IC std falls from 28.2 A to 14.1 A. At β = 0.1,
+SS IC std continues to fall (9.6 A) but Ret std plateaus at 2.52, while mean Ic partially recovers to
+322.6 A. At β = 1.0, Ret std rises to 4.16 and SS IC std worsens to 21.3 A: the penalty dominates
+the performance signal, causing the actor to converge toward a near-constant action policy that
+achieves low per-step variance but poor long-horizon consistency.
+This behaviour is consistent
+with the over-conservatism effect identified in mean-variance RL literature [23, 13] and motivates
+per-experiment β tuning.
+7.3.3
+Trajectory Analysis and Pareto Frontier
+Figure 8 visualises the learned policy behaviour. Panel (A) shows that β = 0.01 achieves a sub-
+stantially tighter IQR band than the baseline throughout the episode, with the gap widening in the
+steady-state window (steps 140–200, shaded grey). Both policies start near the dataset maximum
+(590 A, the physical upper bound of the surrogate model; this is not a tracking setpoint) because
+episodes are initialised from high-Ic states in the dataset, and the declining trajectory reflects sur-
+rogate dynamics under the feasible DHPS action range. Panel (B) confirms that the cross-rollout
+Ic standard deviation at β = 0.01 collapses to near zero in the steady-state window (annotated:
+14.1 A at step 185), while the baseline remains at 55.4 A. Panel (C) shows the episode return
+distributions: the β = 0.01 boxplot is visibly tighter, with a smaller IQR and fewer outliers, while
+β = 0 spans a wide range driven by high-noise episodes near the DHPS boundaries.
+
+
+
+
+
+
+
+
+*$,) !-!*
+
+
+	
+	
+
+
+
+
+
+
+
+
+-,!-'1$'.'
+-! 2,--!
+0$( )0
++%!-)+2 '!("+!! 2+)&&).-,
+,!&$(!
+
+-#!+/&.!,
+	
+ 
+
+Figure 8: Mean ± IQR of the Ic(A) trajectory across 400 greedy rollouts (10 seeds × 40 rollouts)
+under the VPAC-RS policy at κ = 1.5. The solid green line is the risk-neutral baseline (β = 0);
+the dashed blue line is the best risk-adjusted policy (β = 0.01); thin grey lines show the remaining
+β values. The dashed horizontal line marks the dataset maximum (590 A), which is the physical
+upper bound of the surrogate model and not a tracking setpoint. The shaded region indicates the
+steady-state evaluation window (steps 140–200), over which SS IC std is computed. The β = 0.01
+policy exhibits a markedly tighter IQR band throughout, with the separation widening in the
+steady-state window (SS IC std: 14.1 A versus 55.4 A for the baseline).
+Figure 9 plots mean Ic against Ret std for each β value. The Pareto frontier connects β = 0
+(highest mean Ic, highest Ret std) and β = 0.01 (lowest Ret std), and β = 1.0 falls strictly inside
+23
+
+
+the frontier on both axes, confirming that over-penalisation is counter-productive with respect to
+both objectives simultaneously.
+
+	
+
+	
+
+
+
+
+
+
+
+
+%!" !' ))'
+
+
+
+
+)*'%)$&+' ))'
+
+
+
+
+
+"(#)*'%'&
+Figure 9: Risk-return Pareto scatter for VPAC-RS at κ = 1.5. Each marker represents one β value
+evaluated over 400 greedy rollouts; axes report mean Ic(A) across all rollout steps and episode
+return standard deviation (Ret std). The starred marker identifies the best risk-adjusted policy
+(β = 0.01, Ret std = 2.52, 63% below the baseline). The dashed line connects the Pareto-non-
+dominated operating points. The β = 1.0 point falls inside the frontier on both axes, confirming
+that over-penalisation degrades both objectives simultaneously.
+7.3.4
+Comparison with VPAC-BS
+We evaluate VPAC-BS on the same HTS environment to determine whether the bootstrapping-
+based estimator offers complementary variance reduction. The full VPAC-BS sweep across all β
+values is provided in Table 4 (Appendix E).
+At its best-β configuration (β = 0.1), VPAC-BS
+achieves a 44% reduction in Ret std relative to its risk-neutral baseline, requiring a tenfold larger
+penalty coeﬀicient than VPAC-RS to reach comparable risk reduction. At β = 0.01, VPAC-BS
+Ret std increases above the baseline (5.55 versus 4.48), a result not observed for VPAC-RS at any
+tested β, indicating that the bootstrapping estimator provides an unreliable variance signal at small
+penalty values in this environment.
+The performance difference is explained by the type of uncertainty each estimator targets.
+VPAC-RS measures trajectory-level variability of the Q-iterate, directly tied to fluctuations in
+24
+
+
+cumulative reward caused by stochastic rewards. VPAC-BS measures cross-replicate disagreement
+among Q-table predictions, targeting epistemic uncertainty about the Q-function arising from finite
+training data. In the HTS environment the surrogate model is highly accurate (R2 = 0.9964), so the
+dominant source of outcome variability is aleatoric: sensor noise, thermal transients, and boundary-
+proximity effects encoded in the noise model. The VPAC-BS epistemic signal is correspondingly
+weak relative to this aleatoric noise, and the estimator cannot reliably guide the actor toward
+lower-variance behaviour at moderate β values. VPAC-RS is therefore the recommended estimator
+for environments in which a reliable predictive model is available and aleatoric noise dominates.
+Conversely, VPAC-BS is better suited to settings with sparse data or substantial model uncertainty,
+consistent with the competitive VPAC-BS results in the puddle world experiments (Section 6).
+Section 8 discusses this estimator-selection principle in the context of broader deployment guidance.
+7.4
+Discussion
+The HTS case study establishes three findings that go beyond the puddle world experiments.
+The first finding is that VPAC-RS scales to real industrial data without modification. The
+tile-coded function approximation, two-timescale actor-critic updates, and rolling-sample variance
+estimator all operate directly on real sensor features, without domain-specific reward shaping or
+noise model knowledge. The 74% SS IC std reduction at β = 0.01 was achieved using the same
+algorithm that reduced puddle world return variance by 83% in the tabular setting.
+The second finding concerns the interpretation of the risk-return trade-off. The risk-neutral
+baseline (β = 0) achieves a higher mean Ic (339.7 A) than the best VPAC-RS policy (318.3 A),
+confirming that the variance reduction comes at a genuine cost in mean performance. This is ex-
+pected behaviour for mean-variance optimisation and should not be interpreted as a failure of the
+algorithm. Rather, it reflects the fundamental trade-off that the Pareto plot in Figure 9 makes ex-
+plicit: practitioners select an operating point on the frontier based on their specific yield/consistency
+requirements, and the appropriate β will vary across production lines and quality targets.
+The third finding provides empirical support for a general principle about estimator selection.
+The VPAC-RS versus VPAC-BS comparison on HTS, taken together with the competitive perfor-
+mance of both estimators on the puddle world, suggests that the dominant uncertainty type in
+the environment determines which estimator is more effective. Aleatoric-dominated environments
+favour RS; epistemic-dominated environments favour BS. This principle is stated more precisely as
+deployment guidance in Section 8.
+8
+Conclusion
+This paper introduced a nonparametric variance-penalized framework for risk-sensitive reinforce-
+ment learning that eliminates the variance critic of prior dual-critic methods by substituting statis-
+tically grounded online estimators based on random scaling (VPAC-RS) and online bootstrapping
+(VPAC-BS). Almost-sure convergence of both the Q-learning and actor-critic variants was estab-
+lished via the ODE method, requiring only that the variance penalty remain bounded, a strictly
+weaker condition than the consistency assumed by prior work. Empirically, VPAC-RS achieves
+up to 83% reduction in steady-state return variance in the puddle world benchmark, matching or
+exceeding the dual-critic VPAC baseline while adding zero learned parameters. In the HTS man-
+ufacturing case study, the same algorithm reduces steady-state Ic variability by 74% and episode
+return standard deviation by 63%, with the risk-return trade-off characterised explicitly by a Pareto
+analysis across penalty coeﬀicients.
+25
+
+
+A practical finding across environments is that estimator choice should reflect the dominant
+uncertainty type: VPAC-RS is better matched to environments with predominantly aleatoric noise,
+while VPAC-BS is better suited to settings where epistemic uncertainty in the value function is the
+primary source of policy instability.
+Several directions remain open. Deriving finite-sample rates requires combining SA concen-
+tration bounds [39, 40] with finite-sample approximation bounds for the present framework, a
+combination that existing analyses do not address and that requires tools from the functional CLT
+literature [18, 20]. Extending the framework to neural network function approximation, where boot-
+strap ensembles and running parameter-space statistics provide natural analogues of the tabular
+estimators, is a practical direction with direct implications for deep RL deployment in safety-critical
+settings.
+References
+[1] A. Jain, G. Patil, A. Jain, K. Khetarpal, and D. Precup, “Variance penalized on-policy and off-
+policy actor-critic,” in Proceedings of the AAAI Conference on Artificial Intelligence, vol. 35,
+no. 9, 2021, pp. 7899–7907.
+[2] V. Mnih, K. Kavukcuoglu, D. Silver, A. A. Rusu, J. Veness, M. G. Bellemare, A. Graves,
+M. Riedmiller, A. K. Fidjeland, G. Ostrovski et al., “Human-level control through deep rein-
+forcement learning,” Nature, vol. 518, no. 7540, pp. 529–533, 2015.
+[3] D. Silver, J. Schrittwieser, K. Simonyan, I. Antonoglou, A. Huang, A. Guez, T. Hubert,
+L. Baker, M. Lai, A. Bolton et al., “Mastering the game of Go without human knowledge,”
+Nature, vol. 550, no. 7676, pp. 354–359, 2017.
+[4] S. Levine, C. Finn, T. Darrell, and P. Abbeel, “End-to-end training of deep visuomotor poli-
+cies,” Journal of Machine Learning Research, vol. 17, no. 39, pp. 1–40, 2016.
+[5] A. Tamar, D. Di Castro, and S. Mannor, “Policy gradient with variance related risk criteria,”
+in International Conference on Machine Learning, 2012, pp. 935–942.
+[6] M. Kuderer, S. Gulati, and W. Burgard, “Learning driving styles for autonomous vehicles
+from demonstration,” in IEEE International Conference on Robotics and Automation (ICRA).
+IEEE, 2015, pp. 2641–2646.
+[7] M. Komorowski, L. A. Celi, O. Badawi, A. C. Gordon, and A. A. Faisal, “The artificial
+intelligence clinician learns optimal treatment strategies for sepsis in intensive care,” Nature
+Medicine, vol. 24, no. 11, pp. 1716–1720, 2018.
+[8] T. Wei, Y. Wang, and Q. Zhu, “Deep reinforcement learning for building HVAC control,” in
+Proceedings of the 54th Annual Design Automation Conference (DAC), 2017, pp. 1–6.
+[9] H. Markowitz, “Portfolio selection,” The Journal of Finance, vol. 7, no. 1, pp. 77–91, 1952.
+[10] M. J. Sobel, “The variance of discounted markov decision processes,” Journal of Applied Prob-
+ability, vol. 19, no. 4, pp. 794–802, 1982.
+[11] D. J. White, “Mean, variance, and probabilistic criteria in finite markov decision processes:
+a review,” J. Optim. Theory Appl., vol. 56, no. 1, p. 1–29, Jan. 1988. [Online]. Available:
+https://doi.org/10.1007/BF00938524
+26
+
+
+[12] A. Tamar and S. Mannor, “Variance adjusted actor critic algorithms,” arXiv preprint
+arXiv:1310.3697, 2013.
+[13] L. Prashanth and M. Ghavamzadeh, “Variance-constrained actor-critic algorithms for dis-
+counted and average reward mdps,” Machine Learning, vol. 105, pp. 367–417, 2016.
+[14] H. Zhong, Y. C. Wu, and Z. Wang, “Risk-sensitive deep rl: Variance-constrained actor-critic
+provably finds globally optimal policy,” arXiv preprint arXiv:2012.14098, 2023.
+[15] C. Sherstan, D. R. Ashley, B. Bennett, K. Young, A. White, M. White, and R. S. Sutton,
+“Comparing direct and indirect temporal-difference methods for estimating the variance of the
+return,” in Conference on Uncertainty in Artificial Intelligence (UAI), 2018.
+[16] P. La and M. Ghavamzadeh, “Actor-critic algorithms for risk-sensitive mdps,” Advances in
+neural information processing systems, vol. 26, 2013.
+[17] X. Chen, J. D. Lee, X. T. Tong, and Y. Zhang, “Statistical inference for model parameters in
+stochastic gradient descent,” 2020.
+[18] C. Xie and Z. Zhang, “A statistical online inference approach in averaged stochastic approxi-
+mation,” Advances in Neural Information Processing Systems, vol. 35, pp. 8998–9009, 2022.
+[19] P. Ramprasad, Y. Li, Z. Yang, Z. Wang, W. W. Sun, and G. Cheng, “Online bootstrap
+inference for policy evaluation in reinforcement learning,” Journal of the American Statistical
+Association, vol. 118, no. 544, pp. 2901–2914, 2023.
+[20] X. Li, J. Liang, and Z. Zhang, “Online statistical inference for nonlinear stochastic approxi-
+mation with markovian data,” arXiv preprint arXiv:2302.07690, 2023.
+[21] Y. Zhu and J. Dong, “On constructing confidence region for model parameters in stochastic
+gradient descent via batch means,” in 2021 Winter Simulation Conference (WSC).
+IEEE,
+2021, pp. 1–12.
+[22] V. S. Borkar, Stochastic Approximation: A Dynamical Systems Viewpoint.
+Springer, 2008.
+[23] J. García and F. Fernández, “A comprehensive survey on safe reinforcement learning,” Journal
+of Machine Learning Research, vol. 16, no. 1, pp. 1437–1480, 2015.
+[24] Y. Shen, M. J. Tobia, T. Sommer, and K. Obermayer, “Risk-sensitive reinforcement
+learning,” Neural Computation, vol. 26, no. 7, p. 1298–1328, Jul. 2014. [Online]. Available:
+http://dx.doi.org/10.1162/NECO_a_00600
+[25] R. A. Howard and J. E. Matheson, “Risk-sensitive Markov decision processes,” Management
+Science, vol. 18, no. 7, pp. 356–369, 1972.
+[26] V. S. Borkar, “Q-Learning for risk-sensitive control,” Mathematics of Operations Research,
+vol. 27, no. 2, pp. 294–311, 2002.
+[27] ——, “Learning algorithms for risk-sensitive control,” 2010. [Online]. Available:
+https:
+//api.semanticscholar.org/CorpusID:5835100
+[28] Y. Chow, M. Ghavamzadeh, L. Janson, and M. Pavone, “Risk-constrained reinforcement learn-
+ing with percentile risk criteria,” Journal of Machine Learning Research, vol. 18, no. 167, pp.
+1–51, 2018.
+27
+
+
+[29] A. Tamar, Y. Glassner, and S. Mannor, “Optimizing the CVaR via sampling,” in Proceedings
+of the AAAI Conference on Artificial Intelligence, vol. 29, no. 1, 2015.
+[30] W. Dabney, M. Rowland, M. G. Bellemare, and R. Munos, “Distributional reinforcement
+learning with quantile regression,” in AAAI Conference on Artificial Intelligence, vol. 32,
+no. 1, 2018.
+[31] W. Dabney, G. Ostrovski, D. Silver, and R. Munos, “Implicit quantile networks for distri-
+butional reinforcement learning,” in International Conference on Machine Learning (ICML).
+PMLR, 2018, pp. 1096–1105.
+[32] A. Tamar, D. Di Castro, and S. Mannor, “Policy gradients with variance related risk criteria,”
+in Proceedings of the 29th International Coference on International Conference on Machine
+Learning, ser. ICML’12.
+Madison, WI, USA: Omnipress, 2012, p. 1651–1658.
+[33] L. Bisi, L. Sabbioni, E. Vittori, M. Papini, and M. Restelli, “Risk-averse trust region optimiza-
+tion for reward-volatility reduction,” in Proceedings of the Twenty-Ninth International Joint
+Conference on Artificial Intelligence (IJCAI), 2020, pp. 4583–4589.
+[34] T. Sangadi, L. A. Prashanth, and K. Jagannathan, “A finite-sample analysis of an actor-
+critic algorithm for mean-variance optimization in a discounted MDP,” arXiv preprint
+arXiv:2406.07892, 2024.
+[35] D. Liu, Q. Wei, D. Wang, X. Yang, and H. Li, Adaptive Dynamic Programming with Applica-
+tions in Optimal Control, ser. Advances in Industrial Control.
+Cham, Switzerland: Springer,
+2017.
+[36] S. Bhatnagar, R. S. Sutton, M. Ghavamzadeh, and M. Lee, “Natural actor-critic algorithms,”
+Automatica, vol. 45, no. 11, pp. 2471–2482, 2009.
+[37] V. R. Konda and J. N. Tsitsiklis, “On actor-critic algorithms,” SIAM Journal on Control and
+Optimization, vol. 42, no. 4, pp. 1143–1166, 2003.
+[38] S. Al-Dabooni and D. Wunsch, “The boundedness conditions for model-free HDP(λ),” IEEE
+Transactions on Neural Networks and Learning Systems, vol. 30, no. 7, pp. 1928–1942, 2019.
+[39] T. Xu, Z. Wang, and Y. Liang, “Improving sample complexity bounds for (natural) actor-critic
+algorithms,” in Advances in Neural Information Processing Systems (NeurIPS), vol. 33, 2020,
+pp. 4358–4369.
+[40] Y. Wu, W. Zhang, P. Xu, and Q. Gu, “A finite-time analysis of two time-scale actor-critic
+methods,” in Advances in Neural Information Processing Systems (NeurIPS), vol. 33, 2020,
+pp. 17 617–17 628.
+[41] M. G. Bellemare, W. Dabney, and R. Munos, “A distributional perspective on reinforcement
+learning,” in International Conference on Machine Learning (ICML).
+PMLR, 2017, pp.
+449–458.
+[42] M. Zhu and T. Pan, “Distributional reinforcement learning for run-to-run control in semi-
+conductor manufacturing processes,” Neural Computing and Applications, vol. 35, no. 26, pp.
+19 337–19 350, 2023.
+28
+
+
+[43] S. K. Panda, R. Liu, and Y. Xiang, “Asymptotic analysis of sample-averaged Q-learning,”
+IEEE Transactions on Information Theory, 2025.
+[44] R. Nian, J. Liu, and B. Huang, “A review on reinforcement learning: Introduction and appli-
+cations in industrial process control,” Computers & Chemical Engineering, vol. 139, p. 106886,
+2020.
+[45] T. Jaakkola, M. I. Jordan, and S. P. Singh, “Convergence of stochastic iterative dynamic
+programming algorithms,” Neural Computation, vol. 6, no. 6, pp. 1185–1201, 1994.
+[46] J. N. Tsitsiklis, “Asynchronous stochastic approximation and q-learning,” Machine Learning,
+vol. 16, no. 3, pp. 185–202, 1994.
+[47] J. N. Tsitsiklis and B. Van Roy, “An analysis of temporal-difference learning with function
+approximation,” IEEE Transactions on Automatic Control, vol. 42, no. 5, pp. 674–690, 1997.
+29
+
+
+A
+Hyperparameter Settings
+Table 3 lists the full hyperparameter settings used across all puddle world experiments. Summary
+statistics reported in the main paper are computed from unsmoothed rollouts of the converged
+policy; smoothing coeﬀicients apply only to learning curve figures.
+Table 3: Hyperparameters used across discrete and continuous puddle world settings. lrc: critic
+learning rate. lra: actor learning rate. lrσ: variance critic learning rate (VPAC only).
+Parameter
+Discrete
+Continuous
+Common parameters
+Discount γ
+0.99
+0.99
+Max episodes
+1,000
+2,000
+Max steps
+500
+5,000
+Seeds
+10
+10
+Smoothing (αsmooth, returns)
+0.03
+0.03
+Smoothing (αsmooth, variance)
+0.05
+0.05
+AC (baseline, β = 0)
+lrc / lra
+0.1 / 0.01
+0.05 / 0.01
+VPAC [1]
+β
+0.002
+0.005
+lrc / lra / lrσ
+0.1 / 0.01 / 0.1
+0.05 / 0.01 / 0.025
+VPAC-RS (proposed)
+β
+0.01
+0.005
+lrc / lra
+0.1 / 0.01
+0.05 / 0.01
+Variance update frequency
+20 steps
+20 steps
+Warm-up episodes
+5
+5
+VPAC-BS (proposed)
+β
+0.005
+0.005
+lrc / lra
+0.1 / 0.01
+0.05 / 0.01
+Ensemble size K
+10
+10
+Variance update frequency
+20 steps
+20 steps
+Continuous setting only
+Tile coding
+–
+10 tilings, 5 bins
+Feature dimension
+–
+1,024
+B
+Proof of Theorem 1
+We prove almost-sure convergence of the variance-penalized Q-learning iterates to Q∗, the unique
+fixed point of the penalized Bellman operator K, by verifying the stochastic approximation condi-
+tions of Borkar’s Theorem 2.2 [22]. Since the update modifies only the visited state-action pair at
+each iteration, the recursion is an asynchronous stochastic approximation; we invoke the standard
+reduction of asynchronous updates with positive asymptotic visitation frequency to the synchronous
+framework (Jaakkola et al. [45]; see also Tsitsiklis [46] and Chapter 7 of Borkar [22]).
+30
+
+
+Step 1: SA Recursion in Standard Form
+We write the Q-learning update as
+Qt+1(s, a) = Qt(s, a) + ∆t(s, a),
+∆t(s, a) = αt 1[(s, a) = (St, At)]
+×
+
+h(Qt)(s, a) + Mt+1(s, a)
+
+,
+(38)
+where the mean-field function is
+h(Q)(s, a) = (KQ)(s, a) −Q(s, a),
+(39)
+and the noise term at the visited state-action pair is
+Mt+1(s, a) =
+
+
+
+
+
+Rt+1 + γ max
+π
+F π
+Qt(St+1)
+−(KQt)(s, a),
+(s, a) = (St, At),
+0,
+otherwise.
+(40)
+Under Assumption 1, the fixed exploration policy πb induces a stationary distribution µπb with
+µπb(s, a) > 0 for every (s, a), so that
+1
+t
+t−1
+X
+k=0
+1[(Sk, Ak) = (s, a)] −→µπb(s, a) > 0
+a.s.
+(41)
+Each state-action pair is therefore updated with positive asymptotic frequency, which is the condi-
+tion required for the induced per-coordinate asynchronous step sizes to inherit the Robbins-Monro
+conditions from {αt}.
+Step 2: γ-Contraction of K
+We show ∥KQ1 −KQ2∥∞≤γ∥Q1 −Q2∥∞for any Q1, Q2. For any state s′, define for i = 1, 2:
+F π
+Qi(s′) =
+X
+a′
+π(a′|s′)
+
+Qi(s′, a′) −β ˆσclip(s′, a′)
+
+,
+(42)
+where ˆσclip is treated as a fixed bounded state-action penalty inside the Bellman operator K for
+the purposes of this contraction argument, and is the same in both F π
+Q1 and F π
+Q2.
+Let π∗
+1 =
+arg maxπ F π
+Q1(s′). Since π∗
+2 = arg maxπ F π
+Q2(s′) maximises F π
+Q2, we have F π∗
+2
+Q2(s′) ≥F π∗
+1
+Q2(s′), and
+therefore:
+max
+π
+F π
+Q1(s′) −max
+π
+F π
+Q2(s′) = F π∗
+1
+Q1(s′) −F π∗
+2
+Q2(s′)
+≤F π∗
+1
+Q1(s′) −F π∗
+1
+Q2(s′)
+=
+X
+a′
+π∗
+1(a′|s′)
+×
+ Q1(s′, a′) −Q2(s′, a′)
+
+≤∥Q1 −Q2∥∞,
+(43)
+where the last equality uses the fact that ˆσclip cancels in the difference F π∗
+1
+Q1 −F π∗
+1
+Q2, since both terms
+use the same fixed penalty. By the symmetric argument with π∗
+2:
+max
+π
+F π
+Q2(s′) −max
+π
+F π
+Q1(s′) ≤∥Q1 −Q2∥∞.
+(44)
+31
+
+
+Combining (43) and (44):
+max
+π
+F π
+Q1(s′) −max
+π
+F π
+Q2(s′)
+ ≤∥Q1 −Q2∥∞.
+(45)
+Taking expectations over S′ conditional on (s, a) and then taking the supremum over (s, a) gives
+∥(KQ1) −(KQ2)∥∞≤γ∥Q1 −Q2∥∞.
+(46)
+Since γ < 1, K is a γ-contraction in ∥· ∥∞. By Banach’s fixed-point theorem, K has a unique
+fixed point Q∗, satisfying ∥Q∗∥∞≤(Rmax + γβcmax)/(1 −γ), and h(Q) = KQ −Q satisfies
+∥h(Q1) −h(Q2)∥∞≤(1 + γ)∥Q1 −Q2∥∞(Lipschitz condition, Borkar’s Assumption A1).
+Step 3: Martingale Difference Noise
+For the visited coordinate (St, At), the noise in (40) satisfies
+E[Mt+1(St, At) | Ft] = 0
+(47)
+by definition of (KQt)(St, At) as the conditional expectation of Rt+1 + γ maxπ F π
+Qt(St+1) given
+(St, At). For the conditional second moment, note that |Rt+1| ≤Rmax almost surely (Assumption 2)
+and
+max
+π
+F π
+Qt(s′)
+ ≤∥Qt∥∞+ βcmax
+(48)
+by Assumption 3 and the fact that | P
+a′ π(a′|s′)Qt(s′, a′)| ≤∥Qt∥∞. Therefore
+E
+
+M2
+t+1(St, At) | Ft
+
+≤C
+ 1 + ∥Qt∥2
+∞
+
+(49)
+for a constant C > 0 depending only on Rmax, γ, β, and cmax (Borkar’s Assumption A3).
+Step 4: Step-Size and Bounded-Iterate Conditions
+Assumption 4 supplies the Robbins-Monro conditions for the base step-size sequence {αt}, while
+Step 1 shows that the induced per-coordinate asynchronous step sizes inherit these conditions
+under positive asymptotic visitation frequency (Borkar’s Assumption A2). Assumption 5 supplies
+almost-sure boundedness of {Qt} (Borkar’s Assumption A4).
+Step 5: Global Asymptotic Stability of the ODE
+The limiting ODE is ˙Q(t) = h(Q(t)) = KQ(t) −Q(t). Since KQ∗= Q∗, the error e(t) = Q(t) −Q∗
+satisfies ˙e(t) = KQ(t) −KQ∗−e(t). Let V (t) = ∥e(t)∥∞and define the active set
+I(t) =
+
+(s, a) : |e(t)(s, a)| = V (t)
+	
+.
+(50)
+For V (t) > 0, the upper right Dini derivative satisfies
+D+V (t) ≤
+max
+(s,a)∈I(t) sgn(e(t)(s, a)) ˙e(t)(s, a)
+=
+max
+(s,a)∈I(t) sgn(e(t)(s, a))
+h
+(KQ(t))(s, a) −(KQ∗)(s, a) −e(t)(s, a)
+i
+≤
+max
+(s,a)∈I(t)
+(KQ(t))(s, a) −(KQ∗)(s, a)
+ −V (t)
+≤γ∥Q(t) −Q∗∥∞−V (t)
+= −(1 −γ)V (t).
+(51)
+32
+
+
+When V (t) = 0, the inequality holds trivially. Therefore, by the comparison principle for upper
+right Dini derivatives,
+V (t) ≤e−(1−γ)tV (0),
+(52)
+so Q(t) →Q∗exponentially as t →∞, establishing global asymptotic stability of the limiting ODE
+(Borkar’s Assumption A5).
+All conditions of Borkar’s Theorem 2.2 are satisfied. Therefore Qt →Q∗almost surely.
+□
+Remark 4. The contraction argument in Step 2 holds for any bounded ˆσclip, regardless of whether
+it converges to the true σπ. The key algebraic fact is that ˆσclip cancels in F π∗
+1
+Q1 −F π∗
+1
+Q2, since both
+use the same estimator. This is why boundedness is the only requirement on the variance estimate:
+the fixed point Q∗exists and is unique for any bounded ˆσclip, and the operator K is a γ-contraction
+irrespective of the estimator’s accuracy.
+C
+Proof of Theorem 2
+We prove convergence of the two-timescale actor-critic using Borkar’s Theorem 2 of Chapter 6 [22],
+which gives conditions under which a two-timescale SA scheme converges: the faster-timescale
+iterate tracks a unique stable equilibrium that depends continuously on the slower-timescale iterate,
+and the slower-timescale iterate then has its limit set contained in the stationary set of the ODE
+induced by evaluating the equilibrium map at the current slower iterate.
+The on-policy case (ρt ≡1) is treated here; the off-policy extension is given in Appendix D.
+Throughout, we assume bounded features ∥ϕ(s, a)∥≤ϕmax and a bounded, Lipschitz policy score
+on the relevant compact parameter set, in addition to Assumptions 1–6.
+Step 1: Two-Timescale SA Form
+Write the critic update as
+wt+1 = wt + αw,t
+
+hw(wt, θt) + Mw
+t+1
+
+,
+(53)
+where the critic mean field is
+hw(w, θ) = Eµπθ
+h Rt+1 + γF(St+1) −Qw(St, At)
+
+× ∇wQw(St, At)
+i
+.
+(54)
+with F(s′) = P
+a′ πθ(a′|s′)[Qw(s′, a′) −βˆσclip(s′, a′)], and the critic noise, centered at its stationary
+mean field, is
+Mw
+t+1 =
+ Rt+1 + γF(St+1) −Qw(St, At)
+
+∇wQw(St, At)
+−hw(wt, θt).
+(55)
+Write the actor update as
+θt+1 = θt + αθ,t
+
+g(θt, wt) + Mθ
+t+1
+
+,
+(56)
+where the actor mean field is
+g(θ, w) = Eµπθ
+ ˆQvar(St, At) ∇θ log πθ(At|St)
+
+,
+ˆQvar(s, a) = Qw(s, a) −βˆσclip(s, a).
+(57)
+33
+
+
+and the actor noise, centered at its stationary mean field, is
+Mθ
+t+1 = ˆQvar(St, At)∇θ log πθ(At|St) −g(θt, wt).
+(58)
+Because (St, At) is generated by a Markov chain rather than i.i.d. sampling from µπθ at every step,
+Mw
+t+1 and Mθ
+t+1 are not literal martingale differences with respect to the full filtration Ft; instead
+they satisfy the bounded controlled Markov noise conditions of Borkar’s two-timescale framework
+(Chapter 6, Section 6.2 of [22]), which requires only that the noise, averaged over the mixing time
+of the chain, vanish asymptotically relative to the step size, together with the conditional second-
+moment growth bound verified in Step 2 and Step 4 below. This is the standard treatment for
+actor-critic recursions built on a single Markovian trajectory [36, 37].
+Step 2: Faster-Timescale Analysis (Critic Convergence to w∗(θ))
+For a quasi-static actor parameter θ, the critic recursion (53) tracks the ODE
+˙w(t) = hw(w(t), θ).
+(59)
+Linear FA mean field.
+Under linear function approximation Qw(s, a) = w⊤ϕ(s, a), the TD
+target becomes yt = Rt+1 + γ(w⊤Φ(St+1, πθ) −βB(St+1, πθ)), where Φ(s′, π) = P
+a′ π(a′|s′)ϕ(s′, a′)
+and B(s′, π) = P
+a′ π(a′|s′)ˆσclip(s′, a′). The mean field is
+hw(w, θ) = bvar(θ) −G(θ)w,
+G(θ) = A(θ) −γC(θ),
+(60)
+where
+A(θ) = Eµπθ [ϕ(s, a)ϕ(s, a)⊤],
+(61)
+C(θ) = Eµπθ [ϕ(s, a)Φ(S′, πθ)⊤],
+(62)
+bvar(θ) = Eµπθ
+
+(R −γβB(S′, πθ))ϕ(s, a)
+
+.
+(63)
+Positive definiteness. G(θ) = A(θ) −γC(θ) is identical in structure to the standard on-policy
+linear TD system matrix, for which positive definiteness under Assumption 1 and non-degenerate
+features is established in Tsitsiklis and Van Roy [47].
+The variance penalty modifies only bvar
+(a vector), not G(θ), so positive definiteness is preserved. We assume G(θ) is uniformly positive
+definite over the compact parameter set, consistent with the standard linear TD stability condition.
+Unique stable equilibrium. Since G(θ) is positive definite, the ODE (59) is globally exponentially
+stable with unique equilibrium
+w∗(θ) = G(θ)−1bvar(θ).
+(64)
+The noise Mw
+t+1 in (55) has zero mean under µπθ and bounded conditional second moment, since
+Rt+1, ∇wQw = ϕ, Qw, and ˆσclip are all bounded under Assumptions 2, 3, and 5, together with the
+assumed feature boundedness. By Borkar’s Theorem 2.2 (extended to controlled Markov noise as
+discussed in Step 1), wt →w∗(θ) almost surely for each fixed θ.
+Step 3: Continuity of θ 7→w∗(θ)
+From (64), w∗(θ) is continuous in θ provided A(θ), C(θ), and bvar(θ) are continuous in θ and G(θ)
+is uniformly invertible. The matrices A and C are computed as expectations under the stationary
+distribution µπθ. Under Assumption 6, πθ(a|s) is differentiable (hence continuous) in θ for all (s, a),
+and by the ergodicity of the Markov chain (Assumption 1), the stationary distribution µπθ varies
+continuously with θ under smooth policy parameterizations (see, e.g., Section 2 of Bhatnagar et
+al. [36]). Continuity of A(θ), C(θ), and bvar(θ) follows. Uniform invertibility of G(θ) holds because
+positive definiteness is preserved uniformly over compact parameter sets under non-degenerate,
+bounded features. Hence θ 7→w∗(θ) is continuous.
+34
+
+
+Step 4: Slower-Timescale Analysis (Actor Convergence)
+On the actor’s timescale, the critic is at equilibrium w∗(θt) (Step 2). The actor recursion (56)
+therefore approximately tracks the ODE
+˙θ(t) = g
+ θ(t), w∗(θ(t))
+
+= Eµπθ(t)
+h
+ˆQvar(s, a; θ(t))∇θ log πθ(t)(a|s)
+i
+.
+(65)
+where ˆQvar(s, a; θ) = Qw∗(θ)(s, a)−βˆσclip(s, a), with ˆσclip treated as a fixed bounded penalty within
+this mean-field evaluation, consistent with the quasi-static convention used throughout this proof.
+By the policy gradient theorem applied to the variance-penalized objective Jvar(θ), the right-
+hand side of (65) equals ∇θJvar(θ). Thus the actor ODE is the gradient ascent flow of Jvar(θ), and
+its equilibria satisfy ∇θJvar(θ∗) = 0.
+Lipschitz drift. The drift g(θ, w∗(θ)) is Lipschitz in θ on the compact parameter set: the score
+function ∇θ log πθ(a|s) is bounded and Lipschitz by Assumption 6 and the standing boundedness
+assumption of this appendix; ˆQvar is bounded by ∥Qw∗(θ)∥∞+ βcmax, which is bounded over com-
+pact θ sets given bounded features and the continuity of w∗(θ); and w∗(θ) is Lipschitz in θ (it is
+continuously differentiable by the implicit function theorem applied to (64)).
+Noise conditions. The actor noise Mθ
+t+1 in (58) is centered at its mean field under µπθt, and
+by the same controlled Markov noise argument as Step 1, satisfies the conditional second-moment
+bound E[∥Mθ
+t+1∥2 | Ft] ≤C′(1 + ∥θt∥2), because the score function and ˆQvar are bounded under
+Assumptions 3 and 6 together with the standing boundedness assumption.
+ODE trajectories.
+Boundedness of the actor iterates is supplied directly by Assumption 5;
+equivalently, the actor update may be viewed as a projected stochastic approximation on a compact
+parameter set. Hence the trajectories of the actor ODE (65) remain in this compact set.
+Conclusion
+The following conditions of Borkar’s two-timescale Theorem 2 (Chapter 6 of [22]) are satisfied:
+(i) The critic ODE has a unique globally stable equilibrium w∗(θ) for each fixed θ (Step 2).
+(ii) The map θ 7→w∗(θ) is continuous (Step 3).
+(iii) The actor mean field g(θ, w∗(θ)) = ∇θJvar(θ) is Lipschitz (Step 4).
+(iv) Both noise sequences satisfy the bounded controlled Markov noise conditions with bounded
+conditional second moments (Steps 1, 2, and 4).
+(v) The step-size separation αθ,t/αw,t →0 holds by Assumption 4.
+(vi) Iterates are bounded by Assumption 5.
+Therefore wt −w∗(θt) →0 almost surely, and the limit set of {θt} is almost surely contained in
+the set of stationary points of Jvar, i.e., every limit point θ∗of {θt} satisfies ∇θJvar(θ∗) = 0. If
+the stationary points of Jvar are isolated, this limit set is almost surely a single point, and θt →θ∗
+almost surely.
+□
+35
+
+
+D
+Off-Policy Convergence
+The off-policy actor-critic modifies the on-policy analysis by replacing stationary averages under
+µπθ with behavior-distribution averages under µb and by introducing importance weights ρt =
+πθ(At|St)/b(At|St).
+Assumption 7 (Off-Policy Coverage and Clipped Importance Weights). The behavior policy b has
+support over the target policy class: if πθ(a|s) > 0, then b(a|s) > 0. The importance weights are
+clipped so that 0 ≤ρt ≤ρmax < ∞for all t.
+Assumption 8 (Off-Policy Critic Stability). The off-policy projected TD system matrix Gb(θ) =
+Ab(θ) −γCb(θ), computed under the behavior distribution µb, is uniformly positive definite on the
+compact parameter set.
+Under Assumptions 7 and 8, the actor mean field becomes
+goﬀ(θ, w) = Eµb
+
+ρ(s, a) ˆQvar(s, a)∇θ log πθ(a|s)
+
+,
+(66)
+where ˆQvar(s, a) = Qw(s, a) −βˆσclip(s, a) (following the off-policy policy gradient of Theorem 4 in
+Jain et al. [1]). The corresponding actor noise is
+Mθ
+t+1 = ρt ˆQvar(St, At) ∇θ log πθ(At|St) −goﬀ(θt, wt).
+(67)
+Because the data are generated by the behavior Markov chain, this noise is centered at its mean field
+under µb but is not a literal martingale difference with respect to the full filtration; it satisfies the
+controlled Markov noise conditions of Borkar’s framework, as in the on-policy case (Appendix C).
+The clipped ratio ρt ≤ρmax, together with bounded scores, bounded critic features, bounded
+iterates, and bounded ˆσclip, gives the required conditional second-moment bound:
+E
+
+∥Mθ
+t+1∥2 | Ft
+
+≤ρ2
+max C′(1 + ∥θt∥2).
+(68)
+The critic analysis is analogous to Steps 2 and 3 of Appendix C, with all expectations taken
+under µb in place of µπθ, provided Assumption 8 holds; this positive definiteness is not automatically
+implied by coverage or ergodicity alone and is stated as a separate standing condition.
+Under
+this assumption, the critic tracks the off-policy equilibrium w∗
+b(θ), and the actor tracks the off-
+policy ODE ˙θ = goﬀ(θ, w∗
+b(θ)). Consequently, the limit set of {θt} is almost surely contained in
+the stationary set of the off-policy actor ODE. If the stationary points of the induced off-policy
+objective Jd0(θ) are isolated, then θt converges almost surely to a stationary point θ∗.
+□
+Remark 5. As in the on-policy case, the off-policy proof requires only that ˆσclip be bounded, not
+consistent. The importance sampling correction ρt modifies the actor mean field and noise but does
+not affect the contraction of the penalized Bellman operator, which is established independently of
+ρt in Appendix B. The off-policy critic, unlike its on-policy counterpart, requires Assumption 8 as
+an additional stability condition, reflecting the well-known sensitivity of off-policy linear TD to the
+choice of behavior policy [47].
+E
+Full VPAC-BS HTS Evaluation
+Table 4 reports VPAC-BS evaluation metrics across all β values at κ = 1.5, averaged over 10
+seeds × 40 greedy rollouts. The best risk-adjusted result (β = 0.1, shown in bold) achieves 44%
+36
+
+
+Table 4: VPAC-BS evaluation metrics at κ = 1.5, averaged over 10 seeds × 40 rollouts. SS IC std:
+steady-state Ic standard deviation (steps 140–200). CVaR-10%: mean of worst 10% of episode
+returns (higher is better). Best non-baseline entry per column in bold.
+β
+Mean Ic [A]
+Ret mean
+Ret std
+SS IC std [A]
+CVaR-10%
+0.000 (baseline)
+338.3
+59.06
+4.48
+–
+51.27
+0.001
+331.3
+57.97
+4.58
+–
+52.32
+0.010
+340.7
+59.78
+5.55
+–
+50.18
+0.100
+320.5
+56.74
+2.52
+9.6
+51.76
+1.000
+332.0
+58.62
+4.13
+–
+52.93
+Ret std reduction relative to the within-run baseline. The irregular pattern at β = 0.01 (Ret std
+exceeds the baseline) is discussed in Section 7.3.4 and attributed to the mismatch between the
+bootstrapping estimator’s epistemic signal and the predominantly aleatoric noise structure of the
+HTS environment.
+Figures 10 and 11 show the trajectory and Pareto evaluation for VPAC-BS, analogous to Fig-
+ures 8 and 9 for VPAC-RS. Figures 12 and 13 provide the rolling IC std and episode return
+distributions for both methods.
+
+
+
+
+
+
+
+
+*$,) !-!*
+
+
+	
+	
+
+
+
+
+
+
+
+
+-,!-'1$'.'
+-! 2,--!
+0$( )0
++%!-)+2 '!("+!! 2+)&&).-,
+,!&$(!
+
+-#!+/&.!,
+	
+ 
+Figure 10: Mean ± IQR of the Ic(A) trajectory across 400 greedy rollouts under the VPAC-BS
+policy at κ = 1.5. The solid green line is the risk-neutral baseline (β = 0); the dashed blue line
+is the best risk-adjusted policy (β = 0.1). The β = 0.1 IQR band is wider than the baseline in
+the transient phase (steps 50–130) before narrowing in the steady-state window, indicating that
+VPAC-BS achieves variance reduction primarily in the settled phase of the episode rather than
+throughout.
+F
+HTS Training Curves
+Figure 14 shows the training return and variance curves for VPAC-RS at κ = 1.5 across all β values.
+These curves reflect the evolution of the variance estimator signal during training, evaluated on
+stochastic rollouts of the target policy every 15 episodes for returns and every 30 episodes for
+variance. The variance values are computed on normalised discounted returns (reward divided by
+590 at each step) and are therefore on a different absolute scale from the evaluation Ret std reported
+37
+
+
+
+	
+
+		
+
+	
+
+	
+
+
+
+
+
+	
+
+
+
+
+
+
+
+
+&"#!"( **(
+	
+
+
+
+
+
+
+
+
+*+(&*%',( **(
+
+
+
+
+
+#)$*+(&('  
+Figure 11: Risk-return Pareto scatter for VPAC-BS at κ = 1.5. Axes and marker conventions follow
+Figure 9. The starred marker identifies the best risk-adjusted policy (β = 0.1, Ret std = 2.52, 44%
+below the baseline). Four operating points are Pareto-non-dominated; the β = 0.01 point is non-
+dominated on the mean Ic axis (highest mean Ic of all configurations) despite exhibiting the highest
+Ret std, reflecting the irregular variance signal produced by the bootstrapping estimator at small
+penalty values in this environment.
+38
+
+
+
+
+
+
+
+
+
+
+
+
+
+% '$ (%
+
+
+	
+
+
+ ( &$'' $!!$)('  
+(,'((
++ #$+
+
+
+	
+	
+  $!! #  (  !$+&  "$& $#' '(#( %$! ,
+ '! #
+
+
+
+
+ '! #
+
+
+
+
+
+
+
+
+
+
+
+
+ '$)#( % '$ ()&#
+  % '$ ()&#  '(& )( $#  ( (&  !$+& *& #
+	
+ 
+
+Figure 12: Supporting evaluation panels for VPAC-RS at κ = 1.5 (400 greedy rollouts, stochastic
+environment). (B) Rolling Ic(A) standard deviation across rollouts at each episode step, smoothed
+with a uniform window of 15 steps. Annotated values show the mean steady-state IC std (steps
+140–200) for β = 0 (55.4 A) and β = 0.01 (14.1 A). The shaded region is the steady-state evaluation
+window. (C) Episode return distributions across all rollouts; boxes span the interquartile range,
+with the median as the horizontal bar and whiskers extending to 1.5 times the IQR. The β = 0.01
+and β = 0.1 policies produce the tightest return distributions, consistent with the Ret std values
+in Table 2.
+
+
+
+
+
+
+
+
+
+
+
+&!(% )&
+
+
+
+
+	
+
+
+
+
+ ) '%(( %""%*)(  
+)-())
+,!$%,
+	
+
+  %""!$  )  "%,'  #%' %$(!()$) &%"!-
+ ("!$
+
+
+
+
+ ("!$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+!(%*$) &!(% )*'$
+  &!(% )*'$ !()'!*)!%$  )! )'  "%,' +'!$
+	
+ 
+Figure 13: Supporting evaluation panels for VPAC-BS at κ = 1.5 (400 greedy rollouts, stochastic
+environment). Panel and axis conventions follow Figure 12. (B) The β = 0.01 curve substantially
+exceeds the baseline IC std throughout the episode, confirming the pathological result reported in
+Table 4. The β = 0.1 policy reaches near-zero IC std in the steady-state window (annotated: 9.6 A).
+(C) Episode return distributions are wider and less ordered across β values than for VPAC-RS (cf.
+Figure 12C), consistent with the weaker and less consistent variance-reduction signal produced by
+the bootstrapping estimator in this environment.
+in Table 2. Despite this scale difference, the relative ordering of β values is qualitatively consistent
+between training and evaluation: lower β values that achieve smaller Ret std at evaluation also tend
+to exhibit lower training variance in the latter half of training. The y-axis of the variance panel is
+truncated to highlight relative ordering; the absolute range is 1.45–1.90 in normalised return units.
+39
+
+
+
+
+
+
+
+	
+!!
+		
+
+
+
+	
+
+	
+
+	
+
+
+
+	
+
+	
+"# 
+$  "# ! $   
+β  
+β  
+β  
+β  
+β  
+
+
+
+
+
+!!
+	
+	
+		
+
+
+
+	
+
+	
+
+	
+  ! !#"  "# 
+   "# ! $   
+β  
+β  
+β  
+β  
+β  
+Figure 14: Training curves for VPAC-RS at κ = 1.5 (10 seeds; error bars show ±1 standard error
+of the mean, plotted at sampled intervals for clarity). Left: mean episode return over training.
+All β values converge to comparable return levels, confirming that variance penalisation does not
+significantly degrade mean performance during learning. Right: variance of normalised discounted
+returns estimated during training. The y-axis is truncated to show relative ordering across β values;
+absolute variance range is 1.45–1.90.
+
+
+
+
+
+	
+!!
+	
+
+
+
+
+
+
+
+
+
+
+
+
+"# 
+$  "# ! $   
+β  
+β  
+β  
+β  
+β  
+
+
+
+
+
+!!
+	
+
+
+
+
+  ! !#"  "# 
+   "# ! $   
+β  
+β  
+β  
+β  
+β  
+Figure 15: Training curves for VPAC-BS at κ = 1.5 (10 seeds; error bars show ±1 standard error
+of the mean, plotted at sampled intervals for clarity). Left: mean episode return over training. All
+β values converge to comparable return levels. Right: variance of normalised discounted returns
+estimated during training. Notably, β = 0.01 (green) sits above the risk-neutral baseline (β = 0,
+blue) throughout training, consistent with the pathological evaluation result for this configuration
+(Table 4), and in contrast to VPAC-RS where β = 0.01 produces the lowest training variance
+(Figure 14). The y-axis is truncated to show relative ordering; absolute variance range is 1.45–1.90.
+40

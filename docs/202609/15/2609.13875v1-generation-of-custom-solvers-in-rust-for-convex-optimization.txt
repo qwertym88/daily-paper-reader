@@ -1,0 +1,859 @@
+Generation of Custom Solvers in Rust
+for Convex Optimization
+Hao Zhu1,2 and Joschka Boedecker1,2
+1IMBIT//BrainLinks-BrainTools
+2Department of Computer Science, University of Freiburg
+September 15, 2026
+Abstract
+We introduce cvxgenrust, an open-source tool for generating custom Rust code
+that solves families of parameterized convex optimization problems modeled in CVXPY.
+cvxgenrust canonicalizes a problem family, extracts affine maps to Clarabel cone-
+program data, and generates a specialized Rust crate that updates parameters and calls
+Clarabel natively at runtime. The generated solver can also be exposed to Python and
+registered as a custom CVXPY solver. Our code generator supports a wide range of
+convex optimization problems up to semidefinite programs and exponential-cone prob-
+lems. Numerical experiments show reduced runtime relative to direct CVXPY solves
+and performance comparable to CVXPYgen on shared problem classes.
+1
+arXiv:2609.13875v1  [math.OC]  12 Sep 2026
+
+
+Contents
+1
+Introduction
+3
+1.1
+Prior and related work . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+3
+1.2
+Contribution . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+4
+1.3
+Outline . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5
+2
+cvxgenrust
+5
+2.1
+Canonical quadratic cone problems . . . . . . . . . . . . . . . . . . . . . . . . .
+5
+2.2
+Affine-solve-affine workflow . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5
+2.3
+A simple example . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+7
+3
+Numerical results
+8
+4
+Conclusion
+8
+5
+Appendix: Benchmark problem families
+10
+5.1
+Basic examples . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+10
+5.2
+Semidefinite programming examples
+. . . . . . . . . . . . . . . . . . . . . . . .
+11
+5.3
+Machine learning examples
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+11
+5.4
+Control and finance examples . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+12
+2
+
+
+1
+Introduction
+We consider the class of parameterized convex optimization problems of the form
+minimize
+f0(x; ω)
+subject to
+fi(x; ω) ≤0,
+i = 1, . . . , m
+hi(x; ω) = 0,
+i = 1, . . . , p,
+(1)
+where x ∈Rn is the optimization variable [AAB+19, SBD+22]. The family of problems (1)
+corresponding to different values of the parameter ω ∈Rk is called a problem family. In this
+context, we call a problem of the form (1) associated with one specific value of ω a problem
+instance. The functions fi : Rn × Rk →R for i = 0, . . . , m are assumed to be convex and
+hi : Rn × Rk →R for i = 1, . . . , p are assumed to be affine, in the variable x for each fixed
+ω, so that each problem instance is a convex optimization problem. Parameterized convex
+optimization problems are ubiquitous in many fields, including machine learning [MB12,
+AAB+19, BB21], control [SBD+22, MLQH25], and finance [BJK+24, LB24], just to list a
+few.
+In practice, solving a problem instance of the form (1) typically involves two steps.
+First, the problem instance is canonicalized into a standard form, such as a cone program
+(see §2.1), that can be handled by a generic numerical solver. Second, the canonicalized
+problem instance is passed to the numerical solver and solved via, e.g., an interior-point
+method [NN94, BV04]. Although the first problem canonicalization step is usually mathe-
+matically tedious, time-consuming, and error-prone, many domain specific languages (DSLs)
+have been developed to automate this step, such as YALMIP [Lof04] and CVX [GB14] for
+MATLAB, Convex.jl [UMZ+14] for Julia, CVXPY [DB16] for Python, and CVXR [FNB20]
+for R. These DSLs allow users to express optimization problems in a natural mathemati-
+cal syntax, and automatically canonicalize them into a standard form that can be solved
+by generic solvers such as OSQP [SBG+20], SCS [OCPB16], ECOS [DCB13], and Clara-
+bel [GC24].
+Most of the DSLs for convex optimization are parser-solvers [SBD+22], which means
+that they parse an instance of the problem (1) and call a generic solver at runtime, for each
+time the parameter ω changes. This approach is flexible and easy to use, but it can be
+inefficient when the problem parameter ω changes frequently, as is often the case in real-
+time embedded applications. In such settings, the parsing and canonicalization steps may
+become computationally expensive, especially for large-scale problems.
+Here we address
+this issue by designing a code generator, which parses a given problem family and generates
+custom solvers for it. The generated source code is then compiled into binary libraries that
+are directly executable and can solve problem instances when the parameter values change,
+without the need for parsing and canonicalization at runtime.
+1.1
+Prior and related work
+The idea of code generators for embedded convex optimization has been explored over the
+last several decades. One of the earliest works in this direction is CVXGEN [MB12], which
+generates custom C code for solving small linear programs (LPs) and convex quadratic
+programs (QPs) in embedded applications. This software has been used to generate flight
+code for high-speed onboard convex optimization for precision landing of space rockets by
+SpaceX [Bla16]. More recently, the CVXPY-based C code generator CVXPYgen [SBD+22]
+3
+
+
+extends the code generation approach to a much broader class of convex optimization prob-
+lems, up to second-order cone programs (SOCPs). Custom solvers generated by CVXPYgen
+are generally faster than those from CVXGEN, and have smaller binary sizes (see [SBD+22]
+for detailed comparisons). There are several other code generators, which, however, only
+support solver generation for a specific problem family, e.g., optimal control problems, in-
+cluding FORCESPRO [Emb26], FORCES NLP [ZDJM20], acados [VFK+22], and SCvx-
+PyGen [BCG24].
+There are several limitations of the existing code generators for convex optimization.
+Firstly, existing code generators target C, mainly because C offers native performance,
+small runtime overhead, and broad support for embedded deployment. In this work, we
+target Rust in order to retain these systems-level advantages while improving the safety and
+maintainability of the generated solver code. Rust compiles to efficient native code without
+a garbage collector, and its ownership model helps prevent memory errors, unintended
+aliasing, and data races at compile time. These properties make Rust a suitable target
+for generated solvers used in real-time and embedded applications. Secondly, as far as we
+know, there is no existing code generator that supports solver generation for semidefinite
+programs (SDPs) or exponential cone programs, which have become increasingly useful in
+many applications (see §5.2 and §5.3 for some examples).
+1.2
+Contribution
+This work presents cvxgenrust, a code generator for parameterized convex optimization
+problems that generates custom solvers in Rust.
+Given a problem family specified in
+CVXPY, cvxgenrust canonicalizes the family once into a standard conic form and gen-
+erates a Rust crate specialized to that family. At runtime, users only update the problem
+parameters and call the compiled solver, avoiding repeated parsing and canonicalization.
+The generated solver uses Clarabel as its backend conic solver. Since Clarabel is imple-
+mented natively in Rust, cvxgenrust integrates directly with the Rust ecosystem without
+foreign-function interfaces or language bindings between the generated solver and the nu-
+merical backend. This enables generation of native Rust solver modules that can be used
+from Rust projects, compiled into binary libraries, or exposed to other languages.
+Compared with existing general-purpose code generators for convex optimization prob-
+lems, cvxgenrust targets Rust and supports a broader class of cone programs through
+Clarabel, including LPs, QPs, SOCPs, SDPs, and exponential cone programs. To the best
+of our knowledge, cvxgenrust is the first code generator for parameterized convex opti-
+mization that combines native Rust solver generation with support for semidefinite and
+exponential cones.
+In addition to the Rust module, cvxgenrust generates Python bindings that allow the
+generated solver to be registered as a custom solver in CVXPY. Users can therefore keep
+the usual CVXPY modeling workflow while reducing runtime overhead for repeated solves
+of the same problem family.
+We evaluate cvxgenrust on problem families from several application domains. The
+numerical results show that generated cvxgenrust solvers reduce runtime compared with
+standard CVXPY workflows and achieve solve times comparable to CVXPYgen on problem
+classes supported by both tools.
+Last but not least, cvxgenrust is fully open-source and available at
+https://github.com/dxogrp/cvxgenrust.
+4
+
+
+1.3
+Outline
+The rest of this paper is organized as follows. In §2 we provide a high-level overview of
+the basic ideas behind cvxgenrust, followed by a simple example of how these ideas work
+and how to use cvxgenrust for code generation. In §3 we present numerical results on
+the performance of cvxgenrust on a variety of problem families. (The detailed problem
+formulations of the compared problem families can be found in the appendix §5.)
+We
+conclude the paper in §4 with a summary and discussion of future work.
+2
+cvxgenrust
+2.1
+Canonical quadratic cone problems
+CVXPY allows users to describe convex optimization problems in a high-level mathematical
+syntax, but numerical solvers operate on canonical forms. For the Clarabel backend used by
+cvxgenrust, each CVXPY problem instance is canonicalized into a quadratic cone program
+minimize
+(1/2)˜xT P ˜x + qT ˜x
+subject to
+A˜x + s = b
+s ∈K,
+(2)
+where ˜x is the canonical optimization variable, s is the slack variable, and K is a prod-
+uct cone. The data P, q, A, and b are the canonical numerical data passed to Clarabel,
+while K is determined automatically by the atoms and constraints in the original CVXPY
+model. Here the supported cone components include zero, nonnegative, second-order, posi-
+tive semidefinite, exponential, and power cones.
+2.2
+Affine-solve-affine workflow
+We could similarly define the data, or parameters, of the canonicalized cone program
+(2) as ˜ω = {P, q, A, b}. The important point for code generation is that, for disciplined
+parametrized programming (DPP) compliant problems [AAB+19], the canonical problem
+parameters ˜ω depend affinely on the parameters ω of the original problem (1), and the
+original problem solution x⋆can be recovered from the canonical solution ˜x⋆via an affine
+map. In other words, we have
+˜ω = F
+"
+ω
+1
+#
+,
+x⋆= G
+"
+˜x⋆
+1
+#
+,
+where F and G are sparse matrices depending only on the structure of the problem (1) and
+can be extracted from the CVXPY-Clarabel canonicalization process.
+This affine-solve-affine workflow [AAB+19] separates offline code generation from run-
+time solving. Offline, cvxgenrust extracts the canonicalization maps; at runtime, it updates
+the parameters, reconstructs the cone program, calls Clarabel, and maps the solution back.
+Figure 1 summarizes this workflow.
+5
+
+
+CVXPY model
+minimize
+f(x; ω)
+subject to
+g(x; ω) ≤0
+h(x; ω) = 0
+canonicalization
+code generation
+compilation
+Custom solver
+˜x⋆(˜ω) = argmin˜x
+(1/2)˜xT P(˜ω)˜x + q(˜ω)T ˜x
+subject to
+A(˜ω)˜x + s = b(˜ω)
+s ∈K
+User input
+ω
+˜ω = F
+
+ω
+1
+
+x⋆= G
+
+˜x⋆
+1
+
+Figure 1 Workflow of cvxgenrust. The left part shows the offline code generation
+process and the right part shows the runtime solving process.
+6
+
+
+2.3
+A simple example
+As a minimal example, consider the nonnegative least-squares problem
+minimize
+∥Cx −d∥2
+2
+subject to
+x ⪰0,
+(3)
+with parameters C ∈Rm×n and d ∈Rm (⪰denotes componentwise inequality). Introduc-
+ing the residual variable t = Cx −d, we can rewrite (3) in the form of (2) with canonical
+variable ˜x =
+"
+x
+t
+#
+∈Rn+m and slack variable s =
+"
+s1
+s2
+#
+∈Rm+n. The corresponding
+problem data are
+P =
+"
+0
+0
+0
+2I
+#
+,
+q = 0,
+A =
+"
+C
+−I
+−I
+0
+#
+,
+b =
+"
+d
+0
+#
+,
+with cone K = {0}m × Rn
++ (where the first block enforces Cx −t = d, and the second block
+enforces x ⪰0). In this example, the canonical problem parameters P, q, A, and b are
+indeed affine in the original problem parameters C and d.
+The following CVXPY code generates a Rust solver crate for this problem family.
+1 import
+cvxpy as cp
+2 import
+cvxgenrust as cgr
+3
+4 # Define the
+problem
+family
+5 x = cp.Variable(n, name="x")
+6 C = cp.Parameter ((m, n), name="C")
+7 d = cp.Parameter(m, name="d")
+8
+9 problem = cp.Problem(
+10
+cp.Minimize(cp.sum_squares(C @ x - d)),
+11
+[x >= 0]
+12 )
+13
+14 # Generate
+the custom
+solver
+code
+15 cgr.generate_code(
+16
+problem ,
+17
+module_name="nonneg_ls"
+18 )
+The names assigned to CVXPY parameters and variables are used to generate stable pa-
+rameter setters and solution extractors. After code generation, the resulting Cargo project
+can be built and used from Rust. For example, a Rust application can create a generated
+problem object, set the current values of C and d, solve the problem, and extract the named
+variable x:
+1 use
+nonneg_ls :: CGRProblem;
+2
+3 // Create a new
+problem
+instance
+4 let mut
+problem = CGRProblem ::new();
+5
+6 // Update the
+problem
+parameters
+7
+
+
+7 problem.set_c (& c_values)?;
+8 problem.set_d (& d_values)?;
+9
+10 // Solve and
+extract
+the
+solution
+11 let
+solution = problem.solve ()?;
+12 let x = problem.extract_x (& solution.x)?;
+To register and use the generated solver in CVXPY, the generated Python bindings can be
+used as follows:
+1 from
+nonneg_ls_wrapper .cgr_solver
+import
+cgr_solve
+2
+3 # Register
+the
+generated
+solver in CVXPY
+4 problem. register_solve("CGR", cgr_solve)
+5
+6 # Update the
+problem
+parameters
+7 C.value = C_value
+8 d.value = d_value
+9
+10 # Solve
+with the
+generated
+solver
+11 problem.solve(
+12
+method="CGR",
+13
+updated_params =["C", "d"]
+14 )
+3
+Numerical results
+We benchmarked cvxgenrust on the twelve problem families listed in §5, with five problem
+sizes per family. Each case used three warm-up solves and 1000 timed samples; all methods
+used Clarabel with the same tolerances where applicable. Experiments ran on Linux with
+an AMD Ryzen 9 7950X CPU.
+We compare direct CVXPY solves, the generated cvxgenrust solver called through its
+Python wrapper, the generated cvxgenrust Rust crate called directly, and the corresponding
+Python and C interfaces generated by CVXPYgen. Note that CVXPYgen is not available
+for the parametric quadratic-form, SDP, and logistic-regression examples in this benchmark
+suite.
+Figure 2 shows that both generated cvxgenrust interfaces reduce runtime relative to
+direct CVXPY solves, with median speedups of 2.66× through Python and 6.27× through
+direct Rust calls over the 60 problem-size cases. This improvement comes from avoiding
+repeated CVXPY parsing and canonicalization after code generation. On the 40 problem-
+size cases supported by CVXPYgen, the cvxgenrust Python and Rust interfaces are close
+to the corresponding CVXPYgen Python and C interfaces.
+4
+Conclusion
+We presented cvxgenrust, a code generator that turns DPP-compliant CVXPY problem
+families into specialized Rust solver crates. By extracting affine canonicalization maps offline
+and calling Clarabel natively at runtime, cvxgenrust avoids repeated parsing and canon-
+icalization while supporting a broad class of cone programs, including LPs, QPs, SOCPs,
+8
+
+
+2 4
+8
+16
+32
+n
+10−1
+100
+Solve time (ms)
+Nonnegative least squares
+3 6
+12
+24
+48
+n
+Box and equality constrained QP
+2 4
+8
+16
+32
+n
+Simplex constrained SOCP
+2
+4
+8
+12
+16
+n
+10−1
+100
+Solve time (ms)
+Parametric convex QP
+2
+3
+4
+6
+8
+n
+Trace constrained SDP
+2
+3
+4
+6
+8
+n
+Covariance estimation
+4
+6
+10
+16
+24
+n
+10−1
+100
+Solve time (ms)
+Lasso regression
+3
+4
+6
+8
+12
+n
+Support vector machine
+3
+4
+6
+8
+10
+n
+Logistic regression
+3 6
+12
+24
+48
+H
+10−1
+100
+Solve time (ms)
+Model predictive control
+1 2
+4
+8
+16
+p
+Network ﬂow optimization
+4 8
+16
+32
+64
+n
+Portfolio optimization
+CVXPY
+cvxgenrust (Python)
+CVXPYgen (Python)
+cvxgenrust (Rust)
+CVXPYgen (C)
+Figure 2 Comparison of solve times for CVXPY, CVXPYgen, and cvxgenrust
+(shown in different colors).
+Each point represents the median solve time for one
+problem size over the timed samples.
+9
+
+
+SDPs, and exponential-cone problems. Numerical experiments show reduced runtime com-
+pared with direct CVXPY solves and performance comparable to CVXPYgen on shared
+problem classes.
+Future work involves extending cvxgenrust to support differentiating through the gen-
+erated solvers (e.g., as in [HNB26]), which would enable end-to-end learning of problem
+parameters in applications such as machine learning and control. Moreover, we could ex-
+tend cvxgenrust to support generating explicit solver code for specific problem families,
+e.g., a parameterized QP [SABB25], which can be solved more efficiently than general cone
+programs.
+5
+Appendix: Benchmark problem families
+In this section we present the problem families used in the numerical experiments. For the
+detailed problem dimensions and parameter generation procedures, please refer to the code
+in our repository
+https://github.com/dxogrp/cgr-benchmarks.
+5.1
+Basic examples
+Nonnegative least squares.
+We consider the problem of finding a nonnegative vector x ∈
+Rn that minimizes the least squares error with respect to a given matrix A ∈Rm×n and a
+vector b ∈Rm:
+minimize
+∥Ax −b∥2
+2
+subject to
+x ⪰0,
+where ⪰represents elementwise inequality. This problem is parameterized by the matrix A
+and the vector b.
+Box and equality constrained QP.
+We consider the following QP with box and equality
+constraints:
+minimize
+(1/2)∥x −x0∥2
+2 + qT x
+subject to
+Ax = b
+0 ⪯x ⪯1
+where x ∈Rn is the optimization variable, and x0 ∈Rn, q ∈Rn, A ∈Rm×n, and b ∈Rm
+are parameters of the problem.
+Simplex constrained SOCP.
+We consider the following SOCP with the probabilistic sim-
+plex constraint:
+minimize
+∥Ax −b∥2
+2 + 0.1∥x∥2
+2
+subject to
+∥x∥2 ≤ρ
+x ⪰0,
+1T x = 1,
+where x ∈Rn is the variable, and A ∈Rm×n, b ∈Rm, and ρ ∈R+ are the parameters.
+10
+
+
+Parametric convex QP.
+We consider the following convex QP with the quadratic coefficient
+matrix P ∈Sn
++ and a vector q ∈Rn as parameters:
+minimize
+xT Px + qT x
+subject to
+x ⪰0,
+1T x ≤1,
+where x ∈Rn is the variable. Note that cvxgenrust allows modeling of this problem family,
+but it is not yet supported by CVXPYgen [SBD+22].
+5.2
+Semidefinite programming examples
+Trace constrained SDP.
+We consider the following SDP with equality constraints:
+minimize
+tr(CT X)
+subject to
+X ⪰0,
+tr X = 1,
+where X ∈Sn is the variable, and C ∈Sn is the parameter. Here the inequality ⪰denotes
+matrix inequality, i.e., X is constrained to be positive semidefinite.
+Covariance estimation.
+We consider the problem of recovering a covariance matrix X ∈Sn
++
+from a given noisy observation S ∈Sn:
+minimize
+∥X −S∥2
+F + 0.15 P
+i̸=j (Xij −Sij)2
+subject to
+X ⪰0
+Xii = Sii,
+i = 1, . . . , n,
+where ∥· ∥F denotes the Frobenius norm, Xij and Sij are the (i, j)th entries of X and S,
+respectively, and the problem is parameterized by the noisy observation S.
+5.3
+Machine learning examples
+Lasso regression.
+The lasso regression problem is given by
+minimize
+(1/2)∥Ax −b∥2
+2 + λ∥x∥1,
+where x ∈Rn is the variable, and A ∈Rm×n, b ∈Rm, and λ ∈R+ are the parameters.
+Support vector machine.
+We consider the soft-margin support vector machine problem:
+minimize
+(1/2)∥w∥2
+2 + Pm
+i=1 (1 −yi(Xiw + β))+,
+where w ∈Rn and β ∈R are the variables, and X ∈Rm×n and y ∈{−1, 1}m are the
+parameters. The function (u)+ denotes the positive part of u ∈R.
+Logistic regression.
+The logistic regression problem is given by
+minimize
+(1/m) Pm
+i=1 log(1 + exp(−yi(Xiw + β))) + (λ/2)∥w∥2
+2,
+where w ∈Rn and β ∈R are the variables, and X ∈Rm×n, y ∈{−1, 1}m, and λ ∈R+ are
+the parameters. Note that code generation for this problem family requires canonicalizing
+it into a conic form involving the exponential cone, which is currently not compatible with
+CVXPYgen.
+11
+
+
+5.4
+Control and finance examples
+Model predictive control.
+We consider the following finite-horizon linear-quadratic track-
+ing problem. Let xt ∈R3 be the system state at time t for t = 0, . . . , H, and let ut ∈R2
+be the control input at time t for t = 0, . . . , H −1. Given an initial state ¯x0 ∈R3 and
+a reference trajectory rt ∈R3 for t = 0, . . . , H, we consider the following optimization
+problem:
+minimize
+PH
+t=0 ∥Q1/2(xt −rt)∥
+2
+2 + PH−1
+t=0 ∥R1/2ut∥
+2
+2 + 0.03∥xH∥2
+2
+subject to
+x0 = ¯x0,
+xt+1 = Axt + But,
+t = 0, . . . , H −1
+|ut+1 −ut| ≤0.35,
+t = 0, . . . , H −2
+|x1,t| ≤2.5,
+|x2,t| ≤2.5,
+t = 0, . . . , H
+|ut| ≤1,
+t = 0, . . . , H −1,
+where xt and ut are the optimization variables. In this example we assume that the system
+dynamics A ∈R3×3 and B ∈R3×2, as well as the quadratic cost matrices Q ∈S3
++ and
+R ∈S2
++, are constants, so the problem is only parameterized by the initial state ¯x0 and the
+reference trajectory rt for t = 0, . . . , H.
+Network flow optimization.
+We consider a capacitated multi-commodity flow problem on
+a directed graph with n vertices and m edges. Let p denote the number of commodities, and
+for each commodity i = 1, . . . , p, let fi ∈Rm represent the flow of the ith commodity on
+each directed edge, so f =
+h
+f1
+· · ·
+fp
+iT
+∈Rp×m is the commodity-edge flow matrix.
+The network flow optimization problem is given by
+minimize
+Pp
+i=1 cT
+i fi
+subject to
+fi ⪰0,
+Bfi = dibi,
+i = 1, . . . , p
+Pp
+i=1 fij ≤uj,
+j = 1, . . . , m,
+where ci ∈Rm is the edge cost vector for the ith commodity, B ∈Rn×m is the vertex-edge
+incidence matrix of the graph, i.e., Bij = 1 if edge j enters vertex i, Bij = −1 if edge j leaves
+vertex i, and Bij = 0 otherwise. The vector d ∈Rp
++ records the demand for all commodities,
+and the vector bi ∈Rn encodes the source and sink of this commodity, which has value
+1 at the source vertex, value −1 at the sink vertex, and value 0 elsewhere. Therefore the
+conservation constraint Bfi = dibi ensures that the flow of the ith commodity satisfies the
+demand di from the source to the sink. The vector u ∈Rm
++ is the edge capacity vector.
+This problem has the variable f ∈Rp×m and is parameterized by c1, . . . , cp ∈Rm, d ∈Rp
++,
+and u ∈Rm
++. The matrix B ∈Rn×m and the vectors b1, . . . , bp ∈Rn are assumed to be
+constants.
+Portfolio optimization.
+We consider the long-only portfolio optimization problem with n
+assets, given by
+minimize
+γ
+
+∥F T w∥
+2
+2 + ∥D1/2w∥
+2
+2
+
+−µT w + 0.02∥w −wprev∥1
+subject to
+0 ⪯w ⪯wmax,
+1T w = 1
+∥w −wprev∥1 ≤0.75,
+Sw ⪯0.651,
+µT w ≥rtar,
+12
+
+
+where the wealth allocation vector w ∈Rn is the variable. The matrix F ∈Rn×p is the
+factor loading matrix with p factors, and D ∈Sn
++ is the diagonal idiosyncratic risk matrix,
+so γ ≥0 is the risk aversion parameter that controls the trade-off between risk and return
+in the objective. The vector µ ∈Rn is the expected return vector, and wprev ∈Rn is the
+previous wealth allocation. The matrix S ∈Rq×n encodes the sector information of the
+assets, where q is the number of sectors and Sij = 1 if asset j belongs to sector i and Sij = 0
+otherwise. The vector wmax ∈Rn
++ is the maximum allocation vector, and rtar ∈R is the
+target return. We assume that the problem is parameterized by γ, µ, wprev, and rtar, while
+the matrices F, D, and S, as well as the vector wmax, are constants.
+13
+
+
+Acknowledgments
+This work has been funded as part of BrainLinks-BrainTools, which is funded by the Federal
+Ministry of Economics, Science and Arts of Baden-Württemberg within the sustainability
+program for projects of the Excellence Initiative II, and CRC/TRR 384 “IN-CODE”.
+14
+
+
+References
+[AAB+19] A. Agrawal, B. Amos, S. Barratt, S. Boyd, S. Diamond, and J. Z. Kolter. Differ-
+entiable convex optimization layers. In H. Wallach, H. Larochelle, A. Beygelz-
+imer, F. d'Alché-Buc, E. Fox, and R. Garnett, editors, Advances in Neural
+Information Processing Systems, volume 32. Curran Associates, Inc., 2019.
+[BB21]
+S. T. Barratt and S. P. Boyd. Least squares auto-tuning. Engineering Optimiza-
+tion, 53(5):789–810, 2021.
+[BCG24]
+D. Berrah, A. Chapoutot, and P.-L. Garoche. SCvxPyGen: Autocoding SCvx
+algorithm.
+In 2024 IEEE 63rd Conference on Decision and Control (CDC),
+pages 5086–5093. IEEE, 2024.
+[BJK+24]
+S. Boyd, K. Johansson, R. Kahn, P. Schiele, and T. Schmelzer.
+Markowitz
+portfolio construction at seventy. arXiv, 2401.05080, 2024.
+[Bla16]
+L. Blackmore. Autonomous precision landing of space rockets. In Frontiers of
+Engineering: Reports on Leading-Edge Engineering from the 2016 Symposium,
+pages 33–41. The National Academies Press, 2016.
+[BV04]
+S. Boyd and L. Vandenberghe. Convex Optimization. Cambridge University
+Press, 2004.
+[DB16]
+S. Diamond and S. Boyd. CVXPY: A Python-embedded modeling language for
+convex optimization. Journal of Machine Learning Research, 17(83):1–5, 2016.
+[DCB13]
+A. Domahidi, E. Chu, and S. Boyd.
+ECOS: An SOCP solver for embedded
+systems. In European Control Conference, pages 3071–3076. IEEE, 2013.
+[Emb26]
+Embotech AG. FORCES Professional, 2026. Available at https://embotech.
+com/forcespro.
+[FNB20]
+A. Fu, B. Narasimhan, and S. Boyd. CVXR: An R package for disciplined convex
+optimization. Journal of Statistical Software, 94:1–34, 2020.
+[GB14]
+M. Grant and S. Boyd. CVX: MATLAB software for disciplined convex pro-
+gramming, version 2.1, 2014.
+[GC24]
+P. J. Goulart and Y. Chen. Clarabel: An interior-point solver for conic programs
+with quadratic objectives. arXiv, 2405.12762, 2024.
+[HNB26]
+Q. Healey, P. Nobel, and S. Boyd. Differentiating through a quadratic cone
+program. Optimization Letters, 2026. Preprint on arXiv:2508.17522.
+[LB24]
+E. Luxenberg and S. Boyd. Portfolio construction with Gaussian mixture returns
+and exponential utility via convex optimization. Optimization and Engineering,
+25:555–574, 2024.
+[Lof04]
+J. Lofberg. YALMIP: A toolbox for modeling and optimization in MATLAB. In
+Proceedings of the IEEE International Symposium on Computed Aided Control
+Systems Design, pages 294–289. IEEE, 2004.
+15
+
+
+[MB12]
+J. Mattingley and S. Boyd. CVXGEN: A code generator for embedded convex
+optimization. Optimization and Engineering, 13:1–27, 2012.
+[MLQH25] Y. Ma, Y. Liu, K. Qu, and M. Hutter. Learning accurate whole-body throwing
+with high-frequency residual policy and pullback tube acceleration.
+In 2025
+IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS),
+pages 1771–1778. IEEE, 2025.
+[NN94]
+Y. Nesterov and A. Nemirovskii. Interior-Point Polynomial Algorithms in Con-
+vex Programming. Studies in Applied and Numerical Mathematics. Society for
+Industrial and Applied Mathematics, 1994.
+[OCPB16] B. O’Donoghue, E. Chu, N. Parikh, and S. Boyd. Conic optimization via oper-
+ator splitting and homogeneous self-dual embedding. Journal of Optimization
+Theory and Applications, 169(3):1042–1068, 2016.
+[SABB25]
+M. Schaller, D. Arnström, A. Bemporad, and S. Boyd. Automatic generation of
+explicit quadratic programming solvers. arXiv, 2506.11513, 2025.
+[SBD+22]
+M. Schaller, G. Banjac, S. Diamond, A. Agrawal, B. Stellato, and S. Boyd. Em-
+bedded code generation with CVXPY. IEEE Control Systems Letters, 6:2653–
+2658, 2022.
+[SBG+20]
+B. Stellato, G. Banjac, P. Goulart, A. Bemporad, and S. Boyd.
+OSQP: An
+operator splitting solver for quadratic programs. Mathematical Programming
+Computation, 12(4):637–672, 2020.
+[UMZ+14] M. Udell, K. Mohan, D. Zeng, J. Hong, S. Diamond, and S. Boyd. Convex
+optimization in Julia. In Proceedings of the Workshop for High Performance
+Technical Computing in Dynamic Languages, pages 18–28, 2014.
+[VFK+22] R. Verschueren, G. Frison, D. Kouzoupis, J. Frey, N. van Duijkeren, A. Zanelli,
+B. Novoselnik, T. Albin, R. Quirynen, and M. Diehl.
+acados — a modular
+open-source framework for fast embedded optimal control. Mathematical Pro-
+gramming Computation, 14:147–183, 2022.
+[ZDJM20] A. Zanelli, A. Domahidi, J. Jerez, and M. Morari. FORCES NLP: an efficient
+implementation of interior-point methods for multistage nonlinear nonconvex
+programs. International Journal of Control, 93(1):13–29, 2020.
+16

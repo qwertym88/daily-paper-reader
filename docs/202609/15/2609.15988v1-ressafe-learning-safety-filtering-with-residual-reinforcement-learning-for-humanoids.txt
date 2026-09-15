@@ -1,0 +1,968 @@
+ResSafe: Learning Safety Filtering with Residual
+Reinforcement Learning for Humanoids
+Gechen Qu1
+Tong Zhang1
+Bike Zhang1
+Yen-Jen Wang1
+Koushil Sreenath1,†
+Claire Tomlin1,†
+Jason Jangho Choi2,†
+1University of California, Berkeley
+2University of California, Los Angeles
+Figure 1: Humanoid balance tasks under various payloads. We introduce ResSafe, a performance-safety
+decoupling framework based on residual reinforcement learning which learns safety filtering. (a)-(d) Successful
+experiments of balance motions under our policy. (e) Failure case of the baseline policy. See more details in
+Section 5.3 and Table 3.
+Abstract: Safe control of humanoid robots remains challenging due to their high-
+dimensional dynamics, contact-rich interactions, and sensitivity to disturbances.
+Although reinforcement learning has enabled effective locomotion and motion
+tracking, learned policies can still generate unsafe actions that lead to instability
+or falls. In this work, we propose residual reinforcement learning as an implicit
+safety-filtering mechanism for safe humanoid control. Instead of relying on a sin-
+gle nominal policy to simultaneously balance performance, safety, and robustness,
+we decouple performance and safety. The nominal policy focuses solely on task
+performance, while a residual policy learns safety corrections. This decoupling
+leads to a better performance–safety Pareto trade-off and avoids the need for care-
+ful tuning of multiple competing reward terms within a single policy training. We
+show that the residual policy can act as an implicit safety filter. We evaluate our
+method in challenging humanoid balance tasks. Compared with the nominal ref-
+erence policy and a learning-based safety filter baseline, residual reinforcement
+learning improves safety while still achieving competent performance.
+Keywords: Humanoid Whole-body Control, Safety, Residual Reinforcement
+Learning, Safe Reinforcement Learning, Safety Filter
+†Equal advising.
+Correspondence: qugch@berkeley.edu. Website: sciautonomy.github.io/ResSafe Web
+arXiv:2609.15988v1  [cs.RO]  14 Sep 2026
+
+
+1
+Introduction
+Reinforcement learning (RL) for humanoid control inherently involves a multi-objective optimiza-
+tion problem, where nominal performance (e.g., agility or motion tracking) must be balanced against
+safety and robustness [1, 2]. As illustrated in Fig. 2.(a), these objectives are often in conflict, leading
+to a Pareto trade-off. In practice, however, RL algorithms rely on gradient-based optimization and
+typically converge to locally optimal solutions, often resulting in a suboptimal Pareto frontier. Con-
+sequently, in current RL frameworks, improving robustness or safety, e.g., through increased domain
+randomization or stronger penalties for failures, inevitably comes at the expense of degraded perfor-
+mance. This limitation is also present in classical safe RL based on constrained Markov Decision
+Process (MDP) [3, 4], where safety and performance are coupled through the Lagrangian.
+In this work, we show that by decoupling the learning of performance and safety, we can signif-
+icantly improve the achievable performance–safety Pareto frontier of humanoid motion policies.
+This decoupling is inspired by human motor intelligence: when learning a new sport, humans do
+not relearn safety—such as maintaining balance and avoiding collisions—from scratch, but instead
+rely on reflexive motor skills developed through years of growth and interaction with the physical
+world. Motivated by this observation, our objective is to develop a generalizable safety filtering
+policy for humanoids that transfers across tasks without requiring retraining for safety from scratch.
+As an initial step toward this goal, we propose a framework that explicitly decouples the learning of
+performance and safety during training.
+To instantiate this idea, we propose a residual reinforcement learning framework that separates nom-
+inal task optimization from safety correction. We first train a nominal motion policy optimized for
+task performance and then keep it fixed while training a residual safety policy. The final action is
+obtained by augmenting the nominal action with a learned safety residual correction (Fig. 2.(b)).
+Overall, our contributions can be summarized as follows:
+• We propose ResSafe, a performance–safety decoupling framework for learning-based safety
+filtering and RL-based humanoid control, where a reference policy optimizes task performance
+and a separate residual policy learns safety corrections.
+• We connect residual RL with control-theoretic safety filtering by showing that the learned resid-
+ual policy behaves similarly to a min-norm safety filter correction, providing an implicit safety
+filtering mechanism without online optimization.
+• We empirically demonstrate that the proposed decoupled learning framework achieves a supe-
+rior performance–safety–robustness trade-off compared to single-policy training frameworks for
+humanoid extreme-balance tasks. We validate this framework in both simulation and hardware
+under random payloads, demonstrating improved robustness with small degradation in tracking
+performance, as well as generalization across different reference policy checkpoints.
+2
+Related Works
+Safe Control Theory and Safety Filters. In classical safe control, safety is formulated as a state-
+constraint satisfaction problem, where the objective is to maintain the system within a control-
+invariant subset of the constraint set [7]. Hamilton–Jacobi (HJ) reachability [8] and control barrier
+functions (CBFs) [5] address this problem through safety certificates that characterize the invariant
+set and safe control actions. These certificates can further be used to monitor and modify potentially
+unsafe reference actions through a safety filter [9, 10]. However, existing safety methods typically
+rely on explicit dynamics models and suffer from poor scalability with state dimension, limiting their
+applicability to systems with high-dimensional and complex dynamics such as humanoid robots.
+Safe Reinforcement Learning. Various safe RL algorithms proposed in [3, 4, 11–15] construe
+safety violations as an accumulation of safety-relevant cost, referred to as the constrained MDP
+problem [16]. Although such a formulation is applicable in certain safety settings, it does not ad-
+equately capture instantaneous constraint violations such as collisions or falls. Other formulations
+rooted in safe control theory are proposed, for example, Lyapunov theory in [17, 18], and CBFs
+2
+
+
+safe control
+unfiltered ctrl
+(implicit)
+safety
+constraint
+𝝅𝐬𝐚𝐟𝐞𝒐𝒕
+= 𝝅𝐫𝐞𝐟𝒐𝒕 + 𝚫𝝅𝜽(𝒐𝒕,𝝅𝐫𝐞𝐟 𝒐𝒕)
+𝝅𝐫𝐞𝐟(𝒐𝒕)
+𝝅𝐬𝐚𝐟𝐞(𝒐𝒕)
+(potentially)
+unsafe
+𝚫𝝅𝜽
+Reference Policy 𝜋!"# 
+(motion tracking policy)
+Safety Filtering Policy 
+𝚫𝝅𝜽(𝒐𝒕, 𝝅𝐫𝐞𝐟 𝒐𝒕)
+𝝅𝐫𝐞𝐟(𝒐𝒕)
+domain
+rand.
+easy
+difficult
+motion
+env.
+(i) Training Distribution
+(ii) Reward
+(c) Offline Training
+Task 
+performance
+Robustness
+Safety
+(a) Objective
+Robustness
+Safety
+(b) Framework
+Residual RL
+sim & real
+Task 
+performance
+unsafe
+safe
+ref. policy
+Action
+Set
+survival time
+(reachability)
+min-norm objective
+(filtering)
++
+Figure 2: ResSafe Overview. (a) By decoupling the learning of performance and safety, we aim to achieve
+a better performance–safety Pareto frontier. (b) To achieve this, we propose a residual RL-based architecture
+in which the residual RL policy learns a safety correction, resembling the structure of safety filters [5, 6]. (c)
+We train the residual RL safety filtering policy primarily through a maximum-survival-time reachability for-
+mulation. To improve generalization across various reference actions, we expose the residual RL policy during
+training to varying levels of reference motion difficulty, reference policy safety, and domain randomization.
+and HJ reachability in [19–28]. However, these approaches rely on specialized reachability-type
+Bellman equations, distinct from Bellman equations for typical sum-over-time rewards.
+Safety and Extreme Balance for Humanoids. Various works are proposed to ensure or improve
+the safety of humanoids [24, 29–33], or locomotion more broadly [34–38]. However, the majority
+focuses on collision avoidance and stable walking, often using CBFs synthesized from simplified
+models, with relatively limited attention devoted to whole-body balance as a safety constraint [33,
+38]. The works in [2, 39] leverage refined motion datasets to achieve challenging balance motions;
+however, safety is handled through carefully hand-designed and tuned reward terms within a single-
+policy training framework.
+Residual Reinforcement Learning. Residual RL combines prior controllers with learned residual
+policies, allowing robots to retain structured control knowledge while compensating for modeling
+errors, disturbances, and task-specific discrepancies [40]. Recent works have extended this paradigm
+to various robotic systems, including dexterous manipulation [41], [42], quadcopter flight [43], [44],
+and humanoid whole-body control [45].
+3
+Background & Problem Formulation
+Constrained Optimal Control Problem & Safety Filter. We begin with a safety-constrained op-
+timal control problem for a general nonlinear dynamical system and introduce the safety-filtering
+framework used to achieve performance–safety decoupling. Consider a trajectory x(·) of a dynami-
+cal system, governed by
+˙x(t) = f(x(t), u(t)) for t ≥0, x(0) = x,
+(1)
+where x ∈Rn is the initial state and u is a control input signal in time. We assume that the control
+input at each time must satisfy a compact control input bound, u(t) ∈U ⊂Rm, and consider all
+possible measurable control signals that satisfy the bound as the set of valid control signals U.
+The safety constraint is defined by the constraint set C ⊂Rn, such that x(t) ∈C for all t ≥0.
+The set can be represented as a zero-superlevel set of some continuous function c : Rn →R,
+C = {x | c(x) ≥0}, or it can also be represented by an indicator function 1(x ∈C). Finally, the
+control objective for the policy learning is
+inf
+u(·)∈U
+Z ∞
+0
+e−γtg(x(t), u(t))dt
+(2a)
+s.t.
+x(t) ∈C ∀t ≥0,
+(2b)
+3
+
+
+where (2a) represents the task objective, with the running cost function g and a discount factor
+γ > 0, and (2b) represents the safety constraint. We next decouple Problem (2) into the safety
+problem and an action-constrained optimal control problem. We consider the finite-horizon and
+the infinite-horizon worst-case safety value functions, derived in Hamilton-Jacobi (HJ) reachability
+analysis [8, 9], defined by
+V (x, t) := max
+u(·) min
+s∈[0,t] c(x(s)),
+V (x) := lim
+t→∞V (x, t).
+(3)
+Then, the maximal control invariant set within the constraint set C, denoted as S, is characterized
+as the zero-superlevel set of the value function, S = {x | V (x) ≥0} [46]. If a trajectory exits the
+set S, it inevitably violates the constraint (2b), i.e., x(t) /∈C at some time t > 0. The set of all
+safe control inputs that prevent the safety violation, denoted as the maximal safe action set (at each
+state), is determined by the value function as
+U∗
+safe(x) =
+(U,
+V (x) > 0,
+
+u ∈U
+ ∇V (x)⊤f(x, u) ≥0
+	
+,
+V (x) = 0.
+(4)
+Based on U∗
+safe, Problem (2) can be equivalently written as the following action-constrained form
+[47]:
+inf
+u(·)∈U
+Z ∞
+0
+e−γtg(x(t), u(t))dt
+s.t.
+u(t) ∈U∗
+safe(x(t)) ∀t ≥0.
+(5)
+In practice, we can achieve a conservative solution of (5) by considering a more conservative safe
+action set, satisfying Usafe(x) ⊆U∗
+safe(x) for all x ∈S. In the classic safe control literature, these
+safe action sets are constructed with various methods such as CBFs or predictive control [9, 48, 49].
+Finally, (5) can be further conservatively approximated using the safety filtering architecture [9]:
+Reference Policy:
+πref = min
+π∈Π
+Z ∞
+0
+e−γtg(x(t), u(t))dt
+s.t.
+u(t) = π(x(t)) ∀t ≥0,
+(6)
+Safety filter:
+πsafe(x(t), πref(x(t))) = arg min
+u∈U ∥u −πref(x(t))∥2
+(7a)
+s.t.
+u ∈Usafe(x(t)).
+(7b)
+In (6), a reference policy πref which primarily considers the task objective is optimized. Next, in
+the safety filter (7), the filtered control input is determined by a mapping πsafe : Rn × U →U,
+which maps the state and an unfiltered action into a filtered safe action. Equation (7a) considers
+the min-norm objective, which modifies the reference action only when it is necessary for safety.
+Other objectives can also be considered under various formulations, such as in robust or predictive
+variants. The filtered output can be equivalently represented as the addition between the unfiltered
+reference action u and the filter correction term ∆πsafe(x, u):
+πsafe(x, u) = u + ∆πsafe(x, u).
+(8)
+In the CBF literature, ∆πsafe(x, u) is also called the CBF augmentation input [50].
+Discriminating Hyperplane. For control-affine dynamics, which encapsulates rigid-body robot
+dynamics, the safe action set can be effectively represented by the following halfspace constraint at
+each state,
+Usafe(x) = {u ∈U | a(x)⊤u ≥b(x)}.
+(9)
+Here, the pair (a(x), b(x)) defines a discriminating hyperplane (DH) in the control input space,
+separating certified safe inputs from potentially unsafe inputs at each state [6]. This formulation
+provides a universal representation of safety filter constraints for control-affine dynamics, which
+includes classical CBF and HJ reachability (e.g., (4)) filters as special cases.
+The key advan-
+tage in using this representation is that the safety filter can now be learned from data by directly
+4
+
+
+(a) Target task (Unsafe) - State
+(b) Safety Filtered - State
+𝑝
+𝜃
+𝑡
+𝑢
+𝑡
+Ref. Policy
+𝜋ref(𝑥)
+Residual RL
+𝜋$%&' 
+)'$.)+(𝑥, 𝜋,'&(𝑥))
+Disc. Hyperplane
+ 𝜋$%&' 
+-. (𝑥, 𝜋,'&(𝑥))
+Safe Action Set
+(c) Safety Filtered - Action
+𝑡
+𝑝
+𝜃
+Figure 3: Cart-Pole Running Example. (a) Reference policy is trained for a task positioning the cart position
+to p = 0.6, and violates the safety constraint, p ≤0.5. (b) Learned safety filters can successfully prevent the
+state from safety violations. (c) πsafe under the learned min-norm discriminating hyperplane safety filter (blue)
+and residual RL (proposed method, brown).
+learning the hyperplane parameters (aθ(x), bθ(x)), without requiring an explicit dynamics model
+or an explicit computation of safety certificates such as the safety value function V in (3). With
+the discriminating hyperplane, the min-norm filter correction is determined as ∆πsafe(x, u) =
+max
+
+0, (b(x) −a(x)⊤u)a(x)/∥a(x)∥2
+2
+	
+, which is zero when u already satisfies (9).
+Running Example (Cart-Pole).
+We consider a simple cart-pole dynamics, with the state x =
+[p; θ; ˙p; ˙θ], where p is the cart position and θ is the pole angle, and one-dimensional control input u
+representing the torque applied to the pole, satisfying the bound [−1, 1]. The task is to stabilize the
+cart position to p = 0.6, while keeping the pole upright (θ = 0). We consider the safety constraint
+of keeping the cart position p ≤0.5, which is intentionally chosen to conflict with the task objective
+for the illustrative purpose of the example. A simple MLP reference policy πref is learned through
+PPO [51] which achieves the task (Fig. 3.(a)). Then, a discriminating hyperplane learned through
+PPO in [6] is used to safety filter the reference policy (Fig. 3.(b)). The learned safe action set Usafe
+is determined as [−1, b(x)
+a(x)] if a(x) < 0, and [ b(x)
+a(x), 1] if a(x) > 0. In Fig. 3.(c), the filtered action
+(blue) and the safe action set (green background) are visualized along the safe trajectory.
+Although the discriminating hyperplane works effectively for the running example, since it does
+not directly learn the filtered safe control action but rather learns through the constraint representa-
+tion, it generalizes less effectively for higher-dimensional systems. Also, it imposes the half-space
+constraint structure to Usafe, which might be impractical for more complex systems (e.g., beyond
+control-affine dynamics) whose safe action sets may be less structured (e.g, nonconvex and discon-
+nected). In the next section, we propose an alternative approach of learning directly the correction
+term ∆πsafe(x, u) through residual RL.
+4
+Learning Safety Filtering with Residual Reinforcement Learning
+4.1
+Learning Safety Filtering with Residual RL
+To establish an RL-based framework and to deal with more complex systems like humanoids whose
+dynamics are inherently more uncertain and stochastic, we now consider an MDP-based probabilis-
+tic notion of safety. That is, we aim to learn Usafe such that under at ∈Usafe(st), where (st, at) is
+the discrete-time state and action pair at timestep t, we achieve the highest probability of the safety
+constraint satisfaction, which we call the safety rate, given as Pr
+
+st ∈C ∀t ∈[0, T]
+
+, where T is
+the task time horizon. This is a stochastic reachability problem [52], and can be formulated as the
+maximal survival time problem. As in [6], if we learned the safe action set Usafe with RL, we can
+learn it by considering maxUsafe Eat∼Usafe(st)
+
+Tsurv
+
+, where Tsurv is the time at which an episode
+terminates due to a constraint violation (st /∈C) or completion (in which Tsurv =T).
+The main benefit of solving the safety problem in this way, compared to existing approaches that
+solve the reachability value functions (3) with RL [19–28], is that the problem can be reformulated
+5
+
+
+as a sum-over-reward problem given by maxUsafe E
+ PTsurv
+t=0 1
+
+. In contrast, existing approaches
+typically involve a min-over-time objective, as in (3). This fundamentally leads to a different class
+of Bellman equations [19], for which off-the-shelf RL algorithms such as PPO are not directly
+applicable without specialized modifications.
+With residual RL, we do not learn Usafe but intend to directly learn the correction term ∆πsafe in (8).
+Thus, ∆πsafe is represented as a residual RL policy, whose inputs are the state st, and the (unfiltered)
+control action determined by the reference policy, πref(st). Also, it involves learning the min-norm
+filtering objective in (7a). Thus, the final form of our learning becomes
+max
+∆πθ
+safe
+Eat∼πθ
+safe(st,πref(st))
+h Tsurv
+X
+t=0
+1 −λ||∆πθ
+safe(st, at)||2
+2
+i
+,
+(10)
+where πθ
+safe(st, πref(st)) = πref(st) + ∆πθ
+safe(st, πref(st)), and λ is a weight of the min-norm
+objective penalty. The constant term 1 is known as the “alive bonus”, and is included in many
+practical RL-based robot learning frameworks as one of the hand-designed reward terms [36]. If the
+state st is not directly accessible, we can replace it with observations ot.
+Running Example (Continued). We learn the residual RL safety filter for the cart-pole running ex-
+ample using PPO with the reward defined in (10). As illustrated in Fig. 3.(c), the residual RL policy
+closely approximates the min-norm safety filtered control input determined by the discriminating
+hyperplane, with slight conservativeness. This additional conservativeness acts as a robustness mar-
+gin and helps improve the safety rate for humanoid balance tasks in the next section.
+4.2
+Learning Safety Filters for Humanoid Balance
+The main challenge of applying the residual RL framework established in the previous section to
+humanoids is its high dimensionality. For Unitree G1, the state and input dimensions are n = 58,
+m = 29. To learn an effective safety filter which explores enough in training to secure robustness
+and generalizability, we need to carefully guide the training of residual RL (Fig. 2.(c)).
+General Balance Motion Tracking Policy. We train the reference policy using the balance motion
+tracking pipeline established in [2]. However, instead of training a policy to track only a single ref-
+erence motion, we generate a large and diverse set of balance motions using the method in [39]. In
+total, we generate 10,000 balance motions that cover a wide range of feasible humanoid configura-
+tions and behaviors. Each motion has varying level of difficulty, which we can empirically evaluate
+after the training of reference policy. Training on this diverse motion dataset encourages the safety
+policy to learn a more general balance prior, rather than overfitting to a specific trajectory.
+Reward Design for Residual RL. The residual policy is trained with a compact reward function that
+encourages balance recovery while preserving the behavior of the nominal controller. In addition
+to the two terms in (10), we add two additional safety rewards: base velocity stabilization term to
+discourage excessive horizontal drift, and action smoothness penalty to reduce abrupt changes in
+control. This can be considered as additional objective terms in safety filtering. The detailed reward
+expressions and weights are provided in Appendix A.1.
+Training Strategy. We train the residual policy using PPO [51] with an asymmetric actor-critic
+framework [53]. The actor represents the deployable residual policy and only receives observations
+available at deployment time, including proprioceptive states and the reference policy action. In
+contrast, the critic is used only during training and can access privileged simulation information,
+such as ground-truth body states. Moreover, during training, two additional techniques are intro-
+duced to enhance the safety and robustness of the residual policy. First, we introduce a varying level
+of payloads at various locations of the robot body, and random pushes to the robot to expose it to
+failure or near-failure states for exploration. Without such excitation, the policy tends to learn a very
+conservative safety filter which is impractical. Next, the residual policy learns safety corrections
+for multiple reference policy checkpoints, which allows it to generalize against unseen unfiltered
+actions. Additional details including training parameters are provided in Appendix A.2 and A.3.
+6
+
+
+Table 1: Performance–Robustness Trade-off.
+Policy
+Epos-l ↓
+(w. payload)
+Epos-l ↓
+(w/o payload)
+Fall Rate↓
+(w. payload)
+Baseline
+38.6 mm
+24.95 mm
+7.29%
+Baseline*
+43.28 mm
+44.40 mm
+1.20%
+ResSafe
+37.66 mm
+34.04 mm
+1.11%
+Table 2: Performance–Safety Trade-off.
+Policy (safety-cost weight)
+Epos-l ↓
+Fall Rate↓
+Baseline*
+59.89 mm
+1.17%
+Baseline* + Safety (50)
+101.68 mm
+0.00%
+Baseline* + Safety (100)
+353.55 mm
+1.63%
+ResSafe
+68.65 mm
+0.5%
+5
+Experimental Results
+In this section, we evaluate the effectiveness of the proposed residual policy for improving balance-
+motion tracking under payload disturbances in both simulation and real-world hardware experi-
+ments. The central hypotheses we want to evaluate are
+1. Does decoupling the learning of safety and performance achieve a better performance–safety–
+robustness trade-off compared to single-policy training that jointly optimizes all objectives
+through a unified reward function?
+2. Does the proposed residual RL safety filtering framework generalize across diverse motions and
+previously unseen reference policies?
+3. Does the proposed residual RL safety filter transfer effectively to real-world hardware?
+5.1
+Experimental Setup
+We evaluate our method on the Unitree G1 humanoid robot across a range of balance tasks and pay-
+load disturbances in both simulator and real-world hardware. Simulation experiments are conducted
+using the IsaacGym [54] simulator.
+We compare our method against three baselines: 1) the reference motion-tracking policy trained
+without payload domain randomization (denoted as Baseline), 2) the reference policy trained di-
+rectly with payload domain randomization (denoted as Baseline*), and 3) the discriminating hyper-
+plane safety filter trained with PPO [6] (denoted as DH). Note that the discriminating hyperplane
+demonstrates superior safety against classic safe RL methods in [12]. We use the local errors relative
+to the robot base frame Epos-l to measure tracking accuracy, and the fall rate to measure robustness
+and safety.
+5.2
+Simulation Results
+For the Performance–Robustness Trade-off and Performance–Safety Trade-off evaluations, all poli-
+cies are trained on a single reference motion. For the generalization evaluation, we train the policy
+on the entire balance dataset.
+Performance–Robustness Trade-off. Table 1 reports the tracking error and fall rate of different
+policies. The baseline achieves reasonable tracking performance, but its fall rate increases under
+random payloads, indicating that accurate motion tracking alone does not guarantee robustness when
+the system dynamics change. Training the baseline directly with payload randomization improves
+robustness, but leads to higher tracking error. In comparison, our approach achieves the lowest
+fall rate while keeping the tracking error close to the nominal policy. This suggests that ResSafe
+provides a better balance between robustness and tracking performance.
+Performance–Safety Trade-off. Table 2 further compares our method with policies trained using
+different safety-cost weights under random payloads. Adding a moderate safety cost can reduce the
+fall rate, but larger safety weights significantly degrade tracking performance and do not consistently
+improve safety. In contrast, ResSafe improves safety without causing severe tracking degradation.
+This shows the benefit of separating nominal motion tracking from residual safety correction.
+Generalization Across Different Reference Policies. We further evaluate whether the learned
+residual policy can generalize across different reference policies. As shown in Fig. 4.(a), when
+7
+
+
+(a)
+(b)
+Reference
+Single-Checkpoint Residual
+Single-Checkpoint DH
+Reference
+Multi-Checkpoint Residual (Ours)
+Multi-Checkpoint DH
+Figure 4: Generalization across different reference policies. (a) Both the residual policy and the hyper-
+plane policy are trained on a single reference-policy checkpoint. When they are applied to out-of-distribution
+reference-policy checkpoints, the fall rate increases sharply. (b) Our method and the hyperplane policy are
+trained with half of the checkpoints in the dataset, which leads to a smaller safety degradation when evaluated
+with unseen checkpoints.
+the residual policy is trained using a single reference policy checkpoint, its performance degrades
+significantly when applied to other checkpoints, resulting in a substantially higher fall rate. In
+contrast, a residual policy trained across multiple reference policy checkpoints maintains robustness
+when deployed with unseen reference policies (Fig. 4.(b)). This suggests that the learned residual
+correction captures general safety-relevant behaviors rather than overfitting to a particular reference
+controller. We also observe that the DH safety filter is inferior in both safety and robustness.
+5.3
+Hardware Results
+We further validate the proposed method on a physical humanoid robot. We train a policy on the
+entire balance dataset in simulation and deploy it directly on the real robot. The policies are tested
+for multiple reference motions with and without payloads attached to the limbs (Fig. 1). As shown
+in Table 3, our method outperforms both the baseline and the discriminating hyperplane in terms of
+fall rate and tracking error. Baseline*, achieves better tracking under payload because it is explicitly
+trained with a tracking reward; however, its tracking error is worse without payload across multiple
+motions due to over-conservatism from domain randomization. These results demonstrate that the
+residual safety filtering policy can be transferred to the real robot and improve safety and robustness
+when the robot performs challenging motion tasks.
+6
+Conclusion
+We presented ResSafe, a performance–safety decoupling framework that combines a task-oriented
+reference policy with a residual RL safety filter. We showed that the learned residual policy acts
+similarly to a min-norm safety filter correction and demonstrated that this decoupled learning
+paradigm achieves a superior performance–safety–robustness trade-off compared to conventional
+single-policy training approaches. These results highlight the potential of decoupling performance
+and safety as a pathway toward reusable and generalizable safety mechanisms for humanoids.
+7
+Limitations
+While the proposed framework demonstrates promising empirical performance, several limitations
+remain. First, because the safety filter is learned from data, it does not provide hard safety guaran-
+tees in the sense of classical safety filters. Second, the residual policy consistently exhibits more
+conservative behavior than the discriminating hyperplane filter, and a theoretical understanding of
+this phenomenon remains an open question. Third, our approach relies on standard sim-to-real tech-
+niques used in humanoid RL, such as system identification and domain randomization, and does
+not explicitly address sim-to-real transfer, which contributes to the gap observed between simula-
+tion and hardware experiments. Fourth, the generalization capability of the learned safety filter is
+8
+
+
+Table 3: Real-World Results (# indicates motion id in dataset).
+Method
+Fall
+Epos-l (mm)
+Method
+Fall
+Epos-l (mm)
+(a) #9350 (w/ payload)
+(b) #1665 (w/o payload)
+Baseline
+10/10 84.13 ± 12.99
+Baseline
+8/10 80.42 ± 23.16
+Baseline* 0/10
+47.73 ± 4.01
+Baseline* 2/10 73.67 ± 13.53
+DH
+1/10 67.88 ± 20.13
+DH
+3/10 87.95 ± 21.10
+Ours
+2/10 49.81 ± 11.65
+Ours
+1/10 76.43 ± 6.22
+(c) #6337 (w/ payload)
+(d) #8407 (w/ payload)
+Baseline
+10/10 73.56 ± 14.68
+Baseline
+5/10 75.49 ± 28.52
+Baseline* 5/10 62.00 ± 14.43
+Baseline* 2/10 48.49 ± 13.62
+DH
+9/10 82.62 ± 22.98
+DH
+4/10 66.10 ± 15.04
+Ours
+0/10
+70.01 ± 3.11
+Ours
+0/10 61.01 ± 4.41
+limited by the diversity of the training motion dataset, although fine-tuning can be used to adapt to
+new motions. Finally, the current framework operates as a blind safety filter without exteroceptive
+perception. In contrast, human’s balancing and safety behaviors rely heavily on visual feedback and
+environmental awareness. Incorporating perception and leveraging environmental affordances for
+safety, inspired by recent work such as [55], is an important direction for future research.
+Acknowledgments
+We thank Siming He, Christopher Strong, Qiayuan Liao, and Junfeng Long for insightful discus-
+sions, and Chuye Hong, Yiyang Shao, and Haoyi Niu for their help with the hardware experiments,
+and VESSL AI for supporting this research with GPU compute resources. This work was supported
+in part by the NSF Safe Learning Enabled Systems Program, Design of Robustly Implementable
+Autonomous and Intelligent Machines, DARPA award number HR00112490425, and the UCLA
+Samueli School of Engineering.
+References
+[1] Z. Li, X. B. Peng, P. Abbeel, S. Levine, G. Berseth, and K. Sreenath. Reinforcement learning
+for versatile, dynamic, and robust bipedal locomotion control. The International Journal of
+Robotics Research, 44(5):840–888, 2025.
+[2] T. Zhang, B. Zheng, R. Nai, Y. Hu, Y.-J. Wang, G. Chen, F. Lin, J. Li, C. Hong, K. Sreenath,
+et al. Hub: Learning extreme humanoid balance. In Conference on Robot Learning, pages
+686–704. PMLR, 2025.
+[3] S. Gu, L. Yang, Y. Du, G. Chen, F. Walter, J. Wang, and A. Knoll. A review of safe reinforce-
+ment learning: Methods, theories, and applications. IEEE Transactions on Pattern Analysis
+and Machine Intelligence, 46(12):11216–11235, 2024.
+[4] J. Achiam, D. Held, A. Tamar, and P. Abbeel. Constrained policy optimization. In Proceedings
+of the 34th International Conference on Machine Learning, Proceedings of Machine Learning
+Research. PMLR, 06–11 Aug 2017.
+[5] A. D. Ames, S. Coogan, M. Egerstedt, G. Notomista, K. Sreenath, and P. Tabuada. Control
+barrier functions: Theory and applications. In European Control Conference, 2019.
+[6] W. Lavanakul, J. J. Choi, K. Sreenath, and C. J. Tomlin. Safety filters for black-box dynamical
+systems by learning discriminating hyperplanes. In L4DC, 2024.
+[7] F. Blanchini. Set invariance in control. Automatica, 35(11):1747–1767, 1999.
+[8] S. Bansal, M. Chen, S. Herbert, and C. J. Tomlin.
+Hamilton-Jacobi reachability: A brief
+overview and recent advances. In IEEE Conference on Decision and Control (CDC), 2017.
+9
+
+
+[9] K. P. Wabersich, A. J. Taylor, J. J. Choi, K. Sreenath, C. J. Tomlin, A. D. Ames, and M. N.
+Zeilinger. Data-driven safety filters: Hamilton-jacobi reachability, control barrier functions,
+and predictive methods for uncertain systems. IEEE Control Systems Magazine, 2023.
+[10] K.-C. Hsu, H. Hu, and J. F. Fisac. The safety filter: A unified view of safety-critical control in
+autonomous systems. Annual Review of Control, Robotics, and Autonomous Systems, 7, 2023.
+[11] J. Garcıa and F. Fern´andez. A comprehensive survey on safe reinforcement learning. Journal
+of Machine Learning Research, 16(1):1437–1480, 2015.
+[12] A. Ray, J. Achiam, and D. Amodei. Benchmarking safe exploration in deep reinforcement
+learning. arXiv preprint arXiv:1910.01708, 7(1):2, 2019.
+[13] K. Srinivasan, B. Eysenbach, S. Ha, J. Tan, and C. Finn. Learning to be safe: Deep rl with a
+safety critic. arXiv preprint arXiv:2010.14603, 2020.
+[14] B. Thananjeyan, A. Balakrishna, S. Nair, M. Luo, K. Srinivasan, M. Hwang, J. E. Gonzalez,
+J. Ibarz, C. Finn, and K. Goldberg. Recovery rl: Safe reinforcement learning with learned
+recovery zones. IEEE Robotics and Automation Letters, 6(3):4915–4922, 2021.
+[15] N. C. Wagener, B. Boots, and C.-A. Cheng. Safe reinforcement learning using advantage-based
+intervention. In International Conference on Machine Learning, pages 10630–10640. PMLR,
+2021.
+[16] E. Altman. Constrained markov decision processes with total cost criteria: Lagrangian ap-
+proach and dual linear program. Mathematical Methods of Operations Research, 1998.
+[17] Y. Chow, O. Nachum, E. Duenez-Guzman, and M. Ghavamzadeh. A lyapunov-based approach
+to safe reinforcement learning. Advances in neural information processing systems, 31, 2018.
+[18] K. Li, Z. Olkin, Y. Yue, and A. D. Ames. Clf-rl: Control lyapunov function guided reinforce-
+ment learning. IEEE Robotics and Automation Letters, 2026.
+[19] J. F. Fisac, N. F. Lugovoy, V. Rubies-Royo, S. Ghosh, and C. J. Tomlin. Bridging hamilton-
+jacobi safety analysis and reinforcement learning. In Int. Conf. on Robotics and Automation
+(ICRA), pages 8550–8556, Montreal, QC, Canada, 2019.
+[20] S. Huh and I. Yang. Safe reinforcement learning for probabilistic reachability and safety spec-
+ifications: A lyapunov-based approach. arXiv preprint arXiv:2002.10126, 2020.
+[21] K.-C. Hsu, D. P. Nguyen, and J. F. Fisac. Isaacs: Iterative soft adversarial actor-critic for safety.
+In Learning for Dynamics and Control Conference, pages 90–103. PMLR, 2023.
+[22] O. So, Z. Serlin, M. Mann, J. Gonzales, K. Rutledge, N. Roy, and C. Fan. How to train your
+neural control barrier function: Learning safety filters for complex input-constrained systems.
+In 2024 IEEE International Conference on Robotics and Automation (ICRA), pages 11532–
+11539. IEEE, 2024.
+[23] J. Li, D. Lee, J. Lee, K. S. Dong, S. Sojoudi, and C. Tomlin. Certifiable reachability learning
+using a new lipschitz continuous value function. IEEE Robotics and Automation Letters, 10
+(4):3582–3589, 2025.
+[24] L. Yang, B. Werner, M. de Sa, and A. D. Ames. Cbf-rl: Safety filtering reinforcement learning
+in training with control barrier functions. arXiv preprint arXiv:2510.14959, 2025.
+[25] D. D. Oh, J. Lidard, H. Hu, H. Sinhmar, E. Lazarski, D. Gopinath, E. S. Sumner, J. A. DeCas-
+tro, G. Rosman, N. E. Leonard, et al. Safety with agency: Human-centered safety filter with
+application to ai-assisted motorsports. In Robotics: Science and Systems, 2025.
+10
+
+
+[26] J. Li, H. Hu, Y. Yang, and C. Liu. Verifiable safety q-filters via hamilton-jacobi reachability
+and multiplicative q-networks. IEEE Control Systems Letters, 2025.
+[27] B. Kim and H. J. Kim. Deep qp safety filter: Model-free learning for reachability-based safety
+filter. In Annual Learning for Dynamics & Control Conference, 2026.
+[28] W. Sharpless, O. So, D. Hirsch, S. Herbert, and C. Fan. Bellman value decomposition for task
+logic in safe optimal control. In Robotics: Science and Systems, 2026.
+[29] C. Khazoom, D. Gonzalez-Diaz, Y. Ding, and S. Kim.
+Humanoid self-collision avoid-
+ance using whole-body control with control barrier functions.
+In IEEE-RAS 21st Interna-
+tional Conference on Humanoid Robots (Humanoids), pages 558–565, 2022. doi:10.1109/
+Humanoids53995.2022.10000235.
+[30] D. Baek, A. Purushottam, J. J. Choi, and J. Ramos. Whole-body bilateral teleoperation with
+multi-stage object parameter estimation for wheeled humanoid locomanipulation. IEEE Trans-
+actions on Robotics, 2026.
+[31] Y. Sun, R. Chen, K. S. Yun, Y. Fang, S. Jung, F. Li, B. Li, W. Zhao, and C. Liu. Spark: Safe
+protective and assistive robot kit, 2026. URL https://arxiv.org/abs/2502.03132.
+[32] L. Yang, B. Werner, R. K. Cosner, D. Fridovich-Keil, P. Culbertson, and A. D. Ames. Shield:
+Safety on humanoids via cbfs in expectation on learned dynamics. In 2025 IEEE/RSJ Interna-
+tional Conference on Intelligent Robots and Systems (IROS), pages 203–210. IEEE, 2025.
+[33] K. Lee, S. Park, G. Park, M.-J. Kim, and J. Park. Safety-critical whole-body control for hu-
+manoid robots via input-to-state safe control barrier functions, 2026. URL https://arxiv.
+org/abs/2605.25546.
+[34] J. J. Choi, F. Castaneda, C. J. Tomlin, and K. Sreenath. Reinforcement learning for safety-
+critical control under model uncertainty, using control lyapunov functions and control barrier
+functions. In Robotics: Science and Systems, 2020.
+[35] D. P. Nguyen, K.-C. Hsu, W. Yu, J. Tan, and J. F. Fisac. Gameplay filters: Robust zero-shot
+safety through adversarial imagination. In 8th Annual Conference on Robot Learning, 2024.
+[36] T. He, C. Zhang, W. Xiao, G. He, C. Liu, and G. Shi. Agile but safe: Learning collision-free
+high-speed legged locomotion. In Robotics: Science and Systems, 2024.
+[37] K. S. Yun, R. Chen, C. Dunaway, J. M. Dolan, and C. Liu. Safe control of quadruped in varying
+dynamics via safety index adaptation. In 2025 IEEE International Conference on Robotics and
+Automation (ICRA), pages 7771–7777. IEEE, 2025.
+[38] V. Zinage, N. Harutyunyan, E. Verheyden, F. Y. Hadaegh, and S.-J. Chung. Contractionppo:
+Certified reinforcement learning via differentiable contraction layers. IEEE Robotics and Au-
+tomation Letters, 11(5):6320–6327, 2026. doi:10.1109/LRA.2026.3678460.
+[39] Y. Pan, R. Qiao, L. Chen, K. Chitta, L. Pan, H. Mai, Q. Bu, H. Zhao, C. Zheng, P. Luo, et al.
+Agility meets stability: Versatile humanoid control with heterogeneous data. arXiv preprint
+arXiv:2511.17373, 2025.
+[40] T. Johannink, S. Bahl, A. Nair, J. Luo, A. Kumar, M. Loskyll, J. A. Ojea, E. Solowjow, and
+S. Levine. Residual reinforcement learning for robot control. In 2019 international conference
+on robotics and automation (ICRA), pages 6023–6029. IEEE, 2019.
+[41] K. Li, P. Li, T. Liu, Y. Li, and S. Huang. Maniptrans: Efficient dexterous bimanual manipula-
+tion transfer via residual learning. In Proceedings of the IEEE/CVF Conference on Computer
+Vision and Pattern Recognition, pages 6991–7003, 2025.
+11
+
+
+[42] Z. Huang, H. Yuan, Y. Fu, and Z. Lu.
+Efficient residual learning with mixture-of-experts
+for universal dexterous grasping. In International Conference on Learning Representations,
+volume 2025, pages 87492–87510, 2025.
+[43] R. Zhang, D. Zhang, and M. W. Mueller. Proxfly: Robust control for close proximity quad-
+copter flight via residual reinforcement learning. In 2025 IEEE International Conference on
+Robotics and Automation (ICRA), pages 13683–13689. IEEE, 2025.
+[44] Y. Ishihara, Y. Hazama, K. Suzuki, J. J. Yokono, K. Sabe, and K. Kawamoto. Improving wind
+resistance performance of cascaded pid controlled quadcopters using residual reinforcement
+learning. arXiv preprint arXiv:2308.01648, 2023.
+[45] S. Zhao, Y. Ze, Y. Wang, C. K. Liu, P. Abbeel, G. Shi, and R. Duan. Resmimic: From gen-
+eral motion tracking to humanoid whole-body loco-manipulation via residual learning. arXiv
+preprint arXiv:2510.05070, 2025.
+[46] J. F. Fisac, A. K. Akametalu, M. N. Zeilinger, S. Kaynama, J. Gillula, and C. J. Tomlin. A
+general safety framework for learning-based control in uncertain robotic systems. IEEE Trans-
+actions on Automatic Control, 2018.
+[47] H. Wang, A. Dhande, and S. Bansal. Cooptimizing safety and performance with a control-
+constrained formulation. IEEE Control Systems Letters, 8:2739–2744, 2024. doi:10.1109/
+LCSYS.2024.3511429.
+[48] A. D. Ames, X. Xu, J. W. Grizzle, and P. Tabuada. Control barrier function based quadratic
+programs for safety critical systems. IEEE Trans. on Automatic Control, 62(8):3861–3876,
+2016.
+[49] K. P. Wabersich and M. N. Zeilinger. A predictive safety filter for learning-based control of
+constrained nonlinear dynamical systems. Automatica, 129:109597, 2021.
+[50] E. Lavretsky. Servo-controllers with operational constraints. arXiv preprint arXiv:2504.12208,
+2025.
+[51] J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov. Proximal policy optimization
+algorithms, 2017.
+[52] I. Jang, J. Park, C. E. Mballo, S. Cho, C. J. Tomlin, and H. J. Kim. Eigensafe: A spectral
+framework for learning-based stochastic safety filtering. In Robotics: Science and Systems
+(RSS), 2026.
+[53] L. Pinto, M. Andrychowicz, P. Welinder, W. Zaremba, and P. Abbeel. Asymmetric actor critic
+for image-based robot learning. In Robotics: Science and Systems (RSS), 2018.
+[54] V. Makoviychuk, L. Wawrzyniak, Y. Guo, M. Lu, K. Storey, M. Macklin, D. Hoeller, N. Rudin,
+A. Allshire, A. Handa, and G. State. Isaac gym: High performance gpu based physics simu-
+lation for robot learning. In Proceedings of the Neural Information Processing Systems Track
+on Datasets and Benchmarks, 2021.
+[55] T. He, Z. Wang, H. Xue, Q. Ben, Z. Luo, W. Xiao, Y. Yuan, X. Da, F. Casta˜neda, S. Sastry,
+C. Liu, G. Shi, L. Fan, and Y. Zhu. Viral: Visual sim-to-real at scale for humanoid loco-
+manipulation. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition (CVPR), pages 13430–13441, 2026.
+12
+
+
+A
+Residual Reinforcement Learning Details
+A.1
+Reward Design
+This section summarizes the reward design of ResSafe, which is decoupled from the tracking reward.
+Table 4: Reward components and weights.
+Term
+Expression
+Weight
+Remarks
+Reward
+Alive bonus
+1
+1.6
+Base linear velocity stabilization
+exp
+ 
+−∥vbase
+xy,t∥2
+2
+σ2
+lin
+!
+2.5
+σlin = 0.3
+Base angular velocity stabilization
+exp
+ 
+−∥ωbase
+xyz,t∥2
+2
+σ2ang
+!
+4
+σang = 1.2
+Penalty
+Termination
+1
+−60
+Minimal intervention
+aapplied
+t
+−areference
+t
+
+2
+2
+−0.07
+Action smoothness
+aapplied
+t
+−aapplied
+t−1
+
+2
+2
+−0.01
+A.2
+State Space Design
+This subsection describes the state-space design used in our asymmetric actor–critic residual rein-
+forcement learning.
+Table 5: State space information of the critic network input.
+State Term
+Dimensions
+Rigid body position
+87
+Rigid body rotation
+180
+Rigid body velocity
+90
+Rigid body angular velocity
+90
+Applied action
+29
+Reference policy action
+29
+History State Term
+Dimensions
+DoF position
+29
+DoF velocity
+29
+Base angular velocity
+3
+Projected gravity
+3
+Applied action
+29
+History steps
+2
+Total dim
+505 + 93 × 2 = 691
+Table 6: State space information of the actor network input.
+State Term
+Dimensions
+DoF position
+29
+DoF velocity
+29
+Base angular velocity
+3
+Projected gravity
+3
+Applied action
+29
+Reference policy action
+29
+Total dim
+122
+13
+
+
+A.3
+Training Parameters
+In this subsection, we provide the training parameters used for ResSafe.
+Table 7: Hyperparameters.
+Hyperparameter
+Value
+Optimizer
+Adam
+Adam coefficients (β1, β2)
+(0.9, 0.999)
+Learning rate
+1 × 10−3
+Rollout horizon Nsteps
+36
+Number of mini-batches
+12
+Discount factor γ
+0.99
+PPO clipping parameter
+0.2
+Entropy coefficient
+0.001
+Gradient clipping norm
+5
+Value loss coefficient
+1
+Initial policy std.
+0.5
+Number of learning epochs
+5
+MLP hidden layers
+[512, 256, 128]
+A.4
+Domain Randomization
+We use the same dynamics domain randomization as in HuB [2], while additionally introducing
+payload perturbations and a curriculum learning scheme for random push disturbances.
+Table 8: Domain-randomization settings.
+Term
+Value
+Push Disturbance Curriculum Learning
+Curriculum variable
+vxy ∈U(0, vmax) m/s,
+interval = 4 s
+Initial value
+vmax = 0.0 m/s
+Maximum value
+vmax = 0.5 m/s
+Update rule
+vmax ←min(vmax + 0.01, 0.5),
+if episode length > 300,
+vmax ←max(vmax −0.01, 0.0),
+if episode length < 250,
+vmax ←vmax,
+otherwise.
+Payload Disturbance
+Payload links
+{L/R wrist, L/R elbow, L/R shoulder}
+Added mass per link
+madd ∼U(0, 3) kg
+B
+Experimental Details
+We provide additional implementation details for the experiments reported in the main paper.
+B.1
+Performance–Robustness Trade-off
+The performance–robustness trade-off experiments are conducted in a single motion setting, in
+which all methods are trained and evaluated on the same reference motion. In HuB, the final pol-
+icy is obtained through teacher–student distillation. We use the student reference policy to train our
+general residual policy. However, in the performance–safety trade-off experiment in Section B.2, we
+aim to incorporate an additional safety reward during training. To avoid introducing distillation as
+an additional confounding factor, we use the teacher policy as the reference policy in both trade-off
+experiments. The residual policy training uses the state space shown in Table 5 for both the actor
+and critic networks.
+14
+
+
+B.2
+Performance–Safety Trade-off
+Similarly, the performance–safety trade-off experiments are conducted in a single motion setting,
+in which all methods are trained and evaluated on the same reference motion. We use the teacher
+policy as the reference policy, and the residual policy training uses the state space shown in Table 5
+for both the actor and critic networks.
+B.3
+Generalization Across Different Reference Policies
+In contrast, in the generalization experiment, the residual policy is trained on the full motion dataset
+using the student general reference policy, since the goal is to evaluate whether the learned residual
+policy can transfer across different reference policy checkpoints and a broader motion distribution.
+B.4
+Hardware Results
+In the hardware experiment, the residual policy is trained on the full motion dataset using the student
+general reference policy and evaluated on different motions from the dataset.
+15

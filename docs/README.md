@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-14</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-15</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 16 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 21 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>4</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>12</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>13</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-14 23:17:56 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-15 22:10:51 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共生成 16 篇推荐（精读 4 篇，速读 12 篇）</p>
-<p>精读：《RiPPLE: Cross-Space Performance Prediction from Early Training for Neural Architecture Search》（9.0/10）, 《DWMP: Leveraging Dual World Models for Humanoid Obstacle Traversal》（8.0/10）</p>
-<p>速读：《Elastoformer: Enabling Dynamic Adaptivity via Elastic Model Transformation》（7.0/10）, 《Structured Stochastic Representations of Integrated Dynamic Strategies》（7.0/10）, 《DIA: Denoising Intermediate Advantage for Diffusion Policy Optimization》（7.0/10）</p>
+<p>今日共生成 21 篇推荐（精读 8 篇，速读 13 篇）</p>
+<p>精读：《ZAPS: Zero-Cost Active Proxy Search for Neural Architecture Search》（10.0/10）, 《SafePG: Safe and Globally Optimal Reinforcement Learning with Hard Constraints》（9.0/10）</p>
+<p>速读：《Learning to Solve Stochastic Controls with Unknown Drifts and Running Rewards: Theory, Algorithms and Convergence》（8.0/10）, 《Refinement-based Flow Policy Optimization》（8.0/10）, 《Safe Meta-Reinforcement Learning via Information Space Reachability》（8.0/10）</p>
 <p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
   </div>
 </section>
@@ -74,12 +74,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">4 篇</strong>
+    <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="RiPPLE: Cross-Space Performance Prediction from Early Training for Neural Architecture Search">RiPPLE: Cross-Space Performance Prediction from Early Training for Neural Architecture Search</span></li><li><span class="dpr-home-dashboard-paper-title" title="DWMP: Leveraging Dual World Models for Humanoid Obstacle Traversal">DWMP: Leveraging Dual World Models for Humanoid Obstacle Traversal</span></li><li><span class="dpr-home-dashboard-paper-title" title="VertexCBF: Improving Neural Control Barrier Functions via Vertex-Restricted Control Search">VertexCBF: Improving Neural Control Barrier Functions via Vertex-Restricted Control Search</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ZAPS: Zero-Cost Active Proxy Search for Neural Architecture Search">ZAPS: Zero-Cost Active Proxy Search for Neural Architecture Search</span></li><li><span class="dpr-home-dashboard-paper-title" title="SafePG: Safe and Globally Optimal Reinforcement Learning with Hard Constraints">SafePG: Safe and Globally Optimal Reinforcement Learning with Hard Constraints</span></li><li><span class="dpr-home-dashboard-paper-title" title="X-WBC: A Cross-Embodiment Foundation Model for Humanoid Whole-Body Control">X-WBC: A Cross-Embodiment Foundation Model for Humanoid Whole-Body Control</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>2</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>5</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,12 +87,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">12 篇</strong>
+    <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Elastoformer: Enabling Dynamic Adaptivity via Elastic Model Transformation">Elastoformer: Enabling Dynamic Adaptivity via Elastic Model Transformation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Structured Stochastic Representations of Integrated Dynamic Strategies">Structured Stochastic Representations of Integrated Dynamic Strategies</span></li><li><span class="dpr-home-dashboard-paper-title" title="DIA: Denoising Intermediate Advantage for Diffusion Policy Optimization">DIA: Denoising Intermediate Advantage for Diffusion Policy Optimization</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Learning to Solve Stochastic Controls with Unknown Drifts and Running Rewards: Theory, Algorithms and Convergence">Learning to Solve Stochastic Controls with Unknown Drifts and Running Rewards: Theory, Algorithms and Convergence</span></li><li><span class="dpr-home-dashboard-paper-title" title="Refinement-based Flow Policy Optimization">Refinement-based Flow Policy Optimization</span></li><li><span class="dpr-home-dashboard-paper-title" title="Safe Meta-Reinforcement Learning via Information Space Reachability">Safe Meta-Reinforcement Learning via Information Space Reachability</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>10</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>11</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span></div>
 </section>
 </div>
 
