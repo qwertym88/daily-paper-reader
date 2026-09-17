@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-16</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-17</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 15 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 21 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>13</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-16 22:09:36 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-17 22:29:01 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>2026-09-16 日报精选 15 篇，精读 2 篇、速读 13 篇，聚焦机器人强化学习与控制器优化。最值得看的是 9.0 分的《Skill Composition for Legged Robot Reinforcement Learning》和 8.0 分的《Parallel Policy-Gradient Methods for Parameter Optimization of Nonlinear Feedback Controllers》。普通读者可优先从这两篇精读入手，再按兴趣浏览速读中的通信估计与多智能体方向。</p>
+<p>2026-09-17 日报共筛出21篇机器人学习论文，精读8篇、速读13篇。最值得关注的是PASSAGE（9.0分）用场景对齐的运动学习让人形机器人穿越杂乱环境，以及JEPLO（8.0分）把联合嵌入预测学习用于LiDAR足式运动。普通读者可优先从这两篇入手，理解感知与运动结合如何提升机器人复杂地形适应力。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">2 篇</strong>
+    <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Skill Composition for Legged Robot Reinforcement Learning">Skill Composition for Legged Robot Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Parallel Policy-Gradient Methods for Parameter Optimization of Nonlinear Feedback Controllers">Parallel Policy-Gradient Methods for Parameter Optimization of Nonlinear Feedback Controllers</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="PASSAGE: Scaling Scene-Aligned Motion Learning for Perceptive Humanoid Traversal in Cluttered Environments">PASSAGE: Scaling Scene-Aligned Motion Learning for Perceptive Humanoid Traversal in Cluttered Environments</span></li><li><span class="dpr-home-dashboard-paper-title" title="JEPLO: Joint-Embedding Predictive Learning for LiDAR-Based Legged Locomotion">JEPLO: Joint-Embedding Predictive Learning for LiDAR-Based Legged Locomotion</span></li><li><span class="dpr-home-dashboard-paper-title" title="Collision-Aware Humanoid Whole-Body Control under Imperfect Tracking Targets">Collision-Aware Humanoid Whole-Body Control under Imperfect Tracking Targets</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>7</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,9 +87,9 @@
     <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="CRFCAN: A Complex-Valued Cross-Domain Residual Network for Joint Channel and Phase Noise Estimation in Sub-THz OFDM Systems">CRFCAN: A Complex-Valued Cross-Domain Residual Network for Joint Channel and Phase Noise Estimation in Sub-THz OFDM Systems</span></li><li><span class="dpr-home-dashboard-paper-title" title="Predefined-Time Integral Reinforcement Learning for Saturated Unknown Nonlinear Multi-Agent Systems Under FDI Attacks and Disturbances">Predefined-Time Integral Reinforcement Learning for Saturated Unknown Nonlinear Multi-Agent Systems Under FDI Attacks and Disturbances</span></li><li><span class="dpr-home-dashboard-paper-title" title="Sparsity-Adaptive Sharpness-Aware Minimization">Sparsity-Adaptive Sharpness-Aware Minimization</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Learning Holistic Whole-Body Loco-Manipulation with a Bipedal Mobile Manipulator">Learning Holistic Whole-Body Loco-Manipulation with a Bipedal Mobile Manipulator</span></li><li><span class="dpr-home-dashboard-paper-title" title="Dynamics-Informed Reinforcement Learning for Agile and Energy-Efficient Locomotion of a Monopedal Hopping Quadcopter">Dynamics-Informed Reinforcement Learning for Agile and Energy-Efficient Locomotion of a Monopedal Hopping Quadcopter</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning Multimodal One-step Flow Policy via Value-weighted Optimal Transport">Learning Multimodal One-step Flow Policy via Value-weighted Optimal Transport</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">neural-arch <strong>7</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>5</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>6</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>6</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
 </div>
 
