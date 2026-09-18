@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-17</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-18</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 21 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 18 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>5</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>13</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-17 22:29:01 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-18 21:31:51 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>2026-09-17 日报共筛出21篇机器人学习论文，精读8篇、速读13篇。最值得关注的是PASSAGE（9.0分）用场景对齐的运动学习让人形机器人穿越杂乱环境，以及JEPLO（8.0分）把联合嵌入预测学习用于LiDAR足式运动。普通读者可优先从这两篇入手，理解感知与运动结合如何提升机器人复杂地形适应力。</p>
+<p>2026-09-18日报：从18篇中筛出5篇精读、13篇速读，重点锁定人形机器人安全导航与屋顶施工自适应全身运动。</p>
+<p>两篇9.0分精读最值得看：用降阶模型学习安全人形导航，以及面向屋顶施工的坡度自适应全身运动；速读侧可关注控制-推理-传输-热力学桥接、结构化MDP决策边界几何和CPG强化学习步态-形态协同设计。</p>
+<p>普通读者建议先读人形机器人安全与运动两篇，再看速读中与自身场景最接近的一篇，抓住“如何安全适应复杂地形”这条主线。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +73,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">8 篇</strong>
+    <strong class="dpr-home-dashboard-count">5 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="PASSAGE: Scaling Scene-Aligned Motion Learning for Perceptive Humanoid Traversal in Cluttered Environments">PASSAGE: Scaling Scene-Aligned Motion Learning for Perceptive Humanoid Traversal in Cluttered Environments</span></li><li><span class="dpr-home-dashboard-paper-title" title="JEPLO: Joint-Embedding Predictive Learning for LiDAR-Based Legged Locomotion">JEPLO: Joint-Embedding Predictive Learning for LiDAR-Based Legged Locomotion</span></li><li><span class="dpr-home-dashboard-paper-title" title="Collision-Aware Humanoid Whole-Body Control under Imperfect Tracking Targets">Collision-Aware Humanoid Whole-Body Control under Imperfect Tracking Targets</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Learning Safe Humanoid Navigation from Reduced Order Models">Learning Safe Humanoid Navigation from Reduced Order Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning Slope-Adaptive Whole-Body Locomotion for Humanoid Robots in Roofing Construction">Learning Slope-Adaptive Whole-Body Locomotion for Humanoid Robots in Roofing Construction</span></li><li><span class="dpr-home-dashboard-paper-title" title="Rethinking Critic Learning in PPO: Understanding and Mitigating Value Flattening">Rethinking Critic Learning in PPO: Understanding and Mitigating Value Flattening</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>7</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,9 +89,9 @@
     <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Learning Holistic Whole-Body Loco-Manipulation with a Bipedal Mobile Manipulator">Learning Holistic Whole-Body Loco-Manipulation with a Bipedal Mobile Manipulator</span></li><li><span class="dpr-home-dashboard-paper-title" title="Dynamics-Informed Reinforcement Learning for Agile and Energy-Efficient Locomotion of a Monopedal Hopping Quadcopter">Dynamics-Informed Reinforcement Learning for Agile and Energy-Efficient Locomotion of a Monopedal Hopping Quadcopter</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning Multimodal One-step Flow Policy via Value-weighted Optimal Transport">Learning Multimodal One-step Flow Policy via Value-weighted Optimal Transport</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Bridging Control, Inference, Transport, and Thermodynamics: From Theory to Applications in Learning">Bridging Control, Inference, Transport, and Thermodynamics: From Theory to Applications in Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="A Geometric Theory of Decision Boundaries in Structured Markov Decision Processes">A Geometric Theory of Decision Boundaries in Structured Markov Decision Processes</span></li><li><span class="dpr-home-dashboard-paper-title" title="GLAMDRING: Gait Learning And Morphology co-Design via Reinforcement LearnING of CPGs">GLAMDRING: Gait Learning And Morphology co-Design via Reinforcement LearnING of CPGs</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>6</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>6</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>8</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
 </div>
 
