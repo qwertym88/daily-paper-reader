@@ -1,0 +1,466 @@
+Title: EPIG-Tree: Compute-Optimal Branching for Gradient-Efficient Reinforcement Learning
+
+URL Source: https://arxiv.org/pdf/2609.20004v1
+
+Published Time: Fri, 18 Sep 2026 00:58:52 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# EPIG-Tree: Compute-Optimal Branching for Gradient-Efficient Reinforcement Learning 
+
+## Nikita Khomich Leopold Hermansson Ido Hakimi 
+
+Abstract 
+
+Reward based reinforcement learning for language models, exempli-fied by Group Relative Policy Optimization (GRPO), collapses an entire stochastic trajectory into a single scalar reward. This is clean and scalable, but it explores and allocates reward inefficiently: a trajectory may contain many causal decisions, recovery attempts, and environment-randomness events, yet every token or action inherits one trajectory-level advantage. We study tree-based rollout construction as a compute-allocation prob-lem for policy-gradient estimation. Our central claim is that tree branches should not be placed where the policy is merely uncertain; they should be placed where an additional branch most reduces uncertainty about the policy gradient accounting for the expected compute cost. From a law-of-total-variance decomposition of the local policy-gradient random variable, we derive two allocation laws: new branches reduce decision uncertainty, while repeated suffix rollouts reduce continuation uncertainty. The re-sulting EPIG-Tree score allocates branches using the already computed rollouts. It estimates occupancy and score weighted value uncertainty, along with a suffix law 
+
+ne ∝ we ∥∇ θ log π(ae | he)∥ σe
+
+√ce
+
+.
+
+Empirically, we show that EPIG reduces gradient MSE in cloned-state control, winning in all nine dense continuous-control environments of a thirteen-environment sweep and recovering the reference gradient direc-tion near-perfectly, and it improves frozen-LLM gradient calibration rel-ative to simpler entropy branching. In online single-turn math, tree-local credit beats flat GRPO, while branch placement is secondary to token-level credit assignment. In online multi-turn Wordle, EPIG attains the highest final win rate (0.850), overtaking flat GRPO, which saturates early at 0.790, and entropy branching as training proceeds, confirming that the gradient-estimation advantage transfers to a stateful, large-action setting. 
+
+# 1 Introduction 
+
+The recent success of reinforcement learning with verifiable rewards has made on-policy algorithms such as GRPO central to LLM reasoning training [1]. 1arXiv:2609.20004v1 [cs.LG] 17 Sep 2026 GRPO samples a group of responses for the same prompt, normalizes terminal rewards within the group, and applies a PPO-style clipped objective without training a separate critic. GRPO nonetheless has three structural failure modes in long-horizon or multi-turn settings. 
+
+Poor recovery credit assignment. Suppose that a trajectory makes a mistake while performing correct actions and fails. Reward based GRPO assigns the whole trajectory a negative group-relative reward, so the correct actions are also punished. Conversely, if a trajectory succeeds despite multiple bad actions, the bad actions are reinforced. Recovery behavior is thus not a special case of long-horizon credit assignment; it is a direct consequence of assigning one scalar to a whole path. 
+
+Inefficient handling of nondeterminism. In a stochastic environment, a terminal reward is a noisy observation of Q(h, a ) = E[R | h, a ]. A single trajectory conflates policy choice with environment randomness. If the envi-ronment randomly sabotages a good action, GRPO punishes the action; if it rescues a bad action, GRPO reinforces it. Estimating conditional continuation values requires repeated counterfactual suffixes from the same state. 
+
+Poor scaling with rollout count. Increasing the number of independent full rollouts explores more, yet many rollouts differ only in low-importance to-kens, formatting, or environment noise. These do not provide any signal for the model to learn with. Tree rollouts are a natural remedy. Instead of sampling K independent full trajectories, we reuse prefixes, branch at intermediate states, and estimate de-scendant values. This yields local, process-like advantages without training a separate process reward model. Recent LLM tree methods follow this direction: TreeRL’s EPTree forks from high-entropy intermediate tokens [2]; TreePO uses local uncertainty and segment-level tree modeling to amortize common pre-fixes [3]; and related tree-structured rollout methods derive relative advantages in multi-turn agent tasks. The unresolved question is: where should the tree branch? 
+
+A common answer is entropy. Entropy is useful: if a policy is deterministic at a prefix, its branches coincide. But entropy alone is not the quantity that the policy-gradient estimator cares about. A high-entropy choice among reward-equivalent phrasings is not worth branching; a moderate-entropy choice between high- and low-value actions can be crucial. The organizing principle of this paper is therefore: 
+
+A tree is an experimental apparatus for estimating the pol-icy gradient. 
+
+Optimal branching allocates compute where an additional branch most reduces gradient-estimator error per unit cost—not where the policy is merely uncertain. Concretely: GRPO collapses a full trajectory into one scalar advantage, whereas a tree estimates local conditional values; entropy measures only whether 2branches can differ, while EPIG measures whether they matter for the gradient. 
+
+Contributions. 
+
+1. We derive a law-of-total-variance decomposition showing that tree con-struction has two distinct jobs: new branches reduce decision uncertainty, while suffix resampling reduces continuation uncertainty. 2. We prove a compute-optimal suffix allocation law 
+
+n∗ 
+
+> e
+
+∝ we ∥∇ log π(ae | he)∥ σe
+
+√ce
+
+and a marginal branching law based on occupancy and score weighted value uncertainty. 3. We introduce EPIG-Tree, an algorithm that uses entropy as a proposal mechanism but allocates branches by expected predictive information gain about the gradient. 4. We validate the theory across cloned-state continuous control, frozen LLM gradient calibration, single-turn LLM math, and online multi-turn Wordle, establishing both where EPIG wins and the boundary conditions under which it ties cheaper baselines. 
+
+# 2 Related work 
+
+Policy gradients and PPO. Our derivation begins from the standard policy-gradient theorem [4] and PPO-style clipped optimization [5]. The novelty is not a new policy-gradient identity; it is the use of the identity to formulate tree construction as optimal sampling for the gradient. 
+
+GRPO and RLVR. DeepSeekMath introduced GRPO as a critic-free PPO variant for mathematical reasoning [1], replacing a learned value baseline with group-relative normalization. Our critique is that the group-normalized termi-nal reward is a coarse estimator of local advantages in long-horizon settings. 
+
+Tree search for LLM RL. TreeRL proposes EPTree, an entropy-guided tree search that forks from high-uncertainty tokens and derives process super-vision from descendant correctness [2]. TreePO similarly uses local uncertainty with segment-level tree modeling and prefix amortization [3]. These methods motivate our setting; we replace entropy/uncertainty heuristics with a gradient-estimation objective. 
+
+Entropy in LLM RL. The entropy-mechanism analysis argues that RL for reasoning models trades policy entropy for downstream performance, deriving entropy change from the covariance between logit updates and action probabili-ties/advantages [6]. Complementary work finds that a minority of high-entropy tokens act as reasoning forks and carry much of the RLVR update signal [7]. We agree that entropy identifies branchable or update-sensitive points. Our 3result is narrower and sharper: entropy is not the objective; it is one input to a compute-allocation problem. 
+
+Reward overoptimization. Gao, Schulman, and Hilton study gold reward as a function of optimization distance d = pDKL (π∥π0), finding distinct scaling forms for best-of-n and RL optimization and Goodhart-style degradation un-der proxy rewards [8]. We include a Goodhart-corrected EPIG-Full variant for proxy-reward settings, while our strongest evidence concerns exact or cloned-state gradient estimation. 
+
+# 3 From outcome GRPO to local gradient exper-iments 
+
+Consider a history or prefix h, an action a ∼ πθ (· | h), and a utility 
+
+Y = U  G(h) + Rfuture 
+
+, (1) where G(h) is reward already accumulated and U is the training utility (linear return, success/failure, preference utility, verifier score, or task-specific reward). Define 
+
+Qh(a) = E[Y | h, a ], σ2
+
+> h
+
+(a) = Var( Y | h, a ), ψh(a) = ∇θ log πθ (a | h).
+
+(2) The local contribution to the policy gradient is 
+
+gh = μh Ea∼πh
+
+ψh(a)Qh(a), (3) where μh is the occupancy or training weight of the prefix. For an LLM token prefix, μh captures how frequently the current policy reaches that prefix or how much training mass we assign to it; for a cloned Gym/MuJoCo state, μh may be uniform over sampled states. Outcome-only GRPO estimates many local terms with a single trajectory scalar. With K sampled completions τi for a prompt, the group advantage is 
+
+bAGRPO  
+
+> i
+
+= Ri − ¯RsR + ε , (4) and every action on trajectory i receives this same sign and scale. A tree estimator instead estimates Qh(a) by descendant rollouts from a shared prefix: 
+
+bQh(a) = 1
+
+nh,a nh,a 
+
+X
+
+> j=1
+
+Yh,a,j , bA(h, a ) = bQh(a) − bV (h). (5) The mathematical question is now: given a compute budget, where should we spend the next suffix rollout or branch? 44 The variance decomposition that determines the tree 
+
+Let the random vector for a one-sample local gradient contribution be 
+
+Zh = μhψh(A)Y, A ∼ πh. (6) Its total variance decomposes as follows. 
+
+Proposition 1 (Decision and continuation uncertainty). For fixed prefix h,Var( Zh | h) = μ2 
+
+> h
+
+Var A∼πh
+
+ψh(A)Qh(A) (7) + μ2 
+
+> h
+
+EA∼πh
+
+ψh(A)ψh(A)⊤σ2
+
+> h
+
+(A). (8) Taking the trace gives a scalar gradient-MSE proxy. 
+
+Proof. Apply the law of total variance, Var( Zh | h) = Var( E[Zh | A, h ] |
+
+h) + E[Var( Zh | A, h ) | h]. Since E[Zh | A = a, h ] = μhψh(a)Qh(a) and Var( Y | h, a ) = σ2
+
+> h
+
+(a), the result follows. □
+
+This decomposition is the core of the paper. The first term is decision uncertainty : uncertainty over which action branch matters. The second is con-tinuation uncertainty : noise in the suffix after a branch action has already been selected. Tree construction therefore has two distinct compute actions: 
+
+• add a new branch from h to reduce Var a[ψh(a)Qh(a)]; 
+
+• add suffix samples under an existing edge ( h, a ) to reduce σ2
+
+> h
+
+(a). 
+
+## 4.1 Why entropy is insufficient 
+
+Entropy is Hh = H(πθ (· | h)): it measures how many alternatives the policy can produce. But the variance decomposition contains no standalone entropy term. A high-entropy prefix with Qh(a) nearly constant has little gradient-relevant de-cision uncertainty; a moderate-entropy prefix with large Qh dispersion can dom-inate the gradient MSE. Entropy is therefore a useful proposal mechanism—it tells us where branches can differ. EPIG asks whether those differences matter. 
+
+# 5 Optimal allocation laws 
+
+## 5.1 Suffix allocation 
+
+Let edge e = ( h, a ) have training weight we, score vector ψe = ∇ log π(a | h), continuation standard deviation σe, and suffix cost ce. If ne independent suffixes are allocated under e, the trace-variance contribution is approximately Ae/n e
+
+with 
+
+Ae = w2 
+
+> e
+
+∥ψe∥2σ2 
+
+> e
+
+.
+
+5Theorem 1 (Cost-sensitive suffix allocation). For fixed candidate edges and budget B, the solution of min 
+
+> ne>0
+
+X
+
+> e
+
+Ae
+
+ne
+
+s.t. X
+
+> e
+
+cene ≤ B
+
+is 
+
+n∗ 
+
+> e
+
+∝
+
+r Ae
+
+ce
+
+= we∥ψe∥σe
+
+√ce
+
+. (9) 
+
+Proof. The Lagrangian is L(n, ρ ) = P 
+
+> e
+
+Ae/n e +ρ(P 
+
+> e
+
+cene −B). Stationarity gives −Ae/n 2 
+
+> e
+
++ρc e = 0, hence ne = pAe/(ρc e); the proportionality follows after normalizing to the budget. □
+
+The law is a Neyman-allocation analogue for policy gradients: sample more where gradient leverage and suffix noise are high and cost is low. 
+
+## 5.2 Branch allocation 
+
+Let mh be the number of action branches already sampled at node h, and define the decision-uncertainty coefficient 
+
+Bh = μ2 
+
+> h
+
+tr(Var a∼πh [ψh(a)Qh(a)]) .
+
+With mh independent branch samples, the action Monte Carlo term scales as 
+
+Bh/m h, so the discrete gain from one more branch is ∆branch  
+
+> h
+
+≈ Bh
+
+mh(mh + 1) − λc h, (10) where ch is expected branch/suffix cost and λ is compute price. In practice Qh
+
+and ψh are estimated from pilot branches, and EPIG uses the empirical score 
+
+SEPIG (h) = 
+
+bμ 2 
+
+> h
+
+tr dVar a∈C (h)
+
+h bψh(a) bQh(a)
+
+ibch(mh + 1) 2 + ε . (11) We call the full ψ-weighted score EPIG-grad—the variant used in all experiments below—and the value-variance-only score dVar a[ bQh(a)] /bch EPIG-Lite. EPIG-Lite is cheaper and suffices in dense continuous control but can fail where score norms differ or action probabilities are very uneven. Our frozen Wordle calibra-tion confirms the ψ-weighting is active: EPIG-grad beats pure value variance. 
+
+Corollary 1 (Entropy branching as a special case). Entropy-guided branching coincides with EPIG only under a homogeneity assumption: across candidate nodes, μh, ∥ψh∥, value dispersion, suffix noise, and cost must be constant or monotone functions of entropy. When these quantities decouple, entropy selects branchable but low-information prefixes. 65.3 Goodhart and entropy-pricing extensions 
+
+When rewards are exact or verifiable, we set Goodhart sensitivity to zero. For proxy rewards, local tree expansion can overoptimize the proxy. Following the empirical scaling-law view of reward-model overoptimization [8], define local optimization distance dh = pDKL (πtree  
+
+> h
+
+∥πh). A Goodhart-corrected gain is 
+
+Gh(d) = 
+
+Z d
+
+> 0
+
+αheHh(u) du − βhΦ( d), (12) with Φ( d) = d2 for best-of-branch-like selection and Φ( d) = d log d for RL-like updates. If κh(d) = −H′
+
+> h
+
+(d) is entropy drain, the marginal equilibrium condition is 
+
+Bh
+
+m2
+
+> h
+
++ μh
+
+h
+
+αheHh(dh) − βhΦ′(dh)
+
+i
+
+d′
+
+> h
+
+(mh) = λC ′
+
+> h
+
+(mh) + τ κ h(dh)d′
+
+> h
+
+(mh). (13) We treat this as EPIG-Full. Our strongest measured evidence concerns the first term, the branch score, and the suffix law; the Goodhart and entropy-drain terms are theoretically motivated and remain to be stress-tested at larger proxy-reward scale. 
+
+# 6 Algorithm 
+
+EPIG-Tree uses entropy to propose candidate branch points but value/gradient information to allocate the branch budget. 
+
+# 7 Experiments 
+
+We organize the evidence into three layers. The first directly tests the allocation law under frozen policies and cloneable states; the second tests frozen LLM gra-dient calibration; the third tests online LLM RL, where optimization dynamics and token credit assignment interact with branch placement. All numbers are measured. 
+
+## 7.1 Cloned-state control: direct validation of the alloca-tion law 
+
+Setup. We freeze a policy, sample states, clone each state, sample candidate actions, and estimate a high-budget reference gradient with 32 suffix rollouts per action. Each allocation method receives budget B = 8 suffixes and estimates 
+
+bg; we report ∥bg − gref ∥2 and cosine to the reference. We compare EPIG-grad against entropy, uniform, value variance, suffix-√·, and oracle variants; the key comparison is EPIG-grad versus entropy and uniform. 
+
+Result. EPIG-grad beats both entropy and uniform on gradient-MSE in 9/13 environments—exactly the nine dense continuous-control environments 7Algorithm 1 EPIG-Tree update for one prompt/state batch 
+
+Require: policy πθ ; prompts/states; root count K0; branch budget B; pilot size m0; compute price λ 
+
+> 1:
+
+Sample K0 on-policy root trajectories; store prefixes/states h, actions a,log-probs, rewards, and costs.  
+
+> 2:
+
+Propose a candidate set C of branch states: turn or reasoning-step bound-aries / high-entropy token segments (LLMs), or sampled clone states (clone-able RL).  
+
+> 3:
+
+for each candidate node h ∈ C do  
+
+> 4:
+
+Score SEPIG (h) using the branch score above.  
+
+> 5:
+
+end for  
+
+> 6:
+
+while branch budget B remains do  
+
+> 7:
+
+Add a branch at arg max h SEPIG (h) with positive marginal gain; refresh its score.  
+
+> 8:
+
+end while  
+
+> 9:
+
+Allocate suffix rollouts per edge by n∗ 
+
+> e
+
+∝ we∥ψe∥σe/√ce. 
+
+> 10:
+
+Form tree values bV (h) from descendant leaves and edge advantages 
+
+bA(h, a ) = bV (child) − bV (h) (optionally mixed with a root-relative advan-tage).  
+
+> 11:
+
+Apply a PPO/GRPO-style clipped update with an action-token / branch-segment mask, so the advantage trains the tokens that caused the branch.  
+
+> 12:
+
+return updated policy πθ .8(Figure 1). On these nine it recovers the reference gradient direction near-perfectly (cosine 0.998–1.000), while entropy lags and mis-points (cosine 0.79– 0.94; Figure 2). The four exceptions are informative rather than arbitrary. Tiny-action environments (Acrobot with K = 3, a stochastic CartPole with 
+
+K = 2) leave little allocation problem—uniform already covers the relevant actions—and sparse or non-smooth reward regimes (MountainCarContinuous, Pendulum) make small-pilot value dispersion unreliable. EPIG is therefore not a universal replacement for exploration; it is a compute-allocation law for settings where local value differences can be estimated. 
+
+Figure 1: Cloned-state control: entropy and uniform gradient-MSE divided by EPIG MSE (log scale). Values above 1 mean EPIG is better. EPIG wins on all nine dense continuous-control tasks and on the four sparse or tiny-action exceptions falls back toward the cheaper baselines. 
+
+## 7.2 Counterfactual branching helps when there is head-room 
+
+Before selective EPIG allocation, a simpler question is whether counterfac-tual branching helps at all. In a seven-environment ablation, uniform per-edge stochastic branching—each edge forks with probability p, a fresh action is re-sampled, and all root and branch samples feed one group-normalized GRPO update—improves early learning wherever learning happens (Figure 3). Rela-tive to flat GRPO ( p = 0) under a capped update budget, InvertedDoublePen-dulum gains +52 final return, Hopper +16, and Reacher +5 at p = 0 .5, with the bulk of the gain captured by a moderate p ≈ 0.1–0 .2. The mechanism is simply more counterfactual signal per update; the cost is proportionally more compute (branched-edge fraction → 0.9+ at high p), and gains diminish beyond the sweet spot. EPIG asks how to spend this branching budget more selectively. 9Figure 2: Gradient cosine to the high-budget reference. On the nine dense continuous-control tasks EPIG recovers the reference direction near-perfectly (0.998–1.000) while entropy mis-points. 
+
+Figure 3: Even unoptimized stochastic branching supplies useful counterfactual signal in control. Left: normalized final-return gain over flat GRPO versus branch probability p for the three environments with headroom; the shaded band marks the p ≈ 0.1–0 .2 sweet spot. Right: the branched-edge fraction (compute cost) rises steeply with p, so high p buys little extra return. 10 7.3 Frozen LLM gradient calibration 
+
+Setup. We use Qwen3-8B on GSM8K and compare budgeted-tree PPO gradi-ents against a 64-leaf high-budget reference over 64 prompts and 3 seeds. This is not an online training result; it asks whether the branch topology improves the gradient estimator. 
+
+Result. Among tree methods, EPIG-Lite is more stable and better aligned than entropy branching: cosine 0 .0748 ± 0.0119 versus 0 .0217 ± 0.0389 (entropy goes negative on one seed), a gap of +0.053 at one-third the standard deviation (Figure 4). Flat GRPO aligns best with the GRPO-style reference (0.2298), which we read as a warning that tree-local advantages and token masks are themselves consequential estimator choices—branch scoring is not the only thing a tree estimator must get right. 
+
+Figure 4: Frozen GSM8K/Qwen3-8B gradient calibration. Among tree meth-ods, EPIG is more stable and better aligned than EPTree-style entropy branch-ing. Flat GRPO aligns best with the GRPO-style reference, highlighting that topology and advantage construction must be evaluated separately. Error bars are SEM over three seeds. 
+
+## 7.4 Single-turn LLM math: tree credit helps, placement ties 
+
+On Qwen-class GSM8K-hard and MATH-small, tree-local training beats flat GRPO, but branch-placement variants fall within single-seed noise (Figure 5). EPIG wins MATH-small final Pass@1 (0.382 versus 0.206 for flat GRPO), while EPTree wins GSM8K-hard (0.828). We therefore do not claim that EPIG beats EPTree in single-turn math; the robust finding is that tree-local credit is useful and that token masking can dominate branch placement. The most consequential LLM engineering lesson was a loss-mask bug: an incorrect branch-segment mask trained only a short window and missed answer tokens in thinking-mode outputs. Fixing the mask moved EPIG on GSM8K-11 hard from 0.547 to 0.781 Pass@1 and frozen gradient cosine from 0.428 to 0.691, and moved uniform-tree from 0.625 to 0.781, while the two non-mask methods barely moved (Figure 6). For LLM tree RL, topology and credit assignment are coupled: a good branch score is useless if its advantage is applied to the wrong tokens. 
+
+Figure 5: Single-turn LLM math. Tree methods beat flat GRPO, especially on the harder MATH-small, but branch placement is within single-seed noise. This motivates stateful multi-turn benchmarks rather than more saturated single-turn math. 
+
+Figure 6: The loss-mask fix is the large LLM-side signal. The two mask-using methods (EPIG, uniform tree) jump on both Pass@1 and frozen gradient cosine, while the non-mask methods (EPTree, flat GRPO) are essentially unchanged on Pass@1, isolating the mask as the cause. 12 7.5 Multi-turn Wordle: frozen calibration 
+
+Single-turn math distributes value over many reasoning tokens, making branch placement hard to isolate; multi-turn games provide clearer states and actions. On frozen Wordle states from a TextArena-style environment with a Wordle-tuned Qwen-family model, we estimate high-budget reference values and com-pare budgeted estimators. EPIG-grad achieves the lowest value MSE, 0.523, versus 0.568 for entropy and 1.094 for uniform (Figure 7). Crucially, pure value variance is worse (1.389): score weighting matters, supporting the theorem’s 
+
+ψQ form over a plain Var[ Q] heuristic. 
+
+Figure 7: Frozen Wordle state calibration. EPIG-grad has the lowest value MSE, and the gap to pure value variance shows that gradient/score weighting—not value dispersion alone—drives the advantage. 
+
+## 7.6 Online multi-turn Wordle 
+
+The decisive test is whether the dense-control and frozen-calibration advantage survives online, where the policy moves and the action space is large. We run online Wordle—a Wordle-tuned 1.7B model, four methods × two seeds, 300 policy updates—training each for the full update budget and logging win rate against environment interactions. The Wordle result is the clearest online evidence in the paper (Figure 8). All three tree methods start below flat GRPO in the first ∼ 30 updates—tree advantages are noisier early—but flat GRPO saturates near a win rate of 0.790 by update 50 and improves no further. The tree methods keep climbing and overtake it: EPIG-grad crosses flat GRPO around update 140 and separates over the second half of training, finishing at 0.850, compared with EPTree (0.825), uniform turn tree (0.805), and flat GRPO (0.790). The final EPIG margin over 13 the strongest tree baseline is +0.025 win rate, and EPIG gains the most from extended training. 
+
+Figure 8: Online Wordle win rate per policy update (smoothed, 95% CI over two seeds). The tree methods start below flat GRPO but overtake it as it saturates near 0.790. Final win rates are annotated at right. 
+
+# 8 Discussion 
+
+The experiments support a nuanced conclusion. In theorem-aligned settings— especially cloned-state dense continuous control—EPIG allocation is strongly supported: it reconstructs the reference gradient direction where entropy mis-points. In frozen LLM diagnostics it improves tree-gradient alignment and Wor-dle value-MSE. In online single-turn LLM math, tree-local credit is helpful but branch placement is not the bottleneck; token loss masks and advantage con-struction dominate. In online multi-turn Wordle, where the policy moves and the action space is large, EPIG’s allocation advantage reappears as a higher final plateau: it overtakes a fast-but-saturating flat GRPO and finishes ahead of every baseline. 
+
+What the theorem does not say. EPIG is not a universal exploration algorithm. If the action space is tiny, uniform coverage is already near-optimal. If rewards are sparse and pilot rollouts cannot reveal value differences, pure value-information allocation can be too exploitative. If branch advantages are applied to irrelevant tokens, topology does not matter. These are boundary conditions, not contradictions, and our control losses fall exactly where the boundary conditions predict. 
+
+Why this matters for GRPO. GRPO remains a powerful baseline, but in stochastic, multi-turn, or recovery-heavy environments its outcome-only es-timator is inherently coarse. Trees expose local conditional values, and EPIG provides a principle for deciding which local counterfactuals are worth buying. 14 9 Limitations 
+
+Several LLM diagnostics use a single seed and should be read as preliminary rather than as ranked benchmarks; we mark single-seed comparisons as such throughout and do not overclaim sub-0.02 gaps. The Goodhart and entropy-drain terms are theoretically motivated and have not been stress-tested at large proxy-reward scale. Finally, EPIG depends on reasonably good pilot estimates of local value and score-weighted dispersion; sparse-reward environments may require additional exploration terms. 
+
+# 10 Conclusion 
+
+We proposed EPIG-Tree, a compute-optimal view of rollout-tree construction. The core derivation is simple: the variance of the local policy-gradient con-tribution splits into decision uncertainty and continuation uncertainty. New branches should reduce the former; suffix samples should reduce the latter. This yields explicit allocation laws and shows why entropy is an incomplete branch-ing objective. The empirical picture matches the theory: EPIG wins cleanly in cloned-state control and frozen LLM diagnostics, ties cheaper baselines on near-saturated single-turn math, and recovers its advantage online in stateful, large-action multi-turn games. A tree is an experimental apparatus for the pol-icy gradient, and EPIG is the design that spends its budget where the gradient is hardest to estimate. 
+
+# Acknowledgments 
+
+We thank our colleagues at Tzafon AI for infrastructure support and helpful discussions. 
+
+# References 
+
+[1] Z. Shao et al., “DeepSeekMath: Pushing the limits of mathematical reason-ing in open language models,” arXiv:2402.03300, 2024. [2] Z. Hou, Z. Hu, Y. Li, R. Lu, J. Tang, and Y. Dong, “TreeRL: LLM rein-forcement learning with on-policy tree search,” arXiv:2506.11902, 2025. [3] Y. Li et al., “TreePO: Bridging the gap of policy optimization and efficacy and inference efficiency with heuristic tree-based modeling,” arXiv:2508.17445, 2025. [4] R. S. Sutton, D. McAllester, S. Singh, and Y. Mansour, “Policy gradient methods for reinforcement learning with function approximation,” in Ad-vances in Neural Information Processing Systems , 1999. 15 [5] J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov, “Proximal policy optimization algorithms,” arXiv:1707.06347, 2017. [6] G. Cui et al., “The entropy mechanism of reinforcement learning for reason-ing language models,” arXiv:2505.22617, 2025. [7] S. Wang et al., “Beyond the 80/20 rule: High-entropy minority tokens drive effective reinforcement learning for LLM reasoning,” arXiv:2506.01939, 2025. [8] L. Gao, J. Schulman, and J. Hilton, “Scaling laws for reward model overop-timization,” in Proceedings of the 40th International Conference on Machine Learning , PMLR 202, 2023, pp. 10835–10866. [9] F. Bickford Smith, A. Kirsch, S. Farquhar, Y. Gal, A. Foster, and T. Rainforth, “Prediction-oriented Bayesian active learning,” in Proceedings of the 26th International Conference on Artificial Intelligence and Statistics ,Proceedings of Machine Learning Research, vol. 206, 2023, pp. 7331–7348. 
+
+https://proceedings.mlr.press/v206/bickfordsmith23a.html 
+
+16 Detailed derivations 
+
+## Group-relative baselines and why local values help 
+
+Ignoring standard-deviation normalization, the GRPO group baseline for sample 
+
+i is Ri − ¯R. If ¯R includes Ri, the estimator is shrunk by a factor close to (1 −
+
+1/K ) in the simplest independent setting; a leave-one-out baseline removes this shrinkage. The larger issue is variance and credit assignment: the same scalar multiplies every score term on the trajectory. Tree-local values approximate 
+
+Q(h, a ) − V (h) at internal edges, reducing the chance that recovery actions inherit the sign of unrelated terminal events. 
+
+## Connection to mutual information 
+
+The action channel A → Y has utility information 
+
+I(A; Y | h) = H(Y | h) − Ea∼πh [H(Y | h, a )] .
+
+If Y | a is approximately Gaussian with common variance σ2 and nearby means 
+
+qa, then 
+
+I(A; Y | h) ≈ 12σ2 Var a∼πh [qa].
+
+The gradient version replaces qa with ψh(a)qa. Thus value dispersion is a small-noise approximation to reward information, while EPIG-grad is a small-noise approximation to gradient information. 
+
+## Occupancy correction 
+
+Tree expansion can overrepresent rare prefixes. If a tree allocates many leaves to a prefix reached by only one root chain, a naive tree advantage gives that prefix too much loss mass. Occupancy weighting by μh corrects this. In LLMs, exact occupancy is hard to estimate because token prefixes are rarely revisited exactly; practical estimators include root-chain visitation counts, depth discounting, or segment-level grouping. 
+
+# Experiment details 
+
+The control sweep spans thirteen Gym/MuJoCo environments at branch budget 8 with a 32-suffix-per-action reference; EPIG/value-information wins gradient-MSE in 9/13 (all nine dense continuous-control), recovering the reference direc-tion at cosine 0.998–1.000. The frozen GSM8K calibration uses Qwen3-8B over 64 prompts and 3 seeds against a 64-leaf reference. The single-turn math runs use Qwen-class models on GSM8K-hard and MATH-small. The classic-RL abla-tion comprises a 47-environment flat-GRPO baseline and a seven-environment stochastic-branching p-ablation (21 values × 3 seeds). The loss-mask fix de-scribed above and a k1 → k3 KL-estimator change were applied before the online multi-turn runs. 17 Recommended replication protocol for the online test 
+
+For independent replication of the online multi-turn result we recommend: methods flat GRPO, uniform turn tree, EPTree entropy, and EPIG-grad; a Wordle-tuned model with headroom; 16 leaves per prompt, K0 = 4 root chains, and a fixed token/env-step budget; at least three seeds over the full update budget; and metrics covering reward AUC versus environment interactions, win rate, invalid action rate, KL, entropy, gradient norm, and frozen calibration at checkpoints. 18

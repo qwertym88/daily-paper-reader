@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-18</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-19</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 18 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 8 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>5</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>13</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>6</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-18 21:31:51 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-19 22:03:34 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>2026-09-18日报：从18篇中筛出5篇精读、13篇速读，重点锁定人形机器人安全导航与屋顶施工自适应全身运动。</p>
-<p>两篇9.0分精读最值得看：用降阶模型学习安全人形导航，以及面向屋顶施工的坡度自适应全身运动；速读侧可关注控制-推理-传输-热力学桥接、结构化MDP决策边界几何和CPG强化学习步态-形态协同设计。</p>
-<p>普通读者建议先读人形机器人安全与运动两篇，再看速读中与自身场景最接近的一篇，抓住“如何安全适应复杂地形”这条主线。</p>
+<p>今日从8篇论文中精读2篇、速读6篇，主线集中在强化学习控制、安全导航与离线目标条件学习。</p>
+<p>最值得看的是两篇8.0分精读：用历史依赖策略类做LQR域随机化策略梯度，以及从降阶模型学习安全人形导航。</p>
+<p>普通读者可先读这两篇8分工作，再按兴趣看7分的严格Reach-Avoid-Stay控制障碍函数与6分的离线目标条件RL奖励刺激。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +73,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">5 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Learning Safe Humanoid Navigation from Reduced Order Models">Learning Safe Humanoid Navigation from Reduced Order Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning Slope-Adaptive Whole-Body Locomotion for Humanoid Robots in Roofing Construction">Learning Slope-Adaptive Whole-Body Locomotion for Humanoid Robots in Roofing Construction</span></li><li><span class="dpr-home-dashboard-paper-title" title="Rethinking Critic Learning in PPO: Understanding and Mitigating Value Flattening">Rethinking Critic Learning in PPO: Understanding and Mitigating Value Flattening</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Policy Gradient over History-Dependent Policy Classes for LQR with Domain Randomization">Policy Gradient over History-Dependent Policy Classes for LQR with Domain Randomization</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning Safe Humanoid Navigation from Reduced Order Models">Learning Safe Humanoid Navigation from Reduced Order Models</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>1</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -86,12 +86,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">13 篇</strong>
+    <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Bridging Control, Inference, Transport, and Thermodynamics: From Theory to Applications in Learning">Bridging Control, Inference, Transport, and Thermodynamics: From Theory to Applications in Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="A Geometric Theory of Decision Boundaries in Structured Markov Decision Processes">A Geometric Theory of Decision Boundaries in Structured Markov Decision Processes</span></li><li><span class="dpr-home-dashboard-paper-title" title="GLAMDRING: Gait Learning And Morphology co-Design via Reinforcement LearnING of CPGs">GLAMDRING: Gait Learning And Morphology co-Design via Reinforcement LearnING of CPGs</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Winning a Won Game: Strict Reach-Avoid-Stay Control Barrier Functions for High-Dimensional Black-Box Systems">Winning a Won Game: Strict Reach-Avoid-Stay Control Barrier Functions for High-Dimensional Black-Box Systems</span></li><li><span class="dpr-home-dashboard-paper-title" title="XPACE: Joint World and Action Modeling from Heterogeneous Experience">XPACE: Joint World and Action Modeling from Heterogeneous Experience</span></li><li><span class="dpr-home-dashboard-paper-title" title="Improving Offline Goal-Conditioned Reinforcement Learning via Selective Reward Stimulation">Improving Offline Goal-Conditioned Reinforcement Learning via Selective Reward Stimulation</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>8</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>4</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span></div>
 </section>
 </div>
 
