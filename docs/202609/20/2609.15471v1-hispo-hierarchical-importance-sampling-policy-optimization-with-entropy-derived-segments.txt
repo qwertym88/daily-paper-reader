@@ -1,0 +1,718 @@
+Title: HISPO: Hierarchical Importance-Sampling Policy Optimization with Entropy-Derived Segments
+
+URL Source: https://arxiv.org/pdf/2609.15471v1
+
+Published Time: Tue, 15 Sep 2026 02:26:10 GMT
+
+Number of Pages: 22
+
+Markdown Content:
+# HISPO: Hierarchical Importance-Sampling Policy Optimization with Entropy-Derived Segments 
+
+Quoc-Vinh Lai-Dang 
+
+Cho Chun Shik Graduate School of Mobility KAIST 
+
+ldqvinh@kaist.ac.kr 
+
+Hyo-Sang Shin ∗
+
+Cho Chun Shik Graduate School of Mobility KAIST 
+
+hyosangshin@kaist.ac.kr 
+
+## Abstract 
+
+Reinforcement learning with verifiable rewards (RLVR) has become a central approach for improving mathematical reasoning in language models, but long-form completions introduce a difficult credit-assignment problem: different parts of a solution trace may contribute unevenly to final correctness. Existing policy-optimization objectives for RLVR commonly apply importance-sampling correc-tion at either the token level (GRPO, DAPO) or the sequence level (GSPO), im-posing different granularities for assigning credit across a response. We introduce 
+
+Hierarchical Importance-Sampling Policy Optimization (HISPO ), a segment-level policy-optimization method that constructs rollout-time entropy-derived contigu-ous segments, assigns soft entropy-based saliency weights, and applies clipped importance-sampling correction at the segment granularity. This provides an in-termediate correction unit between token-level GRPO/DAPO and sequence-level GSPO. We evaluate HISPO by fine-tuning Qwen3-1.7B-Base on mathematical rea-soning tasks. Across six benchmarks, HISPO improves Pass@8 over the strongest baseline on all benchmarks and matches or exceeds the strongest baseline in Acc@8 on five of them. On AIME25, HISPO improves over GRPO by +3 .75 Acc@8 and +3 .78 Pass@8, and over GSPO by +2 .50 Acc@8 and +1 .27 Pass@8. These results suggest that segment-level correction is a promising granularity for RLVR in long-form mathematical reasoning. 
+
+## 1 Introduction 
+
+By 2026, frontier language models increasingly expose reasoning effort as an explicit inference-time capability. Systems such as GPT-5.5 reasoning models, Claude 4.x with adaptive or extended thinking, Gemini 3.1 Pro and Deep Think, Qwen3, and DeepSeek-R1 illustrate a broader shift toward spending more computation on difficult mathematical, scientific, coding, and agentic tasks (OpenAI, 2026; Anthropic, 2026; Google, 2026a,b; Yang et al., 2025; D. Guo et al., 2025). This trend makes reinforcement learning with verifiable rewards (RLVR) especially attractive for mathematical reasoning, since final answers can often be checked automatically. At the same time, long completions create a difficult credit-assignment problem: different tokens, steps, or reasoning regions may contribute unevenly to final correctness. Modern RLVR methods inherit this issue from PPO-style clipped policy optimization (Schulman et al., 2017). Token-level methods such as GRPO and DAPO provide fine-grained correction, but can be sensitive to noisy local ratios and length-dependent aggregation (Shao et al., 2024; Yu et al., 2025). Sequence-level methods such as GSPO improve stability by correcting the whole response, but may treat heterogeneous reasoning traces as a single update unit (Zheng et al., 2025). Recent work on length-unbiased sequence optimization further highlights that response length can interact nontrivially 
+
+> ∗Corresponding author. Preprint. arXiv:2609.15471v1 [cs.AI] 14 Sep 2026
+
+with sequence-level objectives (Liu et al., 2026). These limitations motivate an intermediate correction granularity. Several related directions also emphasize intermediate reasoning structure. Process-supervision methods use step-level signals, but often require intermediate labels or process reward models (Lightman et al., 2024; Wang et al., 2024). Concurrent work on SPO studies segment-level advantage estimation, while DHPO mixes token- and sequence-level importance ratios, including entropy-guided variants (Y. Guo et al., 2025; Min et al., 2026). Our approach differs by using entropy to form contiguous reasoning segments and applying clipped importance-sampling correction directly at the segment level. We introduce Hierarchical Importance-Sampling Policy Optimization (HISPO ), a segment-level policy-optimization objective for RLVR in long-form mathematical reasoning. HISPO partitions each response into entropy-derived contiguous segments, applies non-maximum suppression and segment-level weighting to construct stable correction units, and performs clipped importance-sampling correction at the segment granularity. This creates a middle ground between token-level GRPO/DAPO-style correction and sequence-level GSPO-style correction, without requiring step labels, a process reward model, a critic, or hybrid token/sequence mixing. We evaluate HISPO by fine-tuning Qwen3-1.7B-Base (Yang et al., 2025) with LoRA (Hu et al., 2022) and comparing against GRPO, DAPO, and GSPO in a mathematical RLVR platform (Sheng et al., 2025). In the selected-checkpoint evaluation across six mathematical reasoning benchmarks, HISPO improves pass rate (Pass@8) over the strongest baseline on all benchmarks and matches or exceeds the strongest baseline in accuracy (Acc@8) on five of six. Due to computational constraints, we use monitoring curves with 4 samples (Acc@4 and Pass@4) for checkpoint selection, diagnostics, and segment-boundary sensitivity analysis, showing that HISPO’s gains are most visible in multi-sample success rates. Our contributions are threefold. First, we propose entropy-based segment construction with non-maximum suppression and soft segment-level weighting, forming intermediate correction units without step-level supervision. Second, we formulate HISPO, a segment-level clipped importance-sampling objective for RLVR in long-form mathematical reasoning. Third, we provide a controlled comparison against token-level and sequence-level policy-optimization variants, together with moni-toring curves, training diagnostics, selected-checkpoint evaluation, and segment-boundary sensitivity analysis. 
+
+## 2 Preliminaries 
+
+We study RLVR for long-form mathematical reasoning. Given a prompt x, a policy πθ generates a response y = ( y1, . . . , y T ), with token probability πθ (yt | x, y <t ). A verifier provides a binary response-level reward R ∈ { 0, 1}, and policy-gradient methods update θ through score-function terms of the form ∇θ log πθ (yt | x, y <t ).For a response yi = ( yi, 1, . . . , y i,T i ) sampled from the behavior policy πθold , the token-level impor-tance ratio is 
+
+ρi,t (θ) = πθ (yi,t | x, y i,<t )
+
+πθold (yi,t | x, y i,<t ) . (1) Policy-optimization methods can then be compared by their advantage estimates, normalization schemes, and importance-correction granularities. 
+
+2.1 From PPO to GRPO 
+
+Proximal Policy Optimization (PPO) (Schulman et al., 2017) controls policy updates by clipping the importance ratio between the current and behavior policies. Omitting auxiliary KL terms for brevity, its clipped surrogate for a single response is 
+
+JPPO (θ) ≈ 1
+
+T
+
+> T
+
+X
+
+> t=1
+
+min 
+
+
+
+ρt(θ) ˆAt, clip( ρt(θ), 1 − ϵ, 1 + ϵ) ˆAt
+
+
+
+, (2) where ˆAt is typically estimated from a learned value function. In LLM RLVR, however, rewards are usually assigned to complete responses, making token-level value estimation costly and nontrivial. 2Group Relative Policy Optimization (GRPO) (Shao et al., 2024) removes the learned value model by sampling a group of responses {yj }Gj=1 for the same prompt and normalizing rewards within the group. For response yi, the group-relative advantage is 
+
+ˆAi = R(x, y i) − mean( {R(x, y j )}Gj=1 )std( {R(x, y j )}Gj=1 ) . (3) Omitting KL regularization for readability, the GRPO surrogate is 
+
+JGRPO (θ) ≈ 1
+
+G
+
+> G
+
+X
+
+> i=1
+
+1
+
+TiTiX
+
+> t=1
+
+min 
+
+
+
+ρi,t (θ) ˆAi, clip( ρi,t (θ), 1 − ϵ, 1 + ϵ) ˆAi
+
+
+
+. (4) For the active unclipped branch, the gradient contribution is 
+
+∇θ JGRPO (θ) ≈ 1
+
+G
+
+> G
+
+X
+
+> i=1
+
+ˆAi
+
+1
+
+TiTiX
+
+> t=1
+
+ρi,t (θ)∇θ log πθ (yi,t | x, y i,<t ). (5) Thus, PPO and GRPO share clipped token-level importance correction, but differ in the source of the advantage signal: PPO uses critic-based token advantages, whereas GRPO assigns each response a group-normalized outcome advantage. GRPO therefore avoids a separate value model while retaining token-level likelihood ratios and per-response length normalization. 
+
+2.2 Token-level policy-gradient loss in DAPO 
+
+Decouple Clip and Dynamic sAmpling Policy Optimization (DAPO) (Yu et al., 2025) highlights a reduction issue in GRPO’s per-response averaging: each response receives equal total weight, so tokens in longer responses receive smaller per-token weight. Its token-level policy-gradient loss instead normalizes by the total number of generated tokens while retaining the clipped token-level surrogate: 
+
+JDAPO (θ) ≈ 1
+
+PGj=1 TjGX
+
+> i=1
+> Ti
+
+X
+
+> t=1
+
+min 
+
+
+
+ρi,t (θ) ˆAi, clip( ρi,t (θ), 1 − ϵlow , 1 + ϵhigh ) ˆAi
+
+
+
+. (6) For the active unclipped branch, the corresponding gradient is 
+
+∇θ JDAPO (θ) ≈ 1
+
+PGj=1 TjGX
+
+> i=1
+
+ˆAiTiX
+
+> t=1
+
+ρi,t (θ)∇θ log πθ (yi,t | x, y i,<t ). (7) Compared with GRPO’s per-response normalization, DAPO gives longer-than-average responses more total gradient mass and shorter-than-average responses less. Thus, DAPO mitigates length dilution in the aggregation scheme, but its correction unit remains the individual token. Other DAPO contributions are not the focus of the granularity analysis considered here. 
+
+2.3 Sequence-level policy optimization in GSPO 
+
+Group Sequence Policy Optimization (GSPO) (Zheng et al., 2025) moves importance correction from tokens to the full response, motivated by the instability of token-wise ratios and clipping in long completions. It defines a sequence-level ratio as the geometric mean of token ratios, 
+
+si(θ) = 
+
+> Ti
+
+Y
+
+> t=1
+
+ρi,t (θ)
+
+!1/T i
+
+, (8) and applies clipping at the response level: 
+
+JGSPO (θ) ≈ 1
+
+G
+
+> G
+
+X
+
+> i=1
+
+min 
+
+
+
+si(θ) ˆAi, clip( si(θ), 1 − ϵ, 1 + ϵ) ˆAi
+
+
+
+. (9) 3For the active unclipped branch, the gradient becomes 
+
+∇θ JGSPO (θ) ≈ 1
+
+G
+
+> G
+
+X
+
+> i=1
+
+si(θ) ˆAi
+
+1
+
+TiTiX
+
+> t=1
+
+∇θ log πθ (yi,t | x, y i,<t ). (10) Thus, unlike GRPO and DAPO, which weight each token gradient by its own ρi,t (θ), GSPO assigns all tokens in a response the same sequence-level correction factor si(θ). This improves response-level stability but treats the entire reasoning trace as a single optimization unit, without distinguishing intermediate segments. 
+
+2.4 Motivation 
+
+The preceding objectives expose a correction-granularity tradeoff. PPO provides token-level clipping but requires a value model; GRPO removes the value model through group-relative advantages while retaining token-level ratios and per-response averaging; DAPO changes the normalization to reduce length dilution but still updates at the token level; and GSPO moves correction to the whole response, improving stability but treating the entire reasoning trace as one unit. Long-form reasoning responses often contain distinct contiguous phases, such as problem setup, derivation, revision, and answer formation. This motivates Hierarchical Importance-Sampling Policy 
+
+Optimization (HISPO ), which introduces segment-level correction as an intermediate granularity between token-level and sequence-level objectives. The next section defines the segment construction procedure and derives the corresponding HISPO objective and gradient structure. 
+
+## 3 Algorithm 
+
+3.1 Entropy-based segment detection and weight construction 
+
+We use token entropy as a detached uncertainty signal along each completion. For token position t in response yi, entropy is computed once at rollout time under the behavior policy: 
+
+Hi,t = − X
+
+> v∈V
+
+pi,t (v) log pi,t (v), pi,t (v) = sg[ πθold (v | x, y i,<t )] , (11) where V is the vocabulary and sg[ ·] denotes stop-gradient. The entropy trace, segment boundaries, and segment weights are therefore fixed during subsequent policy-optimization updates. To reduce local lexical noise, we smooth the trace with a forward exponential moving average (EMA), 
+
+˜Hi, 1 = Hi, 1, ˜Hi,t = αH i,t + (1 − α) ˜Hi,t −1, t = 2 , . . . , T i. (12) As a one-sided smoother, the EMA can slightly lag abrupt entropy changes, so we use ˜Hi as a coarse boundary signal rather than a token-exact semantic boundary estimate. Let qH ∈ [0 , 1] be the entropy percentile threshold and ∆ the NMS window. For each response, we define the response-local cutoff 
+
+τi,H = Quantile qH
+
+
+
+{ ˜Hi,t }Ti−1
+
+> t=2
+
+
+
+, (13) and collect high-entropy local maxima, 
+
+Ci =
+
+n
+
+t ∈ { 2, . . . , T i − 1} : ˜Hi,t ≥ τi,H , ˜Hi,t ≥ ˜Hi,t −1, ˜Hi,t > ˜Hi,t +1 
+
+o
+
+. (14) Internal boundaries are selected by token-order non-maximum suppression (NMS), 
+
+Bi = NMS ∆(Ci; ˜Hi), (15) Here NMS ∆ scans candidates from left to right, retains a candidate t only if ˜Hi,t attains the maximum in a centered ∆-token neighborhood, breaks ties by scan order, and suppresses later candidates within 
+
+∆ tokens of t. The hyperparameters (α, q H , ∆) control smoothing, percentile-based peak selection, and boundary spacing. Let the sorted selected boundaries and endpoints be 
+
+0 = bi, 0 < b i, 1 < · · · < b i,K i = Ti. (16) 4They define contiguous, non-overlapping segments 
+
+Si = {Si,k = {bi,k −1 + 1 , . . . , b i,k }} Ki
+
+> k=1
+
+. (17) If no internal boundary is selected, we set Ki = 1 and treat the full response as one segment. Finally, each segment receives a softmax-normalized entropy saliency weight: 
+
+¯Hi,k = 1
+
+|Si,k |
+
+X
+
+> t∈Si,k
+
+Hi,t , wi,k = exp( ¯Hi,k )
+
+PKi 
+
+> ℓ=1
+
+exp( ¯Hi,ℓ ) . (18) Thus, PKi 
+
+> k=1
+
+wi,k = 1 . This unit-temperature softmax softly distributes saliency mass across seg-ments: higher-entropy segments receive larger saliency mass, while all segments retain nonzero weight. Here |Si,k | denotes the length of segment Si,k .
+
+3.2 Hierarchical Importance-Sampling Policy Optimization 
+
+We propose Hierarchical Importance-Sampling Policy Optimization (HISPO ), which applies clipped importance correction at the segment rather than token or sequence level. For response yi, we first define the group-normalized response advantage 
+
+ˆAi = R(x, y i) − mean( {R(x, y j )}Gj=1 )std( {R(x, y j )}Gj=1 ) . (19) Each segment then receives a saliency-weighted advantage 
+
+ˆAi,k = wi,k 
+
+|Si,k | ˆAi, (20) where wi,k is the entropy-based segment weight from the previous Section 3.1 and |Si,k | is the segment length. For segment Si,k , HISPO defines the segment-level importance ratio as the geometric mean of token ratios within the segment: 
+
+μi,k (θ) = exp 
+
+ 1
+
+|Si,k |
+
+X
+
+> t∈Si,k
+
+log ρi,t (θ)
+
+ =
+
+ Y
+
+> t∈Si,k
+
+ρi,t (θ)
+
+ 
+
+> 1/|Si,k |
+
+. (21) The HISPO clipped surrogate is 
+
+JHISPO (θ) ≈ 1
+
+G
+
+> G
+
+X
+
+> i=1
+> Ki
+
+X
+
+> k=1
+
+|Si,k | min 
+
+
+
+μi,k (θ) ˆAi,k , clip( μi,k (θ), 1 − ϵ, 1 + ϵ) ˆAi,k 
+
+
+
+. (22) Equivalently, since |Si,k | ˆAi,k = wi,k ˆAi, HISPO assigns each response-level advantage across entropy-weighted segments while using μi,k (θ) as the clipped correction unit. This gives an interme-diate correction granularity between token-level GRPO/DAPO and sequence-level GSPO. 
+
+3.3 Gradient Analysis 
+
+We compare update coefficients under the active unclipped branch, without auxiliary KL terms, and with the shared group-relative advantage ˆAi. Segment boundaries and entropy-derived weights are fixed as described in Subsection 3.1. From the HISPO objective, the gradient contribution is 
+
+∇θ JHISPO (θ) ≈ 1
+
+G
+
+> G
+
+X
+
+> i=1
+> Ki
+
+X
+
+> k=1
+
+μi,k (θ) ˆAi
+
+wi,k 
+
+|Si,k |
+
+X
+
+> t∈Si,k
+
+∇θ log πθ (yi,t | x, y i,<t ), (23) where 
+
+μi,k (θ) = 
+
+ Y
+
+> t∈Si,k
+
+ρi,t (θ)
+
+ 
+
+> 1/|Si,k |
+
+. (24) 5Table 1: Token-gradient coefficients under a shared group-relative advantage. The comparison isolates correction granularity: GRPO and DAPO use token-level ratios, GSPO uses one sequence-level ratio, and HISPO uses entropy-weighted segment-level ratios.                      
+
+> Method Correction unit Normalization view Token-gradient coefficients GRPO token per response, then group ˆAiρi,t (θ)/(GT i)
+> DAPO token all valid response tokens ˆAiρi,t (θ)/PGjTj
+> GSPO sequence response-level correc-tion with token mean
+> ˆAi
+> QTi
+> t=1 ρi,t (θ)
+> 1/T i
+> /(GT i)
+> HISPO segment saliency segment mass, uniform token share
+> ˆAi
+> Q
+> t∈Si,k ρi,t (θ)
+> 1/|Si,k |
+> wi,k /(G|Si,k |)
+
+Thus, all tokens in a segment share the same correction ratio μi,k (θ), while the segment saliency mass wi,k ˆAi is distributed uniformly over the segment tokens. Table 1 summarizes the resulting token-gradient coefficients, up to common optimizer and batch-scale constants. For HISPO, the coefficient applies to tokens t ∈ Si,k .This comparison isolates the role of correction granularity. GRPO and DAPO use token-specific ratios, GSPO assigns one ratio to the full response, and HISPO assigns one ratio to each entropy-derived segment. 
+
+## 4 Experiments 
+
+We evaluate HISPO in mathematical RLVR. We first describe the shared training setup and evaluation protocol, then analyze validation curves, training diagnostics, selected-checkpoint performance, and hyperparameter sensitivity. 
+
+4.1 Experimental Settings 
+
+All experiments use Qwen3-1.7B-Base (Yang et al., 2025), a practical scale for controlled long-reasoning experiments under our compute budget. We train on the MATH dataset (Hendrycks et al., 2021), which contains 7,500 competition-style mathematical reasoning problems, and evaluate selected checkpoints on six benchmarks: MATH500, Minerva (Lewkowycz et al., 2022), AMC23, AIME24, AIME25, and OlympiadBench (He et al., 2024). We report accuracy (Acc@ k) and pass rate (Pass@ k); Acc@ k averages correctness over the k sampled responses, while Pass@ k computes a bootstrap estimate of best-of-k correctness for each problem and then averages these per-problem estimates. Formal definitions are given in Appendix A.2. We compare the correction granularities introduced in Sections 2 and 3: GRPO (Shao et al., 2024) and DAPO (Yu et al., 2025) as token-level methods, GSPO (Zheng et al., 2025) as a sequence-level method, and HISPO as the proposed segment-level method. All methods use the same verl -based platform (Sheng et al., 2025) and recipe family. To fit the available hardware budget, all runs use LoRA fine-tuning (Hu et al., 2022) with batch size of 32 and mini-batch size of 8. Implementation details are provided in the Appendix. Scaling to larger models, larger batches, longer schedules, and full fine-tuning remains future work. 
+
+4.2 Main Results and Analysis 
+
+For validation-curve monitoring, we generate four responses per problem and track Acc@4 and Pass@4 across training (Figures 1 and 2). In the displayed trajectories, HISPO shows broad improve-ments, ending at approximately 0.68 /0.78 Acc@4/Pass@4 on MATH500, 0.40 /0.54 on AMC23, 
+
+0.08 /0.13 on AIME25, and 0.31 /0.41 on OlympiadBench, matching or exceeding the strongest baseline on most of these benchmarks. The clearest gains appear on AMC23 and AIME25, where sev-eral baselines plateau or regress while HISPO continues to improve, suggesting better multi-sample success as well as higher average correctness. Minerva is the main exception: GRPO and GSPO retain a small Acc@4 advantage, although HISPO remains close in Pass@4. These monitoring trends motivate a shared checkpoint-selection protocol for the final comparison. 60.525 0.550 0.575 0.600 0.625 0.650 0.675 0.700                
+
+> Acc@4
+> MATH-500
+> 0.12 0.13 0.14 0.15 0.16 0.17 0.18 0.19 0.20
+> Minerva
+> 0.275 0.300 0.325 0.350 0.375 0.400 0.425 0.450
+> AMC23
+> 50 500 1000 1500 2000
+> Training steps
+> 0.00 0.02 0.04 0.06 0.08
+> Acc@4
+> AIME24
+> 50 500 1000 1500 2000
+> Training steps
+> 0.00 0.02 0.04 0.06 0.08 0.10
+> AIME25
+> 50 500 1000 1500 2000
+> Training steps
+> 0.22 0.24 0.26 0.28 0.30 0.32
+> OlympiadBench
+> GRPO DAPO GSPO HISPO
+
+Figure 1: Development checkpoint curves for Acc@4 on the six-benchmark validation suite. HISPO shows steady improvements on most benchmarks, with the clearest gains on AMC23 and AIME25. All curves are smoothed for visual clarity. 0.68 0.70 0.72 0.74 0.76 0.78 0.80                
+
+> Pass@4
+> MATH-500
+> 0.20 0.21 0.22 0.23 0.24 0.25 0.26
+> Minerva
+> 0.35 0.40 0.45 0.50 0.55 0.60
+> AMC23
+> 50 500 1000 1500 2000
+> Training steps
+> 0.00 0.02 0.04 0.06 0.08 0.10 0.12 0.14 0.16
+> Pass@4
+> AIME24
+> 50 500 1000 1500 2000
+> Training steps
+> 0.000 0.025 0.050 0.075 0.100 0.125 0.150 0.175 0.200
+> AIME25
+> 50 500 1000 1500 2000
+> Training steps
+> 0.32 0.34 0.36 0.38 0.40 0.42
+> OlympiadBench
+> GRPO DAPO GSPO HISPO
+
+Figure 2: Development checkpoint curves for Pass@4 on the six-benchmark validation suite. HISPO provides the most consistent multi-sample gains, especially on AMC23 and AIME25. All curves are smoothed for visual clarity. Figure 3 summarizes response length, length-clipping ratio, and entropy during training. HISPO follows a distinct regime: its mean response length rises from roughly 650 to above 1,100 tokens, with peaks near 1,600 , while the baselines mostly remain in the 600 –1000 range; its clipping ratio also spikes near 0.20 , indicating stronger length pressure. At the same time, HISPO maintains higher entropy than DAPO and remains comparable to or above GRPO and GSPO after the initial drop. These diagnostics contextualize the validation gains, but remain correlational: they do not by themselves prove that entropy-induced boundaries are semantic boundaries or that segmentation is the causal source of the improvements. 750 500 1000 1500 1990            
+
+> Training steps
+> 600 800 1000 1200 1400 1600
+> Mean response length (tokens)
+> Response length
+> 50 500 1000 1500 1990
+> Training steps
+> 0.00 0.05 0.10 0.15 0.20
+> Clip ratio
+> Length clip ratio
+> 50 500 1000 1500 1990
+> Training steps
+> 0.0 0.1 0.2 0.3 0.4
+> Entropy per token (nats)
+> Entropy
+> GRPO DAPO GSPO HISPO
+
+Figure 3: Training diagnostics for response length, length clipping, and entropy. HISPO produces longer, higher-entropy generations, indicating stronger length pressure and more sustained exploration during training. All curves are smoothed for visual clarity. Table 2: Selected-checkpoint top-1 @8 comparison on six benchmarks. Bold and underlined entries mark the best and second-best distinct values within each column, with ties all bolded. The final row reports HISPO minus the largest non-HISPO value in percentage points. HISPO improves Pass@8 on all six benchmarks and matches or exceeds the best Acc@8 baseline on five of six. 
+
+MATH500 Minerva AMC23 AIME24 AIME25 OlympiadBench Method Acc@8 Pass@8 Acc@8 Pass@8 Acc@8 Pass@8 Acc@8 Pass@8 Acc@8 Pass@8 Acc@8 Pass@8 GRPO 64.70 77.33 18.57 26.48 37.81 57.73 5.42 12.08 4.58 13.68 29.65 43.92 DAPO 64.75 76.71 17.28 26.32 34.69 53.37 2.50 7.77 5.00 13.61 29.15 44.59 GSPO 65.55 78.65 18.34 27.62 36.56 60.73 5.42 14.19 5.83 16.19 30.99 45.93 
+
+HISPO 68.00 81.25 17.51 29.11 40.00 64.42 5.42 16.09 8.33 17.46 31.49 46.72 
+
+HISPO ∆ +2.45 +2.60 -1.06 +1.49 +2.19 +3.69 +0.00 +1.90 +2.50 +1.27 +0.50 +0.79 
+
+For the main selected-checkpoint comparison, we select one checkpoint per method by macro-averaging Acc@4 across the six validation benchmarks, then evaluate the selected checkpoint with eight responses per problem on the same suite. Thus, Table 2 is a shared selected-checkpoint benchmark-suite comparison, not a fully held-out test estimate. Under this protocol, HISPO improves Pass@8 over the strongest non-HISPO baseline on all six benchmarks, with an average gain of +1 .96 
+
+points and the largest gains on AMC23 ( +3 .69 ), MATH500 ( +2 .60 ), and AIME24 ( +1 .90 ). For Acc@8, HISPO matches or exceeds the strongest non-HISPO baseline on five of six benchmarks, with Minerva the only negative case ( −1.06 ). These trends align with the monitoring curves and diagnostics, where HISPO’s longer, higher-entropy generations are associated with stronger multi-sample success. Appendix A.4 reports fresh HISPO–GSPO bootstrap diagnostics: macro Pass@8 point estimates remain positive, but intervals cross zero and Minerva/AIME24 show sampling sensitivity. 
+
+4.3 Hyperparameter Sensitivity Analysis 
+
+Table 3 evaluates HISPO’s sensitivity to the NMS window ( NMS ∆) used for entropy-based segment-boundary selection on development-level @4 metrics over MATH500, Minerva, and AMC23. The Average columns macro-average these three displayed benchmarks. NMS 64 is strongest overall, improving the best baseline Acc@4 average from 42 .05 (GRPO) to 43 .55 and the best baseline Pass@4 average from 52 .08 (GSPO) to 54 .89 . The largest gains appear on AMC23 ( 45 .00 /62 .01 ,or +3 .12 / + 4 .66 over the strongest baseline). It also improves MATH500 from 66 .33 /75 .33 
+
+to 67 .09 /77 .16 , while Minerva remains less uniform: NMS 32 obtains the best Acc@4 ( 18 .93 ), but NMS 64 obtains the best Pass@4 ( 25 .50 ). Compared with NMS 32 (42 .52 /51 .83 average) and 
+
+NMS 128 (41 .16 /50 .56 average), NMS 64 provides the best average among tested NMS windows, supporting it as the default configuration for the main selected-checkpoint experiments. 8Table 3: Development-level @4 sensitivity to the entropy-boundary NMS window ( NMS ∆). The Average columns macro-average the three displayed benchmarks: MATH500, Minerva, and AMC23. 
+
+Bold and underlined entries mark the best and second-best distinct values within each metric column, with ties all underlined where they are second-best. NMS 64 obtains the strongest average Acc@4 and Pass@4 among the tested windows.                                                     
+
+> MATH500 Minerva AMC23 Average Method Acc@4 Pass@4 Acc@4 Pass@4 Acc@4 Pass@4 Acc@4 Pass@4 GRPO 65.62 73.24 18.66 23.71 41.88 57.19 42.05 51.38 DAPO 65.52 75.14 17.74 23.79 40.00 51.78 41.09 50.24 GSPO 66.33 75.33 18.20 23.55 40.62 57.35 41.72 52.08 HISPO-NMS 32 65.50 74.77 18.93 24.96 43.12 55.76 42.52 51.83 HISPO-NMS 64 67.09 77.16 18.57 25.50 45.00 62.01 43.55 54.89
+> HISPO-NMS 128 62.35 72.04 18.01 23.45 43.12 56.19 41.16 50.56
+
+## 5 Limitations and Future Work 
+
+HISPO uses entropy-derived segments as intermediate units and entropy-softmax weights to allocate advantage mass, but our experiments evaluate HISPO as a combined method and do not establish the mechanism causally. The diagnostics are correlational: they do not prove that entropy boundaries are semantic reasoning units, that entropy-softmax weighting independently contributes to the gains, or that segmentation alone explains the improvements. Our evaluation is limited to mathematical RLVR with Qwen3-1.7B-Base and LoRA under compute constraints; since HISPO can increase response length and clipping pressure, its benefits should be weighed against token-budget and inference-cost constraints. Future work should test larger-scale and full-finetuning regimes, additional seeds, and checkpoint-selection protocols that separate model selection from final reporting. It should also isolate HISPO’s components by comparing entropy-based boundaries with fixed or random alternatives and entropy-softmax weights with uniform segment weights. Further theory, boundary diagnostics, and extensions beyond mathematical RLVR remain important directions. 
+
+## 6 Related Work 
+
+Policy-optimization granularity in RLVR. HISPO builds on clipped importance-ratio policy optimization from PPO (Schulman et al., 2017) and its recent adaptations to mathematical RLVR. GRPO replaces the learned value model with group-relative advantages (Shao et al., 2024), while DAPO retains token-level correction but revises the aggregation and normalization for long-CoT training (Yu et al., 2025). GSPO instead moves correction to the sequence level with a response-level importance ratio and clipping rule (Zheng et al., 2025). These methods expose a granularity tradeoff: token-level correction is fine-grained but noisy and length-sensitive, whereas sequence-level correction is more stable but coarse for heterogeneous reasoning traces. Recent work explores nearby design points: SPO studies segment-level advantage estimation (Y. Guo et al., 2025), DHPO mixes token- and sequence-level importance ratios (Min et al., 2026), and LUSPO corrects length bias in sequence-level optimization (Liu et al., 2026). HISPO differs by combining entropy-derived contiguous segmentation, segment-level geometric-mean importance correction, and entropy-softmax segment weighting inside a clipped RLVR objective; Appendix A.3 provides a compact comparison with the closest adjacent policy-optimization design points, including SPO, DHPO, and LUSPO. 
+
+Entropy and key-token signals in RLVR. RLVR is effective for long-form reasoning when final answers are verifiable, as illustrated by DeepSeek-R1 (D. Guo et al., 2025). Recent studies also show that entropy and uncertainty reveal important structure in reasoning updates. Wang et al. (2025) identify high-entropy minority tokens as reasoning forks, while Cheng et al. (2026) link high-entropy regions to pivotal tokens and reflective behaviors. Related entropy-mechanism work studies entropy collapse during RL (Cui et al., 2025), and RL-ZVP uses entropy-guided advantage shaping for zero-variance prompts (Le et al., 2026). HISPO differs by using entropy to form contiguous segment-level correction units, rather than only weighting, masking, or regularizing token-level updates. 97 Conclusion 
+
+Long-form mathematical RLVR poses a credit-assignment challenge because different parts of an extended reasoning trace may contribute unevenly to final correctness. We introduced HISPO , a segment-level policy-optimization objective that constructs entropy-derived contiguous segments and applies clipped importance-sampling correction at the segment granularity, providing an intermediate design point between token-level and sequence-level correction. In a shared mathematical reasoning evaluation with Qwen3-1.7B-Base, HISPO improves selected-checkpoint Pass@8 over the strongest baseline on all six benchmarks and matches or exceeds the strongest baseline in Acc@8 on five of six. Together with the validation curves, training diagnostics, and segment-boundary sensitivity analysis, these results suggest that segment-level correction is a promising granularity for RLVR in long-form reasoning, while further work is needed to validate the segmentation mechanism, scale the training regime, and extend the approach beyond verifiable mathematical rewards. 10 References 
+
+OpenAI. Introducing GPT-5.5. OpenAI Blog , 2026. https://openai.com/index/introducing-gpt-5-5/ .Anthropic. Building with extended thinking. Claude API Documentation , 2026. https://docs.anthropic. com/en/docs/build-with-claude/extended-thinking .Google. Gemini 3.1 Pro: A smarter model for your most complex tasks. Google Blog , 2026. https://blog. google/innovation-and-ai/models-and-research/gemini-models/gemini-3-1-pro/ .Google. Gemini 3 Deep Think: AI model update designed for science. Google Blog , 2026. https://blog. google/innovation-and-ai/models-and-research/gemini-models/gemini-3-deep-think/ .Schulman, J., Wolski, F., Dhariwal, P., Radford, A., and Klimov, O. Proximal policy optimization algorithms. 
+
+arXiv preprint arXiv:1707.06347 , 2017. https://arxiv.org/abs/1707.06347 .Shao, Z., Wang, P., Zhu, Q., Xu, R., Song, J., Bi, X., Zhang, H., Zhang, M., Li, Y. K., Wu, Y., and Guo, D. DeepSeekMath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 , 2024. https://arxiv.org/abs/2402.03300 .Yu, Q., Zhang, Z., Zhu, R., Yuan, Y., Zuo, X., Yue, Y., Dai, W., Fan, T., Liu, G., Liu, J., Liu, L., Liu, X., Lin, H., Lin, Z., Ma, B., Sheng, G., Tong, Y., Zhang, C., Zhang, M., Zhang, R., et al. DAPO: An open-source LLM reinforcement learning system at scale. In Advances in Neural Information Processing Systems , 2025. 
+
+https://openreview.net/forum?id=2a36EMSSTp .Zheng, C., Liu, S., Li, M., Chen, X.-H., Yu, B., Gao, C., Dang, K., Liu, Y., Men, R., Yang, A., Zhou, J., and Lin, J. Group Sequence Policy Optimization. arXiv preprint arXiv:2507.18071 , 2025. https://arxiv.org/ abs/2507.18071 .Yang, A., Li, A., Yang, B., Zhang, B., Hui, B., Zheng, B., Yu, B., Gao, C., Huang, C., Lv, C., et al. Qwen3 technical report. arXiv preprint arXiv:2505.09388 , 2025. https://arxiv.org/abs/2505.09388 .Guo, D., Yang, D., Zhang, H., Song, J., Wang, P., Zhu, Q., Xu, R., Zhang, R., Ma, S., Bi, X., et al. DeepSeek-R1 incentivizes reasoning in LLMs through reinforcement learning. Nature , 645:633–638, 2025. https: //doi.org/10.1038/s41586-025-09422-z .Wang, S., Yu, L., Gao, C., Zheng, C., Liu, S., Lu, R., Dang, K., Chen, X.-H., Yang, J., Zhang, Z., Liu, Y., Yang, A., Zhao, A., Yue, Y., Song, S., Yu, B., Huang, G., and Lin, J. Beyond the 80/20 rule: High-entropy minority tokens drive effective reinforcement learning for LLM reasoning. In Advances in Neural Information Processing Systems , 2025. https://openreview.net/forum?id=yfcpdY4gMP .Le, T.-L. V., Jeon, M., Vu, K., Lai, V. D., and Yang, E. No Prompt Left Behind: Exploiting zero-variance prompts in LLM reinforcement learning via entropy-guided advantage shaping. In The Fourteenth International Conference on Learning Representations , 2026. https://openreview.net/forum?id=kiXFIESZKv .He, C., Luo, R., Bai, Y., Hu, S., Thai, Z., Shen, J., Hu, J., Han, X., Huang, Y., Zhang, Y., Liu, J., Qi, L., Liu, Z., and Sun, M. OlympiadBench: A challenging benchmark for promoting AGI with olympiad-level bilingual multimodal scientific problems. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 3828–3850, 2024. https://aclanthology. org/2024.acl-long.211/ .Sheng, G., Zhang, C., Ye, Z., Wu, X., Zhang, W., Zhang, R., Peng, Y., Lin, H., and Wu, C. HybridFlow: A flexible and efficient RLHF framework. In Proceedings of the Twentieth European Conference on Computer Systems , pages 1279–1297. ACM, 2025. https://doi.org/10.1145/3689031.3696075 .Hu, E. J., Shen, Y., Wallis, P., Allen-Zhu, Z., Li, Y., Wang, S., Wang, L., and Chen, W. LoRA: Low-rank adaptation of large language models. In International Conference on Learning Representations , 2022. https: //openreview.net/forum?id=nZeVKeeFYf9 .Schulman, J. LoRA without regret. Thinking Machines Lab Blog , 2025. https://thinkingmachines.ai/ blog/lora/ .Lightman, H., Kosaraju, V., Burda, Y., Edwards, H., Baker, B., Lee, T., Leike, J., Schulman, J., Sutskever, I., and Cobbe, K. Let’s verify step by step. In International Conference on Learning Representations , 2024. 
+
+https://openreview.net/forum?id=v8L0pN6EOi .Wang, P., Li, L., Shao, Z., Xu, R., Dai, D., Li, Y., Chen, D., Wu, Y., and Sui, Z. Math-Shepherd: Verify and reinforce LLMs step-by-step without human annotations. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 9426–9439, 2024. https: //aclanthology.org/2024.acl-long.510/ .
+
+11 Guo, Y., Xu, L., Liu, J., Ye, D., and Qiu, S. Segment Policy Optimization: Effective segment-level credit assignment in RL for large language models. In Advances in Neural Information Processing Systems , 2025. 
+
+https://openreview.net/forum?id=9osvTOYbT4 .Min, Z., Liu, B., Wang, A., Zhang, L., Zeng, A., Zhang, H., and Su, J. Orchestrating tokens and sequences: Dynamic Hybrid Policy Optimization for RLVR. arXiv preprint arXiv:2601.05607 , 2026. https://arxiv. org/abs/2601.05607 .Hendrycks, D., Burns, C., Kadavath, S., Arora, A., Basart, S., Tang, E., Song, D., and Steinhardt, J. Measuring mathematical problem solving with the MATH dataset. In Proceedings of the Neural Information Process-ing Systems Track on Datasets and Benchmarks , 2021. https://datasets-benchmarks-proceedings. neurips.cc/paper/2021/hash/be83ab3ecd0db773eb2dc1b0a17836a1-Abstract-round2.html .Lewkowycz, A., Andreassen, A., Dohan, D., Dyer, E., Michalewski, H., Ramasesh, V., Slone, A., Anil, C., Schlag, I., Gutman-Solo, T., Wu, Y., Neyshabur, B., Gur-Ari, G., and Misra, V. Solving quantitative reasoning problems with language models. In Advances in Neural In-formation Processing Systems , 2022. https://papers.nips.cc/paper_files/paper/2022/hash/ 18abbeef8cfe9203fdf9053c9c4fe191-Abstract-Conference.html .Cheng, D., Huang, S., Zhu, X., Dai, B., Zhao, W. X., Zhang, Z., and Wei, F. Reasoning with exploration: An entropy perspective. In Proceedings of the AAAI Conference on Artificial Intelligence , 40(36):30377–30385, 2026. https://doi.org/10.1609/aaai.v40i36.40290 .Cui, G., Zhang, Y., Chen, J., Yuan, L., Wang, Z., Zuo, Y., Li, H., Fan, Y., Chen, H., Chen, W., Liu, Z., Peng, H., Bai, L., Ouyang, W., Cheng, Y., Zhou, B., and Ding, N. The entropy mechanism of reinforcement learning for reasoning language models. arXiv preprint arXiv:2505.22617 , 2025. https://arxiv.org/abs/2505. 22617 .Liu, F., Yin, Y., Shi, P., Yang, S., Zeng, Z., and Qiu, H. Length-Unbiased Sequence Policy Optimization: Revealing and controlling response length variation in RLVR. arXiv preprint arXiv:2602.05261 , 2026. 
+
+https://arxiv.org/abs/2602.05261 .
+
+12 Table 4: Shared training and evaluation hyperparameters.                 
+
+> Hyperparameter Value Train batch / mini-batch / micro-batch 32 / 8 / 2 Training samples per prompt 8Monitoring samples per prompt 4Prompt / response maximum length 512 / 4096 Optimizer AdamW Learning rate / warmup / scheduler 3×10 −6/ 0.05 / constant Train temperature / top-p/ top-k1.0 / 1.0 / −1
+> Validation temperature / top-p/ top-k1.0 / 0.7 / −1
+
+Table 5: Compute resources for the reported experiments.                      
+
+> Experiment group Number of runs Wall-clock time Total GPU-hours Baselines: GRPO, DAPO, GSPO 375–85 h 225–255 HISPO variants: NMS 32 ,NMS 64 ,NMS 128 385–100 h 255–300 Full six-benchmark checkpoint sweep 421 h 84 Selected-checkpoint (Acc@8, Pass@8) evaluation 45.5 h total 5.5 Total reported compute ––570–645
+
+## A Implementation Details 
+
+All methods use the same verl training platform and Qwen3-1.7B-Base (Yang et al., 2025). To fit the single-GPU hardware budget, we train with LoRA (Hu et al., 2022), following recent evidence that LoRA can be competitive in some RL post-training settings (Schulman, 2025). All runs use one RTX 5090 GPU with 32GB memory, LoRA rank r = 1 , LoRA scale α = 32 , and all linear modules as adaptation targets. During training, each prompt is sampled with eight responses. We monitor development performance every 50 steps with four samples per prompt. After 2,000 training steps, we sweep checkpoints on the six-benchmark suite, select one checkpoint per method by macro-averaging Acc@4 across benchmarks, and re-evaluate the selected checkpoint with eight samples per prompt on MATH500, Minerva, AMC23, AIME24, AIME25, and OlympiadBench. Shared hyperparameters are listed in Table 4. For HISPO, the default segment-detector settings are EMA smoothing α = 0 .1, NMS window ∆ = 64 , and entropy percentile threshold qH = 0 .60 . The implementation distributes segment saliency mass using a minimum segment-length floor Lmin = 16 , replacing |Si,k | by 
+
+max( |Si,k |, L min ) in the per-token mass denominator. 
+
+A.1 Compute Resources 
+
+All reported experiments use one RTX 5090 GPU with 32GB memory, so wall-clock hours equal GPU-hours. Table 5 summarizes training, checkpoint-sweep, and final-evaluation costs. The total reported compute is approximately 570–645 GPU-hours and excludes preliminary debugging runs. 
+
+A.2 Evaluation Metrics 
+
+For problem i and sampled response m ∈ { 1, . . . , k }, let si,m ∈ { 0, 1} denote verifier correctness. Acc@ k is the benchmark mean of per-problem sample correctness: 
+
+ˆa(k) 
+
+> i
+
+= 1
+
+k
+
+> k
+
+X
+
+> m=1
+
+si,m , Acc@ k = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+ˆa(k) 
+
+> i
+
+. (25) Pass@ k follows the evaluator’s best@k/mean reducer. For each problem, the evaluator draws B
+
+bootstrap resamples of size k from the k response scores and applies a maximum reducer. With 
+
+Ii,b,j ∼ Unif( {1, . . . , k }), we define 
+
+ˆp(k) 
+
+> i
+
+= 1
+
+B
+
+> B
+
+X
+
+> b=1
+
+max  
+
+> j=1 ,...,k
+
+si,I i,b,j , Pass@ k = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+ˆp(k) 
+
+> i
+
+. (26) We use B = 1000 and seed 42 . Thus, Pass@ k is the evaluator’s bootstrap estimate of best-of-k
+
+correctness, rather than the literal observed any-correct indicator. 13 Table 6: Closest policy-optimization design points for long-form RLVR. HISPO differs by combining entropy-derived contiguous segmentation, segment-level geometric-mean importance-ratio correction, and entropy-softmax saliency weighting inside a clipped RLVR objective.                            
+
+> Method Main granularity Main mechanism Relation to HISPO SPO (Y. Guo et al., 2025) segment advantage segment-level advantage estimation with Monte Carlo estimation Shares segment-level motivation, but focuses on advantage estimation rather than entropy-derived segment-level importance-ratio correction. DHPO (Min et al., 2026) hybrid token/sequence mixing token- and sequence-level importance ratios Blends token and sequence ratios, whereas HISPO defines contiguous segment-level correction units. LUSPO (Liu et al., 2026) sequence correction length-unbiased sequence-level op-timization Addresses response-length bias in sequence-level correction rather than segment-level correction within aresponse. HISPO (Ours) entropy-derived segment cor-rection entropy-derived contiguous seg-ments, geometric-mean segment ra-tios, and entropy-softmax saliency weights Applies clipped importance-sampling correction directly at the entropy-derived segment granularity.
+
+Table 7: Fresh selected-checkpoint HISPO–GSPO uncertainty diagnostic on the six-benchmark suite. Values are percentages; intervals are 95% paired bootstrap intervals over matched problem IDs.                                                                            
+
+> Benchmark Metric HISPO GSPO ∆95% CI MATH500 Acc@8 68.15 65.70 +2.45 [+0.70, +4.25] MATH500 Pass@8 81.38 78.50 +2.88 [+0.96, +4.93] Minerva Acc@8 16.59 18.80 -2.21 [-4.14, -0.41] Minerva Pass@8 27.30 27.58 -0.28 [-3.02, +2.53] AMC23 Acc@8 41.25 39.69 +1.56 [-6.56, +10.00] AMC23 Pass@8 66.95 63.47 +3.47 [-7.98, +15.55] AIME24 Acc@8 3.75 6.25 -2.50 [-6.67, +0.42] AIME24 Pass@8 10.94 14.28 -3.34 [-8.95, +0.13] AIME25 Acc@8 7.50 4.58 +2.92 [-0.42, +7.08] AIME25 Pass@8 19.26 12.80 +6.46 [-3.00, +16.72] OlympiadBench Acc@8 30.84 31.57 -0.72 [-2.45, +0.95] OlympiadBench Pass@8 45.24 46.56 -1.33 [-3.87, +1.24] Macro average Acc@8 28.01 27.76 +0.25 [-1.48, +2.01] Macro average Pass@8 41.85 40.53 +1.31 [-1.41, +4.15]
+
+A.3 Closest Method Comparison 
+
+Table 6 summarizes the closest adjacent policy-optimization design points and highlights HISPO’s specific combination of entropy-derived segmentation, segment-level importance-ratio correction, and entropy-softmax saliency weighting. 
+
+A.4 Selected-Checkpoint Uncertainty Diagnostics 
+
+As a sampling-variability diagnostic, we ran a fresh k = 8 evaluation of the selected HISPO and GSPO checkpoints on the six-benchmark suite. This diagnostic does not vary training seeds, checkpoint-selection rules, the benchmark problem sets themselves, or model initialization; it estimates only problem-level uncertainty for a fresh selected-checkpoint rerun. For each benchmark, we compute paired bootstrap intervals over matched problem IDs using the metrics from Appendix A.2. These intervals are diagnostic for the fresh HISPO–GSPO comparison, not confidence intervals for the exact sampled generations in Table 2. Table 7 gives positive macro point estimates for HISPO on both Acc@8 and Pass@8, but both macro intervals cross zero. MATH500 is the clearest positive case, with positive intervals for both metrics. Minerva and AIME24 are the main unstable cases, motivating a focused repeat diagnostic on these two benchmarks (Table 8). Table 8 shows that these small and difficult benchmarks are sensitive to sampled completions. Minerva remains slightly negative but no longer has a strictly negative Acc@8 interval, while AIME24 has positive point estimates, with a strictly positive Pass@8 interval. We therefore treat both reruns as diagnostics of sampling variability rather than definitive per-benchmark statistical confirmation. 14 Table 8: Focused repeat selected-checkpoint diagnostic on Minerva and AIME24. Values are percentages; intervals are 95% paired bootstrap intervals over matched problem IDs. 
+
+Benchmark Metric HISPO GSPO ∆ 95% CI Minerva Acc@8 17.14 18.11 -0.97 [-2.90, +0.92] Minerva Pass@8 28.09 28.83 -0.74 [-3.93, +2.42] AIME24 Acc@8 7.50 5.00 +2.50 [-0.42, +5.83] AIME24 Pass@8 21.28 12.32 +8.96 [+1.09, +18.80] Minerva+AIME24 macro Acc@8 12.32 11.55 +0.77 [-1.12, +2.64] Minerva+AIME24 macro Pass@8 24.68 20.58 +4.11 [-0.02, +9.05] 
+
+Table 9: Existing assets used in the experiments. 
+
+Asset and source Use License / terms Qwen3-1.7B-Base; https:// huggingface.co/Qwen/Qwen3-1. 7B-Base 
+
+Base policy model Apache 2.0 MATH-lighteval; https:// huggingface.co/datasets/ DigitalLearningGmbH/ MATH-lighteval 
+
+Training data MIT MATH500; https://huggingface.co/ datasets/HuggingFaceH4/MATH-500 
+
+Evaluation benchmark Source split is from OpenAI PRM800K / MATH splits, released under MIT AMC23; https://huggingface.co/ datasets/math-ai/amc23 
+
+Evaluation benchmark Copyrighted by the Mathematical Association of America / American Mathematics Competitions. Used only for evaluation; not redistributed Minerva; https://huggingface.co/ datasets/math-ai/minervamath 
+
+Evaluation benchmark Primarily sourced from MIT OpenCourseWare, whose default terms are CC BY-NC-SA 4.0. Used only for evaluation; not redistributed AIME24; https://huggingface.co/ datasets/HuggingFaceH4/aime_2024 
+
+Evaluation benchmark Copyrighted by the Mathematical Association of America. Used only for evaluation; not redis-tributed AIME25; https://huggingface.co/ datasets/math-ai/aime25 
+
+Evaluation benchmark Apache 2.0 on the Hugging Face dataset card OlympiadBench; https:// huggingface.co/datasets/math-ai/ olympiadbench 
+
+Evaluation benchmark Official OlympiadBench GitHub repository is MIT licensed. Used only for evaluation; not redis-tributed 
+
+verl ; https://github.com/ verl-project/verl 
+
+RL training platform Apache 2.0 Hugging Face Transformers; 
+
+https://github.com/huggingface/ transformers 
+
+Model implementation utili-ties Apache 2.0 Hugging Face PEFT; https://github. com/huggingface/peft 
+
+LoRA implementation utili-ties Apache 2.0 
+
+A.5 Existing Assets and Licenses 
+
+Table 9 lists the existing assets used in the experiments. We use these assets only for research training and evaluation, cite their original sources, and do not redistribute benchmark contents or model weights as part of this paper. 
+
+A.6 Societal Impact 
+
+HISPO may support beneficial applications such as STEM education, scientific problem solving, and coding assistance by improving mathematical RLVR post-training. It may also strengthen dual-use automation, produce more convincing but incorrect reasoning traces, or encourage over-reliance in high-stakes settings. We view HISPO as a research contribution to policy-optimization granularity rather than a deployment-ready system; use in consequential applications requires domain-specific evaluation and safeguards. 15 NeurIPS Paper Checklist 
+
+1. Claims 
+
+Question: Do the main claims made in the abstract and introduction accurately reflect the paper’s contributions and scope? Answer: [Yes] Justification: The abstract and introduction state HISPO’s segment-level clipped importance-sampling objective and scope. The main empirical claims are supported by Table 2 and caveated in Section 5. Guidelines: • The answer [N/A] means that the abstract and introduction do not include the claims made in the paper. • The abstract and/or introduction should clearly state the claims made, including the contributions made in the paper and important assumptions and limitations. A [No] or [N/A] answer to this question will not be perceived well by the reviewers. • The claims made should match theoretical and experimental results, and reflect how much the results can be expected to generalize to other settings. • It is fine to include aspirational goals as motivation as long as it is clear that these goals are not attained by the paper. 2. Limitations 
+
+Question: Does the paper discuss the limitations of the work performed by the authors? Answer: [Yes] Justification: Section 5 discusses causal uncertainty, limited scale, LoRA training, mathematical-RLVR scope, response length, clipping pressure, and future validation. Guidelines: • The answer [N/A] means that the paper has no limitation while the answer [No] means that the paper has limitations, but those are not discussed in the paper. • The authors are encouraged to create a separate “Limitations” section in their paper. • The paper should point out any strong assumptions and how robust the results are to violations of these assumptions (e.g., independence assumptions, noiseless settings, model well-specification, asymptotic approximations only holding locally). The authors should reflect on how these assumptions might be violated in practice and what the implications would be. • The authors should reflect on the scope of the claims made, e.g., if the approach was only tested on a few datasets or with a few runs. In general, empirical results often depend on implicit assumptions, which should be articulated. • The authors should reflect on the factors that influence the performance of the approach. For example, a facial recognition algorithm may perform poorly when image resolution is low or images are taken in low lighting. Or a speech-to-text system might not be used reliably to provide closed captions for online lectures because it fails to handle technical jargon. • The authors should discuss the computational efficiency of the proposed algorithms and how they scale with dataset size. • If applicable, the authors should discuss possible limitations of their approach to address problems of privacy and fairness. • While the authors might fear that complete honesty about limitations might be used by reviewers as grounds for rejection, a worse outcome might be that reviewers discover limitations that aren’t acknowledged in the paper. The authors should use their best judgment and recognize that individual actions in favor of transparency play an impor-tant role in developing norms that preserve the integrity of the community. Reviewers will be specifically instructed to not penalize honesty concerning limitations. 3. Theory assumptions and proofs 
+
+Question: For each theoretical result, does the paper provide the full set of assumptions and a complete (and correct) proof? 16 Answer: [N/A] Justification: The paper does not present formal theorems. It provides objective definitions and gradient decompositions under stated simplifying assumptions. Guidelines: • The answer [N/A] means that the paper does not include theoretical results. • All the theorems, formulas, and proofs in the paper should be numbered and cross-referenced. • All assumptions should be clearly stated or referenced in the statement of any theorems. • The proofs can either appear in the main paper or the supplemental material, but if they appear in the supplemental material, the authors are encouraged to provide a short proof sketch to provide intuition. • Inversely, any informal proof provided in the core of the paper should be complemented by formal proofs provided in appendix or supplemental material. • Theorems and Lemmas that the proof relies upon should be properly referenced. 4. Experimental result reproducibility 
+
+Question: Does the paper fully disclose all the information needed to reproduce the main ex-perimental results of the paper to the extent that it affects the main claims and/or conclusions of the paper (regardless of whether the code and data are provided or not)? Answer: [Yes] Justification: Section 4 and Appendix A specify the model, data, benchmarks, methods, checkpoint selection, evaluation protocol, implementation stack, LoRA settings, and hyper-parameters. Guidelines: • The answer [N/A] means that the paper does not include experiments. • If the paper includes experiments, a [No] answer to this question will not be perceived well by the reviewers: Making the paper reproducible is important, regardless of whether the code and data are provided or not. • If the contribution is a dataset and/or model, the authors should describe the steps taken to make their results reproducible or verifiable. • Depending on the contribution, reproducibility can be accomplished in various ways. For example, if the contribution is a novel architecture, describing the architecture fully might suffice, or if the contribution is a specific model and empirical evaluation, it may be necessary to either make it possible for others to replicate the model with the same dataset, or provide access to the model. In general. releasing code and data is often one good way to accomplish this, but reproducibility can also be provided via detailed instructions for how to replicate the results, access to a hosted model (e.g., in the case of a large language model), releasing of a model checkpoint, or other means that are appropriate to the research performed. • While NeurIPS does not require releasing code, the conference does require all submis-sions to provide some reasonable avenue for reproducibility, which may depend on the nature of the contribution. For example (a) If the contribution is primarily a new algorithm, the paper should make it clear how to reproduce that algorithm. (b) If the contribution is primarily a new model architecture, the paper should describe the architecture clearly and fully. (c) If the contribution is a new model (e.g., a large language model), then there should either be a way to access this model for reproducing the results or a way to reproduce the model (e.g., with an open-source dataset or instructions for how to construct the dataset). (d) We recognize that reproducibility may be tricky in some cases, in which case authors are welcome to describe the particular way they provide for reproducibility. In the case of closed-source models, it may be that access to the model is limited in some way (e.g., to registered users), but it should be possible for other researchers to have some path to reproducing or verifying the results. 17 5. Open access to data and code 
+
+Question: Does the paper provide open access to the data and code, with sufficient instruc-tions to faithfully reproduce the main experimental results, as described in supplemental material? Answer: [No] Justification: The submission includes an anonymized partial supplement with HISPO loss excerpts, configuration wrappers, selected evaluation/recompute scripts, result CSVs, figure assets, checksums, and provenance notes. It does not release full checkpoints, raw logs, full datasets, or a complete standalone reproduction package. Guidelines: • The answer [N/A] means that paper does not include experiments requiring code. • Please see the NeurIPS code and data submission guidelines ( https://neurips.cc/ public/guides/CodeSubmissionPolicy ) for more details. • While we encourage the release of code and data, we understand that this might not be possible, so [No] is an acceptable answer. Papers cannot be rejected simply for not including code, unless this is central to the contribution (e.g., for a new open-source benchmark). • The instructions should contain the exact command and environment needed to run to reproduce the results. See the NeurIPS code and data submission guidelines ( https: //neurips.cc/public/guides/CodeSubmissionPolicy ) for more details. • The authors should provide instructions on data access and preparation, including how to access the raw data, preprocessed data, intermediate data, and generated data, etc. • The authors should provide scripts to reproduce all experimental results for the new proposed method and baselines. If only a subset of experiments are reproducible, they should state which ones are omitted from the script and why. • At submission time, to preserve anonymity, the authors should release anonymized versions (if applicable). • Providing as much information as possible in supplemental material (appended to the paper) is recommended, but including URLs to data and code is permitted. 6. Experimental setting/details 
+
+Question: Does the paper specify all the training and test details (e.g., data splits, hyperpa-rameters, how they were chosen, type of optimizer) necessary to understand the results? Answer: [Yes] Justification: Section 4 and Appendix A specify the training setup, evaluation suite, metrics, compared methods, hyperparameters, decoding settings, and HISPO-specific parameters. Guidelines: • The answer [N/A] means that the paper does not include experiments. • The experimental setting should be presented in the core of the paper to a level of detail that is necessary to appreciate the results and make sense of them. • The full details can be provided either with the code, in appendix, or as supplemental material. 7. Experiment statistical significance 
+
+Question: Does the paper report error bars suitably and correctly defined or other appropriate information about the statistical significance of the experiments? Answer: [Yes] Justification: Appendix A.4 reports paired bootstrap uncertainty diagnostics for fresh selected-checkpoint HISPO–GSPO evaluations. These intervals capture problem-level sampling variability, but not training-seed variance or checkpoint-selection uncertainty. Guidelines: • The answer [N/A] means that the paper does not include experiments. 18 • The authors should answer [Yes] if the results are accompanied by error bars, confidence intervals, or statistical significance tests, at least for the experiments that support the main claims of the paper. • The factors of variability that the error bars are capturing should be clearly stated (for example, train/test split, initialization, random drawing of some parameter, or overall run with given experimental conditions). • The method for calculating the error bars should be explained (closed form formula, call to a library function, bootstrap, etc.) • The assumptions made should be given (e.g., Normally distributed errors). • It should be clear whether the error bar is the standard deviation or the standard error of the mean. • It is OK to report 1-sigma error bars, but one should state it. The authors should preferably report a 2-sigma error bar than state that they have a 96% CI, if the hypothesis of Normality of errors is not verified. • For asymmetric distributions, the authors should be careful not to show in tables or figures symmetric error bars that would yield results that are out of range (e.g., negative error rates). • If error bars are reported in tables or plots, the authors should explain in the text how they were calculated and reference the corresponding figures or tables in the text. 8. Experiments compute resources 
+
+Question: For each experiment, does the paper provide sufficient information on the com-puter resources (type of compute workers, memory, time of execution) needed to reproduce the experiments? Answer: [Yes] Justification: Appendix A.1 reports GPU type and memory, wall-clock training/evaluation costs, checkpoint-sweep costs, total GPU-hours, and exclusion of preliminary debugging runs. Guidelines: • The answer [N/A] means that the paper does not include experiments. • The paper should indicate the type of compute workers CPU or GPU, internal cluster, or cloud provider, including relevant memory and storage. • The paper should provide the amount of compute required for each of the individual experimental runs as well as estimate the total compute. • The paper should disclose whether the full research project required more compute than the experiments reported in the paper (e.g., preliminary or failed experiments that didn’t make it into the paper). 9. Code of ethics 
+
+Question: Does the research conducted in the paper conform, in every respect, with the NeurIPS Code of Ethics https://neurips.cc/public/EthicsGuidelines ?Answer: [Yes] Justification: The work studies algorithmic RLVR optimization using public models and benchmarks, without private data, human-subject research, crowdsourcing, surveillance, or biometric data. Guidelines: • The answer [N/A] means that the authors have not reviewed the NeurIPS Code of Ethics. • If the authors answer [No], they should explain the special circumstances that require a deviation from the Code of Ethics. • The authors should make sure to preserve anonymity (e.g., if there is a special consid-eration due to laws or regulations in their jurisdiction). 10. Broader impacts 
+
+Question: Does the paper discuss both potential positive societal impacts and negative societal impacts of the work performed? 19 Answer: [Yes] Justification: Appendix A.6 discusses potential benefits for STEM, science, and coding, as well as risks from dual-use automation, incorrect reasoning traces, and over-reliance. Guidelines: • The answer [N/A] means that there is no societal impact of the work performed. • If the authors answer [N/A] or [No], they should explain why their work has no societal impact or why the paper does not address societal impact. • Examples of negative societal impacts include potential malicious or unintended uses (e.g., disinformation, generating fake profiles, surveillance), fairness considerations (e.g., deployment of technologies that could make decisions that unfairly impact specific groups), privacy considerations, and security considerations. • The conference expects that many papers will be foundational research and not tied to particular applications, let alone deployments. However, if there is a direct path to any negative applications, the authors should point it out. For example, it is legitimate to point out that an improvement in the quality of generative models could be used to generate Deepfakes for disinformation. On the other hand, it is not needed to point out that a generic algorithm for optimizing neural networks could enable people to train models that generate Deepfakes faster. • The authors should consider possible harms that could arise when the technology is being used as intended and functioning correctly, harms that could arise when the technology is being used as intended but gives incorrect results, and harms following from (intentional or unintentional) misuse of the technology. • If there are negative societal impacts, the authors could also discuss possible mitigation strategies (e.g., gated release of models, providing defenses in addition to attacks, mechanisms for monitoring misuse, mechanisms to monitor how a system learns from feedback over time, improving the efficiency and accessibility of ML). 11. Safeguards 
+
+Question: Does the paper describe safeguards that have been put in place for responsible release of data or models that have a high risk for misuse (e.g., pre-trained language models, image generators, or scraped datasets)? Answer: [N/A] Justification: The paper does not release a new pretrained model, high-risk dataset, or deployed system. Guidelines: • The answer [N/A] means that the paper poses no such risks. • Released models that have a high risk for misuse or dual-use should be released with necessary safeguards to allow for controlled use of the model, for example by requiring that users adhere to usage guidelines or restrictions to access the model or implementing safety filters. • Datasets that have been scraped from the Internet could pose safety risks. The authors should describe how they avoided releasing unsafe images. • We recognize that providing effective safeguards is challenging, and many papers do not require this, but we encourage authors to take this into account and make a best faith effort. 12. Licenses for existing assets 
+
+Question: Are the creators or original owners of assets (e.g., code, data, models), used in the paper, properly credited and are the license and terms of use explicitly mentioned and properly respected? Answer: [Yes] Justification: Appendix A.5 lists existing models, datasets, benchmarks, and software assets, including sources, uses, licenses, or source terms. Guidelines: • The answer [N/A] means that the paper does not use existing assets. 20 • The authors should cite the original paper that produced the code package or dataset. • The authors should state which version of the asset is used and, if possible, include a URL. • The name of the license (e.g., CC-BY 4.0) should be included for each asset. • For scraped data from a particular source (e.g., website), the copyright and terms of service of that source should be provided. • If assets are released, the license, copyright information, and terms of use in the package should be provided. For popular datasets, paperswithcode.com/datasets 
+
+has curated licenses for some datasets. Their licensing guide can help determine the license of a dataset. • For existing datasets that are re-packaged, both the original license and the license of the derived asset (if it has changed) should be provided. • If this information is not available online, the authors are encouraged to reach out to the asset’s creators. 13. New assets 
+
+Question: Are new assets introduced in the paper well documented and is the documentation provided alongside the assets? Answer: [Yes] Justification: The submission includes an anonymized partial supplement with HISPO code excerpts, configs, scripts, result CSVs, figure assets, README, requirements, checksums, and provenance notes. It is documented as a partial review artifact rather than a full standalone release. Guidelines: • The answer [N/A] means that the paper does not release new assets. • Researchers should communicate the details of the dataset/code/model as part of their submissions via structured templates. This includes details about training, license, limitations, etc. • The paper should discuss whether and how consent was obtained from people whose asset is used. • At submission time, remember to anonymize your assets (if applicable). You can either create an anonymized URL or include an anonymized zip file. 14. Crowdsourcing and research with human subjects 
+
+Question: For crowdsourcing experiments and research with human subjects, does the paper include the full text of instructions given to participants and screenshots, if applicable, as well as details about compensation (if any)? Answer: [N/A] Justification: The paper does not involve crowdsourcing, human-subject experiments, user studies, or new human annotations. Guidelines: • The answer [N/A] means that the paper does not involve crowdsourcing nor research with human subjects. • Including this information in the supplemental material is fine, but if the main contribu-tion of the paper involves human subjects, then as much detail as possible should be included in the main paper. • According to the NeurIPS Code of Ethics, workers involved in data collection, curation, or other labor should be paid at least the minimum wage in the country of the data collector. 15. Institutional review board (IRB) approvals or equivalent for research with human subjects 
+
+Question: Does the paper describe potential risks incurred by study participants, whether such risks were disclosed to the subjects, and whether Institutional Review Board (IRB) approvals (or an equivalent approval/review based on the requirements of your country or institution) were obtained? 21 Answer: [N/A] Justification: The paper does not involve human-subject or crowdsourcing research, so IRB or equivalent approval is not applicable. Guidelines: • The answer [N/A] means that the paper does not involve crowdsourcing nor research with human subjects. • Depending on the country in which research is conducted, IRB approval (or equivalent) may be required for any human subjects research. If you obtained IRB approval, you should clearly state this in the paper. • We recognize that the procedures for this may vary significantly between institutions and locations, and we expect authors to adhere to the NeurIPS Code of Ethics and the guidelines for their institution. • For initial submissions, do not include any information that would break anonymity (if applicable), such as the institution conducting the review. 16. Declaration of LLM usage 
+
+Question: Does the paper describe the usage of LLMs if it is an important, original, or non-standard component of the core methods in this research? Note that if the LLM is used only for writing, editing, or formatting purposes and does not impact the core methodology, scientific rigor, or originality of the research, declaration is not required. Answer: [Yes] Justification: The core experiments fine-tune and evaluate Qwen3-1.7B-Base, as described in Section 4 and Appendix A. No external LLM is used for labeling, evaluation, or as a non-standard component of the method. Guidelines: • The answer [N/A] means that the core method development in this research does not involve LLMs as any important, original, or non-standard components. • Please refer to our LLM policy in the NeurIPS handbook for what should or should not be described. 22

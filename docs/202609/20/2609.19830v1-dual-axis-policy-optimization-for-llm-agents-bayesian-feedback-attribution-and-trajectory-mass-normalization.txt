@@ -1,0 +1,719 @@
+Title: Dual-Axis Policy Optimization for LLM Agents: Bayesian Feedback Attribution and Trajectory Mass Normalization
+
+URL Source: https://arxiv.org/pdf/2609.19830v1
+
+Published Time: Fri, 18 Sep 2026 00:45:58 GMT
+
+Number of Pages: 19
+
+Markdown Content:
+# Dual-Axis Policy Optimization for LLM Agents: Bayesian Feedback Attribution and Trajectory Mass Normalization 
+
+Yingxuan Zhuang 1,∗ Binhe Yu 1,∗ Jingxiao Yang 1,∗ Ruopei Sun 2,∗
+
+Ziting li 3 Cheng Tan 1 Xuhong Zhang 1 Jianwei Yin 1
+
+Jintao Chen 11Zhejiang University 
+
+2University of Science and Technology of China 
+
+3University of New South Wales 
+
+4Shanghai Artificial Intelligence Laboratory 
+
+∗Equal contribution September 18, 2026 
+
+Abstract 
+
+Reinforcement learning for LLM agents involves two distinct optimization di-mensions: how environment feedback is exploited within a trajectory, and how complete trajectories are aggregated across a batch. We formulate these dimen-sions as Intra-Trajectory Feedback Attribution and Inter-Trajectory Objec-tive Aggregation , and introduce BATON (Bayesian Attribution and Trajectory 
+
+Objective Normalization), a dual-axis policy optimization framework. BATON instantiates the first axis with Bayesian Feedback Attribution, which constructs a feedback-conditioned posterior over sampled actions, and the second with Trajec-tory Mass Normalization (TMN), which assigns equal optimization mass to com-plete trajectories. Experiments with GRPO and GiGPO on ALFWorld, WebShop, and SearchQA show that both axes provide independent gains and that their combi-nation consistently achieves the strongest overall performance across model scales. 
+
+## 1 Introduction 
+
+Reinforcement learning is increasingly used to train LLM agents that reason, call tools, and act through multi-turn interaction rather than produce a single response. Prompted and tool-augmented agents already operate in embodied, web, software, and conversa-tional environments (Yao et al., 2023; Schick et al., 2023; Shridhar et al., 2021; Yao et al., 2022; Wang et al., 2022; Yang et al., 2024), while recent benchmarks expose increasingly long and heterogeneous interaction trajectories (Liu et al., 2023; Ma et al., 2024; Zhou et al., 2023b; Deng et al., 2023; Drouin et al., 2024; L` u et al., 2024; Yao 1arXiv:2609.19830v1 [cs.AI] 17 Sep 2026 et al., 2024). Beyond prompting and supervised trajectory tuning (Zeng et al., 2023), recent work increasingly optimizes agent policies directly with reinforcement learning (Qi et al., 2024; Wang et al., 2025; Feng et al., 2025; Zeng et al., 2025a; Luo et al., 2025). Policy optimization for LLMs has rapidly evolved from PPO-based RLHF (Schul-man et al., 2017; Ouyang et al., 2022) toward critic-free and group-based objectives such as RLOO and GRPO (Ahmadian et al., 2024; Shao et al., 2024), together with re-finements to clipping, reduction, and sequence-level optimization (Yu et al., 2025; Liu et al., 2025; Hu, 2025; Zheng et al., 2025a). In multi-turn agents, however, optimiza-tion acts on structured trajectories in which each action is followed by an environment observation. This exposes two conceptually distinct questions: how observed feedback should affect learning signals within a trajectory, and how complete trajectories should contribute to the objective across a batch. We call these dimensions Intra-Trajectory Feedback Attribution and Inter-Trajectory Objective Aggregation .This distinction becomes especially visible in variable-length interaction. As shown in Figure 1, unsuccessful trajectories are often substantially longer than successful ones. Inspection of prolonged failures reveals repeated ineffective actions, misread state changes, and actions taken before required constraints are satisfied—behaviors consistent with insufficient exploitation of environment feedback. Meanwhile, global valid-token averaging creates a separate optimization effect: trajectories containing more valid policy tokens receive proportionally larger scalar mass. In our training data, the longest 25% of trajectories account for 60.3% of the aggregation mass in ALF-World and 42.2% in WebShop. Thus, prolonged failures expose two distinct learning challenges: feedback may be insufficiently exploited locally, while long trajectories may simultaneously dominate aggregation globally. The measured aggregation imbal-ance does not by itself establish the behavioral cause of failure; it motivates treating the two dimensions separately. We introduce BATON (Bayesian Attribution and Trajectory Objective Normalization), a dual-axis policy optimization framework. For Intra-Trajectory Feedback Attribution, BATON uses Bayesian Feedback Attribution. Unlike verbal reflection or generic self-correction (Shinn et al., 2023; Madaan et al., 2023; Gou et al., 2024; Zhou et al., 2023a; Wang et al., 2023), it compares actions sampled under the same pre-action context by combining their empirical frequencies with the likelihood of the observed next envi-ronment response. The resulting feedback-conditioned posterior determines a normal-ized attribution weight that reallocates the host learner’s policy signal across decisions within each trajectory; we further show that its expected attribution gain is governed by the distinguishability of action-conditioned feedback distributions. For Inter-Trajectory Objective Aggregation, Trajectory Mass Normalization (TMN) averages valid learning terms within each complete trajectory before averaging trajectories, replacing token-proportional outer mass with a uniform 1 /B share. Both components leave the host learner’s reward, advantage estimator, clipping rule, and rollout procedure unchanged. We evaluate BATON with GRPO and GiGPO on ALFWorld, WebShop, and search-augmented question answering, where multi-turn search policies have recently been optimized with outcome- and step-level reinforcement learning (Jin et al., 2025; Sun et al., 2025; Zheng et al., 2025b). Across model scales, both axes yield independent gains and their combination is consistently strongest. Improvements also persist with 2Loss Pool  
+
+> Gradient share (token -weighted)
+> 15% 85% failed
+> Every step contributes one unit of mass
+
+Standard Flat Aggregation 
+
+> LENGTH BIAS
+> Is flat aggregation making me learn
+> disproportionately from my mistakes?
+
+Success trajectory 
+
+Failed trajectory Figure 1: Motivation of BATON. Flat token-level aggregation gives longer trajectories disproportionate optimization mass, motivating separate treatment of feedback attribu-tion and trajectory aggregation. GiGPO, which already provides finer-grained within-trajectory credit assignment, and are accompanied by shorter evaluation trajectories and fewer generated policy tokens. 
+
+## 2 Preliminaries 
+
+Problem setup. We consider a language-model agent interacting with an environ-ment to complete multi-step tasks. At decision step t, the agent conditions on the inter-action history ht = ( o0, a0, . . . , ot ) and generates an action at ∼ πθ (· | ht ), after which the environment returns the next observation ot+1. A complete trajectory τi contains Ti
+
+decision steps and receives a task return Ri. Because each textual action may contain multiple policy tokens, we let ni,t denote the number of valid policy tokens at step t and 
+
+Ni = ∑Ti 
+
+> t=1
+
+ni,t the total number of valid policy tokens in trajectory τi. We optimize over a batch of B complete trajectories. 
+
+Group-based policy optimization. Recent agent RL methods such as GRPO and GiGPO optimize groups of sampled trajectories without requiring a separate value model. For GRPO, each trajectory τi is assigned a group-relative advantage ˆ Ai based on the returns of sibling rollouts. Let ri,t,k(θ ) = πθ (yi,t,k | hi,t,k)/πθold (yi,t,k | hi,t,k) de-note the likelihood ratio of the k-th valid policy token. Under global valid-policy-token averaging, the policy objective is 
+
+LGRPO (θ ) = − 1
+
+S
+
+> B
+
+## ∑
+
+> i=1
+> Ti
+
+## ∑
+
+> t=1
+> ni,t
+
+## ∑
+
+> k=1
+
+min ri,t,k(θ ) ˆAi, clip  ri,t,k(θ ), 1 − ε, 1 + ε ˆAi
+
+ , (1) where S = ∑Bi=1 Ni. We omit separately reduced regularization terms for clarity. 3BATON: Dual-Axis Policy Optimization 
+
+Interaction & Rollouts  Intra-Trajectory Feedback Attribution  Inter-Trajectory Objective Aggregation 
+
+Environment 
+
+LLM Agent 
+
+Action  Observation 
+
+Sampled trajectories 
+
+τ1
+
+R1
+
+τ2
+
+R2
+
+τ3
+
+R3
+
+(h, a, o′) 
+
+> Observed action–feedback segment
+
+Policy Learning 
+
+GRPO / GiGPO 
+
+Sampled trajectories + rewards  Base policy loss 
+
+ℓ𝒜 
+
+Bayesian Feedback Attribution 
+
+Candidate Actions  
+
+> Visited context h
+> Action Prior
+> ρ0(a | h)
+
+Feedback Likelihood   
+
+> Observed Feedback o′
+> ෤𝑎
+> 𝑎 𝑓 𝜃 𝑜𝑙𝑑 (𝑜 ′| ℎ, 𝑎)
+> Same observed feedback
+
+Action Posterior 
+
+> Executed action a
+> prior
+
+Attribution Weight   
+
+> Within-traj. allocation
+> 𝑒 = 𝜌 𝜃 𝑜𝑙𝑑 (𝑎
+
+|
+
+h, o ′)𝜌 0 𝑎 ℎ) 
+
+Trajectory-wise Local Losses 
+
+Policy Losses  Attribution Weights  
+
+> Valid policy tokens Decision-level weights
+
+τ1
+
+τ2
+
+τ3
+
+Flat Aggregation 
+
+qi 
+
+> flat
+
+= Ni
+
+∑j Nj   
+
+> Nᵢ: valid policy tokens τ1τ2τ3
+
+Trajectory Mass Normalization 
+
+BFA-weighted policy term  Mass conservation 
+
+തℓ𝑖 𝐴,𝐵𝐹𝐴 = Σ𝑡,𝑘 𝜔 𝑖,𝑡 ℓ𝑖,𝑡,𝑘 𝐴 
+
+𝑁 𝑖  
+
+> Nᵢ valid policy tokens Fixed within-trajectory mass
+> Separate within-trajectory weighting
+> from across-trajectory averaging
+
+Within-Trajectory 
+
+Mean 
+
+Across-Trajectory 
+
+Mean 
+
+> Equal Trajectory Mass
+
+qi 
+
+> TMN
+
+= 1
+
+B
+
+> B complete trajectories
+
+BATON Objective 
+
+ℒBATON (𝜃) = 1𝐵 ෍ 
+
+> 𝑖=1 𝐵
+
+1𝑁 𝑖 
+
+෍
+
+> 𝑡=1 𝑇 𝑖
+
+෍
+
+> 𝑘=1 𝑛 𝑖,𝑡
+
+𝑠𝑔 𝜔 𝑖,𝑡 ℓ 𝑖,𝑡,𝑘 
+
+𝒜 (𝜃) 
+
+Update Policy 
+
+> 𝜔 ∝ 𝑒 1/𝐿
+
+𝜌 𝜃 𝑜𝑙𝑑 𝑎 ℎ, 𝑜′) ∝ 𝜌 0 𝑎 ℎ)𝑓 𝜃 𝑜𝑙𝑑 (𝑜 ′| ℎ, 𝑎) 
+
+1𝑁 𝑖 
+
+Σ𝑡 𝑛 𝑖,𝑡 𝜔 𝑖,𝑡 = 1 
+
+തℓ1𝐴,𝐵𝐹𝐴 
+
+തℓ2𝐴,𝐵𝐹𝐴 
+
+തℓ3𝐴,𝐵𝐹𝐴   
+
+> 𝑎 ෤𝑎
+> 𝑎 ෤𝑎
+
+Figure 2: Overview of BATON. Bayesian Feedback Attribution evaluates feedback compatibility between visited decisions and observed environment responses, produc-ing normalized stop-gradient weights within trajectories. Trajectory Mass Normaliza-tion controls the outer aggregation across complete trajectories. 
+
+Flat trajectory aggregation. More generally, let ℓA
+
+i,t,k denote the local policy-surrogate loss of a host learner A , and let ¯ ℓA
+
+i = N−1
+
+i ∑t,k ℓA
+
+i,t,k be its trajectory-level mean. A generic trajectory-weighted objective can be written as 
+
+JA (θ ; q) = 
+
+B
+
+## ∑
+
+i=1
+
+qi ¯ℓA
+
+i (θ ),
+
+B
+
+## ∑
+
+i=1
+
+qi = 1, qflat 
+
+i = Ni
+
+∑ j Nj
+
+. (2) Thus, global valid-token averaging assigns trajectory τi a scalar contribution propor-tional to its number of valid policy tokens. 
+
+## 3 Method 
+
+We propose BATON , a dual-axis policy optimization framework for multi-turn LLM agents. BATON separates policy optimization into two complementary dimensions: 
+
+Intra-Trajectory Feedback Attribution , which allocates learning mass among deci-sions within a trajectory, and Inter-Trajectory Objective Aggregation , which deter-mines the scalar mass assigned to complete trajectories. We instantiate the first axis with Bayesian Feedback Attribution (BFA) and the second with Trajectory Mass Nor-malization (TMN). Both components modify different levels of the objective and can be combined with host learners such as GRPO and GiGPO. 43.1 Dual-Axis Policy Optimization 
+
+For a batch of trajectories B = {τi}Bi=1, we decompose policy optimization into within-trajectory allocation and across-trajectory aggregation: 
+
+L (θ ) = 
+
+> B
+
+## ∑
+
+> i=1
+
+qi
+
+1
+
+NiTi
+
+## ∑
+
+> t=1
+> ni,t
+
+## ∑
+
+> k=1
+
+ωi,t ℓA
+
+> i,t,k
+
+(θ ), (3) where qi controls trajectory-level mass and ωi,t controls the allocation among deci-sions. We require 1
+
+Ni ∑
+
+> t
+
+ni,t ωi,t = 1, (4) so that attribution redistributes mass inside trajectories without changing their total contribution. 
+
+3.2 Bayesian Feedback Attribution 
+
+BFA estimates how strongly a visited decision is associated with its observed feedback. The host learner remains responsible for the signed optimization direction; BFA only adjusts the relative contribution of different decisions. For a visited decision (h, a, o′), where h is the pre-action context, a is the executed action, and o′ is the observed environment feedback, BFA samples a counterfactual action ˜a ∼ πθold (·| h). (5) The executed and counterfactual actions form a pairwise candidate set. For each candidate action, BFA evaluates the compatibility with the observed feedback: log fθold (o′|h, a) = ∑ 
+
+> m∈V(o′)
+
+log πθold (o′
+
+> m
+
+|h, a, o′
+
+> <m
+
+), (6) where V (o′) denotes valid feedback-target token positions. The likelihood mea-sures model-based feedback compatibility rather than causal effects of counterfactual execution. 
+
+Bayesian evidence. Under the pairwise construction, ρ0(a|h) = ρ0( ˜a|h) = 1/2. The feedback-conditioned posterior of the executed action is 
+
+ρθold (a|h, o′) = fθold (o′|h, a)
+
+fθold (o′|h, a) + fθold (o′|h, ˜a) . (7) We define the Bayesian evidence ratio 
+
+e(h, a, o′) = ρθold (a|h, o′)
+
+ρ0(a|h) = 2 fθold (o′|h, a)
+
+fθold (o′|h, a) + fθold (o′|h, ˜a) . (8) 5Proposition 1 (Bayesian Evidence Interpretation) . Let m(o′|h) = 12 fθold (o′|h, a) + 12 fθold (o′|h, ˜a) (9) 
+
+denote the pairwise feedback mixture. The Bayesian evidence satisfies e(h, a, o′) = fθold (o′|h, a)
+
+m(o′|h) . (10) 
+
+Moreover, 
+
+Eo′∼ fθold (·| h,a)[log e(h, a, o′)] = DKL ( fθold (·| h, a)∥m(·| h)) ≥ 0. (11) Proposition 1 characterizes the statistical quantity underlying BFA evidence: larger evidence corresponds to greater distinguishability between the executed action’s feed-back distribution and its policy-sampled alternative. The proof is provided in Ap-pendix A. 
+
+Length-calibrated attribution. For decision (i,t), let 
+
+ei,t = e(hi,t , ai,t , oi,t+1).
+
+Since the feedback likelihood is accumulated over tokens, we use geometric evi-dence 
+
+ri,t = e1/Li,t 
+
+> i,t
+
+, (12) where Li,t = |V (oi,t+1)|. The normalized attribution weight is 
+
+ωi,t = ri,t 
+
+> 1
+> Ni
+
+∑Ti 
+
+> s=1
+
+ni,sri,s
+
+. (13) This normalization gives 1
+
+Ni ∑
+
+> t
+
+ni,t ωi,t = 1, (14) preserving each trajectory’s total optimization mass. BFA applies detached weights to the host objective: ¯ℓA ,BFA  
+
+> i
+
+(θ ) = 1
+
+Ni ∑
+
+> t,k
+
+sg [ωi,t ]ℓA
+
+> i,t,k
+
+(θ ). (15) Therefore, BFA only rescales host learner updates and does not introduce an inde-pendent optimization direction. 63.3 Trajectory Mass Normalization 
+
+BFA controls allocation within trajectories, while TMN controls aggregation across trajectories. Under global valid-token averaging, the trajectory coefficient is 
+
+qflat  
+
+> i
+
+= Ni
+
+∑ j Nj
+
+. (16) Thus, longer trajectories receive larger objective mass. TMN instead assigns equal mass to complete trajectories: 
+
+qTMN  
+
+> i
+
+= 1
+
+B . (17) Because BFA preserves the within-trajectory mass constraint, the two components are independent: BFA reallocates mass inside trajectories, whereas TMN changes only the outer trajectory aggregation. 
+
+3.4 Unified BATON Objective 
+
+Combining BFA and TMN gives 
+
+LBATON (θ ) = 1
+
+B
+
+> B
+
+## ∑
+
+> i=1
+
+1
+
+NiTi
+
+## ∑
+
+> t=1
+> ni,t
+
+## ∑
+
+> k=1
+
+sg [ωi,t ]ℓA
+
+> i,t,k
+
+(θ ). (18) BFA determines the normalized within-trajectory allocation ωi,t , while TMN deter-mines the uniform outer trajectory mass 1 /B. This formulation yields the controlled 2 ×
+
+2 decomposition in our ablation study: the host learner uses uniform within-trajectory weights and token-proportional aggregation; BFA modifies only within-trajectory allo-cation; TMN modifies only trajectory-level aggregation; BATON combines both. 
+
+## 4 Experiments 
+
+We evaluate the proposed dual-axis framework from three perspectives: overall task performance, the independent and joint contributions of its two optimization axes, and the execution behavior of the learned policies. 
+
+4.1 Experimental Setup 
+
+We evaluate Qwen2.5-Instruct models at 1.5B and 7B scales on ALFWorld and Web-Shop, and at 3B and 7B scales on search-augmented question answering. We report success rate on ALFWorld, task score and success rate on WebShop, and exact match on seven search-augmented QA datasets together with their unweighted average. We instantiate the framework with both GRPO and GiGPO as host learners and compare against prompting and reinforcement-learning baselines, including EnvRL. Matched variants share the same initial checkpoint, rollout budget, reward and advantage con-struction, optimization settings, and evaluation protocol, differing only in the compo-nent under study. 7Table 1: Main results on ALFWorld and WebShop. We report success rate (%) for each ALFWorld task domain and the overall result, and task score and success rate (%) on WebShop. Within each backbone, bold marks the highest mean in each metric column separately within the GRPO-based and GiGPO-based method groups. 
+
+Method ALFWorld WebShop Pick Look Clean Heat Cool Pick2 All Score Succ. 
+
+Closed-Source Models 
+
+GPT-4o 75.5 60.5 31.6 56.5 21.9 49.4 48.1 32.1 23.5 Gemini-2.5-Pro 92.5 63.7 61.9 69.3 26.2 58.9 60.4 42.2 36.1 
+
+Qwen2.5-1.5B-Instruct 
+
+Qwen2.5 6.1 5.2 3.4 9.5 4.5 0.0 4.2 22.8 5.4 ReAct 17.1 20.9 15.5 6.5 7.6 2.2 12.9 40.4 11.1 Reflexion 35.7 22.0 22.0 13.3 19.6 3.6 22.0 55.5 22.1 PPO (with critic) 65 .1±3.3 40 .1±7.1 57 .3±5.0 60 .3±6.4 46 .8±4.1 47 .2±2.1 54 .5±3.0 73 .5±3.2 51 .7±2.8
+
+RLOO 88 .0±3.2 53 .2±8.4 70 .8±6.1 63 .1±8.6 66 .0±5.7 57 .1±4.5 69 .6±2.6 74 .2±5.4 51 .9±6.8
+
+GRPO 85 .7±1.6 53 .4±8.2 84 .7±6.6 77 .8±8.1 60 .0±4.8 53 .3±5.7 72 .9±3.4 75 .6±3.6 57 .1±3.6
+
+GRPO + EnvRL 85 .9±2.3 53 .9±6.9 85 .0±4.5 82 .0±4.7 76 .8±3.9 71 .9±4.4 77 .4±3.8 83 .0±2.1 67 .0±2.6
+
+GRPO + BATON (Ours) 91 .0±3.6 80 .1±4.9 91 .9±3.4 83 .6±3.8 83 .9±3.5 78 .5±4.7 85 .6±2.8 85 .2±2.0 68 .2±2.8
+
+GiGPO 94 .6±5.7 67 .2±4.8 94 .5±3.9 94 .7±7.6 79 .4±4.9 76 .6±5.3 86 .8±1.8 83 .7±1.9 67 .1±4.7
+
+GiGPO + EnvRL 95 .0±3.3 70 .8±6.4 94 .9±4.6 97 .7±3.5 94 .1±4.8 94 .7±4.7 91 .8±3.5 88 .2±2.5 74 .2±3.7
+
+GiGPO + BATON (Ours) 97 .2±1.8 83 .5±4.6 98 .0±1.5 99 .8±0.4 94 .0±3.1 85 .6±4.2 94 .1±1.7 90 .3±1.6 76 .4±2.7
+
+Qwen2.5-7B-Instruct 
+
+Qwen2.5 33.7 21.4 19.7 6.6 3.0 3.1 14.9 26.1 8.0 ReAct 48.2 35.8 34.1 13.5 17.9 17.8 31.3 46.5 19.3 Reflexion 62.4 41.3 45.1 30.5 36.6 23.6 42.8 57.9 29.1 PPO (with critic) 92 .5±3.8 63 .7±8.6 92 .8±2.5 89 .2±6.8 80 .7±2.2 68 .6±8.1 80 .5±2.8 81 .1±3.3 68 .9±4.9
+
+RLOO 87 .3±4.5 78 .6±8.1 87 .1±6.0 81 .6±7.4 71 .5±5.3 49 .1±8.2 75 .4±4.8 80 .5±3.0 65 .4±4.2
+
+GRPO 91 .1±4.9 65 .7±6.9 89 .5±5.2 74 .4±7.1 72 .9±5.5 64 .5±7.1 77 .7±5.0 79 .0±2.9 66 .3±3.5
+
+GRPO + EnvRL 92 .6±4.3 77 .5±5.4 92 .9±3.9 79 .7±3.0 77 .4±3.7 71 .1±6.2 80 .4±3.9 81 .8±1.9 68 .6±2.3
+
+GRPO + BATON (Ours) 95 .6±2.1 72 .4±5.3 90 .3±3.8 78 .6±4.9 94 .1±3.2 75 .3±4.6 86 .9±2.7 83 .4±1.9 70 .3±2.5
+
+GiGPO 97 .5±1.7 83 .0±7.7 98 .6±1.5 84 .1±7.4 89 .0±8.0 79 .4±6.8 90 .9±1.4 86 .4±2.4 74 .9±4.0
+
+GiGPO + EnvRL 98 .3±1.5 92 .2±4.5 98 .9±0.8 93 .8±6.9 93 .3±3.5 94 .6±3.0 94 .5±4.0 88 .4±4.9 76 .3±4.7
+
+GiGPO + BATON (Ours) 99 .8±0.4 92 .5±3.6 99 .8±0.4 94 .5±3.1 94 .9±2.8 88 .3±3.9 94 .9±1.5 89 .8±1.8 79 .5±2.6
+
+4.2 Main Results 
+
+Table 1 shows that the full dual-axis framework consistently improves both GRPO and GiGPO across ALFWorld and WebShop and at both model scales. With Qwen2.5-1.5B-Instruct, the ALFWorld success rate increases from 72.9% to 85.6% for GRPO and from 86.8% to 94.1% for GiGPO. On WebShop, the corresponding success rates improve from 57.1% to 68.2% and from 67.1% to 76.4%, respectively. The gains remain at the 7B scale: the framework improves ALFWorld from 77.7% to 86.9% with GRPO and from 90.9% to 94.9% with GiGPO, while also improving their Web-Shop success rates from 66.3% to 70.3% and from 74.9% to 79.5%. These results indicate that jointly improving feedback attribution within trajectories and objective aggregation across trajectories benefits host learners with substantially different local credit constructions. In particular, the improvements over GiGPO suggest that inter-trajectory calibration and feedback-grounded supervision remain useful even when the host learner already employs finer-grained within-trajectory credit signals. 8Table 2: Main results on search-augmented question answering. We report exact match (%) on seven evaluation domains and their unweighted average. NQ, Trivi-aQA, and PopQA are single-hop domains; HotpotQA, 2WikiMultihopQA, MuSiQue, and Bamboogle are multi-hop domains. Within each backbone, bold marks the high-est mean in each metric column separately within the GRPO-based and GiGPO-based method groups. 
+
+Method Single-Hop QA Multi-Hop QA Overall NQ TriviaQA PopQA HotpotQA 2Wiki MuSiQue Bamboogle Avg. 
+
+Qwen2.5-3B-Instruct 
+
+GRPO 43 .4±2.8 62 .1±6.4 41 .4±5.1 37 .8±7.2 30 .7±4.6 14 .8±5.8 35 .4±3.7 37 .9±3.1
+
+GRPO + EnvRL 44 .6±2.4 61 .6±6.9 42 .3±5.8 36 .7±5.3 31 .1±4.1 14 .5±4.9 39 .0±4.5 38 .3±3.6
+
+GRPO + BATON (Ours) 46 .2±2.1 63 .3±5.2 43 .8±4.7 40 .2±4.4 35 .1±3.8 16 .0±5.6 43 .4±3.1 41 .1±2.5
+
+GiGPO 42 .2±5.7 59 .3±4.8 42 .6±3.9 36 .7±7.6 36 .8±4.9 12 .8±5.3 63 .8±6.8 42 .0±4.7
+
+GiGPO + EnvRL 47 .3±3.3 63 .1±5.9 44 .2±4.6 42 .0±3.5 37 .8±4.8 17 .6±4.7 44 .2±5.2 42 .3±3.4
+
+GiGPO + BATON (Ours) 42 .9±4.1 60 .6±6.1 44 .1±5.4 37 .4±5.8 39 .9±4.2 13 .3±4.9 64 .3±6.3 43 .2±4.5
+
+Qwen2.5-7B-Instruct 
+
+GRPO 47 .7±4.9 64 .5±6.9 45 .5±5.2 42 .8±7.1 38 .6±5.5 18 .6±6.2 42 .2±4.8 42 .8±3.6
+
+GRPO + EnvRL 47 .2±4.3 64 .8±5.4 45 .0±3.9 44 .2±3.0 37 .3±3.7 17 .6±6.2 42 .6±3.9 42 .6±2.8
+
+GRPO + BATON (Ours) 48 .4±3.6 66 .5±4.9 46 .3±3.4 43 .7±3.8 52 .4±5.5 19 .7±4.7 44 .1±2.8 45 .9±2.7
+
+GiGPO 46 .2±1.7 64 .9±7.7 46 .3±1.5 41 .4±7.4 43 .8±8.0 18 .7±6.8 68 .7±6.4 47 .1±4.0
+
+GiGPO + EnvRL 45 .9±2.5 65 .1±4.5 47 .2±2.8 42 .1±6.9 42 .7±3.5 19 .4±3.0 69 .3±4.0 47 .5±3.7
+
+GiGPO + BATON (Ours) 47 .8±1.8 65 .6±3.6 49 .5±1.9 43 .3±3.1 45 .0±3.8 20 .4±4.5 69 .4±2.7 48 .7±2.6
+
+4.3 Search-Augmented Question Answering 
+
+We further evaluate BATON on search-augmented question answering, where agents interact with external retrieval systems during multi-step reasoning. Table 2 reports the averaged exact match over seven QA domains. BATON improves both GRPO and GiGPO across model scales. Compared with the corresponding host learners, BATON improves GRPO from 37.9% to 41.1% on Qwen2.5-3B and from 42.8% to 45.9% on Qwen2.5-7B. Similarly, BATON improves GiGPO from 42.0% to 43.2% and from 47.1% to 48.7%, respectively. The results indicate that the proposed dual-axis opti-mization remains effective in retrieval-augmented agent settings. Complete domain-level results are reported in Appendix C. 
+
+4.4 Component Ablation 
+
+Table 3 provides a controlled 2 × 2 decomposition of BATON: the host learner alone, Bayesian Feedback Attribution only, TMN only, and their combination. Both axes yield substantial gains independently. On ALFWorld with Qwen2.5-1.5B-Instruct, GRPO improves from 72.9% to 84.1% with Bayesian Feedback Attribution and to 82.4% with TMN, while BATON reaches 85.6%. For GiGPO, the corresponding re-sults are 86.8%, 93.4%, 90.7%, and 94.1%. The same complementarity holds across tasks and scales. On WebShop with the 7B backbone, BATON reaches 70.3% success with GRPO and 79.5% with GiGPO, outperforming either component alone. These results support the dual-axis formulation: the two components are independently ef-9Table 3: Component ablation of BATON’s two optimization axes. BFA denotes Bayesian Feedback Attribution for Intra-Trajectory Feedback Attribution, while TMN denotes Trajectory Mass Normalization for Inter-Trajectory Objective Aggregation. Values are reported as means with standard deviations.                                                                               
+
+> Component setting ALFWorld WebShop Search-augmented QA 1.5B 7B 1.5B 7B 3B 7B All All Score Succ. Score Succ. Avg. Avg. GRPO 72 .9±3.477 .7±5.075 .6±3.657 .1±3.679 .0±2.966 .3±3.537 .9±3.142 .8±3.6
+> + BFA 84 .1±0.785 .4±3.282 .1±1.867 .3±2.982 .8±1.369 .4±1.840 .7±2.044 .2±2.2
+> + TMN 82 .4±2.983 .8±3.079 .6±2.564 .0±3.281 .5±2.367 .6±2.939 .3±2.843 .0±2.9
+> + BATON (Full) 85 .6±2.886 .9±2.785 .2±2.068 .2±2.883 .4±1.970 .3±2.541 .1±2.545 .9±2.7
+> GIGPO 86 .8±1.890 .9±1.483 .7±1.967 .1±4.786 .4±2.474 .9±4.042 .0±4.747 .1±4.0
+> + BFA 93 .4±1.493 .6±2.788 .3±1.573 .4±2.189 .6±1.178 .6±3.742 .3±3.948 .2±3.4
+> + TMN 90 .7±1.991 .3±1.686 .0±1.871 .6±3.187 .7±2.176 .3±2.842 .9±3.147 .4±2.8
+> + BATON (Full) 94 .1±1.794 .9±1.590 .3±1.676 .4±2.789 .8±1.879 .5±2.643 .2±4.548 .7±2.6
+
+fective and provide complementary gains when combined. 
+
+4.5 Trajectory Execution Cost 
+
+We further examine whether the full dual-axis framework changes the execution behav-ior of the learned policies on ALFWorld with Qwen2.5-1.5B-Instruct. Figure 3 reports the mean number of environment actions and generated policy tokens per evaluation trajectory, including both successful and failed episodes. For GRPO, the full frame-work reduces the mean action count from 21.51 to 16.39 and the mean generated-token count from 1,734 to 1,301. For GiGPO, the corresponding quantities decrease from 13.51 to 10.82 actions and from 1,431 to 746 generated tokens. These results indicate that the performance improvements are accompanied by shorter and less verbose inter-action trajectories, suggesting that the learned policies make more efficient use of their interaction budget. 
+
+Computational overhead. BATON introduces no additional environment interac-tion. The additional computation comes from Bayesian Feedback Attribution, which performs feedback likelihood evaluation for attribution weighting, while TMN only modifies the trajectory-level aggregation rule. The wall-clock overhead analysis is pro-vided in Appendix B. 
+
+## 5 Related Work 
+
+Policy optimization for LLMs and agents. PPO-based RLHF provides the foun-dation for LLM policy optimization (Schulman et al., 2017; Ouyang et al., 2022), while RLOO and GRPO introduce critic-free and group-relative alternatives (Ahma-dian et al., 2024; Shao et al., 2024). Recent reasoning-oriented methods improve opti-10 0 5 10 15 20 25     
+
+> Average Actions per Trajectory GRPO GRPO+EnvRL GRPO+BATON GIGPO GIGPO+EnvRL GIGPO+BATON
+> 21.5 19.3 16.4 13.5 13.8 10.8 0500 1000 1500 2000
+> Average Output Tokens per Trajectory
+> 1734 1601 1301 1431 1679 746
+
+Trajectory Efficiency Comparison on ALFWorld Figure 3: Trajectory execution cost on ALFWorld with Qwen2.5-1.5B-Instruct. We report mean environment-action counts and generated policy-token counts for the host learners, EnvRL variants, and the full dual-axis framework at update 150, including both successful and failed episodes. Lower is better. mization through modified clipping, reduction, process supervision, and sequence-level objectives, including DAPO, Dr. GRPO, REINFORCE++, PRIME, Open-Reasoner-Zero, SimpleRL-Zoo, GSPO, MGAP, TASPO and SARE (Yu et al., 2025; Liu et al., 2025; Hu, 2025; Cui et al., 2025; Hu et al., 2025; Zeng et al., 2025b; Zheng et al., 2025a; Yang et al., 2026a,b; Zhuang et al., 2026). For interactive agents, WebRL and RAGEN study reinforcement learning in environmental settings (Qi et al., 2024; Wang et al., 2025), while GiGPO, turn-level credit assignment, and Agent Lightning inves-tigate finer-grained trajectory optimization (Feng et al., 2025; Zeng et al., 2025a; Luo et al., 2025). BATON is complementary to these approaches by separating within-trajectory feedback attribution from across-trajectory objective aggregation while pre-serving the host learner’s optimization structure. 
+
+Learning from interaction feedback. Interaction feedback has long been used to ground language agents through actions and subsequent observations (Yao et al., 2023; Schick et al., 2023). Reflexion, Self-Refine, CRITIC, LATS, and Voyager exploit ver-bal, tool-based, or environmental feedback for iterative improvement (Shinn et al., 2023; Madaan et al., 2023; Gou et al., 2024; Zhou et al., 2023a; Wang et al., 2023). AgentTuning and AgentGym further study learning from interaction trajectory collec-tions (Zeng et al., 2023; Xi et al., 2024), while EnvRL introduces state-prediction and inverse-dynamics objectives for agent reinforcement learning (Wang et al., 2026). Dif-ferent from these approaches, Bayesian Feedback Attribution compares the observed feedback compatibility of executed and policy-sampled alternative actions, and uses the resulting evidence to reweight the host policy objective without replacing its reward or credit estimator. 11 Interactive agent environments and search. Long-horizon agent learning has been studied in embodied and text environments including ALFWorld, WebShop, and Sci-enceWorld (Shridhar et al., 2021; Yao et al., 2022; Wang et al., 2022), as well as broader evaluation suites such as AgentBench, AgentBoard, WebArena, Mind2Web, WorkArena, and WebLINX (Liu et al., 2023; Ma et al., 2024; Zhou et al., 2023b; Deng et al., 2023; Drouin et al., 2024; L` u et al., 2024). Recent tool-use benchmarks and software environments further include τ-bench and SWE-agent (Yao et al., 2024; Yang et al., 2024). Search-R1, ZeroSearch, and StepSearch optimize multi-turn retrieval agents with reinforcement learning (Jin et al., 2025; Sun et al., 2025; Zheng et al., 2025b). These environments motivate explicit treatment of long and heterogeneous interaction trajectories, which BATON addresses through separate attribution and ag-gregation mechanisms. 
+
+## 6 Conclusion 
+
+We present BATON , a dual-axis policy optimization framework for multi-turn LLM agents. BATON combines Bayesian Feedback Attribution, which reallocates learning mass among decisions within trajectories based on feedback compatibility, with Trajec-tory Mass Normalization, which balances contributions across trajectories. The frame-work preserves the host learner’s optimization structure and is compatible with GRPO and GiGPO. Experiments on ALFWorld, WebShop, and search-augmented question answering demonstrate consistent improvements across model scales. 
+
+## References 
+
+Arash Ahmadian, Chris Cremer, Matthias Gall´ e, Marzieh Fadaee, Julia Kreutzer, Olivier Pietquin, Ahmet ¨Ust¨ un, and Sara Hooker. Back to basics: Revisiting REINFORCE-style optimization for learning from human feedback in LLMs. In 
+
+Proceedings of the 62nd Annual Meeting of the Association for Computational Lin-guistics (Volume 1: Long Papers) , pp. 12248–12267. Association for Computational Linguistics, 2024. doi: 10.18653/v1/2024.acl-long.662. Ganqu Cui, Lifan Yuan, Zefan Wang, Hanbin Wang, Wendi Li, Bingxiang He, Yuchen Fan, Tianyu Yu, Qixin Xu, Weize Chen, Jiarui Yuan, Huayu Chen, Kaiyan Zhang, Xingtai Lv, Shuo Wang, Yuan Yao, Xu Han, Hao Peng, Yu Cheng, Zhiyuan Liu, Maosong Sun, Bowen Zhou, and Ning Ding. Process reinforcement through implicit rewards, 2025. URL https://arxiv.org/abs/2502.01456 .Xiang Deng, Yu Gu, Boyuan Zheng, Shijie Chen, Samuel Stevens, Boshi Wang, Huan Sun, and Yu Su. Mind2web: Towards a generalist agent for the web, 2023. URL 
+
+https://arxiv.org/abs/2306.06070 .Alexandre Drouin, Maxime Gasse, Massimo Caccia, Issam H. Laradji, Manuel Del Verme, Tom Marty, L´ eo Boisvert, Megh Thakkar, Quentin Cappart, David Vazquez, Nicolas Chapados, and Alexandre Lacoste. Workarena: How capable are web agents 12 at solving common knowledge work tasks?, 2024. URL https://arxiv.org/ abs/2403.07718 .Lang Feng, Zhenghai Xue, Tingcong Liu, and Bo An. Group-in-group policy opti-mization for llm agent training, 2025. URL https://arxiv.org/abs/2505. 10978 .Zhibin Gou, Zhihong Shao, Yeyun Gong, Yelong Shen, Yujiu Yang, Nan Duan, and Weizhu Chen. Critic: Large language models can self-correct with tool-interactive critiquing. In International Conference on Learning Representations , 2024. URL 
+
+https://openreview.net/forum?id=Sx038qxjek .Jian Hu. Reinforce++: A simple and efficient approach for aligning large language models, 2025. URL https://arxiv.org/abs/2501.03262 .Jingcheng Hu, Yinmin Zhang, Qi Han, Daxin Jiang, Xiangyu Zhang, and Heung-Yeung Shum. Open-reasoner-zero: An open source approach to scaling up reinforcement learning on the base model, 2025. URL https://arxiv.org/abs/2503. 24290 .Bowen Jin, Hansi Zeng, Zhenrui Yue, Jinsung Yoon, Sercan Arik, Dong Wang, Hamed Zamani, and Jiawei Han. Search-R1: Training LLMs to Reason and Leverage Search Engines with Reinforcement Learning, 2025. URL https://arxiv.org/abs/ 2503.09516 .Xiao Liu, Hao Yu, Hanchen Zhang, Yifan Xu, Xuanyu Lei, Hanyu Lai, Yu Gu, Hangliang Ding, Kaiwen Men, Kejuan Yang, Shudan Zhang, Xiang Deng, Aohan Zeng, Zhengxiao Du, Chenhui Zhang, Sheng Shen, Tianjun Zhang, Yu Su, Huan Sun, Minlie Huang, Yuxiao Dong, and Jie Tang. Agentbench: Evaluating llms as agents, 2023. URL https://arxiv.org/abs/2308.03688 .Zichen Liu, Changyu Chen, Wenjun Li, Penghui Qi, Tianyu Pang, Chao Du, Wee Sun Lee, and Min Lin. Understanding R1-Zero-Like Training: A Critical Perspective, 2025. URL https://arxiv.org/abs/2503.20783 .Xing Han L` u, Zdenˇ ek Kasner, and Siva Reddy. Weblinx: Real-world website naviga-tion with multi-turn dialogue, 2024. URL https://arxiv.org/abs/2402. 05930 .Xufang Luo, Yuge Zhang, Zhiyuan He, Zilong Wang, Siyun Zhao, Dongsheng Li, Luna K. Qiu, and Yuqing Yang. Agent lightning: Train any ai agents with reinforce-ment learning, 2025. URL https://arxiv.org/abs/2508.03680 .Chang Ma, Junlei Zhang, Zhihao Zhu, Cheng Yang, Yujiu Yang, Yaohui Jin, Zhen-zhong Lan, Lingpeng Kong, and Junxian He. Agentboard: An analytical evaluation board of multi-turn llm agents, 2024. URL https://arxiv.org/abs/2401. 13178 .13 Aman Madaan, Niket Tandon, Prakhar Gupta, Skyler Hallinan, Luyu Gao, Sarah Wiegreffe, Uri Alon, Nouha Dziri, Shrimai Prabhumoye, Yiming Yang, Shashank Gupta, Bodhisattwa Prasad Majumder, Katherine Hermann, Sean Welleck, Amir Yazdanbakhsh, and Peter Clark. Self-refine: Iterative refinement with self-feedback, 2023. URL https://arxiv.org/abs/2303.17651 .Long Ouyang, Jeff Wu, Xu Jiang, Diogo Almeida, Carroll L. Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, John Schul-man, Jacob Hilton, Fraser Kelton, Luke Miller, Maddie Simens, Amanda Askell, Pe-ter Welinder, Paul Christiano, Jan Leike, and Ryan Lowe. Training language models to follow instructions with human feedback, 2022. URL https://arxiv.org/ abs/2203.02155 .Zehan Qi, Xiao Liu, Iat Long Iong, Hanyu Lai, Xueqiao Sun, Wenyi Zhao, Yu Yang, Xinyue Yang, Jiadai Sun, Shuntian Yao, Tianjie Zhang, Wei Xu, Jie Tang, and Yux-iao Dong. Webrl: Training llm web agents via self-evolving online curriculum rein-forcement learning, 2024. URL https://arxiv.org/abs/2411.02337 .Timo Schick, Jane Dwivedi-Yu, Roberto Dess` ı, Roberta Raileanu, Maria Lomeli, Luke Zettlemoyer, Nicola Cancedda, and Thomas Scialom. Toolformer: Language mod-els can teach themselves to use tools, 2023. URL https://arxiv.org/abs/ 2302.04761 .John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 , 2017. Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y. K. Li, Y. Wu, and Daya Guo. Deepseekmath: Pushing the limits of mathematical reasoning in open language models, 2024. URL https: //arxiv.org/abs/2402.03300 .Noah Shinn, Federico Cassano, Edward Berman, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. Reflexion: Language agents with verbal reinforce-ment learning, 2023. URL https://arxiv.org/abs/2303.11366 .Mohit Shridhar, Xingdi Yuan, Marc-Alexandre Cˆ ot´ e, Yonatan Bisk, Adam Trischler, and Matthew Hausknecht. Alfworld: Aligning text and embodied environments for interactive learning. In International Conference on Learning Representations ,2021. URL https://arxiv.org/abs/2010.03768 .Hao Sun, Zile Qiao, Jiayan Guo, Xuanbo Fan, Yingyan Hou, Yong Jiang, Pengjun Xie, Fei Huang, and Yan Zhang. Zerosearch: Incentivize the search capability of llms without searching, 2025. URL https://arxiv.org/abs/2505.04588 .Guanzhi Wang, Yuqi Xie, Yunfan Jiang, Ajay Mandlekar, Chaowei Xiao, Yuke Zhu, Linxi Fan, and Anima Anandkumar. Voyager: An open-ended embodied agent with large language models, 2023. URL https://arxiv.org/abs/2305.16291 .14 Ruoyao Wang, Peter Jansen, Marc-Alexandre Cˆ ot´ e, and Prithviraj Ammanabrolu. Scienceworld: Is your agent smarter than a 5th grader?, 2022. URL https: //arxiv.org/abs/2203.07540 .Zhitong Wang, Songze Li, Hao Peng, Shuzheng Si, Yi Wang, Maosong Sun, and Juanzi Li. Envrl: Learn from environment dynamics in agentic reinforcement learning, 2026. URL https://arxiv.org/abs/2606.17680 .Zihan Wang, Kangrui Wang, Qineng Wang, Pingyue Zhang, Linjie Li, Zhengyuan Yang, Kefan Yu, Minh Nhat Nguyen, Licheng Liu, Eli Gottlieb, Monica Lam, Yiping Lu, Kyunghyun Cho, Jiajun Wu, Li Fei-Fei, Lijuan Wang, Yejin Choi, and Manling Li. Ragen: Understanding self-evolution in llm agents via multi-turn reinforcement learning, 2025. URL https://arxiv.org/abs/2504.20073 .Zhiheng Xi, Yiwen Ding, Wenxiang Chen, Boyang Hong, Honglin Guo, Junzhe Wang, Dingwen Yang, Chenyang Liao, Xin Guo, Wei He, Songyang Gao, Lu Chen, Rui Zheng, Yicheng Zou, Tao Gui, Qi Zhang, Xipeng Qiu, Xuanjing Huang, Zuxuan Wu, and Yu-Gang Jiang. Agentgym: Evolving large language model-based agents across diverse environments, 2024. URL https://arxiv.org/abs/2406.04151 .Jingxiao Yang, Wangjie Gan, Yingxuan Zhuang, Wenqi Zhang, Jintao Chen, and Xuhong Zhang. Reconciling process supervision with outcome-based credit in agentic policy optimization, 2026a. URL https://arxiv.org/abs/2608. 31077 .Jingxiao Yang, DaLin He, Miao Pan, Kaixiang Yao, Ge Su, Wenqi Zhang, Yifeng Hu, Tangwei Li, Yuke Li, and Xuhong Zhang. Sare: Sample-wise adaptive reasoning for training-free fine-grained visual recognition, 2026b. URL https://arxiv. org/abs/2603.17729 .John Yang, Carlos E. Jimenez, Alexander Wettig, Kilian Lieret, Shunyu Yao, Karthik Narasimhan, and Ofir Press. Swe-agent: Agent-computer interfaces enable auto-mated software engineering, 2024. URL https://arxiv.org/abs/2405. 15793 .Shunyu Yao, Howard Chen, John Yang, and Karthik Narasimhan. Webshop: Towards scalable real-world web interaction with grounded language agents, 2022. URL 
+
+https://arxiv.org/abs/2207.01206 .Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. React: Synergizing reasoning and acting in language models. In 
+
+International Conference on Learning Representations , 2023. URL https:// arxiv.org/abs/2210.03629 .Shunyu Yao, Noah Shinn, Pedram Razavi, and Karthik Narasimhan. τ-bench: Abenchmark for tool-agent-user interaction in real-world domains, 2024. URL 
+
+https://arxiv.org/abs/2406.12045 .15 Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gaohong Liu, Lingjun Liu, Xin Liu, Haibin Lin, Zhiqi Lin, Bole Ma, Guangming Sheng, Yuxuan Tong, Chi Zhang, Mofan Zhang, Wang Zhang, Hang Zhu, Jinhua Zhu, Jiaze Chen, Jiangjie Chen, Chengyi Wang, Hongli Yu, Yuxuan Song, Xiangpeng Wei, Hao Zhou, Jingjing Liu, Wei-Ying Ma, Ya-Qin Zhang, Lin Yan, Mu Qiao, Yonghui Wu, and Mingxuan Wang. DAPO: An Open-Source LLM Reinforcement Learning System at Scale, 2025. URL https: //arxiv.org/abs/2503.14476 .Aohan Zeng, Mingdao Liu, Rui Lu, Bowen Wang, Xiao Liu, Yuxiao Dong, and Jie Tang. Agenttuning: Enabling generalized agent abilities for llms, 2023. URL 
+
+https://arxiv.org/abs/2310.12823 .Siliang Zeng, Quan Wei, William Brown, Oana Frunza, Yuriy Nevmyvaka, and Mingyi Hong. Reinforcing multi-turn reasoning in llm agents via turn-level credit assign-ment, 2025a. URL https://arxiv.org/abs/2505.11821 .Weihao Zeng, Yuzhen Huang, Qian Liu, Wei Liu, Keqing He, Zejun Ma, and Junx-ian He. Simplerl-zoo: Investigating and taming zero reinforcement learning for open base models in the wild, 2025b. URL https://arxiv.org/abs/2503. 18892 .Chujie Zheng, Shixuan Liu, Mingze Li, Xiong-Hui Chen, Bowen Yu, Chang Gao, Kai Dang, Yuqiong Liu, Rui Men, An Yang, Jingren Zhou, and Junyang Lin. Group sequence policy optimization, 2025a. URL https://arxiv.org/abs/2507. 18071 .Xuhui Zheng, Kang An, Ziliang Wang, Yuhang Wang, and Yichao Wu. StepSearch: Igniting LLMs search ability via step-wise proximal policy optimization. In Pro-ceedings of the 2025 Conference on Empirical Methods in Natural Language Pro-cessing , pp. 21805–21830. Association for Computational Linguistics, 2025b. doi: 10.18653/v1/2025.emnlp-main.1106. Andy Zhou, Kai Yan, Michal Shlapentokh-Rothman, Haohan Wang, and Yu-Xiong Wang. Language agent tree search unifies reasoning acting and planning in language models, 2023a. URL https://arxiv.org/abs/2310.04406 .Shuyan Zhou, Frank F. Xu, Hao Zhu, Xuhui Zhou, Robert Lo, Abishek Sridhar, Xianyi Cheng, Tianyue Ou, Yonatan Bisk, Daniel Fried, Uri Alon, and Graham Neubig. Webarena: A realistic web environment for building autonomous agents, 2023b. URL https://arxiv.org/abs/2307.13854 .Yingxuan Zhuang, Jingxiao Yang, Miao Pan, Cheng Tan, Yuxiang Cai, Siwei Tan, Chen Zhi, Xuhong Zhang, Jianwei Yin, and Jintao Chen. Mitigating manifold de-parture: Uncertainty-aware subspace rectification for trustworthy mllm decoding, 2026. URL https://arxiv.org/abs/2606.09859 .16 A Proofs of Theoretical Properties 
+
+A.1 Proof of Proposition 1 
+
+Proof. Under the pairwise construction, the Bayesian posterior is 
+
+ρθold (a|h, o′) = fθold (o′|h, a)
+
+fθold (o′|h, a) + fθold (o′|h, ˜a) .
+
+Since the empirical prior is uniform, 
+
+ρ0(a|h) = 12 .
+
+Therefore, 
+
+e(h, a, o′) = ρθold (a|h, o′)
+
+ρ0(a|h)
+
+can be written as 
+
+e(h, a, o′) = 2 fθold (o′|h, a)
+
+fθold (o′|h, a) + fθold (o′|h, ˜a) .
+
+Let 
+
+m(o′|h) = 12 fθold (o′|h, a) + 12 fθold (o′|h, ˜a).
+
+Then, 
+
+e(h, a, o′) = fθold (o′|h, a)
+
+m(o′|h) .
+
+Taking expectation over o′ ∼ fθold (·| h, a) gives 
+
+Eo′∼ fθold (·| h,a)[log e(h, a, o′)] = Eo′∼ fθold (·| h,a)
+
+
+
+log fθold (o′|h, a)
+
+m(o′|h)
+
+
+
+= DKL ( fθold (·| h, a)∥m(·| h)) ≥ 0.
+
+Thus, the expected log evidence equals the KL divergence between the executed action’s feedback distribution and the pairwise mixture distribution. 17 B Computational Overhead Analysis 
+
+We analyze the additional computational cost introduced by BATON. All measure-ments are conducted on ALFWorld with Qwen2.5-1.5B-Instruct under the same rollout budget, batch size, optimizer settings, and hardware configuration as the main experi-ments. BATON does not introduce additional environment interaction. The overhead mainly comes from Bayesian Feedback Attribution, which requires additional feedback likeli-hood evaluation for attribution weighting. Trajectory Mass Normalization only changes the trajectory-level aggregation rule and therefore introduces negligible computational cost. Table 5 reports the total wall-clock training time and the relative cost normalized by the corresponding host learner. 
+
+## C Additional Search-Augmented QA Results 
+
+Table 4 reports the domain-level exact match results on the seven search-augmented question answering benchmarks. The averaged score reported in the main paper is computed as the unweighted mean over these domains. 18 Table 4: Main results on search-augmented question answering. We report exact match (%) on seven evaluation domains and their unweighted average. NQ, Trivi-aQA, and PopQA are single-hop domains; HotpotQA, 2WikiMultihopQA, MuSiQue, and Bamboogle are multi-hop domains. Within each backbone, bold marks the high-est mean in each metric column separately within the GRPO-based and GiGPO-based method groups. BATON rows are shaded in blue. 
+
+Method Single-Hop QA Multi-Hop QA Overall NQ TriviaQA PopQA HotpotQA 2Wiki MuSiQue Bamboogle Avg. 
+
+Qwen2.5-3B-Instruct 
+
+R1-Instruct 26 .8±3.8 53 .9±6.2 19 .7±4.5 23 .9±5.7 29 .0±4.1 7.4±2.8 29 .1±5.4 27 .0±3.6
+
+Search-R1 34 .3±2.9 54 .2±5.8 38 .0±4.7 32 .2±6.3 32 .1±4.9 10 .1±3.6 26 .6±5.1 32 .5±3.8
+
+ZeroSearch 41 .1±2.6 57 .6±4.9 44 .6±5.6 27 .6±5.2 29 .8±4.3 9.9±3.9 11 .3±2.7 31 .7±3.4
+
+StepSearch – – – 34 .4±5.8 32 .2±4.6 17 .6±4.2 34 .2±6.1 –GRPO 43 .4±2.8 62 .1±6.4 41 .4±5.1 37 .8±7.2 30 .7±4.6 14 .8±5.8 35 .4±3.7 37 .9±3.1
+
+GRPO + EnvRL 44 .6±2.4 61 .6±6.9 42 .3±5.8 36 .7±5.3 31 .1±4.1 14 .5±4.9 39 .0±4.5 38 .3±3.6
+
+GRPO + BATON (Ours) 46 .2±2.1 63 .3±5.2 43 .8±4.7 40 .2±4.4 35 .1±3.8 16 .0±5.6 43 .4±3.1 41 .1±2.5
+
+GiGPO 42 .2±5.7 59 .3±4.8 42 .6±3.9 36 .7±7.6 36 .8±4.9 12 .8±5.3 63 .8±6.8 42 .0±4.7
+
+GiGPO + EnvRL 47 .3±3.3 63 .1±5.9 44 .2±4.6 42 .0±3.5 37 .8±4.8 17 .6±4.7 44 .2±5.2 42 .3±3.4
+
+GiGPO + BATON (Ours) 42 .9±4.1 60 .6±6.1 44 .1±5.4 37 .4±5.8 39 .9±4.2 13 .3±4.9 64 .3±6.3 43 .2±4.5
+
+Qwen2.5-7B-Instruct 
+
+R1-Instruct 20 .8±4.2 45 .1±7.1 16 .9±3.8 21 .0±5.4 27 .3±4.7 6.2±2.5 19 .0±4.9 22 .3±3.9
+
+Search-R1 39 .5±3.6 60 .8±5.4 39 .9±4.2 36 .8±6.8 40 .3±5.9 14 .4±4.1 37 .0±5.3 38 .6±3.7
+
+ZeroSearch 43 .8±2.9 61 .6±6.2 51 .7±5.7 34 .4±4.8 35 .4±4.4 18 .2±5.6 27 .6±4.6 39 .2±3.5
+
+StepSearch – – – 38 .8±5.1 36 .4±4.7 22 .8±5.3 39 .8±6.5 –GRPO 47 .7±4.9 64 .5±6.9 45 .5±5.2 42 .8±7.1 38 .6±5.5 18 .6±6.2 42 .2±4.8 42 .8±3.6
+
+GRPO + EnvRL 47 .2±4.3 64 .8±5.4 45 .0±3.9 44 .2±3.0 37 .3±3.7 17 .6±6.2 42 .6±3.9 42 .6±2.8
+
+GRPO + BATON (Ours) 48 .4±3.6 66 .5±4.9 46 .3±3.4 43 .7±3.8 52 .4±5.5 19 .7±4.7 44 .1±2.8 45 .9±2.7
+
+GiGPO 46 .2±1.7 64 .9±7.7 46 .3±1.5 41 .4±7.4 43 .8±8.0 18 .7±6.8 68 .7±6.4 47 .1±4.0
+
+GiGPO + EnvRL 45 .9±2.5 65 .1±4.5 47 .2±2.8 42 .1±6.9 42 .7±3.5 19 .4±3.0 69 .3±4.0 47 .5±3.7
+
+GiGPO + BATON (Ours) 47 .8±1.8 65 .6±3.6 49 .5±1.9 43 .3±3.1 45 .0±3.8 20 .4±4.5 69 .4±2.7 48 .7±2.6
+
+Table 5: Wall-clock training overhead of BATON on ALFWorld. Training time is measured over the complete training process under identical rollout and optimization settings. Values are normalized by the corresponding host learner. 
+
+Method Training Time (hours) Relative Cost GRPO 18.05 1.00 ×
+
+GRPO + TMN 18.50 1.02 ×
+
+GRPO + BATON 21.07 1.17 ×
+
+GiGPO 22.77 1.00 ×
+
+GiGPO + TMN 23.08 1.01 ×
+
+GiGPO + BATON 25.15 1.10 ×
+
+19
