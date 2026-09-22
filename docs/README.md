@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-21</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-22</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 16 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 20 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>14</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-21 23:17:24 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-22 22:48:02 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>2026-09-21 日报精选16篇，精读2篇，聚焦人形机器人在3D杂乱环境中的场景感知运动学习与留一被试评估下的高效架构搜索。最值得关注的是基于沉浸式人类演示的人形运动学习（8.0分），以及面向VLA微调的DistAL距离优势学习（7.0分），分别指向机器人示范学习与视觉语言动作模型优化。普通读者可先速读DistAL了解VLA微调思路，再按兴趣深入两篇精读。</p>
+<p>今日日报：扫完20篇，精读6篇</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">2 篇</strong>
+    <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Learning Scene-Aware Humanoid Locomotion through 3D Clutter from Immersive Human Demonstrations">Learning Scene-Aware Humanoid Locomotion through 3D Clutter from Immersive Human Demonstrations</span></li><li><span class="dpr-home-dashboard-paper-title" title="Efficient Architecture Search under Leave-One-Subject-Out Evaluation">Efficient Architecture Search under Leave-One-Subject-Out Evaluation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="STRIDER: Stepping-Enabled Multi-Gait Hierarchical 3D Loco-Manipulation Framework for Humanoid Robots">STRIDER: Stepping-Enabled Multi-Gait Hierarchical 3D Loco-Manipulation Framework for Humanoid Robots</span></li><li><span class="dpr-home-dashboard-paper-title" title="Smoothness as a Constraint for Stable Humanoid Locomotion">Smoothness as a Constraint for Stable Humanoid Locomotion</span></li><li><span class="dpr-home-dashboard-paper-title" title="PredActor: Predictive Action Diffusion for Steerable Onboard Humanoid Control">PredActor: Predictive Action Diffusion for Steerable Onboard Humanoid Control</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,9 +87,9 @@
     <strong class="dpr-home-dashboard-count">14 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="DistAL: Distance-based Advantage Learning for VLA Fine-Tuning">DistAL: Distance-based Advantage Learning for VLA Fine-Tuning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Efficient Bayes-Adaptive Reinforcement Learning with Temporal Logic Specifications">Efficient Bayes-Adaptive Reinforcement Learning with Temporal Logic Specifications</span></li><li><span class="dpr-home-dashboard-paper-title" title="Dynamics-Induced Commitment in Learning-Based Robotic Penalty Kicks">Dynamics-Induced Commitment in Learning-Based Robotic Penalty Kicks</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Dynamics-Induced Commitment in Learning-Based Robotic Penalty Kicks">Dynamics-Induced Commitment in Learning-Based Robotic Penalty Kicks</span></li><li><span class="dpr-home-dashboard-paper-title" title="GEM-MPC: Balancing Exploration and Exploitation through Expert-Guided Planning">GEM-MPC: Balancing Exploration and Exploitation through Expert-Guided Planning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Contact-Rich Motion Planning via GPU-Parallel Mode Evaluation">Contact-Rich Motion Planning via GPU-Parallel Mode Evaluation</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>9</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>9</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
 </div>
 

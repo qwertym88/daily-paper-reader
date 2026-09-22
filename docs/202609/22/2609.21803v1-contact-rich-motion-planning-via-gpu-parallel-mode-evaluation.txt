@@ -1,0 +1,318 @@
+Title: Contact-Rich Motion Planning via GPU-Parallel Mode Evaluation
+
+URL Source: https://arxiv.org/pdf/2609.21803v1
+
+Published Time: Mon, 21 Sep 2026 01:02:01 GMT
+
+Number of Pages: 9
+
+Markdown Content:
+# Contact-Rich Motion Planning via GPU-Parallel Mode Evaluation 
+
+Jiayun Li 1,2 and Georgia Chalvatzaki 1,2,3
+
+Abstract — Contact-rich motion planning (CRMP) is essential for robotic manipulation and locomotion, yet remains compu-tationally challenging due to combinatorial contact decisions. Existing methods typically avoid broad evaluation of contact-mode sequences through search heuristics or optimization reformulations. We revisit broad evaluation in light of modern GPU hardware and introduce Contact-Mode Expansion with parallel Trajectory optimization (CoMET), which combines GPU-parallel trajectory evaluation with greedy contact-mode expansion. On planar pushing benchmarks, CoMET is com-petitive with optimization-based, sampling, and tree-search baselines in solution quality and planning time, matching the full-enumeration reference on nearly all instances with fewer evaluations and shorter planning times. Ablations suggest that much of the performance gain comes from the high-throughput mode evaluator. In bimanual nonprehensile manipulation, GPU-friendly local mode expansion achieves higher planning success than the tested adaptive tree search as the mode space grows. These results demonstrate that broad explicit mode evaluation provides a simple yet effective alternative for CRMP. 
+
+I. INTRODUCTION Contact-rich motion planning (CRMP) is essential for a broad class of robotic manipulation and locomotion tasks. Robots need to reason about how to make and break contact with the environment to accomplish specific tasks. This requires deciding when, where, and how strongly to create task-relevant contacts, while accounting for physical and ge-ometrical feasibility, solution optimality, and computational efficiency. Depending on the formulation, CRMP typically leads to either nonsmooth optimization or combinatorial reasoning over contact-mode sequences, making it difficult to find reliable solutions efficiently. The hybrid structure of CRMP naturally gives rise to a mixed-integer nonlinear program (MINLP), in which discrete variables encode contact modes and continuous variables describe the corresponding motions and contact interactions. Classical approaches address this structure by explicitly specifying or searching over contact modes, reducing the optimization within each mode to a continuous problem [1], [2], [3], [4], [5]. The central difficulty is therefore generally regarded as managing the combinatorial mode-search without incurring excessive continuous optimization. Consequently, search-based methods typically use heuristics or selective expansion to avoid evaluating a large number of candidate mode sequences. More recently, Graph-of-Convex-Sets (GCS) methods have been proposed to address the      
+
+> 1PEARL Lab, Department of Computer Science, TU Darmstadt, Darm-stadt, Germany.
+> 2Hessian.AI, Darmstadt, Germany.
+> 3Robotics Institute Germany (RIG), Germany. (1) --, --(2) left, --(3) left, top
+> (4) --, top (5) foot end, --(6) --, bottom
+> Fig. 1. Real-robot bimanual nonprehensile stable L-shape object flip. Panels are numbered in time order; labels give the block face touched by the left and right paddle, named in the block’s initial pose (panel 1); “--” denotes free motion.
+
+combinatorial contact-mode search through convex relax-ation [6], [7]. However, solving the resulting relaxations can be computationally expensive, particularly for prob-lems with large contact-mode spaces. Alternatively, contact-implicit trajectory optimization (CITO) avoids explicit mode-sequence evaluation by jointly optimizing motion and contact forces [8], [9], [10]. This formulation, however, leads to a highly nonconvex optimization problem that can be sensi-tive to initialization and hyperparameters, making reliable convergence challenging [11]. Recent advances in GPU-accelerated trajectory optimiza-tion (TO) have shifted the practical computational regime, making it possible to optimize many candidates in paral-lel [12], [13]. Contact-mode evaluation, however, presents a heterogeneous batch: candidates differ in active contact constraints and convergence behavior. This raises a natural question: How can heterogeneous mode-conditioned TO be evaluated efficiently on GPUs, and how should the resulting evaluation budget be allocated? 
+
+In this work, we revisit explicit contact-mode evaluation as a planning primitive under modern GPU parallelism. We design a GPU-oriented primal-dual augmented-Lagrangian (AL) differential dynamic programming (DDP) evaluator [14], [15] that maps mode-dependent contact constraints to a shared fixed structure and independently advances thousands of mode-conditioned TO problems. Rather than sequen-tially selecting and refining individual mode sequences, our method evaluates large batches and greedily expands the neighborhoods of the best sequences found so far. We call the resulting framework Contact-Mode Expansion with parallel Trajectory optimization (CoMET ). Experiments on planar pushing and bimanual non-arXiv:2609.21803v1 [cs.RO] 18 Sep 2026 prehensile manipulation highlight the contributions of high-throughput trajectory evaluation and local mode expansion across different mode-space sizes. On the planar pushing benchmark of [7], CoMET recovers the full-enumeration reference on nearly all instances while evaluating only a fraction of the admissible sequences, and returns plans up to 4.4× faster than the strongest optimization-based baseline while achieving lower objective values under a matched criterion. Controlled ablations suggest that much of this performance gain comes from the trajectory evaluator, while the tested adaptive tree-search allocation offers no observed advantage over parallel mode expansion under the same evaluator and compute budget. On the bimanual task, where the admissible space exceeds half a million sequences and only a small fraction can be evaluated, GPU-friendly mode expansion achieves higher planning success than the tested adaptive tree search and uniform sampling. Together, these results highlight the complementary benefits of high-throughput evaluation and local mode expansion. In real-robot experiments, the planned bimanual motions flip the L-shaped block through multiple support transitions with an 
+
+80% success rate. To summarize, our main contributions are: (1) aGPU-parallel evaluator that executes heterogeneous mode-conditioned constrained TO problems with shared fixed structure and independent candidate progress; (2) a GPU-friendly neighborhood-expansion strategy for allocating the evaluation budget; (3) an empirical comparison with convex-relaxation, contact-implicit, sampling, and Monte Carlo tree search (MCTS) baselines, along with ablation studies exam-ining the factors contributing to performance gains; and (4) real-world experiments demonstrating the physical feasibility of the generated plans. Our implementation of CoMET will be released as open source upon acceptance. II. RELATED WORK We position CoMET within three related lines of research: discrete reasoning over contact modes, GPU-parallel TO and planning, and reformulations of contact decisions. 
+
+A. Discrete Reasoning over Contact Modes 
+
+A common strategy for CRMP is to search over contact-mode sequences while solving continuous motion optimiza-tion conditioned on each sequence. Tree-search methods se-lectively expand promising mode sequences using feasibility or cost information [16], [5], [17], while Logic-Geometric Programming uses hierarchical bounds and geometric op-timization to reduce expensive nonlinear solves [3], [18], [19], [20]. Sampling-based methods similarly concentrate computation on selected contact sequences [5], [21]. CoMET instead evaluates large batches of mode sequences with GPU-parallel constrained TO, shifting the emphasis from avoiding evaluations to performing them efficiently in parallel. 
+
+B. GPU-Parallel Trajectory Optimization and Planning 
+
+GPU acceleration has enabled high-throughput TO through parallel dynamics, numerical optimization, and mul-tiple candidate trajectories [22], [23], [24], [25]. At the Candidate Batch s         
+
+> Resident GPU Pool Parallel Primal–Dual AL-DDP Mode Expansion
+> ·4·2·1·1
+> ·0·1·1 ·6· ·4·0·0 ·3·4 ·2·1 ·5·0· ·3· ·7·4 ·3·5 ·1·5·
+> contact-mode orders slots harvest  ̂ J(m), ̂v(m)
+> next batch mode masks m: one matrix structure
+> initial state
+> mode: free
+> t= 5 s
+> mode: face 4
+> t= 10 s
+> mode: free
+> optimized plan
+> mode: face 1 one candidate order, solved on the GPU
+> Fig. 2. CoMET overview. Bottom: one candidate order on push-T (slider blue, pusher orange, goal dashed).
+
+task planning level, cuTAMP evaluates thousands of contin-uous candidates with GPU-parallel differentiable optimiza-tion [12], but does not solve contact-constrained, dynamics-coupled trajectories within each candidate. CoMET instead uses GPU parallelism to solve large batches of contact-mode-conditioned constrained TO problems directly. 
+
+C. Reformulations of Contact Decisions 
+
+Contact-implicit TO avoids prescribed mode sequences by allowing contacts to emerge through complementarity-based formulations [8], [9], [10], [26]. Specialized meth-ods improve their numerical tractability through augmented-Lagrangian optimization, linear complementarity dynam-ics, differentiable contact models, and structure-exploiting solvers [27], [28], [29], [30]. These formulations nevertheless remain highly nonconvex and sensitive to initialization. Convex reformulations provide another route. GCS-based semidefinite relaxations trade computational cost for stronger global reasoning [7], [31], while convex-decomposition methods transform discrete geometric choices into contin-uous constrained optimization [32]. CoMET instead retains explicit contact modes and addresses the resulting combina-torial structure through parallel constrained optimization. III. METHOD CoMET combines parallel contact-mode evaluation with mode expansion (Fig. 2). Each candidate specifies a contact-mode order, while continuous optimization determines the trajectory, contact interactions, and transition timing. Starting from a broad seed batch, CoMET evaluates candidates in parallel under a limited optimization budget and expands the neighborhoods of orders ranked by a merit function combining objective value and constraint violation. The leading feasible candidates are then refined to obtain the final plan. We first formulate the mode-conditioned TO problem, then describe the contact mode expansion strategy and its GPU-parallel TO evaluator. A. Mode-Conditioned Trajectory Optimization 
+
+We formulate CRMP as a mixed discrete–continuous optimization problem 
+
+min  
+
+> m∈S , z
+
+J(z, m) s.t. g(z, m) = 0 , h (z, m) ≤ 0, (1) where z collects continuous trajectory variables, including states, controls, and timing variables. The equalities g encode dynamics and contact equalities, while h contains unilateral contact, friction, non-penetration, and obstacle constraints. The discrete decision is a contact-mode order m =(m1, . . . , m S ) ∈ S . The admissible set S is the language of a task-level transition system: modes are discrete contact events (which body contacts which face, or free motion), and the transition rules encode physical gating, e.g., a con-tact changes faces only through a free-motion segment. S
+
+contains all rule-consistent orders up to a segment cap, with no two consecutive segments sharing a mode, so distinct orders are not related by segment merging. The rules are specified per task from the contact geometry alone and encode no solution knowledge; they are common discrete structures that mode-explicit search [16], [5] also requires. For a fixed contact mode sequence, transition times and segment durations remain continuous variables in z, and Eq. (1) reduces to a smooth constrained TO problem, 
+
+J∗(m) = min  
+
+> z
+
+J(z, m) s.t. g(z, m) = 0 , h (z, m) ≤ 0.
+
+(2) Note that our evaluator for TO uses local optimization for each candidate mode sequence and is therefore not guar-anteed to attain J∗(m). Ideally, the contact-mode sequence would be selected as 
+
+m∗ = arg min  
+
+> m∈S
+
+J∗(m). (3) CoMET approximates this selection using finite-budget local solves from the TO evaluator. For each order m,let bz = ztexp (m) denote the trajectory returned after the exploration budget texp . Its objective and constraint violation are 
+
+bJ(m) = J(bz, m),
+
+bv(m) = max {∥ g(bz, m)∥∞, ∥[h(bz, m)] +∥∞} . (4) A contact mode sequence is considered feasible when the continuous optimization is feasible: bv(m) ≤ ϵfeas . During exploration, all evaluated orders are ranked by 
+
+cM (m) = bJ(m) + μ max {bv(m) − ϵfeas , 0} , (5) where μ > 0 penalizes constraint violation beyond the feasibility tolerance ϵfeas . Infeasible orders can therefore guide further expansion even when no feasible solution has been found. 
+
+B. Contact-Mode Expansion with Parallel TO 
+
+CoMET uses a batch-oriented greedy expansion designed to allocate the GPU TO evaluation budget. The expansion rule is deliberately batch-synchronous: its purpose is to expose, rather than throttle, the throughput of the parallel 
+
+Algorithm 1 CoMET 
+
+Require: Seed batch F0, batch width B, edit radius r,rounds smax , refinement count Kref , budgets texp , t ref ,merit penalty μ, feasibility tolerance ϵfeas  
+
+> 1:
+
+V ← ∅, s ← 0 
+
+> 2:
+
+while Fs̸ = ∅ and s ≤ smax do  
+
+> 3:
+
+Evaluate Fs in the GPU pool with budget texp per order (Sec. III-C)  
+
+> 4:
+
+Store ( bJ, bv) and add evaluated orders to V 
+
+> 5:
+
+Fs+1 ← ∅ 
+
+> 6:
+
+for each m ∈ V in increasing cM do  
+
+> 7:
+
+Add orders from Nr (m) not in V ∪ F s+1 , stop-ping at capacity B 
+
+> 8:
+
+if |F s+1 | = B then  
+
+> 9:
+
+break  
+
+> 10:
+
+end if  
+
+> 11:
+
+end for  
+
+> 12:
+
+s ← s + 1  
+
+> 13:
+
+end while  
+
+> 14:
+
+Re-solve the Kref best feasible orders with budget tref  
+
+> 15:
+
+return Best refined feasible trajectory and mode order evaluator. The seed batch F0 contains all admissible orders up to a prescribed number of segments. Let V denote all evaluated orders. After all candidates in Fs have completed, their results are added to V, which is ranked by increasing merit cM in Eq. (5). 
+
+Neighborhood expansion: An edit inserts, deletes, or substitutes one mode segment. We denote by Nr (m) the orders reachable from m through at most r edits, with every intermediate order remaining admissible in S. For example, a one-edit neighborhood includes alternatives ob-tained by changing one contact mode or adding or removing one segment. This allows large batches of candidate mode sequences to be generated around the best-ranked orders without selecting candidates one at a time, making the expansion well suited to GPU-parallel evaluation. To construct Fs+1 , CoMET traverses V in merit order and admits unseen orders from each r-edit neighborhood until |F s+1 | = B or all ranked orders have been considered. Orders already in V or Fs+1 are skipped. If a neighborhood exceeds the remaining capacity, unseen orders are admitted in enumeration order until the batch is full; the remainder stay unevaluated and may be reconsidered in later rounds. A search batch Fs may exceed the resident GPU pool capacity 
+
+P and is processed through the reusable pool described in Sec. III-C. 
+
+Refinement and termination: Exploration stops after 
+
+smax expansion rounds or when no new neighbors remain. The Kref best feasible orders are then re-solved with budget 
+
+tref , and the best refined feasible trajectory is returned. Finite-budget exploration guides the discrete search, while refinement determines the final plan. Algorithm 1 summa-rizes the procedure. C. GPU-Parallel Mode-Conditioned TO Evaluation 
+
+Candidate contact orders differ in both their active contact constraints and convergence rates, making naive lockstep GPU batching inefficient. Building on the primal–dual prox-imal augmented-Lagrangian DDP methods of [14], [15], we instead organize these heterogeneous problems as fixed-structure, independently advancing GPU solves. A shared masked representation absorbs mode-dependent constraints, fixed-workspace local systems remove dependence on the active constraint count, and a reusable resident pool accom-modates heterogeneous solve times. 
+
+a) Shared representation across contact modes: Can-didates share a fixed discretization with N control intervals, states x1: N , controls u0: N −1, and initial state x0, linked by 
+
+dk = xk+1 − Fk(xk, u k; m) = 0 . Each order partitions these intervals among its mode segments using a deterministic, approximately uniform allocation. When timing is optimized, interval durations are included in the controls. Contact parameters and binary masks place mode-dependent constraints in fixed row positions. Disabled rows have zero residuals, derivatives, and multipliers. Thus, chang-ing the contact order changes only numerical data: all candidates share the same array dimensions, memory layout, and compiled kernels within a task. 
+
+b) Fixed-workspace local solves: Eliminating multi-plier directions in the backward sweep yields local systems whose dimensions are independent of the active constraint count: 
+
+Sk = Hk + ρkI + A⊤ 
+
+> k
+
+Ak/μ AL ,
+
+where Hk is local primal curvature, Ak contains constraint derivatives with respect to (uk, x k+1 ), μAL > 0 is the penalty parameter, and ρk combines proximal regularization and adaptive damping. Masked and inactive rows contribute zeros to Ak.Each system has nu + nx unknowns, independent of the number of active contact constraints, giving every candidate the same factorization size and shared-memory footprint. Cholesky factorization without pivoting checks positive def-initeness; failed attempts increase damping, and exhausted retries reject the step. A forward pass assembles the adjust-ment, followed by parallel trial-step merit evaluations. Mixed precision, internal constraint scaling, and parameter lower bounds help control numerical conditioning. 
+
+c) Reusable pool with independent stopping: A pool of P slots retains candidate-specific trajectories, multipli-ers, solver parameters, and stopping states. Each resident candidate is mapped to a single CUDA warp, and each kernel launch advances its primal–dual DDP solver state by one iteration. The host periodically synchronizes, collects completed results, and refills freed slots from the pending batch. This avoids batch-wide synchronization on heterogeneous solve times: unfinished candidates retain their states while completed slots are immediately refilled from the pending batch. Search batch width B determines the candidate batch size, whereas pool capacity P limits concurrent solves. 
+
+d) Stopping and scoring: Candidates terminate upon satisfying scaled feasibility, stationarity, and dual-residual tolerances, or reaching an iteration limit. Exploration uses an iteration budget texp . Returned trajectories are scored in the original physical units using Eq. (4), separately from the solver’s internal scaling. Search feasibility requires bv ≤
+
+ϵfeas ; budget exhaustion alone does not establish feasibility. Selected feasible orders are refined using the same evaluator with budget tref .IV. EXPERIMENTS We evaluate high-throughput contact-mode planning in two regimes. Planar pushing compares against existing plan-ners and full enumeration, with controls separating the effects of the TO evaluator, GPU execution, and discrete search allocation. Bimanual flipping tests search allocation when the mode space greatly exceeds the evaluation budget, using the same TO evaluator and budget across policies, and validates the resulting plans on hardware. All methods are run separately on a workstation with an NVIDIA RTX 4080 GPU, an AMD Ryzen 9 7950X3D CPU, and 30 GB RAM. Reported return times include host-side search, device computation, refinement, and the final trajectory re-solve. 
+
+A. Experiment 1: Planar Pushing Benchmark 
+
+Task and evaluation. Reorienting a slider requires choos-ing which faces to push and when to move between them. We use the benchmark of Graesdal et al. [7]: a 15 mm disc pusher, quasi-static limit-surface mechanics, sticking face contact in a 5.7◦ friction cone, and the original six-term objective. At a segment cap of eight, the eight-faced tee (Fig. 2) and four-faced box admit 36 ,465 and 6,297 mode orders, respectively. Each method receives the same 50 random start and goal poses per slider. A run succeeds if its returned trajectory satisfies its own constraints to ϵfeas = 10 −3
+
+(Eq. (4)) and reaches within 5 mm and 5◦ of the goal. A common scorer evaluates each method’s trajectory under the benchmark objective; a separate check, identical for every method, tests each returned plan for physical consistency. 
+
+CoMET configurations. CoMET uses 50 knots, an op-timized time step, the benchmark’s duration bound, and 
+
+texp = 300 iterations per candidate. Its pool capacity is 
+
+P = 8 ,192 , expansion batch width B = 1 ,024 , edit radius 
+
+r = 2 , and refinement count Kref = 256 at tref = 1 ,500 
+
+iterations. Each candidate starts from a schedule-derived initial guess: the pusher is placed on each scheduled face during each contact segment. Constraint rows are scaled by their median Jacobian-row norm over sample orders; bv is measured in physical units. The merit (Eq. (5)) uses μ = 100 .
+
+Full enumeration evaluates every admissible order; Seed only evaluates only the initial batch F0, which contains all admissible orders with at most six segments ( 2,289 for the tee and 601 for the box); and expansion (smax = k) adds k
+
+rounds after the seed (Sec. III-B). These configurations share the transcription, warm start, per-candidate budget, feasibility tolerance, refinement, and scorer. Full enumeration provides the best plan found by this procedure over the complete order set, not a certificate of global optimality for the problems. 
+
+Baselines and timing. GCS-SDP [7] runs with Mosek as published. In the open release, its path is assigned fixed per-mode durations after optimization, whereas CoMET op-timizes timing. We therefore also evaluate GCS-SDP + opti-mal retiming : the mode sequence and geometric path remain fixed, and interval durations minimize the same objective subject to the original plan’s total duration. This separable convex timing problem is solved in closed form; retiming leaves the consistency check unchanged. The released GCS-SDP has a terminal pusher position constraint: removing it worsened its plans by up to 40 .9% in our checks. We score every method only through its last contact, reducing the GCS-SDP cost by 6.5% on the tee and 8.4% on the box. Its relaxation bounds apply to its own formulation and do not bound CoMET’s transcription. 
+
+IMPACT [27] uses the same mechanics model and objec-tive, with up to three restarts. CMA-ES [33] samples pusher displacements at 50 knots, using 2,048 GPU-simulated roll-outs per generation. MCTS+IPOPT [16], [34] evaluates mode orders with IPOPT through CasADi, using MUMPS, exact Hessians, and 16 single-threaded processes, one per physical core. Two CPU controls use our DDP in float64 :MCTS and three-round expansion, with one candidate per thread on 16 pinned physical cores and no BLAS ( 97 .8–
+
+98 .9% measured occupancy). IMPACT, CMA-ES, and both CPU MCTS configurations have a nominal 120 s cap. Seed only, full enumeration, and expansion run to completion. GPU MCTS uses the same evaluator and refinement as CoMET, with per-instance evaluation-count and time caps set by three-round expansion. All MCTS variants run UCT (c = 0 .8 by hyperparameter sweeps) with virtual loss and random rollouts, rewarding bJbest / bJ for a feasible order and zero otherwise. 
+
+Solution quality and runtime. CoMET full enumeration and three-round expansion solve every instance; expansion reduces the median return times from 113 .7 s and 18 .8 sto 24 .6 s and 14 .1 s. Against retimed GCS-SDP, its median paired cost changes are −6.2% on the tee and −10 .1% on the box, with lower costs on 36 /50 and 39 /50 instances (Table I, Fig. 3). Both paired confidence intervals lie below zero. On the tee, expansion reduces median return time from GCS-SDP’s 107 .5 s to 24 .6 s, a 4.4× speedup. These results establish that broad mode evaluation is competitive on this benchmark, while the per-problem comparisons show that it does not dominate GCS-SDP everywhere. We check each returned plan for five types of physical in-consistency using its motion and contact forces: penetration, force from distance, motion without force, pulling forces, and forces outside the friction cone. No method exhibits pulling forces or friction-cone violations beyond ϵfeas .In the tested GCS-SDP release, we observe neither pene-tration nor force across a gap. However, 3/50 plans for each slider rotate by 180 ◦ within a single zero-force contact step (see supplementary video), which produces the maximum inconsistencies of 269 mm (tee) and 283 mm (box) in Table I. 10 15 20 30 00.01 0.1 110 100            
+
+> gap to the full enumeration's answer (%)
+> Pareto frontier of the medians equal to the full enumeration's answer
+> seed only 50/50, 13 s expansion (smax = 1 )50/50, 17 s MCTS P= 64
+> 50/50, 23 s MCTS P= 1024 ,256
+> 50/50, 23 s expansion (smax = 3 )50/50, 25 s
+> 100 120
+> GCS-SDP 50/50, 107 s GCS-SDP + optimal retiming 50/50, 107 s MCTS + our DDP (CPU) 50/50, 110 s full enumeration 50/50, 114 s MCTS+IPOPT 50/50, 120 s IMPACT 15/50, 120 s CMA-ES 47/50, 120 s expansion (smax = 3 , CPU) 50/50, 141 s
+
+wall clock to return the plan (s) 
+
+Fig. 3. Push-T: planning time versus objective gap to full enumeration. Small markers show individual successful runs; large markers summarize medians and interquartile ranges. Open markers at the top indicate values beyond the plotted range. The time axis has a break, and objective gaps are shown on a logarithmic scale with a lower display limit labeled “equal.” Dashed lines trace the Pareto frontier of the median results; nested markers show overlapping medians. 1 2 5 10 20 50 100 
+
+wall clock (s)          
+
+> 00.01 0.1 110 100
+> gap to the full enumeration's answer (%)
+> 17 s 23 s 25 s 110 s 114 s 120 s 141 s equal to the full enumeration's answer full enumeration expansion ( smax = 3 )expansion ( smax = 1 )MCTS, P= 1024
+> MCTS, P= 256
+> MCTS, P= 64
+> expansion ( smax = 3 ), CPU MCTS + our DDP, CPU MCTS+IPOPT, CPU
+
+Fig. 4. Push-T: median gap between the best objective found so far and the full-enumeration reference, plotted against elapsed time. Bands show interquartile ranges, and endpoint markers show median total planning times, including refinement. Dashed curves use 16 CPU threads; GPU MCTS curves use different pool capacities P .
+
+This is consistent with its constraint sin ∆ θ = hω , which admits a 0◦/180 ◦ ambiguity. More broadly, 24/50 tee and 17/50 box plans contain a step whose rotation exceeds hω by over 10 ◦. Re-solving GCS-SDP’s mode sequences with our DDP, which enforces stricter ∆θ = hω , reaches feasibility on only 30/50 tee and 40/50 box instances. On the 26 tee and 33 box instances whose GCS-SDP plans are consistent with their applied wrenches, CoMET’s median paired cost advantage widens to 10 .4% and 11 .4% , with lower costs on 24/26 and 32/33 instances. IMPACT applies pushing forces across gaps of up to 
+
+1.61 mm on the tee and 7.48 mm on the box. For CoMET ,the measured inconsistencies remain below 0.51 mm, in-cluding penetration of at most 0.24 mm, except for GPU MCTS with P = 64 on the box, which reaches 1.13 mm of penetration. IMPACT succeeds on 15 /50 tee and 25 /50 TABLE I PLANAR PUSHING (50 INSTANCES PER SLIDER ). W ALL : MEDIAN RETURN TIME (S); NLP S: MEDIAN MODE ORDERS EVALUATED DURING EXPLORATION ; J : MEDIAN OBJECTIVE . I NCONS .: EACH SUCCESSFUL PLAN ’S LARGEST PHYSICAL -CONSISTENCY VIOLATION (MM ), REPORTED AS MEDIAN /MAX OVER PLANS . P AIRED COLUMNS COMPARE AGAINST RETIMED GCS-SDP OVER JOINT SUCCESSES : ∆J IS THE MEDIAN PER -INSTANCE RELATIVE OBJECTIVE CHANGE , BRACKETS GIVE BOOTSTRAP 95% CI S, AND BEATS COUNTS LOWER -COST PLANS . † GPU MCTS USES THE THREE -ROUND EXPANSION BUDGET CAPS . ‡ OUR DDP ON 16 CPU CORES .                                                                                                                                                                                                                                                 
+
+> Push-T (8 faces, 36 ,465 orders) Push-box (4 faces, 6,297 orders) vs retimed GCS-SDP vs retimed GCS-SDP Method Succ. Wall NLPs J∆J(%) Beats Incons. Succ. Wall NLPs J∆J(%) Beats Incons. GCS-SDP + optimal retiming 50/50 107.5 —22.60 ——0.00 /269 50/50 16.7 —23.75 ——0.00 /283
+> GCS-SDP [7], as published 50/50 107.5 —26.67 +14 .0[ 10 .8,18 .3] 0/50 0.00 /269 50/50 16.7 —27.57 +13 .8[ 11 .6,16 .8] 0/50 0.00 /283
+> IMPACT [27] 15/50 120.0 —26.65 +35 .2[ −0.2,44 .5] 4/15 0.67 /2.525/50 120.0 —26.68 +17 .6[ 8.8,39 .7] 5/25 0.36 /7.5
+> CMA-ES [33] 47/50 120.1 —34.01 +37 .6[ 22 .5,57 .7] 7/47 0.00 /0.00 49/50 120.1 —31.77 +16 .4[ 3.7,48 .8] 13/49 0.00 /0.04
+> MCTS+IPOPT [16], [34] 50/50 120.0 324 23.68 −0.2[ −5.1,11 .0] 25/50 0.06 /0.16 50/50 120.0 402 23.12 −6.4[ −9.4,−2.1] 36/50 0.05 /0.15
+> MCTS + our DDP ‡, CPU 50/50 110.4 3,778 21.90 −6.0[−10 .7,−0.3]32/50 0.09 /0.51 50/50 108.3 6,182 22.02 −10 .2[−13 .1,−6.0]39/50 0.05 /0.44
+> CoMET (ours) and ablations
+> full enumeration 50/50 113.7 36,465 21.08 −6.2[ −11 .2,−2.1] 36/50 0.08 /0.42 50/50 18.8 6,297 22.00 −10 .1[ −13 .0,−6.0] 39/50 0.06 /0.44
+> expansion ( smax =3 )50/50 24.6 4,941 21.08 −6.2[−11 .2,−2.1]36/50 0.08 /0.42 50/50 14.1 3,386 22.00 −10 .1[−13 .0,−6.0]39/50 0.06 /0.44
+> expansion ( smax =3 )‡, CPU 50/50 141.3 4,996 21.12 −6.1[ −11 .2,−2.0] 36/50 0.05 /0.51 50/50 64.5 3,375 22.02 −10 .2[ −13 .1,−6.0] 39/50 0.05 /0.44
+> expansion ( smax =1 )50/50 17.3 3,313 21.14 −6.1[ −11 .2,−1.5] 35/50 0.05 /0.42 50/50 8.3 1,476 22.00 −10 .1[ −13 .0,−6.0] 39/50 0.06 /0.44
+> MCTS †,P=1024 50/50 23.5 4,096 21.18 −6.2[ −11 .2,−1.5] 36/50 0.06 /0.42 50/50 12.7 2,048 22.07 −10 .1[ −13 .0,−6.0] 39/50 0.06 /0.44
+> MCTS †,P=256 50/50 23.5 3,072 21.18 −6.2[ −11 .0,−1.5] 35/50 0.05 /0.42 50/50 12.6 1,792 22.07 −10 .1[ −13 .0,−6.0] 39/50 0.06 /0.44
+> MCTS †,P=64 50/50 23.1 832 21.82 −5.7[ −11 .2,1.3] 30/50 0.08 /0.42 50/50 12.6 512 22.43 −8.2[ −11 .9,−5.1] 38/50 0.04 /1.1
+> seed only ( ≤6segments) 50/50 13.4 2,289 21.14 −6.0[ −11 .0,−1.5] 35/50 0.05 /0.42 50/50 5.6 601 22.12 −8.8[ −11 .4,−5.8] 38/50 0.05 /0.44
+
+box instances, better than the results reported for the contact-implicit baseline in the GCS-SDP paper [7]. CMA-ES suc-ceeds more often, and both have higher median paired costs (Table I). MCTS+IPOPT succeeds throughout, with paired cost changes of −0.2% (confidence interval crossing zero) and −6.4% . It evaluates median counts of 324 and 402 
+
+orders within the time cap, motivating a closer look at the evaluator’s contribution. 
+
+Evaluator and GPU contributions. With the same CPU resources and time cap, replacing IPOPT with our DDP raises the median MCTS order counts from 324 to 3,778 
+
+on the tee and from 402 to 6,182 on the box. Its paired cost changes reach −6.0% and −10 .2% , close to GPU expan-sion’s −6.2% and −10 .1% . Thus, much of the quality gain on this benchmark comes from evaluating mode-conditioned TO problems more efficiently. This comparison changes the solver implementation and its finite-budget convergence behavior, and does not isolate evaluation breadth alone. Running the same three-round expansion with our DDP on the CPU produces similar costs but takes 141 .3 s on the tee and 64 .5 s on the box, versus 24 .6 s and 14 .1 s on the GPU. The CPU and GPU versions select the same winning order on 33 /50 tee instances. This comparison keeps the expansion rule and DDP algorithm, but changes execution platform and precision: the CPU uses float64 , whereas the GPU uses mixed precision. Together, these controls separate two effects: the DDP evaluator increases the useful mode evaluations attainable within a CPU budget, while GPU-parallel execution delivers similar solution quality substan-tially faster. 
+
+How should the evaluation budget be allocated? Three expansion rounds recover the full-enumeration reference on 
+
+49 /50 tee instances while evaluating a median 4,941 orders, only about 14% of the admissible space, reducing median return time by 4.6×. On the box, expansion recovers the reference on all 50 instances after evaluating a median 3,386 
+
+orders, about 54% of the space. The entire box space fits within one resident pool. Seed only is less expensive but can miss better plans: its worst tee gap is 3.5% , and its box median cost is 22 .12 , versus 22 .00 for full enumeration. The seed-only configuration already evaluates 2,289 mode-conditioned NLPs on the tee benchmark, highlighting the role of high-throughput evaluation even without neighbor-hood expansion. A check with a nine-segment space, four times larger, found no improvement on the instances tested. GPU MCTS exposes the trade-off between adaptation frequency and evaluation throughput. GPU MCTS with P =1,024 recovers the full enumeration on 35 /50 tee and 45 /50 
+
+box instances under the expansion-derived budget caps. Its completed order counts are lower than the caps because a pool refill can be interrupted by the time budget. Reducing 
+
+P to 256 and 64 allows more frequent search updates, but the median tee order count falls from 4,096 to 3,072 and 832 ,and reference recovery falls to 31 /50 and 18 /50 . Smaller pools can produce an earlier first feasible plan (Fig. 4), but do not improve the returned solutions in these tests. Because 
+
+P changes both the update frequency and the number of completed evaluations, these rows reflect the computational trade-off of the current implementation rather than the value of adaptation alone. Together, these ablations show that evaluator throughput is the main performance driver on this benchmark, while the benefit of more adaptive search is limited by its reduced evaluation throughput in our GPU implementation. θ = 0 ∘ : --, -- θ = −19 ∘ : left, -- θ = −55 ∘ : --, top                           
+
+> θ= −136 ∘: foot end, top θ= −165 ∘: foot end, left θ= −180 ∘: --, --Fig. 5. Visualization of a planned L-block flip, with the arms placed by inverse kinematics at the planned paddle poses. Labels give the block angle and the two paddle contact-face assignments; “--” denotes free motion. 10 210 310 410 5
+> 010 20 30 40
+> feasible sequences  (a) mode expansion MCTS uniform sampling
+> 10 210 310 410 5
+> 0510 15 20 25 30
+> instances solved  (b)
+> 45678
+> sequences in the space
+> Fig. 6. L-flip search policies. (a) Median feasible sequences found per run over the thirty instances; bands are bootstrap 95% confidence intervals. (b) Successful instances out of thirty as the segment cap increases from four to eight. Labels below the marks give the cap; admissible-space size varies by instance.
+
+B. Experiment 2: Bimanual Flipping of an L-shaped Block 
+
+Task and model. Unlike planar pushing, flipping changes the edge supporting the object. A contact sequence must coordinate paddle motions with these support transitions while satisfying quasi-static wrench balance. In the planned motion, a paddle can brace the block while the other drives a pivot, with single-paddle phases allowing contact changes (Fig. 5). The L-block has a 120 ×50 mm foot, a 60 ×150 mm leg, and four stable rest edges. The transcription uses nx =11 , nu = 13 , and 61 knots, optimizing block motion, paddle-tip poses and tilts, and contact forces. The least-squares objective includes motion smoothness penalty, contact forces regularization, and a terminal goal-position penalty. Mode-specific constraints place each contacting tip on its assigned face, enforce sticking, and restrict its force to a Coulomb cone. The table reaction is eliminated through quasi-static wrench balance and satisfies its own friction cone. Tool silhouettes are checked for unintended intersections with the block, table, and each other at the samples; continuous paddle tilts remain within an arm-feasible band obtained from offline inverse-kinematics sweeps. 
+
+Sequences and budget. An order specifies a support chain from the initial rest edge to the goal along the convex hull in either direction. Each paddle assigned to a face or free motion. During a pivot, at least one paddle contacts the block; paddles cannot share a face, change faces without a free phase, or contact the landing edge. Under these transition rules, increasing the segment cap from four to eight expands the admissible space S from 94 –134 to 579 ,734 –612 ,342 
+
+orders, depending on the problem. We test thirty different problems: fifteen requiring the block to pivot successively about two support vertices and fifteen about three, with table friction coefficients of 0.62 –0.78 , masses of 0.10 –0.24 kg, and goal offsets within ±60 mm. To isolate search allocation, all policies use the same CoMET TO evaluator, P = 512 ,
+
+texp = 300 , the same kinematic warm-start construction, and at most 5,000 sequence evaluations, stopping earlier if the admissible space is exhausted. 
+
+Our contact mode expansion follows Algorithm 1, start-ing from the shortest admissible sequences and expanding one-edit neighborhoods ( r = 1) ranked by cM (Eq. (5), 
+
+μ = 100 ). Uniform sampling draws complete admissible se-quences uniformly without replacement. MCTS uses UCT as in Sec. IV-A but rewards cMbest / cM instead of the feasibility-gated reward: feasible orders are rare here, so that reward carries little signal, and sharing the merit gives both search policies the same information. 
+
+Results. At segment caps four and five, all policies solve 
+
+15 /30 problems; the three-pivot problems have no feasible solution in these spaces (Fig. 6b). As the admissible space grows, the policies separate. At cap eight, with approximately 
+
+600 k orders, CoMET solves 30 /30 problems, compared with 
+
+26 /30 for MCTS and 7/30 for uniform sampling. CoMET also finds more feasible orders, with a median of 32 per run versus 18 .5 for MCTS and 0 for uniform sampling (Fig. 6a). This higher success does not come at the expense of returned-plan quality. At caps six through eight, CoMET’s re-turned merit is never higher than that of the other successful policies. At cap eight, among the 26 problems solved by both CoMET and MCTS, the two match on 16 , while CoMET is lower on the remaining 10 by up to 10 .7% . Median runtime is similar across policies: 95 .4 s for expansion, 91 .8 s for MCTS, and 91 .1 s for uniform sampling at cap eight. These results show that, when the mode space exceeds the evaluation budget, local mode structure provides useful guid-ance for allocating high-throughput trajectory evaluations. 
+
+Hardware execution. Two Franka Emika Panda robots execute a planned three-pivot flip, tracking the planned paddle poses and tilt angles via real-time inverse kinematics (IK) at 10 Hz, the update rate of the three-camera AprilTag tracking system (Fig. 1). The block state is used solely to verify geometric feasibility; thus, execution consists of end-effector trajectory tracking without incorporating contact dynamics. A trial is considered successful when the block comes to rest on the goal edge. Under this criterion, 12 out of 15 trials succeed (80%). All trials are included in the supplementary video. In the three failed trials, discrepancies between the planning model and the real world cause the block to deviate from its planned trajectory, and the tracker is unable to recover. The failures highlight the limitations and suggest that force feedback and local replanning are necessary to further improve the tracking with contact. V. CONCLUSIONS This paper revisited explicit contact-mode evaluation for CRMP under modern GPU parallelism. CoMET combines a high-throughput GPU evaluator for heterogeneous mode-conditioned constrained TO with GPU-friendly local mode expansion. On planar pushing, CoMET was competitive with convex-relaxation, contact-implicit, sampling, and tree-search baselines, recovering the full-enumeration reference on nearly all instances with substantially fewer evaluations. Ablations indicate that evaluator efficiency and GPU exe-cution account for much of this performance. On bimanual nonprehensile flipping, where the mode space exceeds the evaluation budget, local expansion under the same evaluator and budget solves more instances than the tested adaptive tree search and uniform sampling without degrading returned-plan quality. Real-robot experiments further demonstrate physical feasibility. Together, these results highlight the com-plementary benefits of high-throughput evaluation and local mode expansion, supporting broad explicit mode evaluation as a simple yet effective option for CRMP. ACKNOWLEDGMENT This work was supported by the DFG Emmy Noether Programme (CH 2676/1-1), the EU Horizon Europe projects MANiBOT (101120823) and ARISE (101135959), the BMFTR project RIG (16ME1001), and the ERC project SIREN (101163933). We also acknowledge support from the hessian.AI Service Center (BMFTR, 16IS22091), the hessian.AI Innovation Lab (S-DIW04/0013/003), TAM, RAI, Google, and the Alfried Krupp Foundation. Claude Opus 5 (Anthropic), via Claude Code, provided programming and debugging assistance for Sec. III-C; all code was reviewed and validated by the authors. REFERENCES [1] T. Lozano-Perez, M. T. Mason, and R. H. Taylor, “Automatic synthesis of fine-motion strategies for robots,” The International Journal of Robotics Research , vol. 3, no. 1, pp. 3–24, 1984. [2] G. Schultz and K. Mombaur, “Modeling and optimal control of human-like running,” IEEE/ASME Transactions on Mechatronics , vol. 15, no. 5, pp. 783–792, 2010. [3] M. Toussaint, “Logic-Geometric Programming: An Optimization-Based Approach to Combined Task and Motion Planning,” in IJCAI ,2015, pp. 1930–1936. [4] N. Doshi, F. R. Hogan, and A. Rodriguez, “Hybrid differential dynamic programming for planar manipulation primitives,” in 2020 IEEE International Conference on Robotics and Automation (ICRA) .IEEE, 2020, pp. 6759–6765. [5] X. Cheng, E. Huang, Y. Hou, and M. T. Mason, “Contact mode guided motion planning for quasidynamic dexterous manipulation in 3d,” in 
+
+2022 International Conference on Robotics and Automation (ICRA) .IEEE, 2022, pp. 2730–2736. [6] T. Marcucci, J. Umenberger, P. Parrilo, and R. Tedrake, “Shortest paths in graphs of convex sets,” SIAM Journal on Optimization , vol. 34, no. 1, pp. 507–532, 2024. [7] B. P. Graesdal, S. Y. C. Chia, T. Marcucci, S. Morozov, A. Amice, P. Parrilo, and R. Tedrake, “Towards Tight Convex Relaxations for Contact-Rich Manipulation,” in Proceedings of Robotics: Science and Systems , Delft, Netherlands, July 2024. [8] M. Posa, C. Cantu, and R. Tedrake, “A direct method for trajectory op-timization of rigid bodies through contact,” The International Journal of Robotics Research , vol. 33, no. 1, pp. 69–81, 2014. [9] Z. Manchester, N. Doshi, R. J. Wood, and S. Kuindersma, “Contact-implicit trajectory optimization using variational integrators,” IJRR ,vol. 38, no. 12-13, pp. 1463–1476, 2019. [10] A. Patel, S. L. Shield, S. Kazi, A. M. Johnson, and L. T. Biegler, “Contact-implicit trajectory optimization using orthogonal colloca-tion,” IEEE Robotics and Automation Letters , vol. 4, no. 2, pp. 2242– 2249, 2019. [11] A. ¨ O. ¨ Onol, R. Corcodel, P. Long, and T. Padır, “Tuning-free contact-implicit trajectory optimization,” in 2020 IEEE International Confer-ence on Robotics and Automation (ICRA) , 2020. [12] W. Shen, C. R. Garrett, N. Kumar, A. Goyal, T. Hermans, L. P. Kaelbling, T. Lozano-P´ erez, and F. Ramos, “Differentiable GPU-Parallelized Task and Motion Planning,” in Proceedings of Robotics: Science and Systems , Los Angeles, CA, USA, June 2025. [13] K. Shen and G. Chou, “Parallel Differentiable Reachability for Learn-ing and Planning with Certified Neural Dynamics and Controllers,” in 
+
+Proceedings of Robotics: Science and Systems , 2026. [14] W. Jallet, A. Bambade, N. Mansard, and J. Carpentier, “Constrained differential dynamic programming: A primal-dual augmented la-grangian approach,” in 2022 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS) , 2022. [15] A. D. Adeoye, P. Latafat, and A. Bemporad, “A proximal augmented Lagrangian method for nonconvex optimization with equality and inequality constraints,” arXiv preprint arXiv:2509.02894 , 2025. [16] C. Chen, P. Culbertson, M. Lepert, M. Schwager, and J. Bohg, “Trajectotree: Trajectory optimization meets tree search for planning multi-contact dexterous manipulation,” in 2021 IEEE/RSJ Interna-tional Conference on Intelligent Robots and Systems (IROS) . IEEE, 2021, pp. 8262–8268. [17] R. Natarajan, G. L. Johnston, N. Simaan, M. Likhachev, and H. Choset, “Torque-limited manipulation planning through contact by interleaving graph search and trajectory optimization,” in 2023 IEEE International Conference on Robotics and Automation (ICRA) , 2023. [18] M. Toussaint and M. Lopes, “Multi-bound tree search for logic-geometric programming in cooperative manipulation domains,” in 
+
+2017 IEEE International Conference on Robotics and Automation (ICRA) . IEEE, 2017, pp. 4044–4051. [19] M. Toussaint, K. Allen, K. Smith, and J. Tenenbaum, “Differentiable Physics and Stable Modes for Tool-Use and Manipulation Planning,” in Proceedings of RSS , Pittsburgh, Pennsylvania, June 2018. [20] J. Ortiz-Haro, E. Karpas, M. Toussaint, and M. Katz, “Conflict-directed diverse planning for logic-geometric programming,” in Pro-ceedings of the International Conference on Automated Planning and Scheduling , vol. 32, 2022, pp. 279–287. [21] M. Zhang, D. K. Jha, A. U. Raghunathan, and K. Hauser, “Simulta-neous Trajectory Optimization and Contact Selection for Multi-Modal Manipulation Planning,” in Proc. of RSS , 2023. [22] A. T. Le, K. Pompetzki, J. Carvalho, J. Watson, J. Urain, A. Biess, G. Chalvatzaki, and J. Peters, “Global tensor motion planning,” IEEE Robotics and Automation Letters , vol. 10, no. 7, pp. 7302–7309, 2025. [23] B. Sundaralingam, S. K. S. Hari, A. Fishman, C. Garrett, K. Van Wyk, V. Blukis, A. Millane, H. Oleynikova, A. Handa, F. Ramos, et al. ,“Curobo: Parallelized collision-free robot motion generation,” in 2023 IEEE International Conference on Robotics and Automation (ICRA) .IEEE, 2023, pp. 8112–8119. [24] E. Adabag, M. Atal, W. Gerard, and B. Plancher, “Mpcgpu: Real-time nonlinear model predictive control through preconditioned conjugate gradient on the gpu,” in 2024 IEEE International Conference on Robotics and Automation (ICRA) . IEEE, 2024, pp. 9787–9794. [25] A. Du, E. Adabag, G. Bravo-Palacios, and B. Plancher, “GATO: GPU-accelerated and batched trajectory optimization for scalable edge model predictive control,” arXiv preprint arXiv:2510.07625 , 2025. [26] J.-P. Sleiman, J. Carius, R. Grandia, M. Wermelinger, and M. Hutter, “Contact-implicit trajectory optimization for dynamic object manipula-tion,” in 2019 IEEE/RSJ international conference on intelligent robots and systems (IROS) . IEEE, 2019, pp. 6814–6821. [27] J. Li, D. Gong, and G. Chalvatzaki, “IMPACT: An Implicit Active-Set Augmented Lagrangian for Fast Contact-Implicit Trajectory Opti-mization,” in Proceedings of Robotics: Science and Systems , Sydney, Australia, July 2026. [28] A. Aydinoglu, A. Wei, W.-C. Huang, and M. Posa, “Consensus Complementarity Control for Multi-Contact MPC,” IEEE Transactions on Robotics (TRO) , July 2024. [29] W.-C. Huang, A. Aydinoglu, W. Jin, and M. Posa, “Adaptive contact-implicit model predictive control with online residual learning,” in 2024 IEEE International Conference on Robotics and Automation (ICRA) . IEEE, 2024, pp. 5822–5828. [30] S. Le Cleac’h, T. A. Howell, S. Yang, C.-Y. Lee, J. Zhang, A. Bishop, M. Schwager, and Z. Manchester, “Fast contact-implicit model predic-tive control,” IEEE Transactions on Robotics , vol. 40, pp. 1617–1629, 2024. [31] S. Kang, G. Liu, and H. Yang, “Global Contact-Rich Planning with Sparsity-Rich Semidefinite Relaxations,” in Proceedings of Robotics: Science and Systems , Los Angeles, CA, USA, June 2025. [32] Y. Zhang, X. Lyu, S. Rudra, D. Tateo, and G. Chalvatzaki, “Sequential Object Placement Optimization with Convex Decomposition,” arXiv preprint arXiv:2608.25162 , 2026. [33] N. Hansen, “The CMA Evolution Strategy: A Tutorial,” arXiv preprint arXiv:1604.00772 , 2016. [34] H. Zhu, A. Meduri, and L. Righetti, “Efficient object manipulation planning with monte carlo tree search,” in 2023 IEEE/RSJ IROS .IEEE, 2023, pp. 10 628–10 635.
