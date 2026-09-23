@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-22</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-23</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 20 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 18 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>4</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>14</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-22 22:48:02 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-23 22:18:49 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日日报：扫完20篇，精读6篇</p>
+<p>2026-09-23 日报共筛出18篇，精读4篇、速读14篇，重点聚焦规划执行一致性与未知动力学建模。最值得看的是两篇8.0分工作：Proximal Residual Value Functions 兼顾规划一致性与实时执行，Neural Kalman Filtering 用 Koopman 骨干做任务感知学习。普通读者可优先从这两篇入手，再按兴趣延伸速读中的全身操作与自动驾驶控制方向。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">6 篇</strong>
+    <strong class="dpr-home-dashboard-count">4 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="STRIDER: Stepping-Enabled Multi-Gait Hierarchical 3D Loco-Manipulation Framework for Humanoid Robots">STRIDER: Stepping-Enabled Multi-Gait Hierarchical 3D Loco-Manipulation Framework for Humanoid Robots</span></li><li><span class="dpr-home-dashboard-paper-title" title="Smoothness as a Constraint for Stable Humanoid Locomotion">Smoothness as a Constraint for Stable Humanoid Locomotion</span></li><li><span class="dpr-home-dashboard-paper-title" title="PredActor: Predictive Action Diffusion for Steerable Onboard Humanoid Control">PredActor: Predictive Action Diffusion for Steerable Onboard Humanoid Control</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Proximal Residual Value Functions for Consistent Planning and Real-Time Execution">Proximal Residual Value Functions for Consistent Planning and Real-Time Execution</span></li><li><span class="dpr-home-dashboard-paper-title" title="Neural Kalman Filtering for Unknown Dynamics: Task-Aware Learning with a Koopman Backbone">Neural Kalman Filtering for Unknown Dynamics: Task-Aware Learning with a Koopman Backbone</span></li><li><span class="dpr-home-dashboard-paper-title" title="PLAT: Sparse Timed Keyframe Motion Tracking for Humanoid Control via Privileged Latent Transition Learning">PLAT: Sparse Timed Keyframe Motion Tracking for Humanoid Control via Privileged Latent Transition Learning</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,7 +87,7 @@
     <strong class="dpr-home-dashboard-count">14 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Dynamics-Induced Commitment in Learning-Based Robotic Penalty Kicks">Dynamics-Induced Commitment in Learning-Based Robotic Penalty Kicks</span></li><li><span class="dpr-home-dashboard-paper-title" title="GEM-MPC: Balancing Exploration and Exploitation through Expert-Guided Planning">GEM-MPC: Balancing Exploration and Exploitation through Expert-Guided Planning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Contact-Rich Motion Planning via GPU-Parallel Mode Evaluation">Contact-Rich Motion Planning via GPU-Parallel Mode Evaluation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Whole-Body UMI: Transferring UMI Manipulation Skills to Humanoid Whole-Body Manipulation via Real-Time Motion Generation">Whole-Body UMI: Transferring UMI Manipulation Skills to Humanoid Whole-Body Manipulation via Real-Time Motion Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Stability-Aware Imitation Learning from Model Predictive Control for Autonomous Vehicle Lateral Control: Exact Q-Loss and a Novel Training Procedure">Stability-Aware Imitation Learning from Model Predictive Control for Autonomous Vehicle Lateral Control: Exact Q-Loss and a Novel Training Procedure</span></li><li><span class="dpr-home-dashboard-paper-title" title="Statistical Convergence of Transformer Encoder-Accelerated Robust Reinforcement Learning">Statistical Convergence of Transformer Encoder-Accelerated Robust Reinforcement Learning</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>9</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
