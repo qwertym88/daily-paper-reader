@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-23</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-24</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 18 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 19 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>4</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>5</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>14</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-23 22:18:49 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-24 22:59:52 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>2026-09-23 日报共筛出18篇，精读4篇、速读14篇，重点聚焦规划执行一致性与未知动力学建模。最值得看的是两篇8.0分工作：Proximal Residual Value Functions 兼顾规划一致性与实时执行，Neural Kalman Filtering 用 Koopman 骨干做任务感知学习。普通读者可优先从这两篇入手，再按兴趣延伸速读中的全身操作与自动驾驶控制方向。</p>
+<p>1）今日完成19篇论文扫描，精读5篇、速读14篇，重点锁定NGN与CRISP两篇高分工作。</p>
+<p>2）最值得看的是NGN（9.0）把神经网络规模作为可微计数来学习，以及CRISP（8.0）面向接触丰富机器人仿真的几何与接触求解平台。</p>
+<p>3）普通读者可先读NGN摘要了解“可微计数”思路，再浏览CRISP应用场景，速读中的力感知VLA、子任务分解和鲁棒对抗RL可作为延伸。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +73,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">4 篇</strong>
+    <strong class="dpr-home-dashboard-count">5 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Proximal Residual Value Functions for Consistent Planning and Real-Time Execution">Proximal Residual Value Functions for Consistent Planning and Real-Time Execution</span></li><li><span class="dpr-home-dashboard-paper-title" title="Neural Kalman Filtering for Unknown Dynamics: Task-Aware Learning with a Koopman Backbone">Neural Kalman Filtering for Unknown Dynamics: Task-Aware Learning with a Koopman Backbone</span></li><li><span class="dpr-home-dashboard-paper-title" title="PLAT: Sparse Timed Keyframe Motion Tracking for Humanoid Control via Privileged Latent Transition Learning">PLAT: Sparse Timed Keyframe Motion Tracking for Humanoid Control via Privileged Latent Transition Learning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="NGN: Learning Neural Network Size as a Differentiable Count">NGN: Learning Neural Network Size as a Differentiable Count</span></li><li><span class="dpr-home-dashboard-paper-title" title="CRISP: Contact-Rich Robotic Simulation Platform with Extensive Geometries and Contact Solvers">CRISP: Contact-Rich Robotic Simulation Platform with Extensive Geometries and Contact Solvers</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning Expressive Humanoid Locomotion from Monocular Runway Videos for Robot Fashion Shows">Learning Expressive Humanoid Locomotion from Monocular Runway Videos for Robot Fashion Shows</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,9 +89,9 @@
     <strong class="dpr-home-dashboard-count">14 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Whole-Body UMI: Transferring UMI Manipulation Skills to Humanoid Whole-Body Manipulation via Real-Time Motion Generation">Whole-Body UMI: Transferring UMI Manipulation Skills to Humanoid Whole-Body Manipulation via Real-Time Motion Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Stability-Aware Imitation Learning from Model Predictive Control for Autonomous Vehicle Lateral Control: Exact Q-Loss and a Novel Training Procedure">Stability-Aware Imitation Learning from Model Predictive Control for Autonomous Vehicle Lateral Control: Exact Q-Loss and a Novel Training Procedure</span></li><li><span class="dpr-home-dashboard-paper-title" title="Statistical Convergence of Transformer Encoder-Accelerated Robust Reinforcement Learning">Statistical Convergence of Transformer Encoder-Accelerated Robust Reinforcement Learning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Opt2VLA: Force-Aware Vision-Language-Action for Contact-Rich Humanoid Whole-Body Manipulation">Opt2VLA: Force-Aware Vision-Language-Action for Contact-Rich Humanoid Whole-Body Manipulation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Reinforcement Learning with Decomposed Subtasks">Reinforcement Learning with Decomposed Subtasks</span></li><li><span class="dpr-home-dashboard-paper-title" title="Robust Adversarial Reinforcement Learning with Risk Sensitivity and Critic Consistency Regularization">Robust Adversarial Reinforcement Learning with Risk Sensitivity and Critic Consistency Regularization</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>9</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>8</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>5</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span></div>
 </section>
 </div>
 
