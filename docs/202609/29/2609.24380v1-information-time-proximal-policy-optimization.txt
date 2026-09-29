@@ -1,0 +1,2973 @@
+Title: Information-Time Proximal Policy Optimization
+
+URL Source: https://arxiv.org/pdf/2609.24380v1
+
+Published Time: Tue, 22 Sep 2026 02:28:06 GMT
+
+Number of Pages: 38
+
+Markdown Content:
+# Information-Time Proximal Policy Optimization 
+
+Yongcheng Zeng 1,2, Xinyu Cui 1, Yan Song 3,4, Guoqing Liu 5,Hongsheng Xin 6, Kaike Zhang 6, Cheng Deng 7, Kun Zhan 6,
+
+Jian Ying 6, Jian Zhao 8, Haifeng Zhang 1,†, Jun Wang 3,† 
+
+> 1
+
+Institute of Automation, Chinese Academy of Sciences, China  
+
+> 2
+
+School of Artificial Intelligence, University of Chinese Academy of Sciences, China  
+
+> 3
+
+University College London 4 AI Lab, The Yangtze River Delta  
+
+> 5
+
+Microsoft Research AI4Science 6 Li Auto 7 The University of Edinburgh  
+
+> 8
+
+Zhongguancun Institute of Artificial Intelligence 
+
+Abstract 
+
+Reinforcement Learning with Verifiable Rewards (RLVR) has substantially im-proved the reasoning capabilities of Large Language Models (LLMs). However, existing methods typically parameterize temporal progression in the Markov Deci-sion Process (MDP) by token-by-token generation, despite the highly non-uniform information flow along autoregressive trajectories. In this paper, we propose Information-Time Proximal Policy Optimization (InfoPPO), which reparameter-izes temporal progression using information density, so that temporal distance is measured by accumulated information rather than raw token count. This reparam-eterization induces a common state-dependent structure for both temporal credit propagation and policy updates. By measuring temporal progression through accu-mulated information rather than token count, InfoPPO restores the effectiveness of non-trivial discounting in long-horizon reasoning, retaining effective-horizon contraction in information time while avoiding excessive attenuation of terminal supervision over long token sequences. Moreover, the information-time policy-improvement analysis naturally leads to a state-dependent update constraint, which we implement through adaptive clipping. By adapting the clipping threshold at each token position to the information density of its corresponding state, this mech-anism enables more targeted policy updates while preserving proximal control. Theoretically, we extend performance-difference and policy-improvement anal-yses to the information-time MDP, deriving a policy-improvement lower bound when policy changes are regulated by information density. We further connect the general information-time analysis to practical LLM policy optimization by relating state-wise information density to local policy movement, while also pro-viding theoretical grounding for the adaptive update mechanism. Experiments on Qwen3 models demonstrate consistent gains over competitive baselines across five challenging competition-style mathematical reasoning benchmarks. InfoPPO also maintains stable accuracy and response length across non-trivial discount settings under which token-time PPO deteriorates. 
+
+1 Introduction 
+
+Although Reinforcement Learning with Verifiable Rewards (RLVR) has substantially improved the performance of Large Language Models (LLMs) on challenging reasoning tasks (Guo et al., 2025; Yang et al., 2025; Jaech et al., 2024; Shao et al., 2024; Yu et al., 2025), reliably optimizing policies over long reasoning trajectories remains challenging. Existing RLVR methods commonly 
+
+> Preprint. arXiv:2609.24380v1 [cs.LG] 21 Sep 2026
+
+formulate each generated token as one transition of the Markov Decision Process (MDP), thereby measuring temporal progression by raw token count. This is a natural and widely adopted modeling choice. However, this formulation does not explicitly capture how information content varies across token transitions. This raises the question of whether token count alone provides the most suitable temporal metric for long-horizon LLM reasoning. Under sparse outcome-level supervision, this choice also makes non-trivial discounting difficult to apply: discounting at every token can cause terminal rewards to decay rapidly over long sequences, whereas removing discounting forgoes its control over the effective horizon. This tension motivates us to consider whether temporal progression in LLM reinforcement learning can be parameterized by a measure other than token count alone. One natural basis for such an alternative is the non-uniform information structure of autoregressive trajectories. In conventional RL domains such as robotic control and games, temporal progression is typically indexed by successive environment interactions, with each transition advancing the discrete-time index by one step (Brockman et al., 2016; Schulman et al., 2015a, 2017). When this convention is applied to language generation, each generated token is likewise treated as one unit of temporal progression. Yet token progression need not match information progression: many locally predictable tokens, including common function words such as articles, contribute mainly to local syntactic or semantic continuity, whereas a smaller number of semantic transition points can substantially redirect the subsequent reasoning trajectory (Wang et al., 2025; Qu et al., 2025; Fu et al., 2025). The resulting information landscape therefore interleaves locally sparse and dense regions. In sparse regions, continuations are relatively constrained, whereas dense regions involve a broader range of plausible continuations and larger increments of information. Consequently, token spans of equal length can accumulate markedly different amounts of reasoning-relevant information, even though token-based discounting applies the same cumulative decay to each. Raw token count thus captures sequence distance, but not the information distance traversed along the sequence. This motivates parameterizing temporal progression by accumulated information rather than token count. Building on this analysis, we propose Information-Time Proximal Policy Optimization (InfoPPO), which preserves the token-level state and action structure while reparameterizing the temporal measure of the MDP using state-wise information density. Temporal distance is therefore measured by accumulated information rather than raw token count. Under this formulation, discounting and trace decay operate over information time, retaining effective-horizon contraction while mitigating the excessive attenuation of terminal supervision over long token sequences. The corresponding policy-improvement analysis further motivates constraining policy movement in proportion to information density, which InfoPPO implements through adaptive clipping. By adapting the clipping range to local information density, this mechanism improves sample efficiency and accelerates policy learning. The state-wise information structure thus provides a common basis for temporal credit propagation and policy-update regulation. Theoretically, we extend the performance-difference lemma to the information-time MDP and derive a policy-improvement lower bound for policy updates constrained by information density. We further connect the general information-time analysis to practical LLM policy optimization by relating state-wise information density to local policy movement, while also providing theoretical grounding for the adaptive update mechanism in InfoPPO. Empirically, InfoPPO delivers consistent gains over PPO and DAPO-based baselines across model scales and five challenging competition-style mathematical reasoning benchmarks, while maintaining stable response lengths across training and remaining robust to non-trivial discounting that substantially degrades token-time PPO. 
+
+2 Related Works 
+
+Reinforcement Learning with Verifiable Rewards (RLVR). RLVR has emerged as a powerful post-training paradigm for improving the reasoning capabilities of LLMs by using rule-based verification functions to generate binary reward signals (Guo et al., 2025; Yang et al., 2025; Jaech et al., 2024; Lambert et al., 2024). Within this paradigm, Proximal Policy Optimization (PPO) (Schulman et al., 2017) remains a central framework for policy optimization and constitutes the most direct point of comparison for our method. Beyond PPO, several methods have adapted policy optimization to the specific demands of LLM reasoning. Group-based methods such as GRPO (Shao et al., 2024) eliminate the dependency on a separate value network by sampling multiple outputs per query and computing advantages via group-relative normalization, a strategy successfully validated by systems like DeepSeek-R1 (Guo et al., 2025). Concurrently, DAPO (Yu et al., 2025) further 2improves performance and stability through refined engineering implementations. Recent studies have also reconsidered how policy updates should be allocated across a generated trajectory. DAPO-FT (Wang et al., 2025) shows that a minority of high-entropy tokens account for a disproportionate share of effective policy learning and accordingly restrict gradient updates to these positions. At a coarser granularity, GSPO (Zheng et al., 2025) shifts importance weighting and clipping from individual tokens to entire sequences. Collectively, these methods refine how learning signals are estimated, sampled, and allocated, while generally retaining token-by-token generation as the temporal parameterization of the underlying MDP. In contrast, InfoPPO preserves the proximal policy-optimization structure of PPO while reparameterizing temporal progression through state-wise information density, thereby enabling effective-horizon control over long reasoning trajectories and supporting more sample-efficient policy learning. 
+
+Temporal Abstraction and Information Dynamics. Reinforcement learning has long explored temporal abstraction as a way to move beyond uniformly indexed primitive transitions. Foundational frameworks such as Semi-Markov Decision Processes (SMDPs) and the options framework (Sutton et al., 1999; Precup, 2000; Bacon et al., 2017) introduced temporal abstraction by aggregating primitive transitions into temporally extended actions. At the representation level, recent language modeling work, such as Dynamic Large Concept Models (DLCM) (Qu et al., 2025), also explores adaptive semantic abstraction beyond fixed token-level representations. These approaches typically require higher-level actions, units, or boundaries to be specified or learned, which is difficult in the semantically fluid process of autoregressive generation. Beyond explicit temporal abstraction, another complementary line of work generalizes geometric discounting through weighted or transition-based discount factors, allowing temporal weighting to vary across states or transitions (Feinberg & Shwartz, 1994; White, 2017). InfoPPO is related to this line of work, but grounds non-uniform temporal progression specifically in state-wise information density and extends the same structure to policy-update regulation. Unlike explicit temporal-abstraction methods, InfoPPO preserves token-level states and actions, capturing non-uniform temporal progression without requiring explicit segmentation or macro-action modeling. 
+
+3 Preliminaries 
+
+Markov Decision Process. We formulate the language generation process as a discounted Markov Decision Process (MDP), denoted by the tuple M = ( S, A, P, r, γ ). The state st ∈ S represents the generated sequence prefix, while the action at ∈ A corresponds to the next token selected from the vocabulary V. The transition dynamics P : S × A × S → R are deterministic, given by st+1 = st ⊕ at, where ⊕ denotes concatenation. r : S → R is the reward function and γ is the discount factor. For convenience, we write rt := r(st). Given a policy π, the objective is to maximize the expected discounted return η(π) = Eτ ∼π [P∞ 
+
+> t=0
+
+γtr(st)] . Accordingly, we define the state-value function Vπ (st) = Eπ [P∞ 
+
+> k=0
+
+γkr(st+k)|st] and the action-value function Qπ (st, a t) = 
+
+Eπ [P∞ 
+
+> k=0
+
+γkr(st+k)|st, a t], yielding the advantage function Aπ (s, a ) := Qπ (s, a ) − Vπ (s). Finally, we define the (unnormalized) discounted state visitation distribution as dπ (s) := P∞ 
+
+> t=0
+
+γtP (st =
+
+s|π).In many sparse reward settings, such as reasoning or question-answering tasks in LLMs, the agent only receives a non-zero signal RT at the terminal timestep T , i.e., 
+
+r(st) = 
+
+RT , t = T
+
+0, t < T (1) Here, the terminal reward RT provides outcome-level supervision for the entire trajectory. 
+
+Policy Optimization. The Performance Difference Lemma (Kakade & Langford, 2002) provides the theoretical foundation for monotonic policy improvement. It expresses the return difference between two policies, π and ˜π, as: 
+
+η(˜ π) − η(π) = Eτ ∼˜π
+
+" ∞X
+
+> t=0
+
+γtAπ (st, a t)
+
+#
+
+= X
+
+> s
+
+d˜π (s) X
+
+> a
+
+˜π(a|s)Aπ (s, a ). (2) 3In practice, to render the optimization tractable, we employ a local approximation by replacing d˜π
+
+with dπ , yielding the following surrogate objective function: 
+
+Lπ (˜ π) = η(π) + X
+
+> s
+
+dπ (s) X
+
+> a
+
+˜π(a|s)Aπ (s, a ). (3) TRPO (Schulman et al., 2015a) derives the following lower bound for monotonic policy improvement: 
+
+η(˜ π) ≥ Lπ (˜ π) − 4Cγ 
+
+(1 − γ)2 α2, (4) where C = max s,a |Aπ (s, a )| and α = max  
+
+> s
+
+DTV (π(·| s)∥˜π(·| s)) . In practice, TRPO constrains the magnitude of the policy update using an expected KL-divergence trust region, optimizing the following surrogate objective: 
+
+max  
+
+> θ
+
+Eπθold 
+
+ πθ (at|st)
+
+πθold (at|st) Aθold (st, a t)
+
+
+
+s.t. Eπθold [DKL (πθold (·| st)∥πθ (·| st))] ≤ δ, 
+
+(5) where πθ is the parameterized policy, and θold denotes the policy parameters before the update. PPO (Schulman et al., 2017) simplifies this optimization by using a clipped surrogate objective to approximately constrain policy updates: 
+
+LCLIP (θ) = Eπθold 
+
+h
+
+min  ωt(θ)Aθold , clip( ωt(θ), 1 − ϵlow , 1 + ϵhigh )Aθold 
+
+i
+
+, (6) where ωt(θ) = πθ (at|st)  
+
+> πθold (at|st)
+
+represents the importance ratio, ϵlow and ϵhigh are the clipping hyperparam-eters. 
+
+Advantage Estimation. Generalized Advantage Estimation (GAE) (Schulman et al., 2015b) is used to estimate the advantage from a parameterized value function Vϕ. Given the TD residual 
+
+δt = rt + γV ϕ(st+1 ) − Vϕ(st), the GAE estimator is given by AGAE (γ,λ ) 
+
+> t
+
+(st, a t) = P∞
+
+> l=0
+
+(γλ )lδt+l,where λ ∈ (0 , 1] controls the bias-variance trade-off. 
+
+4 Methodology 
+
+In this section, we develop Information-Time Proximal Policy Optimization (InfoPPO) in three stages. First, we identify the temporal misalignment induced by uniform token time and formulate an Information-Time MDP that preserves token-level states and actions while measuring trajectory progression through accumulated state-dependent information. Second, we extend the performance-difference and policy-improvement analyses to this non-uniform temporal measure, deriving a general lower bound when policy updates are constrained by information density. Finally, we specialize the framework to LLM policy optimization by using the old policy’s uncertainty over next-token continuations as a tractable proxy for local information density. We empirically examine how this proxy varies along reasoning trajectories and theoretically show that the induced policy movement satisfies the update condition required by the general lower bound. Because the proxy is fixed within each update but recomputed across iterations, we further bound the effect of this recomputation on the information-time return. This specialization yields the practical InfoPPO algorithm, combining information-time advantage estimation with proximal updates guided by information density. 
+
+4.1 Information-Time Markov Decision Process Temporal Misalignment under Uniform Token Time. Conventional RL formulations treat au-toregressive token generation as an MDP over a uniform time measure, denoted as μunif . Under this paradigm, each generated token advances the temporal coordinate by one unit, ∆μunif (t) = 1 , making temporal distance proportional to token count. This construction implicitly assigns the same temporal increment to every token transition, irrespective of how the local continuation structure changes along the trajectory. At each state, however, the autoregressive policy induces a distribution over possible continuations, and the structure of this distribution can vary substantially across the trajectory (Wang et al., 2025; Fu et al., 2025). Some transitions occur where the continuation is relatively constrained, 4Standard  PPO: Token-Time MDP 
+
+LLM  ⋯
+
+𝑡: 
+
+> Discrete Token Count Time (t)
+
+Uniform Discrete Token Timesteps 
+
+1 2 3 4
+
+> fast discount decay
+
+𝛾 𝑡     
+
+> 1234
+
+⋯
+
+𝑇 2𝑇 1 𝑇 3 𝑇 4
+
+> near -zero weight
+> 1.0
+> 0.5
+> 0
+> effective
+> horizon
+
+Discounting by token count 
+
+𝑅 𝑇 
+
+Long-horizon signal propagation 
+
+> signal fades backward
+
+𝑇 1 𝑇 2 𝑇 3 𝑇 4
+
+⋯
+
+InfoPPO: Information-Time MDP 
+
+𝜌(𝑠 𝑡 ) 𝑑𝜇 info 
+
+𝑑𝜇 unif 
+
+(𝑡) = 𝜌(𝑠 𝑡 )
+
+High 
+
+Low 
+
+LLM  ⋯𝑇 1 𝑇 2 𝑇 3 𝑇 4
+
+Information density  𝜌(𝑠 𝑡 )
+
+> Discrete Token Generation Timesteps
+
+1 2 3 4 ⋯
+
+Information-time  𝜇 Info  (adaptive steps) 
+
+> Discrete Token Generation Timesteps
+
+1 2 3 4 ⋯   
+
+> Tiny Step (low 𝜌 )
+> Large Step (high 𝜌 )
+
+discount aligned 
+
+with information density 
+
+1) Non-uniform information density    
+
+> high-𝜌 information-dense state low-𝜌 information-sparse state
+
+2) Standard PPO:  𝝆 -blind time and trust region  3) InfoPPO:  𝝆 -aware time and trust region                                  
+
+> 𝑇 1𝑇 2𝑇 3𝑇 4𝑇 5𝑇 6𝑇 7
+> information-dense
+> state (high-𝜌 )
+> information-dense
+> state (high-𝜌 )
+> Same token distance ≠same information distance
+> more plausible alternatives
+> more plausible
+> alternatives
+> 𝑇 1𝑇 2𝑇 3𝑇 4𝑇 5𝑇 6
+> (a) 𝝆 -blind time / discounting
+> local information density 𝜌(𝑠 𝑡 )
+> token-count time (uniform steps)
+> same token-time spacing (ignores local 𝜌 )
+> (b) 𝝆 -blind trust region / clipping
+> Standard PPO uses fixed clipping range
+> 𝑟 𝑡 𝜃 ∈ [1 − 𝜖 low , 1 + 𝜖 hi gh ]
+> 𝑇 1𝑇 2𝑇 3𝑇 4𝑇 5𝑇 6
+> 1
+> 1 + 𝜖 high
+> 1 + 𝜖 low
+> Consequences
+> high-𝜌 states under-
+> updated
+> low-𝜌 states
+> over-
+> updated
+> (a) 𝝆 -aware discounting / information-time
+> 𝜌(𝑠 𝑡 )Γinfo 𝑡 1, 𝑡 2= 𝛾 σ𝑡=𝑡1
+> 𝑡 2−1 𝑛
+> 𝑘 𝜌(𝑠 𝑡 )
+
+⋯ ⋯                  
+
+> consumes less effective distance
+> effective temporal
+> distance accumulates
+> information density
+> (b) adaptive-clipping / trust region
+> Consequences
+> high-𝜌 states
+> get wider
+> clip range
+> low-𝜌 states get narrower
+> clip range
+> 𝑟 𝑡 𝜃 ∈11 + log 1 + 𝛼 low 𝜌 𝑡
+> , 1 + log 1 + 𝛼 high 𝜌 𝑡
+> 1.0 1.0 11 + log 1 + 𝛼 low 𝜌 𝑡
+> 1 + log 1 + 𝛼 high 𝜌 𝑡
+> 1
+> 1 + log 1 + 𝛼 low 𝜌 𝑡
+> 1 + log 1 + 𝛼 high 𝜌 𝑡
+> high-𝝆 state (wide range) low-𝝆 state (narrow range)
+> consumes more effective distance
+
+token-count time  𝑡  information time  𝜇 info fast decay & uniform updates  aligned discounting & adaptive clipping Figure 1: Comparison of standard PPO and InfoPPO. PPO parameterizes temporal progression by uniform token steps and applies fixed clipping bounds across token positions. In long-horizon reasoning, this creates a tension between long-range credit propagation and effective-horizon con-traction. In contrast, InfoPPO preserves token-level transitions while measuring temporal distance through accumulated state-dependent information. This reparameterization retains effective-horizon contraction while moderating long-range attenuation. The same information density also adapts the clipping range across states, improving sample efficiency and accelerating policy learning. whereas others occur where a broader set of plausible continuations remains. The same unit token step can therefore correspond to different increments in the information traversed by the trajectory. Consequently, equal token distances need not imply equal information distances. We refer to this mismatch between token distance and information distance as Temporal Misalignment .Temporal Misalignment becomes consequential when temporal decay is defined over the same token-based coordinate. Because discounting and trace decay accumulate with temporal distance, under uniform token time, their cumulative effect is determined by raw token distance rather than the information traversed along the trajectory. In long-horizon reasoning, this creates a tension between long-range credit propagation and effective-horizon contraction: non-trivial token-wise decay can excessively attenuate terminal supervision over long sequences, whereas removing temporal decay forfeits effective-horizon contraction. This suggests that the issue is not necessarily temporal decay itself, but the coordinate over which that decay accumulates. Rather than assigning every token transition the same temporal increment, we therefore seek a temporal coordinate whose local progression varies with the information associated with each state. 
+
+The Information-Time MDP Construction. To formalize this state-dependent temporal coordi-nate, we augment the standard MDP formulation to the Information-Time MDP, denoted by the tuple 
+
+Minfo = ( S, A, P, r, γ, ρ ), where ρ : S → [0 , 1] quantifies the instantaneous information density of each state, reflecting the local intensity of information change along the trajectory. For example, in RL for LLM reasoning, the state corresponds to the self-generated context, while the old policy defines a predictive distribution over the next token at each visited state. Since the old policy remains fixed during the current update, this distribution provides a stable characterization of the information profile of the state. This motivates using quantities derived from the old policy distribution, such as next-token uncertainty, as proxies for the information density ρ(st). The details are provided in Section 4.4. To formalize how state-wise information density reparameterizes temporal progression over discrete token steps, we define the information-time measure μinfo with respect to the uniform time measure 5μunif : dμ info 
+
+dμ unif 
+
+(t) = ρ(st). (7) Since each token transition contributes a unit increment under μunif , this gives ∆μinfo (t) = ρ(st).Equipped with this measure transformation, we proceed to reformulate the fundamental RL compo-nents, specifically the objective and value functions. To facilitate the derivation, let us first revisit the standard objective function η(π) defined under the uniform time measure μunif :
+
+η(π) = Eτ ∼π
+
+" ∞X
+
+> t=0
+
+Γ(0 , t )r(st)
+
+#
+
+, (8) where the cumulative discount factor is defined as Γ( t1, t 2) := γPt2−1 
+
+> t=t1∆μunif (t)
+
+. Since ∆μunif (t) = 1 ,this recovers the standard form Γ( t1, t 2) = γt2−t1 .Replacing the uniform time measure with the information-time measure, we define the corresponding objective as 
+
+ηinfo (π) = Eτ ∼π
+
+" ∞X
+
+> t=0
+
+Γinfo (0 , t )r(st)
+
+#
+
+, (9) Here, the information-time discount factor is defined as Γinfo (t1, t 2) := γPt2−1 
+
+> t=t1∆μinfo (t)
+
+, specifically, this is equivalent to Γinfo (t1, t 2) = γPt2−1 
+
+> t=t1ρ(st)
+
+. For γ = 1 , the information-time objective reduces to the original undiscounted RLVR objective, whereas for γ < 1, information time determines how temporal decay is accumulated along the trajectory. Analogously, we define the value function V info  
+
+> π
+
+, action-value function Qinfo  
+
+> π
+
+, and advantage function 
+
+Ainfo  
+
+> π
+
+with respect to the information-time measure μinfo :
+
+V info  
+
+> π
+
+(st) := Eπ
+
+" ∞X
+
+> u=t
+
+Γinfo (t, u )r(su) st
+
+#
+
+,Qinfo  
+
+> π
+
+(st, a t) := Eπ
+
+" ∞X
+
+> u=t
+
+Γinfo (t, u )r(su) st, a t
+
+#
+
+,Ainfo  
+
+> π
+
+(s, a ) := Qinfo  
+
+> π
+
+(s, a ) − V info  
+
+> π
+
+(s).
+
+When ρ(s) ≡ 1 for all s ∈ S , the information-time formulation reduces to the standard uniform-time formulation. 
+
+4.2 Policy Improvement on Information-Time MDP 
+
+To analyze policy updates in the Information-Time MDP, we first extend the classic performance difference lemma (Kakade & Langford, 2002) to the information-time setting. 
+
+Lemma 4.1. (Information-Time Performance Difference). Given two policies π and ˜π within the Information-Time MDP framework, the following identity holds: 
+
+ηinfo (˜ π) − ηinfo (π) = Eτ ∼˜π
+
+" ∞X
+
+> t=0
+
+Γinfo (0 , t )Ainfo  
+
+> π
+
+(st, a t)
+
+#
+
+. (10) The detailed proof is provided in Appendix A.1. To express the information-time performance difference in state space, we define the unnormalized information-discounted state visitation measure 
+
+νinfo  
+
+> π
+
+(s) := Eτ ∼π
+
+" ∞X
+
+> t=0
+
+Γinfo (0 , t )1{st = s}
+
+#
+
+. (11) Unlike the standard discounted visitation measure, the information discount remains inside the expectation because Γinfo (0 , t ) depends on the information accumulated along the sampled trajectory. 6With this definition, Eq. (10) can be equivalently written as 
+
+ηinfo (˜ π) − ηinfo (π) = X
+
+> s
+
+νinfo ˜π (s) X
+
+> a
+
+˜π(a|s)Ainfo  
+
+> π
+
+(s, a ). (12) The derivation is provided in Appendix A.2. This formulation implies that if the condition P 
+
+> a
+
+˜π(a|s)Ainfo  
+
+> π
+
+(s, a ) ≥ 0 holds for all states s, the update from π to ˜π guarantees non-decreasing information-time return. However, direct optimization of this expression is difficult because the state visitation measure depends on the candidate policy ˜π.We therefore replace νinfo ˜π with the visitation measure induced by the current policy π, yielding the local surrogate 
+
+Linfo  
+
+> π
+
+(˜ π) = ηinfo (π) + X
+
+> s
+
+νinfo  
+
+> π
+
+(s) X
+
+> a
+
+˜π(a|s)Ainfo  
+
+> π
+
+(s, a ). (13) This replacement introduces an approximation error between the surrogate objective and the true return of ˜π. To relate the surrogate to the information-time return, we need to control this error as the candidate policy ˜π departs from the current policy π. Unlike the standard discounted setting, however, the information-time discount Γinfo (0 , t ) depends on the accumulated information density along the trajectory rather than on the token index alone. As a result, Γinfo (0 , t ) no longer forms a standard geometric sequence, and its cumulative sum cannot in general be reduced to (1 − γ)−1 as in the uniform-time setting. The standard geometric-series argument used to control the approximation error therefore does not directly apply. The underlying difference is that each transition now advances the temporal coordinate by ρ(s),rather than by a uniform unit step. This state-dependent temporal increment motivates expressing the local policy-update scale in terms of information density. Specifically, we require the total-variation divergence between the candidate policy ˜π and the current policy π at state s to be constrained by its information density: 
+
+DTV (˜ π(·| s), π (·| s)) ≤ αρ (s), ∀s. (14) Under this condition, states with lower information density admit smaller divergence bounds, whereas states with higher information density admit larger ones. Here, α determines the overall divergence scale. We justify this condition for LLM policy optimization in Section 4.4. We next show that this state-wise divergence constraint provides a corresponding bound on the surrogate approximation error. 
+
+Theorem 4.2. Let π be the current policy and ˜π a candidate policy. Suppose that the divergence condition in Eq. (14) holds for some α ≥ 0. Then, the following lower bound holds: 
+
+ηinfo (˜ π) ≥ Linfo  
+
+> π
+
+(˜ π) − 4Cα 2
+
+(1 − γ)2 ,
+
+where C = max  
+
+> s,a
+
+|Ainfo  
+
+> π
+
+(s, a )|.
+
+(15) The proof is provided in Appendix A.6. It uses a coupling argument to relate the state-wise total-variation bound to action disagreement between the two policies. Consequently, if the surrogate gain over the current policy exceeds the penalty term in Theorem 4.2, the candidate policy is guaranteed to achieve a non-decreasing information-time return. Section 4.4 extends this one-step result to the practical setting in which the information clock is induced by the old policy and refreshed across policy iterations. 
+
+4.3 Practical Construction of the Information Clock 
+
+The analysis in Section 4.2 is stated in the general infinite-horizon form of the Information-Time MDP. Episodic language generation is naturally covered by this formulation by treating the state reached after termination as absorbing, with zero continuation reward and value. We now specialize this framework to the practical RLVR setting considered in this work. Each generated response forms a finite trajectory τ = ( s0, a 0, . . . , s T ), which terminates at the EOS action, and supervision is provided through a terminal outcome reward RT .7(a) Highest average predictive entropy. (b) Lowest average predictive entropy. 
+
+Figure 2: Predictive entropy patterns in mathematical reasoning. We visualize up to 100 tokens with the highest and lowest average predictive entropy in Qwen3-4B, 8B, and 14B responses to AIME24 and AIME25. To reduce noise in the average entropy estimates, we only include tokens occurring more than 100 times in every model. 
+
+Instantiating the Information Density. The Information-Time MDP specifies the role of the state-wise information density ρ(s), but leaves its functional form unspecified. Because ρ(st) determines the information-time increment assigned to the transition from st to st+1 , its practical instantiation should capture the local uncertainty that remains in resolving that transition under the current policy. In autoregressive language generation, conditioned on the current prefix st, the next transition is determined by the next-token choice πold (·| st). The conditional next-token distribution therefore provides a state-local characterization of the uncertainty over the next transition. Shannon entropy provides a direct scalar summary of this uncertainty, because it equals the expected surprisal of the next token under the predictive distribution. Unlike the surprisal of a realized token, entropy is determined from the full predictive distribution before the next token is sampled and thus defines a state-wise quantity within the current policy update, consistent with the role of ρ. A concentrated distribution yields low entropy and indicates a locally constrained continuation, whereas a dispersed distribution yields high entropy and reflects a broader set of plausible continuations. Moreover, entropy can be computed directly from the policy distribution at the current state, varies continuously with the predictive distribution, and requires neither future trajectory information nor additional supervision. We therefore use the normalized next-token entropy of the frozen old policy as a tractable proxy for ρ(st).Figure 2 provides a qualitative view of token patterns associated with different levels of predictive entropy in mathematical reasoning. Tokens with higher average entropy tend to occur in discourse and reasoning transitions, whereas lower entropy is more common in mathematical symbols, numerals, and predictable subword fragments. This contrast supports predictive entropy as a practical proxy for local information density, since higher entropy reflects a broader set of plausible next-token continuations, while lower entropy indicates more constrained transitions. Figures 10–15 further illustrate this local variation along individual reasoning trajectories. Formally, for each state st visited under the frozen old policy, we define its predictive entropy as 
+
+Hold (st) := H(πold (·| st)) = − X
+
+> a∈V
+
+πold (a|st) log πold (a|st), (16) and instantiate the information density as 
+
+ρ(st) = Hold (st)
+
+Hmax 
+
+, (17) where Hmax > 0 is a normalization scale held fixed throughout the current policy update, so that 
+
+ρ(st) ∈ [0 , 1] over the states under consideration. This construction makes ρ well defined and fixed within a single policy update, while allowing it to adapt across policy iterations as the policy’s predictive uncertainty changes. Connecting this practical construction to the preceding analysis requires addressing two additional points. Theorem 4.2 assumes that policy divergence scales with 
+
+ρ(s), so this relation must first be verified for the entropy construction. Moreover, the theorem compares policies under a common information density, whereas the practical algorithm recomputes 
+
+ρ after each policy update. We therefore also need to quantify the change in information-time return introduced by this recomputation. 8We first verify the required divergence relation. For a fixed state s, the action-dependent term of the surrogate in Eq. (13) admits the equivalent importance-ratio representation 
+
+X
+
+> a
+
+˜π(a|s)Ainfo  
+
+> πold
+
+(s, a ) = Ea∼πold (·| s)
+
+ ˜π(a|s)
+
+πold (a|s) Ainfo  
+
+> πold
+
+(s, a )
+
+
+
+. (18) Because the divergence condition in Eq. (14) is imposed separately at each state, we characterize the policy movement induced by this conditional objective at a fixed s.
+
+Proposition 4.3. Suppose that πold is parameterized by a softmax distribution and that πnew is obtained by one local gradient step on the conditional surrogate in Eq. (18) , with the local step size bounded above by ¯β. Then, for every state s,
+
+DTV (πnew (·| s), π old (·| s)) ≤ ¯βC 
+
+2 (1 − exp {−H old (s)}) ≤ ¯βC Hmax 
+
+2 ρ(s), (19) 
+
+where C = max s,a |Ainfo  
+
+> πold
+
+(s, a )|. Hence, with α = ¯βC Hmax /2, the local update satisfies the state-dependent divergence scaling in Eq. (14) .
+
+The proof is provided in Appendix A.2. Proposition 4.3 resolves the first point by establishing the required divergence scaling for the entropy construction. We now turn to the effect of recomputing the information density after the policy update. Let πk denote the policy before an update and let ρk be the information density computed from it. During the update from πk to πk+1 , ρk remains fixed, so Theorem 4.2 applies directly to the comparison between these two policies under the same information density. Once the update is complete, the density is recomputed from πk+1 , yielding ρk+1 . We therefore quantify the change in information-time return caused solely by replacing ρk with ρk+1 while keeping πk+1 fixed. For this comparison, we write ηinfo  
+
+> ρ
+
+(π) for the information-time return of π evaluated using density ρ. The quantities ηinfo  
+
+> ρk
+
+(πk+1 ) and ηinfo  
+
+> ρk+1
+
+(πk+1 ) therefore isolate the effect of recomputing ρ while keeping the policy fixed. 
+
+Proposition 4.4. Suppose that the terminal reward is bounded by |RT | ≤ Rmax < ∞. Under the update from πk to πk+1 in Proposition 4.3, the change in information-time return caused by recomputing the information density satisfies 
+
+ηinfo  
+
+> ρk+1
+
+(πk+1 ) − ηinfo  
+
+> ρk
+
+(πk+1 ) ≤ 8Rmax 
+
+e α. (20) Since α = ¯βC Hmax /2, the effect of recomputing ρ is directly controlled by the local step-size bound 
+
+¯β. Together with Theorem 4.2, this separates the policy update performed with ρk fixed from the subsequent variation introduced by recomputing ρ. The proof is provided in Appendix A.8. The preceding result controls the perturbation caused by a single information-clock refresh. Across multiple policy iterations, however, the information density is repeatedly recomputed. To compare policy iterates on a common basis, we evaluate them under the same reference clock. The following proposition establishes a lower bound for this common-clock comparison. 
+
+Proposition 4.5. Let πx and πy , with x < y , be two policy iterates from the same sequence of updates, and let ρr be any fixed information-density snapshot used as a common reference clock. Suppose that |RT | ≤ Rmax < ∞. Define the cumulative certified gain between the two iterates as 
+
+Gx,y := 
+
+> y−1
+
+X
+
+> t=x
+
+
+
+Linfo  
+
+> πt
+
+(πt+1 ) − ηinfo  
+
+> ρt
+
+(πt) − 4Ctα2
+
+> t
+
+(1 − γ)2 − 8Rmax 
+
+e αt
+
+
+
+, (21) 
+
+where Ct and αt denote the corresponding quantities for the update πt → πt+1 , and all information-time quantities in the t-th summand are evaluated under ρt. For a trajectory τ = ( s0, a 0, . . . , s T ),define ¯ρj (τ ) := 1
+
+> T
+
+PT −1 
+
+> u=0
+
+ρj (su), and ε(r) 
+
+> x,y
+
+:= 12
+
+P 
+
+> j∈{ x,y }
+
+Eτ ∼πj
+
+h
+
+log ¯ρr (τ )¯ρj (τ )
+
+i
+
+. Then 
+
+ηinfo  
+
+> ρr
+
+(πy ) − ηinfo  
+
+> ρr
+
+(πx) ≥ G x,y − 2Rmax 
+
+e ε(r) 
+
+> x,y
+
+. (22) The proof is provided in Appendix A.9. Here, ε(r) 
+
+> x,y
+
+measures the average relative discrepancy between the trajectory-level information densities of the two endpoint policies and the common reference 9clock. Proposition 4.5 therefore shows that moderate variation in the information clock induces only a limited perturbation to comparisons between policy iterates, making their relative comparison less sensitive to clock recomputation across training. In the experiments, we further track the evolution of normalized entropy throughout training to empirically assess how the information clock evolves in practice. 
+
+4.4 Information-Time Policy Optimization 
+
+With the information clock specified, we incorporate ρt := ρ(st) into advantage estimation and policy optimization. Replacing uniform token-time decay in standard GAE with information-time decay gives 
+
+δinfo  
+
+> t
+
+= rt + γρt Vϕ(st+1 ) − Vϕ(st),
+
+ˆAinfo  
+
+> t
+
+= δinfo  
+
+> t
+
++ ( γλ )ρt ˆAinfo 
+
+> t+1
+
+. (23) By defining the information-time trace decay as Λinfo (t1, t 2) := λ  
+
+> Pt2−1
+> j=t1ρj
+
+, the recursion can be equivalently written as 
+
+ˆAinfo  
+
+> t
+
+= 
+
+> T−t−1
+
+X
+
+> l=0
+
+Γinfo (t, t + l)Λ info (t, t + l)δinfo  
+
+> t+l
+
+. (24) The information density also regulates the proximal policy update. Theorem 4.2 and Proposition 4.3 motivate a state-dependent update scale that increases with ρt. Following the PPO paradigm, we realize this update geometry through an adaptive clipping range. A direct choice would scale the bounds linearly as [1 − ϵinfo 
+
+> low
+
+ρt, 1 + ϵinfo 
+
+> high
+
+ρt]. While this linear construction captures the desired dependence on information density, it can yield relatively permissive updates at high-information states. We therefore adopt a more conservative logarithmic scaling. Specifically, we define the upper and lower clipping bounds as ξinfo high ,t := 1 + log 
+
+
+
+1 + ϵinfo high ρt
+
+
+
+and ξinfo low ,t := 11+log (1+ ϵinfo low ρt) ,respectively. Thus, the resulting clipping range expands with information density, while its logarithmic scaling moderates policy updates in high-information regions. Finally, we obtain the optimization objective of InfoPPO: 
+
+Linfo -CLIP (θ) = Eπθold 
+
+"
+
+min ωt(θ) ˆAinfo  
+
+> t
+
+, clip  ωt(θ), ξ info low ,t , ξ info high ,t 
+
+ ˆAinfo 
+
+> t
+
+!# 
+
+. (25) 
+
+5 Experiments 
+
+We organize our experiments to examine three aspects of InfoPPO. We first characterize the information-time quantities induced during training, including information density, cumulative information-time discounting, and state-dependent clipping. We then compare information-time and token-time PPO under non-trivial discount and trace-decay settings. Finally, we evaluate the complete method against representative RLVR baselines across model scales and mathematical reasoning benchmarks. 
+
+Models and Training Settings. We conduct our experiments on the Qwen3 series of models (Yang et al., 2025) with the DAPO-Math-17K dataset (Yu et al., 2025) and compare InfoPPO against three representative baselines: PPO (Schulman et al., 2017), DAPO (Yu et al., 2025), and DAPO-FT (Wang et al., 2025). For both InfoPPO and PPO, the policy model is trained with a learning rate of 1e−6
+
+and a 10-step warmup, while the critic model employs a learning rate of 2e − 6 without warmup. For the reproduction of DAPO and DAPO-FT, we adhere to the official default configurations. The maximum response length is set to 10k tokens for the 4B and 8B models and 12k tokens for the 14B model, consistently during training and evaluation. Further details are provided in the Appendix B. 
+
+Evaluation. We evaluate the models on five challenging competition-style mathematical reasoning benchmarks: AMC23 (Li et al., 2024), AIME24 (Zhang & Math-AI, 2024), AIME25 (Zhang & Math-AI, 2025), AIME26 (Zhang & Math-AI, 2026), and BeyondAIME (ByteDance-Seed, 2025). These benchmarks provide a challenging evaluation of mathematical reasoning across competition-style problem settings. All evaluations are performed in a zero-shot setting. For each prompt, we independently sample 16 responses with decoding temperature T = 1 .0 and report the average accuracy, denoted as Mean@16. 10 5.1 Empirical Characterization of the Information Clock 0 400 800 1200 1600 2000 2400 2800 3200 
+
+> Gradient Steps
+> 10 15 20 25 30
+> Accuracy (Mean@16)
+> sentence-level batch-level global-level
+
+(a) AIME24 Accuracy. 0 800 1600 2400 3200  
+
+> Gradient Steps
+> 0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7
+> Entropy
+> Sentence-level Batch-level Global-level
+
+(b) Raw Predictive Entropy. 0 800 1600 2400 3200  
+
+> Gradient Steps
+> 0.00 0.02 0.04 0.06 0.08
+> Entropy Norm
+> Sentence-level Batch-level Global-level
+
+(c) Normalized Entropy. 0 400 800 1200 1600 2000 2400 2800 3200 
+
+> Gradient Steps
+> 510 15 20 25 30
+> Accuracy (Mean@16)
+> sentence-level batch-level global-level
+
+(d) AIME25 Accuracy. 0 400 800 1200 1600 2000 2400 2800 3200  
+
+> Gradient Steps
+> 1.10 1.20 1.30 1.40 1.50 1.60
+> Mean Upper Clipping Bound
+> Sentence-level Batch-level Global-level
+
+(e) Mean Upper Clipping Bound. 0 400 800 1200 1600 2000 2400 2800 3200  
+
+> Gradient Steps
+> 0.84 0.87 0.90 0.93 0.96
+> Mean Lower Clip Bound
+> Sentence-level Batch-level Global-level
+
+(f) Mean Lower Clipping Bound. 
+
+Figure 3: Effects of Entropy Normalization. We empirically compare alternative normalization schemes by examining their effects on normalized entropy, adaptive clipping, and performance. Section 4.3 instantiates the information density as normalized predictive entropy, ρ(st) =
+
+Hold (st)/Hmax . We examine two complementary aspects of this construction. First, using globally fixed normalization as the reference, we further evaluate batch- and sentence-level alternatives em-pirically, focusing on the trade-off between local scale adaptation and information-clock stability. Second, using the selected scheme, we characterize how information density, temporal discounting, and adaptive clipping evolve during training across model scales. 
+
+Entropy Normalization. Figure 3 compares global-, batch-, and sentence-level entropy normal-ization. Relative to a globally fixed reference scale, more local normalization can make better use of the effective dynamic range of normalized entropy by adapting the scale to the entropy statistics of the current samples. This increased local adaptivity, however, makes the normalization scale itself data-dependent and can introduce additional variation into the resulting information density. The three schemes therefore exhibit different trade-offs. Global normalization preserves a common reference scale but can compress locally relevant entropy variation into a relatively narrow range. Sentence-level normalization provides the strongest local rescaling, but exhibits larger fluctuations and removes the absolute entropy-scale information across responses. Batch-level normalization lies between these two extremes, preserving meaningful local variation while retaining a more consistent reference across samples. Empirically, it also maintains comparatively well-behaved normalized-entropy and clipping dynamics together with competitive downstream performance. We therefore adopt batch-level normalization in the remaining experiments. 
+
+Information-Time Dynamics Across Model Scales. Figure 4 characterizes the information-time dynamics across Qwen3 model scales. After an initial transient, the normalized entropy defining ρt
+
+remains relatively stable, suggesting that the overall scale of the information clock does not exhibit large systematic drift as the policy evolves. This empirical stability is consistent with the moderate clock variation regime characterized by the cross-iteration analysis in Section 4.3. The mean terminal information-time discount Γinfo (0 , T ) remains at a substantial level throughout training, indicating that information-time discounting avoids severe attenuation of terminal supervision along typical trajectories. Meanwhile, the adaptive clipping bounds remain within stable ranges, and AIME24 11 0 400 800 1200 1600 2000 2400 
+
+> Gradient Steps
+> 510 15 20 25 30 35 40 45 50 55
+> Accuracy (Mean@16)
+> 32.5 38.5 51.7 InfoPPO 4B InfoPPO 8B InfoPPO 14B
+
+(a) AIME24 Accuracy. 0 800 1600 2400  
+
+> Gradient Steps
+> 0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7
+> Entropy
+> InfoPPO 4B InfoPPO 8B InfoPPO 14B
+
+(b) Raw Predictive Entropy. 0 800 1600 2400  
+
+> Gradient Steps
+> 0.00 0.02 0.04 0.06
+> Entropy Norm
+> InfoPPO 4B InfoPPO 8B InfoPPO 14B
+
+(c) Normalized Entropy. 0 400 800 1200 1600 2000 2400 
+
+> Gradient Steps
+> 0.90 0.92 0.94 0.96 0.98
+> Mean batch (Γinfo (0,  T))
+> InfoPPO 4B InfoPPO 8B InfoPPO 14B
+
+(d) Mean Γinfo (0 , T ).0 400 800 1200 1600 2000 2400  
+
+> Gradient Steps
+> 1.10 1.20 1.30 1.40 1.50
+> Mean Upper Clipping Bound
+> InfoPPO 4B InfoPPO 8B InfoPPO 14B
+
+(e) Mean Upper Clipping Bound. 0 400 800 1200 1600 2000 2400  
+
+> Gradient Steps
+> 0.81 0.84 0.87 0.90 0.93 0.96
+> Mean Lower Clip Bound
+> InfoPPO 4B InfoPPO 8B InfoPPO 14B
+
+(f) Mean Lower Clipping Bound. 
+
+Figure 4: Information-Time Dynamics Across Model Scales. We track the training dynamics of InfoPPO on Qwen3-4B, 8B, and 14B base models. (a) reports AIME24 accuracy; (b)–(c) show the raw predictive entropy and its normalized form used as the information density ρt; (d) reports the mean terminal information-time discount Γinfo (0 , T ); and (e)–(f) show the corresponding upper and lower adaptive clipping bounds. accuracy improves over training across model scales. These results show that the information clock induces well-behaved temporal weighting and state-dependent update scales across model scales. 
+
+5.2 Information-Time vs. Token-Time PPO 
+
+We next compare information-time PPO with standard token-time PPO under non-trivial discount and trace-decay settings, highlighting how the information-time parameterization changes optimization behavior in long-horizon reasoning. 
+
+Discounting over Information Time. Figure 5 compares the two temporal parameterizations across different γ settings. Token-time PPO is highly sensitive to non-trivial discounting. For γ < 1, accu-racy deteriorates sharply on both AIME24 and AIME25, while response length exhibits pronounced and often degenerate changes. Notably, at γ = 0 .999 , response length rapidly saturates near the maximum generation length. This sharp variation highlights the instability of token-time discounting across γ settings. In contrast, information-time PPO remains effective across the tested γ range, with substantially stronger accuracy and more gradual changes in response length. More importantly, information-time discounting preserves effective-horizon control, thereby keeping response length within a well-behaved, non-degenerate range across γ settings. This behavior is consistent with the different accumulation of temporal decay. Token-time discounting compounds directly with raw sequence length as γT , whereas information-time discounting accumulates according to γP 
+
+> t
+
+ρt . This reparameterization retains effective-horizon control while avoiding the excessive attenuation caused by the raw token distance. 
+
+Trace Decay over Information Time. Figure 6 compares the two parameterizations across different 
+
+λ settings. Under token-time PPO, reducing λ below one leads to substantial performance degradation, whereas information-time PPO remains competitive across non-trivial λ values. Notably, λ = 0 .99 
+
+achieves particularly strong performance and even outperforms λ = 1 on AIME25, suggesting that 12 0 800 1600 2400 3200 4000 
+
+Gradient Steps 
+
+> 0510 15 20 25 30 35 40
+> Accuracy (Mean@16)
+
+AIME 2024      
+
+> 0800 1600 2400 3200 4000
+
+Gradient Steps 
+
+> 0510 15 20 25 30 35 40
+> Accuracy (Mean@16)
+
+AIME 2025      
+
+> 0800 1600 2400 3200 4000
+
+Gradient Steps 
+
+> 02000 4000 6000 8000 10000
+> Response Length
+
+Response Length                                         
+
+> PPO λ= 1, γ= 0.95
+> InfoPPO λ= 0.99, γ= 0.95
+> PPO λ= 1, γ= 0.99
+> InfoPPO λ= 0.99, γ= 0.99
+> PPO λ= 1, γ= 0.995
+> InfoPPO λ= 0.99, γ= 0.995
+> PPO λ= 1, γ= 0.999
+> InfoPPO λ= 0.99, γ= 0.999
+> PPO λ= 1, γ= 1
+> InfoPPO λ= 0.99, γ= 1
+
+Figure 5: Comparison of information-time and token-time discounting under different γ settings. All experiments are conducted using the Qwen3-4B Base Model. (a) and (b) report the accuracy results on AIME24 and AIME25, respectively. (c) illustrates the average response length. Token-time PPO is highly sensitive to non-trivial discounting, whereas information-time PPO maintains stronger performance and more stable response lengths across γ settings. 0 400 800 1200 1600 2000 2400 2800 3200                         
+
+> Gradient Steps
+> 0510 15 20 25 30 35
+> Accuracy (Mean@16)
+> AIME 2024
+> PPO λ= 0.95, γ= 1
+> PPO λ= 0.99, γ= 1
+> PPO λ= 1, γ= 1
+> InfoPPO λ= 0.95, γ= 0.999
+> InfoPPO λ= 0.99, γ= 0.999
+> InfoPPO λ= 1, γ= 0.999
+
+(a) AIME24 Accuracy 0 400 800 1200 1600 2000 2400 2800 3200                          
+
+> Gradient Steps
+> 0510 15 20 25 30 35
+> Accuracy (Mean@16)
+> AIME 2025
+> PPO λ= 0.95, γ= 1
+> PPO λ= 0.99, γ= 1
+> PPO λ= 1, γ= 1
+> InfoPPO λ= 0.95, γ= 0.999
+> InfoPPO λ= 0.99, γ= 0.999
+> InfoPPO λ= 1, γ= 0.999
+
+(b) AIME25 Accuracy 
+
+Figure 6: Comparison of information-time and token-time trace decay under different λ settings. (a) and (b) report the accuracy results on AIME24 and AIME25, respectively. non-trivial trace decay can provide a more favorable bias–variance trade-off rather than merely being tolerated. Under token time, λt2−t1 compounds over every generated token, causing the trace to attenuate rapidly over long trajectories. In InfoPPO, trace decay accumulates over information time rather than raw token distance, allowing credit to propagate over longer horizons without excessive attenuation. This makes non-trivial λ practically useful for controlling the bias–variance trade-off in GAE. Taken together, these results show that information-time discounting supports non-trivial temporal decay while preserving both effective-horizon control and stable long-range credit propagation. Based on the performance and training behavior observed on AIME24 and AIME25, we use γ = 0 .999 
+
+and λ = 0 .99 as the default configuration for InfoPPO in the remaining experiments. For the PPO baseline, we retain its standard configuration with γ = 1 and λ = 1 .
+
+5.3 Overall Performance Comparison 
+
+Having characterized the information-time dynamics and its effects on temporal credit propagation, we now evaluate the complete InfoPPO against representative RLVR baselines across model scales and mathematical reasoning benchmarks. We examine whether the benefits observed in the preceding analyses translate into consistent gains in reasoning performance while maintaining well-behaved response lengths. Table 1 summarizes the performance of InfoPPO against competitive baselines. InfoPPO delivers consistently strong performance across Qwen3-4B, 8B, and 14B, with an overall advantage across multiple challenging mathematical reasoning benchmarks. These gains are not accompanied by 13 Table 1: Performance comparison of InfoPPO with PPO, DAPO, and DAPO-FT. For each prompt, we independently sample 16 responses and report the average accuracy, denoted as Mean@16. Bold 
+
+indicates the best result. 
+
+Benchmark DAPO DAPO-FT PPO InfoPPO Score Len. Score Len. Score Len. Score Len. 
+
+Qwen3-4B Base Model 
+
+AMC23 73.4 3938.7 75.0 4013.0 72.8 6583.0 76.6 3792.5 AIME24 30.4 5650.1 31.1 6286.2 28.1 8552.0 32.5 5855.8 AIME25 25.2 5098.3 25.4 5415.1 25.4 8322.0 28.8 5545.9 AIME26 21.7 5457.5 20.6 6019.3 20.2 8632.6 23.8 5863.3 BeyondAIME 10.3 4820.6 12.3 5580.7 12.3 8428.7 12.8 4714.9 
+
+Average 32.2 4993.0 32.9 5462.9 31.8 8103.7 34.9 5154.5 
+
+Qwen3-8B Base Model 
+
+AMC23 80.5 3206.6 81.7 2855.4 76.9 5230.8 84.4 3233.2 AIME24 32.3 4789.9 31.3 4919.0 31.3 7263.6 38.5 5657.9 AIME25 27.5 4099.5 23.1 3956.1 25.4 6499.4 30.8 4795.9 AIME26 28.1 4833.6 26.0 4758.3 26.5 7483.6 33.5 5495.4 BeyondAIME 13.0 3924.7 12.4 3957.5 12.6 7160.8 18.8 4878.8 
+
+Average 36.3 4170.9 34.9 4089.3 34.5 6727.6 41.2 4812.2 
+
+Qwen3-14B Base Model 
+
+AMC23 87.2 3680.5 86.1 4382.5 86.4 5066.1 89.1 3497.4 AIME24 47.7 6519.0 47.5 7622.8 45.4 8254.1 51.7 6334.6 AIME25 34.8 6326.4 37.1 7231.8 30.8 8024.7 37.5 6751.6 AIME26 37.1 6459.9 41.3 7508.1 37.3 8045.8 45.8 6801.0 BeyondAIME 19.8 5746.1 20.9 7245.0 19.4 7954.2 22.7 6260.1 
+
+Average 45.3 5746.4 46.6 6798.0 43.9 7469.0 49.4 5928.9 systematic response-length growth. The generation lengths of InfoPPO remain broadly comparable to those of DAPO and DAPO-FT, while relative to PPO, InfoPPO achieves higher average accuracy with shorter responses. Overall, InfoPPO exhibits a more favorable accuracy–length trade-off rather than relying on continued expansion of the reasoning trajectory. Figure 7 further shows that this pattern persists throughout training. Across model scales, InfoPPO steadily improves accuracy while keeping response lengths within a relatively stable range. In contrast, the baselines exhibit larger variations in response length over the course of training. This behavior is consistent with the information-time formulation. Information-time discounting introduces a non-trivial effective-horizon constraint while avoiding excessive accumulation of token-wise decay over long sequences, and information-dependent policy updates adapt the optimization scale to local information density. Together, these mechanisms enable effective policy improvement within a controlled information horizon without relying on continued trajectory expansion. Taken together, the final performance and training dynamics show that InfoPPO consistently translates the information-time formulation into improved reasoning performance across model scales and challenging mathematical reasoning tasks, while maintaining a favorable overall efficiency. 
+
+6 Conclusion 
+
+We introduce InfoPPO, which reparameterizes temporal progression in LLM reinforcement learning by accumulated information rather than raw token count. This information-time formulation provides a common basis for temporal credit propagation and policy-update regulation, enabling non-trivial effective-horizon control while adapting policy updates to local information density. We establish policy-improvement guarantees under this state-dependent temporal geometry and connect the practical entropy-based construction to the resulting policy movement. Experiments across Qwen3 model scales and challenging mathematical reasoning benchmarks show consistent performance gains and stable response-length behavior, demonstrating the effectiveness of information time as 14 0 400 800 1200 1600 2000 2400 
+
+Gradient Steps 
+
+> 510 15 20 25 30 35
+> Accuracy (Mean@16)
+> 30.4 31.1 28.1 32.5
+> DAPO DAPO-FT PPO InfoPPO
+
+(a) AIME24 Accuracy trained from Qwen3-4B Base. 0 400 800 1200 1600 2000 2400 
+
+Gradient Steps 
+
+> 510 15 20 25 30
+> Accuracy (Mean@16)  25.2 (25.4, 25.4) 28.8
+> DAPO DAPO-FT PPO InfoPPO
+
+(b) AIME25 Accuracy trained from Qwen3-4B Base. 0 400 800 1200 1600 2000 2400 
+
+Gradient Steps 
+
+> 02000 4000 6000
+> Response Length
+> DAPO DAPO-FT PPO InfoPPO
+
+(c) Response lengths trained from Qwen3-4B Base. 0 400 800 1200 1600 2000 2400 
+
+Gradient Steps 
+
+> 510 15 20 25 30 35 40
+> Accuracy (Mean@16)  32.3 (31.3, 31.3) 38.5
+> DAPO DAPO-FT PPO InfoPPO
+
+(d) AIME24 Accuracy trained from Qwen3-8B Base. 0 400 800 1200 1600 2000 2400 
+
+Gradient Steps 
+
+> 510 15 20 25 30
+> Accuracy (Mean@16)  27.5 24.4 27.9 30.8
+> DAPO DAPO-FT PPO InfoPPO
+
+(e) AIME25 Accuracy trained from Qwen3-8B Base. 0 400 800 1200 1600 2000 2400 
+
+Gradient Steps 
+
+> 02000 4000 6000
+> Response Length
+> DAPO DAPO-FT PPO InfoPPO
+
+(f) Response lengths trained from Qwen3-8B Base. 0 400 800 1200 1600 2000 
+
+Gradient Steps 
+
+> 510 15 20 25 30 35 40 45 50 55
+> Accuracy (Mean@16)
+> 47.7 47.5 45.4 51.7
+> DAPO DAPO-FT PPO InfoPPO
+
+(g) AIME24 Accuracy trained from Qwen3-14B Base. 0 400 800 1200 1600 2000 
+
+Gradient Steps 
+
+> 510 15 20 25 30 35 40
+> Accuracy (Mean@16)
+> (35.0, 35.0) 37.5 37.9
+> DAPO DAPO-FT PPO InfoPPO
+
+(h) AIME25 Accuracy trained from Qwen3-14B Base. 0 400 800 1200 1600 2000 
+
+Gradient Steps 
+
+> 02000 4000 6000
+> Response Length
+> DAPO DAPO-FT PPO InfoPPO
+
+(i) Response lengths trained from Qwen3-14B base. 
+
+Figure 7: Training Dynamics of Accuracy and Response Length Across Model Scales. InfoPPO exhibits stronger accuracy gains over training while maintaining stable response lengths, indicating more efficient policy improvement without relying on continued length growth. a temporal parameterization for long-horizon LLM reinforcement learning. Looking forward, an important direction is to explore alternative instantiations of information density beyond predictive entropy, potentially capturing complementary aspects of information progression along reasoning trajectories. It would also be interesting to explicitly regulate predictive entropy during policy optimization, which could help maintain a more stable information clock across policy iterations while offering a potential means of balancing exploration and exploitation during training. 15 References 
+
+Bacon, P.-L., Harb, J., and Precup, D. The option-critic architecture. In Proceedings of the AAAI conference on artificial intelligence , volume 31, 2017. Brockman, G., Cheung, V., Pettersson, L., Schneider, J., Schulman, J., Tang, J., and Zaremba, W. Openai gym. arXiv preprint arXiv:1606.01540 , 2016. ByteDance-Seed. BeyondAIME: Advancing math reasoning evaluation beyond high school olympiads, 2025. URL https://huggingface.co/datasets/ByteDance-Seed/ BeyondAIME .Feinberg, E. A. and Shwartz, A. Markov decision models with weighted discounted criteria. Mathe-matics of Operations Research , 19(1):152–168, 1994. Fu, Y., Wang, X., Tian, Y., and Zhao, J. Deep think with confidence. arXiv preprint arXiv:2508.15260 ,2025. Guo, D., Yang, D., Zhang, H., Song, J., Zhang, R., Xu, R., Zhu, Q., Ma, S., Wang, P., Bi, X., et al. Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning. arXiv preprint arXiv:2501.12948 , 2025. Jaech, A., Kalai, A., Lerer, A., Richardson, A., El-Kishky, A., Low, A., Helyar, A., Madry, A., Beutel, A., Carney, A., et al. Openai o1 system card. arXiv preprint arXiv:2412.16720 , 2024. Kakade, S. and Langford, J. Approximately optimal approximate reinforcement learning. In 
+
+Proceedings of the nineteenth international conference on machine learning , pp. 267–274, 2002. Lambert, N., Morrison, J., Pyatkin, V., Huang, S., Ivison, H., Brahman, F., Miranda, L. J. V., Liu, A., Dziri, N., Lyu, S., et al. T \" ulu 3: Pushing frontiers in open language model post-training. arXiv preprint arXiv:2411.15124 , 2024. Li, J., Beeching, E., Tunstall, L., Lipkin, B., Soletskyi, R., Huang, S., Rasul, K., Yu, L., Jiang, A. Q., Shen, Z., et al. Numinamath: The largest public dataset in ai4maths with 860k pairs of competition math problems and solutions. Hugging Face repository , 13:9, 2024. Precup, D. Temporal abstraction in reinforcement learning . University of Massachusetts Amherst, 2000. Qu, X., Wang, S., Huang, Z., Hua, K., Yin, F., Zhu, R.-J., Zhou, J., Min, Q., Wang, Z., Li, Y., et al. Dynamic large concept models: Latent reasoning in an adaptive semantic space. arXiv preprint arXiv:2512.24617 , 2025. Schulman, J., Levine, S., Abbeel, P., Jordan, M., and Moritz, P. Trust region policy optimization. In 
+
+International conference on machine learning , pp. 1889–1897. PMLR, 2015a. Schulman, J., Moritz, P., Levine, S., Jordan, M., and Abbeel, P. High-dimensional continuous control using generalized advantage estimation. arXiv preprint arXiv:1506.02438 , 2015b. Schulman, J., Wolski, F., Dhariwal, P., Radford, A., and Klimov, O. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 , 2017. Shao, Z., Wang, P., Zhu, Q., Xu, R., Song, J., Bi, X., Zhang, H., Zhang, M., Li, Y., Wu, Y., et al. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 , 2024. Sutton, R. S., Precup, D., and Singh, S. Between mdps and semi-mdps: A framework for temporal abstraction in reinforcement learning. Artificial intelligence , 112(1-2):181–211, 1999. Wang, S., Yu, L., Gao, C., Zheng, C., Liu, S., Lu, R., Dang, K., Chen, X., Yang, J., Zhang, Z., et al. Beyond the 80/20 rule: High-entropy minority tokens drive effective reinforcement learning for llm reasoning. arXiv preprint arXiv:2506.01939 , 2025. White, M. Unifying task specification in reinforcement learning. In International Conference on Machine Learning , pp. 3742–3750. PMLR, 2017. 16 Yang, A., Li, A., Yang, B., Zhang, B., Hui, B., Zheng, B., Yu, B., Gao, C., Huang, C., Lv, C., et al. Qwen3 technical report. arXiv preprint arXiv:2505.09388 , 2025. Yu, Q., Zhang, Z., Zhu, R., Yuan, Y., Zuo, X., Yue, Y., Fan, T., Liu, G., Liu, L., Liu, X., et al. Dapo: An open-source llm reinforcement learning system at scale. arXiv preprint arXiv:2503.14476 ,2025. Zhang, Y. and Math-AI, T. American invitational mathematics examination (aime) 2024, 2024. Zhang, Y. and Math-AI, T. American invitational mathematics examination (aime) 2025, 2025. Zhang, Y. and Math-AI, T. American invitational mathematics examination (aime) 2026, 2026. Zheng, C., Liu, S., Li, M., Chen, X.-H., Yu, B., Gao, C., Dang, K., Liu, Y., Men, R., Yang, A., et al. Group sequence policy optimization. arXiv preprint arXiv:2507.18071 , 2025. 17 A Mathematical Derivations 
+
+A.1 Proofs for Policy Improvement on the Information-Time MDP Lemma A.1 (Information-Time Performance Difference) . Given two policies π and ˜π within the Information-Time MDP framework, the following identity holds: 
+
+ηinfo (˜ π) − ηinfo (π) = Eτ ∼˜π
+
+" ∞X
+
+> t=0
+
+Γinfo (0 , t )Ainfo  
+
+> π
+
+(st, a t)
+
+#
+
+, (26) 
+
+where Γinfo (0 , t ) represents the cumulative information-time discount factor. Proof. First, we verify that the cumulative information discount factor Γinfo (t1, t 2) satisfies the following multiplicative property: 
+
+Γinfo (t1, t 2) = γPt2−1  
+
+> t=t1∆μinfo (t)
+
+= γPtmid −1  
+
+> t1∆μinfo
+
+× γ  
+
+> Pt2−1
+> tmid ∆μinfo
+
+= Γ info (t1, t mid )Γ info (tmid , t 2).
+
+(27) Recalling the definition Qinfo  
+
+> π
+
+(st, a t) := Eπ
+
+hP∞ 
+
+> l=0
+
+Γinfo (t, t + l)r(st+l) st, a t
+
+i
+
+, we proceed to derive the Bellman equation on the information-time: 
+
+Qinfo  
+
+> π
+
+(st, a t) = Eπ
+
+" ∞X
+
+> l=0
+
+Γinfo (t, t + l)r(st+l) st, a t
+
+#
+
+(28) 
+
+= Eπ
+
+"
+
+r(st) + Γ info (t, t + 1) 
+
+> ∞
+
+X
+
+> l=t+1
+
+Γinfo (t + 1 , l )r(sl) st, a t
+
+#
+
+(29) 
+
+= r(st) + Γ info (t, t + 1) Eπ
+
+" ∞X
+
+> l=t+1
+
+Γinfo (t + 1 , l )r(sl) st, a t
+
+#
+
+(30) 
+
+= r(st) + Γ info (t, t + 1) V info  
+
+> π
+
+(st+1 ). (31) Consequently, for the advantage function Ainfo  
+
+> π
+
+(s, a ), we obtain 
+
+Ainfo  
+
+> π
+
+(s, a ) = Qinfo  
+
+> π
+
+(s, a ) − V info  
+
+> π
+
+(s) = r(st) + Γ info (t, t + 1) V info  
+
+> π
+
+(st+1 ) − V info  
+
+> π
+
+(st). (32) Therefore, 
+
+Eτ ∼˜π
+
+" ∞X
+
+> t=0
+
+Γinfo (0 , t )Ainfo  
+
+> π
+
+(st, a t)
+
+#
+
+(33) 
+
+= Eτ ∼˜π
+
+" ∞X
+
+> 0
+
+Γinfo (0 , t )  r(st) + Γ info (t, t + 1) V info  
+
+> π
+
+(st+1 ) − V info  
+
+> π
+
+(st)#
+
+(34) 
+
+= Eτ ∼˜π
+
+" ∞X
+
+> 0
+
+ Γinfo (0 , t + 1) V info  
+
+> π
+
+(st+1 ) − Γinfo (0 , t )V info  
+
+> π
+
+(st) +
+
+> ∞
+
+X
+
+> t=0
+
+Γinfo (0 , t )r(st)
+
+#
+
+(35) 
+
+= Eτ ∼˜π
+
+"
+
+−Γinfo (0 , 0) V info  
+
+> π
+
+(s0) + 
+
+> ∞
+
+X
+
+> t=0
+
+Γinfo (0 , t )r(st)
+
+#
+
+(36) 
+
+= Eτ ∼˜π
+
+"
+
+−V info  
+
+> π
+
+(s0) + 
+
+> ∞
+
+X
+
+> t=0
+
+Γinfo (0 , t )r(st)
+
+#
+
+(37) 
+
+= −ηinfo (π) + ηinfo (˜ π). (38) For the infinite-horizon telescoping argument above, the remaining boundary term is required to vanish: 
+
+lim   
+
+> N→∞
+
+Eτ ∼˜π
+
+Γinfo (0 , N + 1) V info  
+
+> π
+
+(sN +1 ) = 0 .
+
+18 This condition is naturally satisfied in episodic environments with terminal states, since the con-tinuation value is zero after termination. In particular, it holds for the language-generation setting considered in this work, where each response eventually terminates and therefore has zero continua-tion value thereafter. To connect the trajectory form of the Information-Time Performance Difference with the state-space formulation used in Section 4.2, we now derive its equivalent representation in terms of the information-discounted state visitation measure. 
+
+Corollary A.2. (State-Space Representation of the Information-Time Performance Difference). 
+
+Define the unnormalized information-discounted state visitation measure under policy π as 
+
+νinfo  
+
+> π
+
+(s) := Eτ ∼π
+
+" ∞X
+
+> t=0
+
+Γinfo (0 , t )1{st = s}
+
+#
+
+.
+
+Then 
+
+ηinfo (˜ π) − ηinfo (π) = X
+
+> s
+
+νinfo ˜π (s) X
+
+> a
+
+˜π(a|s)Ainfo  
+
+> π
+
+(s, a ). (39) 
+
+Proof. Starting from the Information-Time Performance Difference in Lemma A.1, 
+
+ηinfo (˜ π) − ηinfo (π) = Eτ ∼˜π
+
+" ∞X
+
+> t=0
+
+Γinfo (0 , t )Ainfo  
+
+> π
+
+(st, a t)
+
+#
+
+. (40) For each fixed time t, we introduce an indicator over the current state: 
+
+Ainfo  
+
+> π
+
+(st, a t) = X
+
+> s
+
+1{st = s}Ainfo  
+
+> π
+
+(s, a t). (41) Substituting this identity into Eq. (40) gives 
+
+ηinfo (˜ π) − ηinfo (π) = 
+
+> ∞
+
+X
+
+> t=0
+
+Eτ ∼˜π
+
+"
+
+Γinfo (0 , t ) X
+
+> s
+
+1{st = s}Ainfo  
+
+> π
+
+(s, a t)
+
+#
+
+=
+
+> ∞
+
+X
+
+> t=0
+
+X
+
+> s
+
+Eτ ∼˜π
+
+Γinfo (0 , t )1{st = s}Ainfo  
+
+> π
+
+(s, a t) . (42) Let ht denote the trajectory history up to the current state st, before at is sampled. Conditional on 
+
+ht, both Γinfo (0 , t ) and 1{st = s} are determined, whereas the current action is sampled according to at ∼ ˜π(·| st). Hence, applying iterated expectation first over the current action and then over the history gives 
+
+Eτ ∼˜π
+
+Γinfo (0 , t )1{st = s}Ainfo  
+
+> π
+
+(s, a t)
+
+= Eht∼˜π
+
+Γinfo (0 , t )1{st = s} Eat∼˜π(·| st)
+
+Ainfo  
+
+> π
+
+(s, a t) . (43) On the event {st = s},
+
+Eat∼˜π(·| st)
+
+Ainfo  
+
+> π
+
+(s, a t) = X
+
+> a
+
+˜π(a|s)Ainfo  
+
+> π
+
+(s, a ). (44) This quantity depends only on the fixed state s and is therefore constant with respect to the outer expectation over ht. Hence, 
+
+Eτ ∼˜π
+
+Γinfo (0 , t )1{st = s}Ainfo  
+
+> π
+
+(s, a t)
+
+= Eht∼˜π
+
+Γinfo (0 , t )1{st = s} X 
+
+> a
+
+˜π(a|s)Ainfo  
+
+> π
+
+(s, a ). (45) 19 Substituting Eq. (45) into Eq. (42) and collecting the contributions associated with each state yields 
+
+ηinfo (˜ π) − ηinfo (π) = X
+
+> s
+
+" ∞X
+
+> t=0
+
+Eτ ∼˜π
+
+Γinfo (0 , t )1{st = s}# X
+
+> a
+
+˜π(a|s)Ainfo  
+
+> π
+
+(s, a )= X
+
+> s
+
+Eτ ∼˜π
+
+" ∞X
+
+> t=0
+
+Γinfo (0 , t )1{st = s}
+
+# X
+
+> a
+
+˜π(a|s)Ainfo  
+
+> π
+
+(s, a )= X
+
+> s
+
+νinfo ˜π (s) X
+
+> a
+
+˜π(a|s)Ainfo  
+
+> π
+
+(s, a ), (46) where the final equality follows from the definition of νinfo ˜π (s).Corollary A.2 provides the state-space representation used to define the surrogate in Eq. (13). We now turn to bounding the approximation error introduced by replacing νinfo ˜π with νinfo  
+
+> π
+
+. For this purpose, it is convenient to return to the equivalent trajectory representation and follow the coupling argument of TRPO (Schulman et al., 2015a). To do so, we first define ¯Ainfo (s) as the expected information-time advantage of the candidate policy 
+
+˜π relative to the current policy π at state s:
+
+¯Ainfo (s) = Ea∼˜π(·| s)
+
+Ainfo  
+
+> π
+
+(s, a ) . (47) The Information-Time Performance Difference (Lemma A.1) can then be written as: 
+
+ηinfo (˜ π) = ηinfo (π) + Eτ ∼˜π
+
+" ∞X
+
+> t=0
+
+Γinfo (0 , t ) ¯Ainfo (st)
+
+#
+
+. (48) The surrogate objective can be written as 
+
+Linfo  
+
+> π
+
+(˜ π) = ηinfo (π) + Eτ ∼π
+
+" ∞X
+
+> t=0
+
+Γinfo (0 , t ) ¯Ainfo (st)
+
+#
+
+. (49) The two expressions differ only in the trajectory distribution. the true return uses trajectories generated by the candidate policy ˜π, whereas the surrogate uses trajectories generated by the current policy π.To compare these distributions under the state-wise total-variation constraint in Eq. (14), we place the two policies on a common probability space through a state-wise coupling. 
+
+Definition A.3. (π, ˜π) is an αρ -coupled policy pair if, for every state s, there exists a joint distribution 
+
+(a, ˜a)|s satisfying P (a̸ = ˜ a|s) ≤ αρ (s), where π(·| s) and ˜π(·| s) are the marginal distributions of a
+
+and ˜a, respectively. By the standard coupling characterization of total variation, the divergence condition in Eq. (14) guarantees the existence of such a coupling. Thus, the coupling condition used below is the coupling representation of the state-wise total-variation condition assumed in Theorem 4.2. 
+
+Lemma A.4. Given that π, ˜π are αρ -coupled policies, for all s,
+
+| ¯Ainfo (s)| ≤ 2αρ (s) max  
+
+> s,a
+
+|Ainfo  
+
+> π
+
+(s, a )| (50) 
+
+Proof. 
+
+¯Ainfo (s) = E˜a∼˜π
+
+Ainfo  
+
+> π
+
+(s, ˜a) = E(a, ˜a)∼(π, ˜π)
+
+Ainfo  
+
+> π
+
+(s, ˜a) − Ainfo  
+
+> π
+
+(s, a ) (51) 
+
+= P (a̸ = ˜ a|s)E(a, ˜a)∼(π, ˜π)|a̸=˜ a
+
+Ainfo  
+
+> π
+
+(s, ˜a) − Ainfo  
+
+> π
+
+(s, a ) (52) 
+
+| ¯Ainfo (s)| ≤ αρ (s) · 2 max  
+
+> s,a
+
+|Ainfo  
+
+> π
+
+(s, a )| = 2 αρ (s) max  
+
+> s,a
+
+|Ainfo  
+
+> π
+
+(s, a )| (53) Next we establish a bound on the cumulative discounted information weights, which will be used to control the surrogate approximation error. 20 Lemma A.5. For any sequence of information densities {ρ(st)}∞
+
+> t=0
+
+, the following bound holds: 
+
+> ∞
+
+X
+
+> t=0
+
+Γinfo (0 , t )ρ(st) ≤ 11 − γ . (54) 
+
+Proof. For brevity, let ρt := ρ(st). Consider the function f (x) = 1 − γx. Since f is concave, the chord between endpoints 0 and 1 gives 
+
+1 − γρt = f (ρt) ≥ (1 − ρt)f (0) + ρtf (1) = ρt(1 − γ). (55) Rearranging terms yields 
+
+ρt ≤ 1 − γρt
+
+1 − γ . (56) Multiplying by Γinfo (0 , t ) and summing over t:
+
+> ∞
+
+X
+
+> t=0
+
+Γinfo (0 , t )ρt ≤ 11 − γ
+
+> ∞
+
+X
+
+> t=0
+
+Γinfo (0 , t )(1 − γρt ) (57) 
+
+= 11 − γ
+
+> ∞
+
+X
+
+> t=0
+
+(Γ info (0 , t ) − Γinfo (0 , t + 1)) (since Γinfo (0 , t + 1) = Γ info (0 , t )γρt )
+
+(58) The sum on the right-hand side is a telescoping sum: 
+
+> ∞
+
+X
+
+> t=0
+
+(Γ info (0 , t ) − Γinfo (0 , t + 1)) = Γ info (0 , 0) − lim  
+
+> t→∞
+
+Γinfo (0 , t ) ≤ 1. (59) Thus, P∞ 
+
+> t=0
+
+Γinfo (0 , t )ρ(st) ≤ 11−γ .
+
+Theorem A.6. Let Linfo  
+
+> π
+
+(˜ π) be the surrogate objective and ηinfo (˜ π) be the true expected return. Assume the policies (π, ˜π) are αρ -coupled. Then: 
+
+|ηinfo (˜ π) − Linfo  
+
+> π
+
+(˜ π)| ≤ 4Cα 2
+
+(1 − γ)2 , (60) 
+
+where C = max  
+
+> s,a
+
+|Ainfo  
+
+> π
+
+(s, a )|.Proof. Let ∆ = |ηinfo (˜ π) − Linfo  
+
+> π
+
+(˜ π)|. The difference between the true and surrogate objectives can be expressed as the expected sum of advantages over the trajectories generated by ˜π vs π:
+
+∆ = Eτ ∼˜π
+
+" ∞X
+
+> t=0
+
+Γinfo (0 , t ) ¯Ainfo (st)
+
+#
+
+− Eτ ∼π
+
+" ∞X
+
+> t=0
+
+Γinfo (0 , t ) ¯Ainfo (st)
+
+#
+
+. (61) We analyze this difference under the joint coupling distribution of the two policies. Let Tdiv be the time step of the first action divergence between the coupled policies. For t < T div , the trajectories are identical, so the difference is zero. We can decompose the expectation using the indicator function 
+
+1{Tdiv = k}:
+
+∆ = E(τ, ˜τ )
+
+" ∞X
+
+> k=0
+
+1{Tdiv = k}
+
+> ∞
+
+X
+
+> t=k
+
+Γinfo (0 , t ) ¯Ainfo (st) ˜τ ∼˜π
+
+−
+
+> ∞
+
+X
+
+> t=k
+
+Γinfo (0 , t ) ¯Ainfo (st) τ ∼π
+
+!# 
+
+.
+
+(62) Using the triangle inequality and the fact that Γinfo (0 , t ) = Γ info (0 , k )Γ info (k, t ), we factor out the common discount term up to step k:
+
+∆ ≤
+
+> ∞
+
+X
+
+> k=0
+
+E(τ, ˜τ )
+
+"
+
+1{Tdiv = k}Γinfo (0 , k )
+
+> ∞
+
+X
+
+> t=k
+
+Γinfo (k, t ) ¯Ainfo (st) 
+
+> ˜τ∼˜π
+
++
+
+> ∞
+
+X
+
+> t=k
+
+Γinfo (k, t ) ¯Ainfo (st) 
+
+> τ∼π
+
+!# 
+
+.
+
+(63) 21 Leveraging the result from Lemma A.4, we obtain: 
+
+> ∞
+
+X
+
+> t=k
+
+Γinfo (k, t ) ¯Ainfo (st) ≤
+
+> ∞
+
+X
+
+> t=k
+
+Γinfo (k, t ) (2 αρ (st)C) = 2 αC 
+
+> ∞
+
+X
+
+> t=k
+
+Γinfo (k, t )ρ(st) (64) Applying Lemma A.5, we bound the summation term inside the expectation: 
+
+∆ ≤
+
+> ∞
+
+X
+
+> k=0
+
+E(τ, ˜τ )
+
+
+
+1{Tdiv = k}Γinfo (0 , k )
+
+ 2αC 
+
+1 − γ + 2αC 
+
+1 − γ
+
+ 
+
+(65) 
+
+= 4αC 
+
+1 − γ
+
+> ∞
+
+X
+
+> k=0
+
+E(τ, ˜τ )
+
+1{Tdiv = k}Γinfo (0 , k ) . (66) Next, we bound the probability of divergence. Let Hk denote the coupled history up to state sk,before the actions at step k are sampled. Since Γinfo (0 , k ) = γPk−1  
+
+> t=0 ρ(st)
+
+is determined by this history, the law of iterated expectations gives 
+
+E(τ, ˜τ )
+
+1{Tdiv = k}Γinfo (0 , k ) (67) 
+
+= E(τ, ˜τ )
+
+Γinfo (0 , k ) E [1{Tdiv = k}| Hk] . (68) The event {Tdiv = k} occurs if the two trajectories have not diverged before step k and their actions differ at step k. Hence, 
+
+{Tdiv = k} = {Tdiv ≥ k} ∩ { ak̸ = ˜ ak}. (69) Because whether Tdiv ≥ k holds is already determined by the history Hk,
+
+E [1{Tdiv = k}| Hk] = E [1{Tdiv ≥ k}1{ak̸ = ˜ ak}| Hk] (70) 
+
+= 1{Tdiv ≥ k}P (ak̸ = ˜ ak|Hk) (71) 
+
+≤ 1{Tdiv ≥ k}αρ (sk), (72) where the inequality follows from the αρ -coupling assumption, since on {Tdiv ≥ k} the two trajecto-ries share the same state sk.Substituting this inequality into the previous expression gives 
+
+E(τ, ˜τ )
+
+1{Tdiv = k}Γinfo (0 , k ) (73) 
+
+≤ αE(τ, ˜τ )
+
+1{Tdiv ≥ k}Γinfo (0 , k )ρ(sk) (74) 
+
+≤ αE(τ, ˜τ )
+
+Γinfo (0 , k )ρ(sk) (75) 
+
+= αEτ ∼π
+
+Γinfo (0 , k )ρ(sk) , (76) where the second inequality uses 1{Tdiv ≥ k} ≤ 1. In the last equality, sk and Γinfo (0 , k ) are taken along the π-trajectory; the equality follows because the π-marginal of the trajectory coupling is distributed according to π.Substituting this bound back into the summation: 
+
+∆ ≤ 4α2C
+
+1 − γ Eτ ∼π
+
+" ∞X
+
+> k=0
+
+Γinfo (0 , k )ρ(sk)
+
+#
+
+. (77) Finally, applying Lemma A.5 again to the summation term in Eq. (77): 
+
+∆ ≤ 4α2C
+
+1 − γ · 11 − γ = 4Cα 2
+
+(1 − γ)2 . (78) 22 A.2 Theoretical Analysis of Information-Time Policy Optimization 
+
+To connect the entropy-based information density to the policy update analysis, we examine the policy change induced by the information-time surrogate at a fixed state s. With the information-time advantage evaluated under the old policy, its action-dependent component can be written as 
+
+X
+
+> a
+
+˜π(a|s)Ainfo  
+
+> πold
+
+(s, a ) = Ea∼πold (·| s)
+
+ ˜π(a|s)
+
+πold (a|s) Ainfo  
+
+> πold
+
+(s, a )
+
+
+
+. (79) The following proposition characterizes the policy divergence induced by a local gradient step on this objective. 
+
+Proposition A.7. Suppose that πold is parameterized by a softmax distribution and that πnew is obtained by one local softmax-logit gradient step induced by the conditional surrogate, with step size 
+
+0 ≤ β ≤ ¯β. Then, for every state s,
+
+DTV (πnew (·| s), π old (·| s)) ≤ ¯βC 
+
+2 (1 − exp {−H old (s)}) ≤ ¯βC Hmax 
+
+2 ρ(s), (80) 
+
+where C = max s,a |Ainfo  
+
+> πold
+
+(s, a )|.Proof. Fix an arbitrary state s. By the definition of C,
+
+Ainfo  
+
+> πold
+
+(s, a ) ≤ C for every a ∈ A . (81) Moreover, the information-time advantage has zero expectation under the old policy, 
+
+X
+
+> a∈A
+
+πold (a|s)Ainfo  
+
+> πold
+
+(s, a ) = 0 . (82) Therefore, for any action a,
+
+Ainfo  
+
+> πold
+
+(s, a ) = Ainfo  
+
+> πold
+
+(s, a ) − X
+
+> b∈A
+
+πold (b|s)Ainfo  
+
+> πold
+
+(s, b )= X
+
+> b̸=a
+
+πold (b|s) Ainfo  
+
+> πold
+
+(s, a ) − Ainfo  
+
+> πold
+
+(s, b ) . (83) Using Eq. (81), 
+
+Ainfo  
+
+> πold
+
+(s, a ) ≤ X
+
+> b̸=a
+
+πold (b|s) Ainfo  
+
+> πold
+
+(s, a ) − Ainfo  
+
+> πold
+
+(s, b )
+
+≤ 2C X
+
+> b̸=a
+
+πold (b|s)= 2 C (1 − πold (a|s)) . (84) Multiplying by πold (a|s) and summing over actions gives 
+
+X
+
+> a∈A
+
+πold (a|s) Ainfo  
+
+> πold
+
+(s, a )
+
+≤ 2C X
+
+> a∈A
+
+πold (a|s) (1 − πold (a|s)) = 2 C 1 − X
+
+> a∈A
+
+πold (a|s)2
+
+!
+
+. (85) By concavity of the logarithm, 
+
+−H old (s) = X
+
+> a∈A
+
+πold (a|s) log πold (a|s) ≤ log X
+
+> a∈A
+
+πold (a|s)2
+
+!
+
+. (86) 23 Exponentiating both sides yields 
+
+exp {−H old (s)} ≤ X
+
+> a∈A
+
+πold (a|s)2. (87) Combining Eq. (85) and Eq. (87), 
+
+X
+
+> a∈A
+
+πold (a|s) Ainfo  
+
+> πold
+
+(s, a ) ≤ 2C (1 − exp {−H old (s)}) . (88) Let zold (s, ·) denote the logits of πold (·| s), and let πz (·| s) denote the softmax policy induced by logits z(s, ·). Holding the information-time advantage under the old policy fixed, the conditional surrogate in Eq. (79) can be written as X
+
+> b∈A
+
+πz (b|s)Ainfo  
+
+> πold
+
+(s, b ). (89) For the softmax mapping, 
+
+∂π z (b|s)
+
+∂z (s, a ) = πz (b|s) ( 1{a = b} − πz (a|s)) . (90) Evaluating the gradient of Eq. (89) at z = zold and using Eq. (82) gives 
+
+∂∂z (s, a )
+
+X
+
+> b∈A
+
+πz (b|s)Ainfo  
+
+> πold
+
+(s, b )
+
+> z=zold
+
+= πold (a|s)Ainfo  
+
+> πold
+
+(s, a ) − πold (a|s) X
+
+> b∈A
+
+πold (b|s)Ainfo  
+
+> πold
+
+(s, b )= πold (a|s)Ainfo  
+
+> πold
+
+(s, a ). (91) Hence, the local softmax-logit gradient step in the proposition satisfies 
+
+∆z(s, a ) := znew (s, a ) − zold (s, a ) = βπ old (a|s)Ainfo  
+
+> πold
+
+(s, a ). (92) Taking the ℓ1 norm and using Eq. (88), 
+
+∥∆z(s, ·)∥1 = β X
+
+> a∈A
+
+πold (a|s) Ainfo  
+
+> πold
+
+(s, a )
+
+≤ 2 ¯βC (1 − exp {−H old (s)}) . (93) Consider the line segment 
+
+zξ (s, ·) = zold (s, ·) + ξ∆z(s, ·), ξ ∈ [0 , 1] . (94) Let J(ξ) denote the Jacobian of the softmax probability vector with respect to the logits, evaluated at 
+
+zξ (s, a ). Its entries are 
+
+Jij (ξ) = ∂π z (i|s)
+
+∂z (s, j ) z=zξ
+
+= πzξ (i|s)  1{i = j} − πzξ (j|s) . (95) For every column j, X
+
+> i
+
+|Jij (ξ)| = 2 πzξ (j|s)  1 − πzξ (j|s) ≤ 12 . (96) Therefore, 
+
+∥J(ξ)∥1→1 ≤ 12 . (97) By the fundamental theorem of calculus, 
+
+∥πnew (·| s) − πold (·| s)∥1
+
+=
+
+Z 10
+
+J(ξ)∆ z(s, ·) dξ 
+
+> 1
+
+≤
+
+Z 10
+
+∥J(ξ)∥1→1∥∆z(s, ·)∥1 dξ 
+
+≤ 12 ∥∆z(s, ·)∥1. (98) 24 Thus, 
+
+DTV (πnew (·| s), π old (·| s)) = 12 ∥πnew (·| s) − πold (·| s)∥1
+
+≤ 14 ∥∆z(s, ·)∥1
+
+≤ ¯βC 
+
+2 (1 − exp {−H old (s)}) . (99) Finally, since 1 − e−x ≤ x for x ≥ 0 and Hold (s) = Hmax ρ(s),
+
+DTV (πnew (·| s), π old (·| s)) ≤ ¯βC Hmax 
+
+2 ρ(s). (100) Since s was arbitrary, the result holds for every state. By setting α = ¯βC Hmax /2, the proposition yields 
+
+DTV (πnew (·| s), π old (·| s)) ≤ αρ (s), ∀s, (101) which is the state-dependent divergence condition in Eq. (14). To connect this bound to the coupling formulation used in the proof of Theorem A.6, we first define the common probability mass: 
+
+ma := min {πold (a|s), π new (a|s)} , c := X
+
+> a∈A
+
+ma. (102) Using 
+
+min {x, y } = x + y − | x − y|
+
+2 , (103) we obtain 
+
+1 − c = 12
+
+X
+
+> a∈A
+
+|πnew (a|s) − πold (a|s)|
+
+= DTV (πnew (·| s), π old (·| s)) . (104) The quantity ma represents the probability mass shared by the two policies at action a. We now construct a coupling of πold (·| s) and πnew (·| s) by assigning this common mass to identical action pairs. Specifically, for each action a, we assign 
+
+P (aold = a, a new = a | s) = ma. (105) Since P 
+
+> a∈A
+
+ma = c, the total probability assigned to identical action pairs is c.After removing this common mass, the remaining probability masses of the two policies are 
+
+πold (a|s) − ma and πnew (a|s) − ma,
+
+respectively. Moreover, 
+
+X
+
+> a∈A
+
+(πold (a|s) − ma) = 1 − c, 
+
+X
+
+> a∈A
+
+(πnew (a|s) − ma) = 1 − c. (106) Thus, when c < 1, the normalized remaining distributions are 
+
+πold (a|s) − ma
+
+1 − c , πnew (a|s) − ma
+
+1 − c . (107) The remaining probability mass 1 − c is assigned according to these two distributions. 25 By the definition of ma, for every action a, at least one of 
+
+πold (a|s) − ma and πnew (a|s) − ma
+
+is zero. Hence, the two remaining distributions have disjoint supports. The sampled actions therefore agree on the common mass and differ almost surely on the remaining mass. Consequently, 
+
+P (aold ̸ = anew | s) = 1 − c = DTV (πold (·| s), π new (·| s)) ≤ αρ (s). (108) Hence, (πold , π new ) forms an αρ -coupled policy pair in the sense used in the proof of Theorem A.6. 
+
+Proposition A.8. Suppose that the terminal reward is bounded by |RT | ≤ Rmax < ∞. Under the update from πk to πk+1 in Proposition 4.3, with α = ¯βC Hmax /2, the change in information-time return caused by recomputing the information density satisfies 
+
+ηinfo  
+
+> ρk+1
+
+(πk+1 ) − ηinfo  
+
+> ρk
+
+(πk+1 ) ≤ 8Rmax 
+
+e α. (109) 
+
+Proof. We first bound the relative change in the state-wise information density, then propagate this bound to the accumulated information time along a trajectory, and finally control the resulting change in the terminal information-time discount. 
+
+Step 1: Control of the local logit movement. Fix an arbitrary state s and define 
+
+∆zk(s, ·) := zk+1 (s, ·) − zk(s, ·).
+
+From Proposition 4.3, 
+
+∥∆zk(s, ·)∥1 ≤ 2 ¯βC 
+
+
+
+1 − e−H k (s)
+
+≤ 2 ¯βC Hk(s)= 2 ¯βC Hmax ρk(s)= 4 αρ k(s), (110) where the second inequality follows from 1 − e−x ≤ x for x ≥ 0. Since ∥v∥∞ ≤ ∥ v∥1, we have 
+
+∥∆zk(s, ·)∥∞ ≤ 4αρ k(s). (111) 
+
+Step 2: Multiplicative stability of the information density. For a generic softmax distribution 
+
+πz (·| s), We write the corresponding predictive entropy as 
+
+Hz (s) = − X
+
+> a
+
+πz (a|s) log πz (a|s).
+
+Its derivative with respect to the logit za is 
+
+∂Hz (s)
+
+∂z (s, a ) = −πz (a|s) (log πz (a|s) + Hz (s)) . (112) Hence 
+
+∥∇ z Hz (s)∥1 = X
+
+> a
+
+πz (a|s) |log πz (a|s) + Hz (s)|≤ X
+
+> a
+
+πz (a|s) ( − log πz (a|s) + Hz (s)) = 2 Hz (s). (113) Consider the interpolation 
+
+zξ (s, ·) = zk(s, ·) + ξ∆zk(s, ·), ξ ∈ [0 , 1] ,
+
+By the chain rule, Hölder’s inequality, and Eq. (113), 
+
+ddξ Hzξ (s) = ∇z Hzξ (s)⊤∆zk(s, ·)
+
+≤ ∥∇ z Hzξ (s)∥1∥∆zk(s, ·)∥∞
+
+≤ 2Hzξ (s)∥∆zk(s, ·)∥∞. (114) 26 For positive entropy, 
+
+ddξ log Hzξ (s) ≤ 2∥∆zk(s, ·)∥∞. (115) Integrating over ξ ∈ [0 , 1] yields 
+
+|log Hz1 (s) − log Hz0 (s)| =
+
+Z 10
+
+ddξ log Hzξ (s) dξ 
+
+≤
+
+Z 10
+
+ddξ log Hzξ (s) dξ 
+
+≤ 2∥∆zk(s, ·)∥∞. (116) By construction, 
+
+z0(s, ·) = zk(s, ·), z1(s, ·) = zk+1 (s, ·),
+
+and hence 
+
+Hz0 (s) = Hk(s), Hz1 (s) = Hk+1 (s).
+
+Therefore, 
+
+log Hk+1 (s)
+
+Hk(s) ≤ 2∥∆zk(s, ·)∥∞. (117) Finally, applying Eq. (111) gives 
+
+log Hk+1 (s)
+
+Hk(s) ≤ 8αρ k(s). (118) Equivalently, 
+
+e−8αρ k (s)Hk(s) ≤ H k+1 (s) ≤ e8αρ k (s)Hk(s). (119) Dividing both sides by the normalization scale Hmax gives 
+
+e−8αρ k (s)ρk(s) ≤ ρk+1 (s) ≤ e8αρ k (s)ρk(s). (120) 
+
+Step 3: Stability of the accumulated information time. Fix a finite trajectory 
+
+τ = ( s0, a 0, . . . , s T )
+
+and define 
+
+Ik(τ ) :=  
+
+> T−1
+
+X
+
+> t=0
+
+ρk(st), Ik+1 (τ ) :=  
+
+> T−1
+
+X
+
+> t=0
+
+ρk+1 (st). (121) Also define 
+
+ρk, max (τ ) := max  
+
+> 0≤t<T
+
+ρk(st). (122) By Eq. (120), for every t,
+
+e−8αρ k (st)ρk(st) ≤ ρk+1 (st) ≤ e8αρ k (st)ρk(st). (123) Since ρk(st) ≤ ρk, max (τ ),
+
+e−8αρ k, max (τ )ρk(st) ≤ ρk+1 (st) ≤ e8αρ k, max (τ )ρk(st). (124) Summing over t = 0 , . . . , T − 1 gives 
+
+e−8αρ k, max (τ )Ik(τ ) ≤ Ik+1 (τ ) ≤ e8αρ k, max (τ )Ik(τ ). (125) If Ik(τ ) = 0 , then nonnegativity of the information density implies ρk(st) = 0 for every t. Eq. (120) then implies ρk+1 (st) = 0 for every t, and therefore Ik+1 (τ ) = 0 . In this case the two trajectory discount factors are identical. Now suppose that Ik(τ ) > 0. Eq. (125) implies that Ik+1 (τ ) > 0, and taking logarithms yields 
+
+|log Ik+1 (τ ) − log Ik(τ )| ≤ 8αρ k, max (τ ). (126) 27 Step 4: Log-Lipschitz continuity of the information-time discount. We use the following elementary inequality. For any γ ∈ (0 , 1) and any x, y > 0,
+
+|γx − γy | ≤ 1
+
+e | log x − log y|. (127) To prove this inequality, consider the function 
+
+f (x) := γex
+
+= exp {(log γ)ex} , x ∈ R. (128) Its derivative is 
+
+f ′(x) = (log γ)ex exp {(log γ)ex} . (129) Since log γ < 0, letting q = ( − log γ)ex > 0, we can get 
+
+|f ′(x)| = qe −q ≤ 1
+
+e , (130) where the last inequality follows because qe −q attains its maximum at q = 1 . By applying the mean value theorem, we finally get Eq. (127). For the trajectory τ ,
+
+Γinfo  
+
+> ρk
+
+(0 , T ) =  
+
+> T−1
+
+Y
+
+> t=0
+
+γρk (st) = γIk (τ ), (131) 
+
+Γinfo  
+
+> ρk+1
+
+(0 , T ) =  
+
+> T−1
+
+Y
+
+> t=0
+
+γρk+1 (st) = γIk+1 (τ ). (132) Therefore, when Ik(τ ) > 0, Eqs. (127) and (126) give 
+
+Γinfo  
+
+> ρk+1
+
+(0 , T ) − Γinfo  
+
+> ρk
+
+(0 , T ) ≤ 1
+
+e |log Ik+1 (τ ) − log Ik(τ )| ≤ 8αe ρk, max (τ ). (133) As shown above, the same inequality also holds when Ik(τ ) = 0 , because in that case the left-hand side is zero. Hence Eq. (133) holds for every trajectory. 
+
+Step 5: From pathwise discount stability to return stability. Under the terminal-reward setting, 
+
+ηinfo  
+
+> ρ
+
+(πk+1 ) = Eτ ∼πk+1 
+
+Γinfo  
+
+> ρ
+
+(0 , T )RT
+
+ . (134) Thus 
+
+ηinfo  
+
+> ρk+1
+
+(πk+1 ) − ηinfo  
+
+> ρk
+
+(πk+1 )
+
+= Eτ ∼πk+1 
+
+h
+
+RT
+
+
+
+Γinfo  
+
+> ρk+1
+
+(0 , T ) − Γinfo  
+
+> ρk
+
+(0 , T )
+
+i 
+
+≤ Rmax Eτ ∼πk+1 
+
+h
+
+Γinfo  
+
+> ρk+1
+
+(0 , T ) − Γinfo  
+
+> ρk
+
+(0 , T )
+
+i
+
+≤ 8Rmax αe Eτ ∼πk+1 [ρk, max (τ )] . (135) Finally, since ρk(s) ∈ [0 , 1] ,
+
+ρk, max (τ ) ≤ 1
+
+for every trajectory. Therefore, 
+
+ηinfo  
+
+> ρk+1
+
+(πk+1 ) − ηinfo  
+
+> ρk
+
+(πk+1 ) ≤ 8Rmax 
+
+e α. (136) This proves the proposition. The preceding proposition characterizes the variation in the information clock induced by policy updates under a fixed normalization scheme. In Section 5.1, we further empirically examine different normalization schemes. Although changing the normalization scale may introduce additional variation in the resulting information density, more adaptive normalization can also better capture local information dynamics. Among the three normalization schemes considered, batch-level normalization provides a favorable balance between local adaptivity and the stability of the induced information-density scale. 28 Proposition A.9. Let πx and πy , with x < y , be two policy iterates from the same sequence of updates, and let ρr be any fixed information-density snapshot used as a common reference clock. Suppose that |RT | ≤ Rmax < ∞. Define the cumulative certified gain between the two iterates as 
+
+Gx,y := 
+
+> y−1
+
+X
+
+> t=x
+
+
+
+Linfo  
+
+> πt
+
+(πt+1 ) − ηinfo  
+
+> ρt
+
+(πt) − 4Ctα2
+
+> t
+
+(1 − γ)2 − 8Rmax 
+
+e αt
+
+
+
+, (137) 
+
+where Ct and αt denote the corresponding quantities for the update πt → πt+1 , and all information-time quantities in the t-th summand are evaluated under ρt. For a trajectory τ = ( s0, a 0, . . . , s T ),define ¯ρj (τ ) := 1
+
+> T
+
+PT −1 
+
+> u=0
+
+ρj (su), and ε(r) 
+
+> x,y
+
+:= 12
+
+P 
+
+> j∈{ x,y }
+
+Eτ ∼πj
+
+h
+
+log ¯ρr (τ )¯ρj (τ )
+
+i
+
+. Then 
+
+ηinfo  
+
+> ρr
+
+(πy ) − ηinfo  
+
+> ρr
+
+(πx) ≥ G x,y − 2Rmax 
+
+e ε(r) 
+
+> x,y
+
+. (138) 
+
+Proof. For each t ∈ { x, . . . , y − 1}, the information density ρt is fixed during the update from πt to 
+
+πt+1 . Hence, by Theorem 4.2, 
+
+ηinfo  
+
+> ρt
+
+(πt+1 ) − ηinfo  
+
+> ρt
+
+(πt) ≥ Linfo  
+
+> πt
+
+(πt+1 ) − ηinfo  
+
+> ρt
+
+(πt) − 4Ctα2
+
+> t
+
+(1 − γ)2 . (139) Moreover, Proposition 4.4 gives 
+
+ηinfo  
+
+> ρt+1
+
+(πt+1 ) − ηinfo  
+
+> ρt
+
+(πt+1 ) ≥ − 8Rmax 
+
+e αt. (140) Adding the two inequalities yields 
+
+ηinfo  
+
+> ρt+1
+
+(πt+1 ) − ηinfo  
+
+> ρt
+
+(πt) ≥ Linfo  
+
+> πt
+
+(πt+1 ) − ηinfo  
+
+> ρt
+
+(πt) − 4Ctα2
+
+> t
+
+(1 − γ)2 − 8Rmax 
+
+e αt. (141) Summing over t = x, . . . , y − 1 and telescoping therefore gives 
+
+ηinfo  
+
+> ρy
+
+(πy ) − ηinfo  
+
+> ρx
+
+(πx) ≥ G x,y . (142) It remains to evaluate the two endpoint policies under the common reference clock ρr . For j ∈ { x, y },let 
+
+Ij (τ ) = T ¯ρj (τ ), Ir (τ ) = T ¯ρr (τ ).
+
+Under the terminal-reward setting and the log-Lipschitz bound in Eq. (127), 
+
+ηinfo  
+
+> ρr
+
+(πj ) − ηinfo  
+
+> ρj
+
+(πj ) ≤ Rmax 
+
+e Eτ ∼πj
+
+
+
+log Ir (τ )
+
+Ij (τ )
+
+
+
+= Rmax 
+
+e Eτ ∼πj
+
+
+
+log ¯ρr (τ )¯ρj (τ )
+
+
+
+, (143) where the trajectory length T cancels in the ratio. Finally, define 
+
+∆(r) 
+
+> j
+
+:= ηinfo  
+
+> ρr
+
+(πj ) − ηinfo  
+
+> ρj
+
+(πj ).
+
+Then 
+
+ηinfo  
+
+> ρr
+
+(πy ) − ηinfo  
+
+> ρr
+
+(πx) = ηinfo  
+
+> ρy
+
+(πy ) − ηinfo  
+
+> ρx
+
+(πx) + ∆ (r) 
+
+> y
+
+− ∆(r)
+
+> x
+
+≥ G x,y − | ∆(r) 
+
+> y
+
+| − | ∆(r) 
+
+> x
+
+|≥ G x,y − 2Rmax 
+
+e ε(r) 
+
+> x,y
+
+, (144) where the last inequality follows from Eq. (143) and the definition of ε(r) 
+
+> x,y
+
+. This proves the proposition. Proposition A.9 shows that recomputing the information clock across training does not by itself invalidate comparisons between policy iterates. If the cumulative certified gain exceeds the discrep-ancy introduced by re-anchoring the endpoint policies to a common reference clock, the later policy still achieves a higher information-time return under that clock. Consequently, smaller clock drift makes the comparison more robust, although the information clock need not remain fixed throughout training. We therefore empirically track the evolution of normalized entropy throughout training to characterize how the information clock changes over the full optimization trajectory. 29 B Implementation Details 
+
+We train Qwen3-4B Base Model, Qwen3-8B Base Model, and Qwen3-14B Base Model on DAPO-Math-17K. For both PPO and InfoPPO, the policy learning rate is 1 × 10 −6 with a 10-step warmup, while the critic learning rate is 2 × 10 −6 without warmup. The maximum response length is 10k tokens for the 4B and 8B models and 12k tokens for the 14B model. Unless otherwise specified in the sensitivity experiments, PPO uses γ = 1 and λ = 1 , with clipping parameters ϵlow = 0 .2 and ϵhigh = 0 .28 . For InfoPPO, we use γ = 0 .999 and λ = 0 .99 . The adaptive clipping bounds follow Eq. (25), with ϵinfo low = 10 and ϵinfo high = 20 , as supported by the ablation study below. 0 400 800 1200 1600 2000 2400 2800 
+
+Gradient Steps   
+
+> 10 15 20 25 30 35
+> Accuracy (Mean@16)
+> (εinfo low ,εinfo high )(5, 10) (10, 10) (10, 20) (10, 40) (20, 10) (20, 20)
+
+(a) AIME24 Accuracy. 0 400 800 1200 1600 2000 2400 2800 
+
+Gradient Steps    
+
+> 510 15 20 25 30
+> Accuracy (Mean@16)
+> (εinfo low ,εinfo high )(5, 10) (10, 10) (10, 20) (10, 40) (20, 10) (20, 20)
+
+(b) AIME25 Accuracy. 0 400 800 1200 1600 2000 2400 2800 
+
+Gradient Steps    
+
+> 01000 2000 3000 4000 5000
+> Response Length
+> (εinfo low ,εinfo high )(5, 10) (10, 10) (10, 20) (10, 40) (20, 10) (20, 20)
+
+(c) Response Length. 0 400 800 1200 1600 2000 2400 2800 
+
+Gradient Steps   
+
+> 0.00 0.15 0.30 0.45 0.60 0.75
+> Entropy
+> (εinfo low ,εinfo high )(5, 10) (10, 10) (10, 20) (10, 40) (20, 10) (20, 20)
+
+(d) Raw Predictive Entropy. 0 400 800 1200 1600 2000 2400 2800 
+
+Gradient Steps    
+
+> 0.000 0.015 0.030 0.045 0.060 0.075
+> Entropy Norm
+> (εinfo low ,εinfo high )(5, 10) (10, 10) (10, 20) (10, 40) (20, 10) (20, 20)
+
+(e) Normalized Entropy. 0 400 800 1200 1600 2000 2400 2800 
+
+Gradient Steps    
+
+> 0.84 0.88 0.92 0.96 1.00
+> Mean batch (Γinfo (0,  T))
+> (εinfo low ,εinfo high )(5, 10) (10, 10) (10, 20) (10, 40) (20, 10) (20, 20)
+
+(f) Mean Γinfo (0 , T )0 400 800 1200 1600 2000 2400 2800 
+
+Gradient Steps   
+
+> 1.05 1.20 1.35 1.50 1.65
+> 1 + log  (1 +  εinfo high ρt)
+> (εinfo low ,εinfo high )(5, 10) (10, 10) (10, 20) (10, 40) (20, 10) (20, 20)
+
+(g) Mean Upper Clipping Bound. 0 400 800 1200 1600 2000 2400 2800 
+
+Gradient Steps    
+
+> 0.80 0.84 0.88 0.92 0.96 1.00
+> 11 + log  (1 +  εinfo low  ρt)
+> (εinfo low ,εinfo high )(5, 10) (10, 10) (10, 20) (10, 40) (20, 10) (20, 20)
+
+(h) Mean Lower Clipping Bound. 
+
+Figure 8: Ablation of ϵinfo low and ϵinfo high on the Qwen3-4B Base Model. 
+
+Ablation of Adaptive Clipping Parameters. Figure 8 compares different combinations of ϵinfo low 
+
+and ϵinfo high on the Qwen3-4B Base Model. Increasing ϵinfo high widens the upper clipping range and is generally associated with higher predictive entropy, whereas increasing ϵinfo low lowers the lower clipping bound and tends to reduce predictive entropy over training. Configurations such as (5 , 10) 
+
+and (10 , 20) , where ϵinfo high is approximately twice ϵinfo low , exhibit comparatively stable entropy dynamics while maintaining competitive reasoning performance. Such stability is consistent with the moderate variation of the information clock considered in our theoretical analysis, and may also help preserve a favorable balance between exploration and exploitation during RL optimization. Response length 30 Table 2: Performance comparison of InfoPPO with PPO on Llama-3.2-3B Instruct model. For each prompt, we independently sample 16 responses and report the average accuracy, denoted as Mean@16. 
+
+Benchmark PPO InfoPPO Score Len. Score Len. 
+
+Llama-3.2-3B Instruct Model 
+
+AMC23 39.2 648.1 42.3 511.9 AIME24 11.9 906.0 14.0 516.4 AIME25 0.0 665.2 0.8 374.7 AIME26 0.2 542.8 0.6 365.7 BeyondAIME 0.6 593.3 1.9 396.1 
+
+Average 10.4 671.1 11.9 433.0 remains broadly stable across the tested clipping configurations, with substantially smaller variation than that observed in the γ ablation in Figure 5. This suggests that γ provides a more direct and effective control knob for modulating response length. Considering the overall reasoning performance and training dynamics, we use ϵinfo low = 10 and ϵinfo high = 20 in the main experiments. 
+
+C Additional Results on Llama Models 0 400 800 1200 1600 2000 2400 2800 3200 
+
+> Gradient Steps
+> 510
+> Accuracy (Mean@16)  11.9 14.0 PPO InfoPPO
+
+(a) AIME24 Accuracy. 0 800 1600 2400 3200  
+
+> Gradient Steps
+> 0.0 1.5 3.0 4.5 6.0 7.5
+> Entropy
+> PPO InfoPPO
+
+(b) Raw Predictive Entropy. 0 800 1600 2400 3200  
+
+> Gradient Steps
+> 0.00 0.15 0.30 0.45 0.60
+> Entropy
+> PPO InfoPPO
+
+(c) Normalized Entropy. 0 400 800 1200 1600 2000 2400 2800 3200 
+
+> Gradient Steps
+> 0500 1000 1500 2000
+> Response Length
+> PPO InfoPPO
+
+(d) Response Length. 0 400 800 1200 1600 2000 2400 2800 3200  
+
+> Gradient Steps
+> 1.2 1.6 2.0 2.4 2.8 3.2
+> Mean Lower Clip Bound
+> InfoPPO
+
+(e) Mean Upper Clipping Bound. 0 400 800 1200 1600 2000 2400 2800 3200  
+
+> Gradient Steps
+> 0.5 0.6 0.7 0.8 0.9
+> Mean Lower Clip Bound
+> InfoPPO
+
+(f) Mean Lower Clipping Bound. 
+
+Figure 9: Training dynamics on the Llama-3.2-3B Instruct Model. To further examine whether the benefits of InfoPPO extend beyond the Qwen3 model family, we additionally evaluate PPO and InfoPPO on the Llama-3.2-3B Instruct Model under the same overall experimental protocol as the main experiments. Table 2 summarizes the final evaluation results. InfoPPO achieves clear improvements over PPO on AMC23 and AIME24, while also obtaining higher accuracy on BeyondAIME. On AIME25 and AIME26, both methods achieve very low absolute accuracy, making the comparison less informative on these particularly challenging benchmarks. 31 Figure 9 further shows the training dynamics on Llama-3.2-3B Instruct. On AIME24, InfoPPO reaches a higher final accuracy than PPO while exhibiting stable predictive-entropy and adaptive clipping dynamics after the initial stage of training. Notably, both methods show a substantial decrease in response length during training. This response-length contraction may therefore be partly associated with the training dynamics of the Llama-3.2-3B Instruct Model itself, since a similar and sustained decline is also observed under PPO with γ = 1 . Taken together, these results provide additional evidence that the optimization behavior of InfoPPO remains well behaved on a different model family. 
+
+D Additional Experimental Results 
+
+32 <think> \n Okay , ·so ·I ·need ·to ·solve ·this ·system ·of ·logarith mic ·equations ·and ·then ·find ·the ·absolute ·value ·of ·the ·log ·base · 2 ·of ·x ^ 4 ·y ^ 3 ·z ^ 2 . ·The ·answer ·should ·be ·in ·the ·form ·m /n ·where ·m ·and ·n ·are ·cop r ime , ·and ·then ·find ·m ·+ ·n . ·Let ·me ·start ·by ·writing ·down ·the ·equations·again ·to ·make ·sure ·I ·have ·them ·right .\n\n First ·equation : ·log ₂ (x /( yz )) ·= · 1 / 2 \n\n Second ·equation : ·log ₂ (y /( xz )) ·= · 1 / 3 \n\n Third ·equation : ·log ₂ (z /( xy )) ·= · 1 / 4 \n\n Hmm . ·So ·each ·equation ·is ·a ·logarith m ·of ·a ·ratio ·of ·variables·equal ·to ·some ·fraction . ·Maybe ·I ·can ·convert ·these ·logarith mic ·equations·into ·exponential·form ·to ·make ·them ·easier ·to ·handle . ·Let ·me ·recall ·that ·log _b (a ) ·= ·c ·is ·equivalent·to ·b ^ c ·= ·a . ·So ·applying ·that ·here .\n\n Starting ·with ·the ·first ·equation : ·log ₂ (x /( yz )) ·= · 1 / 2 . ·That ·means · 2 ^( 1 / 2 ) ·= ·x /( yz ). ·So ·sqrt ( 2 ) ·= ·x /( yz ). ·Similarly·for ·the ·other ·equations.\n\n Second ·equation : ·log ₂ (y /( xz )) ·= · 1 / 3 , ·so · 2 ^( 1 / 3 ) ·= ·y /( xz ). ·Third ·equation : ·log ₂ (z /( xy )) ·= · 1 / 4 , ·so · 2 ^( 1 / 4 ) ·= ·z /( xy ).\n\n So ·now ·I ·have ·three ·equations:\n\n 1 ) ·x ·= ·y z ·* · 2 ^( 1 / 2 )\n\n 2 ) ·y ·= ·x z ·* · 2 ^( 1 / 3 )\n\n 3 ) ·z ·= ·xy ·* · 2 ^( 1 / 4 )\n\n Hmm . ·So ·each ·variable ·is ·expressed·in ·terms ·of ·the ·other ·two . ·Maybe ·I ·can ·substitute·these ·equations·into ·each ·other ·to ·solve ·for ·x , ·y , ·z ?\n\n Alternatively, ·maybe ·I ·can ·take ·the ·product ·of ·all ·three ·equations? ·Let ·me ·try ·that .\n\n Multiply ·the ·left ·sides : ·x ·* ·y ·* ·z ·= ·( yz ·* · 2 ^( 1 / 2 )) ·* ·( xz ·* · 2 ^( 1 / 3 )) ·* ·( xy ·* · 2 ^( 1 / 4 ))\n\n Wait , ·let ·me ·check ·that . ·If ·I ·take ·the ·left ·sides ·of ·the ·equations:\n\n Left ·side ·of ·equation · 1 : ·x \n\n Left ·side ·of ·equation · 2 : ·y \n\n Left ·side ·of ·equation · 3 : ·z \n\n So ·multiplying·them ·together : ·x ·* ·y ·* ·z .\n\n On ·the ·right ·side ·of ·each ·equation :\n\n Equ ation · 1 : ·y z ·* · 2 ^( 1 / 2 )\n\n Equ ation · 2 : ·x z ·* · 2 ^( 1 / 3 )\n\n Equ ation · 3 : ·xy ·* · 2 ^( 1 / 4 )\n\n So ·multiplying·them ·together : ·( yz ·* · 2 ^( 1 / 2 )) ·* ·( xz ·* · 2 ^( 1 / 3 )) ·* ·( xy ·* · 2 ^( 1 / 4 )) .\n\n Let ·me ·compute ·that . ·First , ·multiply ·the ·variables:\n\n yz ·* ·x z ·* ·xy ·= ·x ^ 2 ·y ^ 2 ·z ^ 2 . ·Because ·y z ·* ·x z ·is ·x ·z ^ 2 ·y , ·then ·times ·xy ·is ·x ^ 2 ·y ^ 2 ·z ^ 2 . ·Wait , ·let ·me ·check :\n\n Original ·terms : ·y z ·* ·x z ·* ·xy . ·Let ·me ·write ·all ·variables:\n\n For ·x : ·in ·the ·first ·term ·there 's ·no ·x , ·second ·term ·has ·x , ·third ·term ·has ·x . ·So ·total ·x 's : · 1 ·+ · 1 ·= · 2 .\n\n For ·y : ·first ·term ·has ·y , ·second ·term ·no ·y , ·third ·term ·has ·y . ·So ·total ·y 's : · 1 ·+ · 1 ·= · 2 .\n\n For ·z : ·first ·term ·has ·z , ·second ·term ·has ·z , ·third ·term ·no ·z . ·So ·total ·z 's : · 1 ·+ · 1 ·= · 2 . ·So ·yes , ·x ^ 2 ·y ^ 2 ·z ^ 2 .\n\n Then ·the ·ex ponents ·of · 2 : · 2 ^( 1 / 2 ) ·* · 2 ^( 1 / 3 ) ·* · 2 ^( 1 / 4 ) ·= · 2 ^( 1 / 2 ·+ · 1 / 3 ·+ · 1 / 4 ). ·Let ·me ·compute ·that ·exponent .\n\n First , ·find ·common ·denominator·for · 2 , · 3 , · 4 . ·Which ·is · 1 2 . ·So · 1 / 2 ·is · 6 / 1 2 , · 1 / 3 ·is · 4 / 1 2 , · 1 / 4 ·is · 3 / 1 2 . ·Adding ·them : · 6 ·+ · 4 ·+ · 3 ·= · 1 3 . ·So ·exponent ·is · 1 3 / 1 2 . ·Therefore, · 2 ^( 1 3 / 1 2 ).\n\n Therefore , ·the ·product ·of ·the ·right ·sides ·is ·x ² ·y ² ·z ² ·* · 2 ^( 1 3 / 1 2 ).\n\n But ·the ·product ·of ·the ·left ·sides ·is ·x ·y ·z . ·Therefore, ·we ·have :\n\n x ·y ·z ·= ·x ² ·y ² ·z ² ·* · 2 ^( 1 3 / 1 2 )\n\n Div ide        
+
+> 0.0 0.5 1.0 1.5 2.0 2.5 3.0 3.5
+> Predictive entropy (nats)
+
+Figure 10: State-wise predictive entropy along a reasoning trajectory (Part 1/6). 33 ·both ·sides ·by ·x ·y ·z ·( since ·x , ·y , ·z ·are ·positive , ·we ·can ·do ·that ):\n\n 1 ·= ·x ·y ·z ·* · 2 ^( 1 3 / 1 2 )\n\n Therefore , ·x ·y ·z ·= · 2 ^ (- 1 3 / 1 2 ). ·Wait , ·that ·seems ·a ·bit ·complicated. ·Let ·me ·check ·my ·steps ·again .\n\n Wait , ·original ·equation : ·product ·of ·left ·sides ·equals ·product ·of ·right ·sides . ·So :\n\n xyz ·= ·( yz ·* · 2 ^( 1 / 2 )) ·* ·( xz ·* · 2 ^( 1 / 3 )) ·* ·( xy ·* · 2 ^( 1 / 4 )) .\n\n Which ·simpl ifies ·to ·xyz ·= ·( x ^ 2 ·y ^ 2 ·z ^ 2 ) ·* · 2 ^( 1 / 2 ·+ · 1 / 3 ·+ · 1 / 4 ). ·Therefore, ·dividing ·both ·sides ·by ·xyz :\n\n 1 ·= ·xyz ·* · 2 ^( 1 3 / 1 2 ). ·Therefore, ·xyz ·= · 2 ^ (- 1 3 / 1 2 ). ·Wait , ·but · 2 ^ (- 1 3 / 1 2 ) ·is · 1 ·over · 2 ^( 1 3 / 1 2 ). ·So ·that 's ·correct .\n\n But ·maybe ·I ·can ·write ·that ·as · 2 ^ (- 1 3 / 1 2 ). ·Alternatively, ·maybe ·I ·can ·write ·that ·as · 2 ^ (- 1 3 / 1 2 ) ·= · 2 ^ (- 1 ·- · 1 / 1 2 ) ·= · 2 ^ (- 1 ) ·* · 2 ^ (- 1 / 1 2 ) ·= ·( 1 / 2 ) ·* · 2 ^ (- 1 / 1 2 ). ·But ·not ·sure ·if ·that ·helps ·yet .\n\n Alternatively, ·maybe ·I ·can ·use ·this ·value ·of ·xyz ·to ·find ·the ·value ·of ·log ₂ (x ^ 4 ·y ^ 3 ·z ^ 2 ). ·Let ·me ·recall ·that ·the ·problem ·asks ·for ·| log ₂ (x ^ 4 ·y ^ 3 ·z ^ 2 )| . ·Let ·me ·note ·that ·log ₂ (x ^ 4 ·y ^ 3 ·z ^ 2 ) ·= · 4 ·log ₂ x ·+ · 3 ·log ₂ y ·+ · 2 ·log ₂ z . ·Maybe ·I ·can ·find ·log ₂ x , ·log 
+
+₂ y , ·log ₂ z ·individually?\n\n Alternatively, ·since ·I ·have ·xyz , ·maybe ·I ·can ·find ·log ₂ (x yz ) ·and ·relate ·it ·to ·the ·expression·I ·need ?\n\n Wait , ·log ₂
+
+(x ^ 4 ·y ^ 3 ·z ^ 2 ) ·is · 4 ·log ·x ·+ · 3 ·log ·y ·+ · 2 ·log ·z . ·If ·I ·can ·find ·log ·x , ·log ·y , ·log ·z , ·then ·I ·can ·compute ·that .\n\n Alternatively, ·maybe ·I ·can ·find ·log ₂ (x yz ) ·first . ·Since ·xyz ·= · 2 ^ (- 1 3 / 1 2 ), ·then ·log ₂
+
+(x yz ) ·= ·- 1 3 / 1 2 . ·So ·log ₂ x ·+ ·log ₂ y ·+ ·log ₂ z ·= ·- 1 3 / 1 2 .\n\n But ·how ·does ·that ·help ·me ·with · 4 ·log ·x ·+ · 3 ·log ·y ·+ · 2 ·log ·z ?\n\n Hmm . ·Maybe ·I ·need ·more ·equations. ·Let ·me ·think . ·Let ·me ·denote ·a ·= ·log ₂ x , ·b ·= ·log ₂ y , ·c ·= ·log ₂ z . ·Then , ·the ·original ·equations·can ·be ·rewritten ·in ·terms ·of ·a , ·b , ·c .\n\n Original ·equations:\n\n First ·equation : ·log ₂ (x /( yz )) ·= · 1 / 2 . ·Which ·is ·log ₂ x ·- ·log ₂ y ·- ·log ₂ z ·= · 1 / 2 . ·So ·a ·-·b ·- ·c ·= · 1 / 2 .\n\n Second ·equation : ·log ₂ (y /( xz )) ·= · 1 / 3 . ·Which ·is ·log ₂ y ·- ·log ₂ x ·- ·log ₂ z ·= · 1 / 3 . ·So ·b ·- ·a ·- ·c ·= · 1 / 3 .\n\n Third ·equation : ·log ₂ (z /( xy )) ·= · 1 / 4 . ·Which ·is ·log ₂ z ·- ·log ₂ x ·- ·log ₂ y·= · 1 / 4 . ·So ·c ·- ·a ·- ·b ·= · 1 / 4 .\n\n So ·now ·we ·have ·three ·equations :\n\n 1 ) ·a ·- ·b ·- ·c ·= · 1 / 2 \n\n 2 ) ·- a ·+ ·b ·- ·c ·= · 1 / 3 \n\n 3 ) ·- a ·- ·b ·+ ·c ·= · 1 / 4 \n\n And ·also , ·from ·earlier , ·we ·have ·that ·a ·+ ·b ·+ ·c ·= ·log ₂ (x yz ) ·= ·- 1 3 / 1 2 .\n\n So ·maybe ·we ·can ·solve ·this ·system ·of ·equations·for ·a , ·b , ·c ?\n\n Let ·me ·write ·the ·three ·equations·again :\n\n Equ ation · 1 : ·a ·- ·b ·- ·c ·= · 1 / 2 \n\n Equ ation · 2 : ·- a ·+ ·b ·- ·c ·= · 1 / 3 \n\n Equ ation · 3 : ·- a ·- ·b ·+ ·c ·= · 1 / 4 \n\n And ·equation · 4 : ·a ·+ ·b ·+ ·c ·= ·- 1 3 / 1 2 \n\n So ·we ·have ·four ·equations. ·But ·since ·equations· 1 , · 2 , · 3 ·are ·linear ·equations·in ·a , ·b , ·c , ·and ·equation · 4 ·is ·another ·equation . ·Let ·me ·check ·if ·they ·are ·consistent.\n\n Alternatively, ·maybe ·I ·can ·solve ·equations· 1 , · 2 , · 3 ·first . ·Let ·me ·try ·that .\n\n Let ·me ·write ·equations· 1 , · 2 , · 3 :\n\n Equ ation · 1 : ·a ·- ·b ·- ·c ·= · 1 / 2 \n\n Equ ation · 2 : ·- a ·+ ·b ·- ·c ·= · 1 / 3 \n\n Equ ation · 3 : ·- a ·- ·b ·+ ·c ·= · 1 / 4        
+
+> 0.0 0.5 1.0 1.5 2.0 2.5 3.0 3.5
+> Predictive entropy (nats)
+
+Figure 11: State-wise predictive entropy along a reasoning trajectory (Part 2/6). 34 \n\n Let ·me ·try ·to ·solve ·these ·equations. ·Maybe ·adding ·equations· 1 ·and · 2 ?\n\n Equ ation · 1 ·+ ·Equation · 2 : ·( a ·- ·b ·- ·c ) ·+ ·(- a ·+ ·b ·- ·c ) ·= · 1 / 2 ·+ · 1 / 3 .\n\n S implify ·left ·side : ·a ·- ·a ·- ·b ·+ ·b ·- ·c ·- ·c ·= ·- 2 c . ·Right ·side : · 1 / 2 ·+ · 1 / 3 ·= · 5 / 6 . ·Therefore, ·- 2 c ·= · 5 / 6 ·=> ·c ·= ·- 5 / 1 2 .\n\n So ·c ·is ·- 5 / 1 2 . ·Let ·me ·note ·that .\n\n Now , ·let ·me ·substitute·c ·= ·- 5 / 1 2 ·into ·equations· 1 ·and · 2 .\n\n Equ ation · 1 : ·a ·-·b ·- ·(- 5 / 1 2 ) ·= · 1 / 2 ·=> ·a ·- ·b ·+ · 5 / 1 2 ·= · 1 / 2 ·=> ·a ·- ·b ·= · 1 / 2 ·- · 5 / 1 2 ·= · 6 / 1 2 ·- · 5 / 1 2 ·= · 1 / 1 2 . ·So ·equation · 1 ·becomes ·a ·- ·b ·= · 1 / 1 2 .\n\n Equ ation · 2 : ·- a ·+ ·b ·- ·(- 5 / 1 2 ) ·= · 1 / 3 ·=> ·- a ·+ ·b ·+ · 5 / 1 2 ·= · 1 / 3 ·=> ·- a ·+ ·b ·= · 1 / 3 ·- · 5 / 1 2 ·= · 4 / 1 2 ·- · 5 / 1 2 ·= ·- 1 / 1 2 . ·So ·equation · 2 ·becomes ·- a ·+ ·b ·= ·- 1 / 1 2 .\n\n So ·now , ·from ·equation · 1 : ·a ·- ·b ·= · 1 / 1 2 \n\n From ·equation · 2 : ·- a ·+ ·b ·= ·-1 / 1 2 \n\n These ·are ·the ·same ·equations. ·Let ·me ·check : ·if ·I ·multiply ·equation · 2 ·by ·- 1 , ·I ·get ·a ·- ·b ·= · 1 / 1 2 , ·which ·is ·same ·as ·equation · 1 . ·So ·equations· 1 ·and · 2 ·are ·dependent·once ·c ·is ·found . ·Therefore, ·we ·need ·another ·equation ·to ·find ·a ·and ·b . ·That 's ·equation · 3 ·or ·equation · 4 .\n\n Let ·me ·use ·equation · 3 : ·- a ·- ·b ·+ ·c ·= · 1 / 4 . ·Since ·c ·= ·- 5 / 1 2 , ·substitute·that :\n\n - ·a ·- ·b ·+ ·(- 5 / 1 2 ) ·= · 1 / 4 ·=> ·- a ·- ·b ·= · 1 / 4 ·+ · 5 / 1 2 ·= · 3 / 1 2 ·+ · 5 / 1 2 ·= · 8 / 1 2 ·= · 2 / 3 . ·Therefore, ·- a ·-·b ·= · 2 / 3 ·=> ·a ·+ ·b ·= ·- 2 / 3 .\n\n So ·now ·we ·have :\n\n From ·equation · 1 : ·a ·- ·b ·= · 1 / 1 2 \n\n From ·equation · 3 : ·a ·+ ·b ·= ·- 2 / 3 \n\n So ·now ·we ·can ·solve ·for ·a ·and ·b . ·Let ·me ·add ·these ·two ·equations:\n\n (a ·- ·b ) ·+ ·( a ·+ ·b ) ·= · 1 / 1 2 ·+ ·(- 2 / 3 )\n\n Left ·side : · 2 a \n\n Right ·side : · 1 / 1 2 ·- · 8 / 1 2 ·= ·- 7 / 1 2 \n\n Therefore , · 2 a ·= ·- 7 / 1 2 ·=> ·a ·= ·- 7 / 2 4 \n\n Then , ·from ·equation ·a ·+ ·b ·= ·- 2 / 3 , ·so ·b ·= ·- 2 / 3 ·- ·a ·= ·- 2 / 3 ·- ·(- 7 / 2 4 ) ·= ·- 2 / 3 ·+ · 7 / 2 4 .\n\n Convert ·- 2 / 3 ·to ·- 1 6 / 2 4 , ·so ·- 1 6 / 2 4 ·+ · 7 / 2 4 ·= ·- 9 / 2 4 ·= ·- 3 / 8 .\n\n Therefore , ·b ·= ·- 3 / 8 .\n\n So ·now ·we ·have :\n\n a ·= ·log ₂ x ·= ·- 7 / 2 4 \n\n b ·= ·log ₂ y ·= ·- 3 / 8 \n\n c ·= ·log ₂ z ·= ·- 5 / 1 2 \n\n Let ·me ·check ·if ·these ·values ·satisfy ·equation · 4 : ·a ·+ ·b ·+ ·c ·= ·- 7 / 2 4 ·- · 3 / 8 ·- · 5 / 1 2 .\n\n Convert ·all ·to · 2 4 ·denomin ators :\n\n - 7 / 2 4 ·- · 9 / 2 4 ·- · 1 0 / 2 4 ·= ·(- 7 ·- · 9 ·-1 0 )/ 2 4 ·= ·(- 2 6 )/ 2 4 ·= ·- 1 3 / 1 2 . ·Which ·matches ·equation · 4 . ·Good .\n\n So ·that 's ·correct .\n\n Now , ·the ·problem ·asks ·for ·| log ₂ (x ^ 4 ·y ^ 3 ·z ^ 2 )| .\n\n Which ·is ·| 4 a ·+ · 3 b ·+ · 2 c | .\n\n Let ·me ·compute · 4 a ·+ · 3 b ·+ · 2 c .\n\n Compute ·each ·term :\n\n 4 a ·= · 4 *(- 7 / 2 4 ) ·= ·- 2 8 / 2 4 ·= ·- 7 / 6 \n\n 3 b ·= · 3 *(- 3 / 8 ) ·= ·- 9 / 8 \n\n 2 c ·= · 2 *(- 5 / 1 2 ) ·= ·- 1 0 / 1 2 ·= ·- 5 / 6 \n\n So ·total ·is ·- 7 / 6 ·- 9 / 8 ·- 5 / 6 .\n\n Let ·me ·combine ·these ·terms . ·First , ·combine ·- 7 / 6 ·- 5 / 6 ·= ·- 1 2 / 6 ·= ·- 2 .\n\n Then , ·- 2 ·- 9 / 8 . ·Convert ·- 2 ·to ·- 1 6 / 8 , ·so ·- 1 6 / 8 ·- 9 / 8 ·= ·- 2 5 / 8 .\n\n Therefore , · 4 a ·+ · 3 b ·+ · 2 c ·= ·- 2 5 / 8 . ·Therefore, ·the ·absolute ·value ·is ·| ·- 2 5 / 8 ·| ·= · 2 5 / 8 .\n\n So ·the ·answer ·is · 2 5 / 8 . ·Then ·m ·is · 2 5 , ·n ·is · 8 . ·They ·are ·cop r ime ·since · 2 5 ·and · 8 ·share ·no ·common ·factors ·besides · 1 . ·Therefore, ·m ·+ ·n ·= · 2 5 ·+ · 8 ·= · 3 3 .\n\n Wait , ·but        
+
+> 0.0 0.5 1.0 1.5 2.0 2.5 3.0 3.5
+> Predictive entropy (nats)
+
+Figure 12: State-wise predictive entropy along a reasoning trajectory (Part 3/6). 35 ·let ·me ·check ·my ·calculation·again . ·Because ·I ·might ·have ·made ·a ·mistake ·in ·adding .\n\n So :\n\n 4 a ·= · 4 *(- 7 / 2 4 ) ·= ·- 2 8 / 2 4 ·= ·- 7 / 6 \n\n 3 b ·= · 3 *(- 3 / 8 ) ·= ·- 9 / 8 \n\n 2 c ·= · 2 *(- 5 / 1 2 ) ·= ·- 1 0 / 1 2 ·= ·- 5 / 6 \n\n So ·adding ·them ·together : ·- 7 / 6 ·- 9 / 8 ·- 5 / 6 .\n\n First , ·combine ·- 7 / 6 ·- 5 / 6 ·= ·- 1 2 / 6 ·= ·- 2 . ·Then , ·- 2 ·- 9 / 8 . ·Let ·me ·convert ·- 2 ·to ·- 1 6 / 8 . ·So ·- 1 6 / 8 ·- 9 / 8 ·= ·- 2 5 / 8 . ·Yes , ·that 's ·correct . ·So ·the ·value ·is ·- 2 5 / 8 , ·absolute ·value ·is · 2 5 / 8 . ·Therefore, ·m ·= · 2 5 , ·n ·= · 8 , ·m ·+ ·n ·= · 3 3 .\n\n But ·wait , ·let ·me ·check ·if ·my ·values ·of ·a , ·b , ·c ·are ·correct . ·Let ·me ·verify ·with ·the ·original ·equations.\n\n First ·equation : ·a ·- ·b ·- ·c ·= ·(- 7 / 2 4 ) ·- ·(- 3 / 8 ) ·- ·(- 5 / 1 2 ) ·= ·- 7 / 2 4 ·+ · 3 / 8 ·+ · 5 / 1 2 .\n\n Convert ·all ·to · 2 4 ·denomin ators :\n\n - 7 / 2 4 ·+ · 9 / 2 4 ·+ · 1 0 / 2 4 ·= ·(- 7 ·+ · 9 ·+ · 1 0 )/ 2 4 ·= · 1 2 / 2 4 ·= · 1 / 2 . ·Which ·matches ·the ·first ·equation . ·Good .\n\n Second ·equation : ·- a ·+ ·b ·- ·c ·= ·- (- 7 / 2 4 ) ·+ ·(- 3 / 8 ) ·- ·(- 5 / 1 2 ) ·= · 7 / 2 4 ·- · 3 / 8 ·+ · 5 / 1 2 .\n\n Convert ·to · 2 4 ·denomin ators :\n\n 7 / 2 4 ·- · 9 / 2 4 ·+ · 1 0 / 2 4 ·= ·( 7 ·- · 9 ·+ · 1 0 )/ 2 4 ·= · 8 / 2 4 ·= · 1 / 3 . ·Which ·matches ·the ·second ·equation . ·Good .\n\n Third ·equation : ·- a ·- ·b ·+ ·c ·= ·- (- 7 / 2 4 ) ·- ·(- 3 / 8 ) ·+ ·(- 5 / 1 2 ) ·= · 7 / 2 4 ·+ · 3 / 8 ·- 5 / 1 2 .\n\n Convert ·to · 2 4 ·denomin ators :\n\n 7 / 2 4 ·+ · 9 / 2 4 ·- 1 0 / 2 4 ·= ·( 7 ·+ · 9 ·- 1 0 )/ 2 4 ·= · 6 / 2 4 ·= · 1 / 4 . ·Which ·matches ·the ·third ·equation . ·Perfect .\n\n So ·all ·equations·are ·satisfied. ·Therefore, ·the ·calculation·for · 4 a ·+ · 3 b ·+ · 2 c ·is ·correct . ·Therefore, ·the ·answer ·is · 2 5 / 8 , ·so ·m ·+ ·n ·is · 3 3 .\n\n Wait , ·but ·let ·me ·check ·again ·if ·I ·did ·the ·problem ·correctly. ·The ·problem ·says ·" the ·value ·of ·| log ₂ (x ^ 4 ·y ^ 3 ·z ^ 2 )| ". ·So ·log ₂ (x ^ 4 ·y ^ 3 ·z ^ 2 ) ·is · 4 ·log ·x ·+ · 3 ·log ·y ·+ · 2 ·log ·z , ·which ·is · 4 a ·+ · 3 b ·+ · 2 c . ·Which ·is ·- 2 5 / 8 . ·Absolute ·value ·is · 2 5 / 8 . ·So ·yes , · 2 5 / 8 . ·So ·m ·is · 2 5 , ·n ·is · 8 . · 2 5 ·and · 8 ·are ·cop r ime , ·so · 2 5 ·+ · 8 ·= · 3 3 . ·Therefore, ·the ·answer ·is · 3 3 .\n\n But ·just ·to ·be ·thorough , ·let ·me ·check ·if ·I ·can ·compute ·x , ·y , ·z ·and ·then ·compute ·log ₂ (x ^ 4 ·y ^ 3 ·z ^ 2 ) ·directly . ·Maybe ·that 's ·a ·good ·idea ·to ·verify .\n\n We ·have ·a ·= ·log ₂ x ·= ·- 7 / 2 4 ·=> ·x ·= · 2 ^ (- 7 / 2 4 )\n\n Similarly , ·y ·= · 2 ^ (- 3 / 8 ) ·= · 2 ^ (- 9 / 2 4 )\n\n z ·= · 2 ^ (- 5 / 1 2 ) ·= · 2 ^ (- 1 0 / 2 4 )\n\n Therefore , ·x ^ 4 ·= ·[ 2 ^ (- 7 / 2 4 )] ^ 4 ·= · 2 ^ (- 2 8 / 2 4 ) ·= · 2 ^ (- 7 / 6 )\n\n y ^ 3 ·= ·[ 2 ^ (- 9 / 2 4 )] ^ 3 ·= · 2 ^ (- 2 7 / 2 4 ) ·= · 2 ^ (- 9 / 8 )\n\n z ^ 2 ·= ·[ 2 ^ (- 1 0 / 2 4 )] ^ 2 ·= · 2 ^ (- 2 0 / 2 4 ) ·= · 2 ^ (- 5 / 6 )\n\n Therefore , ·x ^ 4 ·y ^ 3 ·z ^ 2 ·= · 2 ^ (- 7 / 6 ) ·* · 2 ^ (- 9 / 8 ) ·* · 2 ^ (- 5 / 6 ) ·= · 2 ^ (- 7 / 6 ·- 9 / 8 ·- 5 / 6 )\n\n Compute ·the ·exponent :\n\n First , ·- 7 / 6 ·- 5 / 6 ·= ·- 1 2 / 6 ·= ·- 2 . ·Then , ·- 2 ·- 9 / 8 ·= ·- 2 ·- · 1 . 1 2 5 ·= ·- 3 . 1 2 5 . ·Which ·is ·- 2 5 / 8 . ·Therefore, ·log ₂ (x ^ 4 ·y ^ 3 ·z ^ 2 ) ·= ·- 2 5 / 8 . ·Absolute ·value ·is · 2 5 / 8 . ·So ·same ·result . ·Therefore, ·correct .\n\n Therefore , ·the ·answer ·is · 2 5 / 8 , ·so ·m ·+ ·n ·is · 3 3 . ·Therefore, ·Answer : · 3 3 .\n\n ** Final ·Answer **\n \ boxed { 3 3 }\n </think> \n\n To ·solve ·the ·given ·system ·of ·logarith mic ·equations:\n\n $$ \n \ log _ 2 \ left (\ frac {x }{ yz }\ right ) ·= ·\ frac { 1 }{ 2        
+
+> 0.0 0.5 1.0 1.5 2.0 2.5 3.0 3.5
+> Predictive entropy (nats)
+
+Figure 13: State-wise predictive entropy along a reasoning trajectory (Part 4/6). 36 }, ·\ quad ·\ log _ 2 \ left (\ frac { y }{ xz }\ right ) ·= ·\ frac { 1 }{ 3 }, ·\ quad ·\ log _ 2 \ left (\ frac { z }{ xy }\ right ) ·= ·\ frac { 1 }{ 4 }\n $$ \n\n we ·begin ·by ·converting·each ·equation ·to ·its ·exponential·form :\n\n 1 . ·$ ·\ frac {x }{ yz } ·= · 2 ^{ 1 / 2 } ·$\n 2 . ·$ ·\ frac { y }{ xz } ·= · 2 ^{ 1 / 3 } ·$\n 3 . ·$ ·\ frac { z }{ xy } ·= · 2 ^{ 1 / 4 } ·$\n\n Let ·us ·denote :\n\n - ·$ ·a ·= ·\ log _ 2 ·x ·$\n - ·$ ·b ·= ·\ log _ 2 ·y ·$\n - ·$ ·c ·= ·\ log _ 2 ·z ·$\n\n Then , ·the ·logarith mic ·equations·become :\n\n 1 . ·$ ·a ·- ·b ·- ·c ·= ·\ frac { 1 }{ 2 } ·$\n 2 . ·$ ·b ·- ·a ·- ·c ·= ·\ frac { 1 }{ 3 } ·$\n 3 . ·$ ·c ·- ·a ·- ·b ·= ·\ frac { 1 }{ 4 } ·$\n\n We ·can ·now ·solve ·this ·system ·of ·linear ·equations.\n\n ---\n\n ### ·Step · 1 : ·Solve ·the ·system \n\n Add ·all ·three ·equations:\n\n $$ \n (a ·- ·b ·- ·c ) ·+ ·( b ·- ·a ·- ·c ) ·+ ·( c ·- ·a ·- ·b ) ·= ·\ frac { 1 }{ 2 } ·+ ·\ frac { 1 }{ 3 } ·+ ·\ frac { 1 }{ 4 }\n $$ \n\n S implify ·the ·left -hand ·side :\n\n $$ \n (a ·- ·b ·-·c ·+ ·b ·- ·a ·- ·c ·+ ·c ·- ·a ·- ·b ) ·= ·- a ·- ·b ·- ·c \n $$ \n\n So :\n\n $$ \n -a ·- ·b ·- ·c ·= ·\ frac { 1 }{ 2 } ·+ ·\ frac { 1 }{ 3 } ·+ ·\ frac { 1 }{ 4 }\n $$ \n\n Find ·the ·common ·denominator·( 1 2 ):\n\n $$ \n \ frac { 6 }{ 1 2 } ·+ ·\ frac { 4 }{ 1 2 } ·+ ·\ frac { 3 }{ 1 2 } ·= ·\ frac { 1 3 }{ 1 2 }\n $$ \n\n Thus :\n\n $$ \n -a ·- ·b ·- ·c ·= ·\ frac { 1 3 }{ 1 2 } ·\ Rightarrow·a ·+ ·b ·+ ·c ·= ·- \ frac { 1 3 }{ 1 2 }\n $$ \n\n ---\n\n ### ·Step · 2 : ·Solve ·for ·individual·variables\n\n From ·the ·first ·equation :\n\n $$ \n a ·- ·b ·- ·c ·= ·\ frac { 1 }{ 2 } ·\ Rightarrow·a ·= ·b ·+ ·c ·+ ·\ frac { 1 }{ 2 }\n $$ \n\n Sub stitute ·into ·the ·second ·equation :\n\n $$ \n b ·- ·( b ·+ ·c ·+ ·\ frac { 1 }{ 2 }) ·- ·c ·= ·\ frac { 1 }{ 3 }\n \ Rightarrow·b ·- ·b ·- ·c ·- ·\ frac { 1 }{ 2 } ·- ·c ·= ·\ frac { 1 }{ 3 }\n \ Rightarrow·- 2 c ·- ·\ frac { 1 }{ 2 } ·= ·\ frac { 1 }{ 3 }\n \ Rightarrow·- 2 c ·= ·\ frac { 1 }{ 3 } ·+ ·\ frac { 1 }{ 2 } ·= ·\ frac { 5 }{ 6 }\n \ Rightarrow·c ·= ·- \ frac { 5 }{ 1 2 }\n $$ \n\n Now ·substitute·$ ·c ·= ·- \ frac { 5 }{ 1 2 } ·$ ·into ·the ·third ·equation :\n\n $$ \n c ·- ·a ·- ·b ·= ·\ frac { 1 }{ 4 } ·\ Rightarrow·- \ frac { 5 }{ 1 2 } ·- ·a ·- ·b ·= ·\ frac { 1 }{ 4 }\n \ Rightarrow·- a ·- ·b ·= ·\ frac { 1 }{ 4 } ·+ ·\ frac { 5 }{ 1 2 } ·= ·\ frac { 3 }{ 1 2 } ·+ ·\ frac { 5 }{ 1 2 } ·= ·\ frac { 8 }{ 1 2 } ·= ·\ frac { 2 }{ 3 }\n \ Rightarrow·a ·+ ·b ·= ·- \ frac { 2 }{ 3 }\n $$ \n\n Now ·we ·have :\n\n - ·$ ·a ·+ ·b ·= ·- \ frac { 2 }{ 3 } ·$\n - ·$ ·a ·- ·b ·= ·\ frac { 1 }{ 2 } ·$\n\n S olve ·this ·system :\n\n Add :\n\n $$ \n (a ·+ ·b ) ·+ ·( a ·- ·b ) ·= ·- \ frac { 2 }{ 3 } ·+ ·\ frac { 1 }{ 2 } ·= ·- \ frac { 4 }{ 6 } ·+ ·\ frac { 3 }{ 6 } ·= ·- \ frac { 1 }{ 6 }\n \ Rightarrow· 2 a ·= ·- \ frac { 1 }{ 6 } ·\ Rightarrow·a ·= ·- \ frac { 1 }{ 1 2 }\n $$ \n\n Then :\n\n $$ \n b ·= ·- \ frac { 2 }{ 3 } ·- ·a ·= ·- \ frac { 2 }{ 3 } ·+ ·\ frac { 1 }{ 1 2 } ·= ·- \ frac { 8 }{ 1 2 } ·+ ·\ frac { 1 }{ 1 2 } ·= ·- \ frac { 7 }{ 1 2 }\n $$ \n\n So ·the ·values ·are :\n\n - ·$ ·a ·= ·- \ frac { 7 }{ 1 2 } ·$\n - ·$ ·b ·= ·- \ frac { 7 }{ 1 2 } ·$\n - ·$ ·c ·= ·- \ frac { 5 }{ 1 2 } ·$\n\n Wait , ·no · — ·correction: ·earlier , ·we ·had :\n\n - ·$ ·a ·= ·- \ frac { 7 }{ 2 4 } ·$\n - ·$ ·b ·= ·- \ frac { 3 }{ 8 } ·$\n - ·$ ·c ·= ·- \ frac { 5 }{ 1 2 } ·$\n\n Let ’s ·now ·compute :\n\n $$ \n 4 a ·+ · 3 b ·+ · 2 c ·= · 4 (- \ frac { 7 }{ 2 4 }) ·+ · 3 (- \ frac { 3 }{ 8 }) ·+ · 2 (- \ frac { 5 }{ 1 2 })\n $$ \n\n Convert ·to ·common ·denominator·( 2 4 ):\n\n $$ \n 4 a ·= ·- \ frac { 2 8 }{ 2 4 }, ·\ quad · 3 b ·= ·- \ frac { 9 }{ 8 } ·= ·- \ frac { 2 7 }{ 2 4 }, ·\ quad · 2 c ·= ·- \        
+
+> 0.0 0.5 1.0 1.5 2.0 2.5 3.0 3.5
+> Predictive entropy (nats)
+
+Figure 14: State-wise predictive entropy along a reasoning trajectory (Part 5/6). 37 frac { 1 0 }{ 1 2 } ·= ·- \ frac { 2 0 }{ 2 4 }\n $$ \n\n Add :\n\n $$ \n -\ frac { 2 8 }{ 2 4 } ·- ·\ frac { 2 7 }{ 2 4 } ·- ·\ frac { 2 0 }{ 2 4 } ·= ·- \ frac { 7 5 }{ 2 4 } ·= ·- \ frac { 2 5 }{ 8 }\n $$ \n\n Thus :\n\n $$ \n |\ log _ 2 (x ^ 4 ·y ^ 3 ·z ^ 2 )| ·= ·\ left | ·- \ frac { 2 5 }{ 8 } ·\ right | ·= ·\ frac { 2 5 }{ 8 }\n $$ \n\n So ·$ ·m ·= · 2 5 ·$ , ·$ ·n ·= · 8 ·$ , ·and ·$ ·m ·+ ·n ·= · 3 3 ·$ .\n\n ---\n\n ### ·Final ·Answer \n\n $$ \n \ boxed { 3 3 }\n $$        
+
+> 0.0 0.5 1.0 1.5 2.0 2.5 3.0 3.5
+> Predictive entropy (nats)
+
+Figure 15: State-wise predictive entropy along a reasoning trajectory (Part 6/6). 38

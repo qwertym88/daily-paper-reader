@@ -1,0 +1,512 @@
+Title: PolicyAttention: Softmax Attention Implements Policy Mirror Descent for Closed-Loop Control
+
+URL Source: https://arxiv.org/pdf/2609.30500v1
+
+Published Time: Mon, 28 Sep 2026 00:12:09 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# PolicyAttention: Softmax Attention Implements Policy Mirror Descent for Closed-Loop Control 
+
+Yuhe Sui 1,2 , Yingzhi Tang 1,3 , and Shufang Chen 1,4 
+
+> 1
+
+Quantitative Research Society, Singapore 
+
+> 2
+
+Nanyang Technological University, Singapore 
+
+> 3
+
+The Chinese University of Hong Kong, Shenzhen, China 
+
+> 4
+
+The University of Hong Kong, Hong Kong SAR, China 
+
+September 28, 2026 
+
+Abstract 
+
+A Transformer can match a reinforcement-learning update on fixed inputs yet fail once its own returned policies alter subsequent inputs. We study this closed-loop gap for negative-entropy policy mirror descent (PMD), whose update is softmax-native: PMD η (π, Q ) = softmax(log π +
+
+ηQ ). The reference recursion is known Q-TD-PMD; our contribution is its causal implementation and learned closed-loop interface. A fixed causal-softmax decoder realizes an inexact actor– environment–one-step-critic loop with explicit actor, routing, and sampling residuals, and a returned-policy theorem propagates those errors to the policy actually output, with no unused final critic residual. A finite-cap pre-LayerNorm/final-LayerNorm compilation and a scoped effective-coordinate result connect the construction to standard Transformer operations and the PMD-aligned training objective. Empirically, a separately trained pre-LN Transformer is closest to PMD among fixed update hypotheses, satisfies a preregistered repeated-control criterion on five fresh runs, and retains that behavior under no-retraining environment shifts. At larger retrained sizes, PolicyAttention attains median normalized returned-policy losses 0.0193 at S = 8 and 0.0273 at S = 16 .Under the common scoring harness, these are 18 –28 × lower than our qualified Liang–Lai and Algorithm Distillation adaptations. PolicyAttention uses an exact one-step Bellman backup with model access, whereas the external adaptations update from sampled interactions; this is therefore a common-harness performance separation rather than an information-matched comparison. Together, the results distinguish local algorithmic fidelity, closed-loop reliability, and task performance, and show how softmax attention can serve as the policy-improvement operator itself. 
+
+# 1 Introduction 
+
+Transformers can execute learning algorithms in context, but an adaptive controller faces a stronger test than a static predictor: its current output changes the distribution of its future inputs. In reinforcement learning (RL), a returned policy changes successor actions, critic targets, and the context processed on the next round. A model can therefore look algorithmic for one step and cease to be useful when repeatedly deployed. PolicyAttention asks whether standard causal softmax attention can implement and learn a genuine policy-improvement algorithm that remains effective after its own policies recursively alter 
+
+1arXiv:2609.30500v1 [cs.LG] 24 Sep 2026 policy + value         
+
+> (πk, Q k)
+> softmax PMD actor
+> softmax(log π+ηQ )environment interaction one-step critic
+> Fπk+1 Qk
+> next context
+> (πk+1 , Q k+1 )
+> Theory Learned controller Literature-facing comparison
+> Focus fixed causal-softmax PMD/critic implementation; explicit actor, routing, sampling, and returned-policy residuals four-layer pre-LN Transformer; PMD-aligned objective; exact-critic repeated-control test plus descriptive learned-critic evidence PolicyAttention vs Liang–Lai and Algorithm Distillation; Exact PMD is the oracle; learned PMD-target model is calibration only
+
+Figure 1: One mechanism-to-control chain. The causal loop is shown above; the table below separates the constructive theorem, the learned-controller evidence, and the literature-facing bench-mark. Exact PMD is the non-learned oracle, while the learned PMD-target model serves only as calibration. 
+
+the control inputs . Negative-entropy PMD is a natural target because its statewise update is exactly 
+
+PMD η(π, Q )( a | s) = π(a | s)eηQ (s,a )
+
+P 
+
+> b
+
+π(b | s)eηQ (s,b ) = softmax(log π + ηQ )a. (1) The identity and the associated PMD/TD-PMD control recursions are prior RL methodology [Xiao, 2022, Johnson et al., 2023, Geist et al., 2019, Lan, 2023, Liu et al., 2025]. Our object is the implementation layer: a causal softmax realization with measurable residuals, a returned-policy interface for those residuals, and a learned closed-loop test. The contribution is one chain. First , a fixed two-block/two-head causal decoder realizes PMD followed by one-step policy evaluation under the policy it actually returned, with explicit finite routing and sampling errors. Second , these errors feed a last-policy theorem that controls the final returned policy and correctly omits the unused final critic residual. Third , a specially compiled pre-LN/final-LN construction and reverse-KL/Fisher effective-coordinate result explain how the same target computation fits standard normalized operations and the PMD-aligned objective. Fourth ,fresh experiments show the learned PMD-like actor survives adaptive repetition and fixed-shape distribution shifts. Finally , a qualified common-harness benchmark compares PolicyAttention with a matched PMD-target reference Transformer and two published-method adaptations, placing the mechanism result in a literature-facing performance context. 
+
+# 2 Related Work 
+
+Transformers have been shown to implement or learn in-context regression and gradient procedures [Garg et al., 2022, Akyürek et al., 2023, von Oswald et al., 2023]. In RL, Wang et al. learn TD-style policy evaluation in context [Wang et al., 2025]; Xie et al. give a standard-softmax construction for weighted softmax TD and policy evaluation [Xie et al., 2026]. Liang and Lai construct semi-gradient SARSA and actor–critic updates with linear self-attention and analyze teacher-mimicking learning [Liang and Lai, 2026]. Algorithm Distillation (AD) trains a causal sequence model on complete learning histories and obtains empirical in-context improvement without weight updates [Laskin et al., 2023]; S5RL uses structured state-space models in a different online-PPO/meta-RL paradigm [Lu et al., 2023]. 2Table 1: Source-verified capability map. “Softmax” denotes standard softmax attention in the relevant construction/model; PolicyAttention’s final column denotes the returned-policy residual interface introduced here.                               
+
+> Work Softmax Eval. Control Learned Return-error Wang et al. 2025 emp. ✓–✓–Xie et al. 2026 ✓✓–✓–Liang–Lai 2026 linear ✓✓✓–Algorithm Distill. ✓implicit ✓✓–PolicyAttention ✓✓✓✓✓
+
+The gap is not “control versus no control.” It is the intersection of standard softmax policy improvement, explicit causal implementation errors, and returned-policy closed-loop accounting . The benchmark numbers for Liang–Lai and AD below are ours from faithful common-harness adaptations, not results reported by those papers. 
+
+# 3 Causal softmax realization 
+
+Let M = ( S, A, P, r, γ ) be finite with |r| ≤ Rmax and B = Rmax /(1 − γ). Define the one-step policy-evaluation and optimality operators 
+
+(FπQ)( s, a ) = r(s, a ) + γES′|s,a ⟨π(· | S′), Q (S′, ·)⟩, (2) 
+
+(FQ)( s, a ) = r(s, a ) + γES′|s,a max  
+
+> b
+
+Q(S′, b ). (3) At round k, the implemented actor returns bπk+1 from (bπk, Q k), then the environment generates critic data under that returned policy. Define same-context residuals 
+
+ζk = max  
+
+> s
+
+∥bπk+1 (· | s) − PMD ηk (bπk, Q k)( · | s)∥1, (4) 
+
+δk = ∥Qk+1 − F bπk+1 Qk∥∞. (5) These are local implementation quantities, not task losses after two trajectories diverge. 
+
+Construction. The normalization-free circuit has two blocks, two heads, head dimension S + A + 3 ,payload width 6S + 6 A + 14 , a causal mask, no positional embeddings, and a role-gated ReLU map. Actor memories carry state/action identity, log bπk, and Qk; intended attention scores are a common state offset plus log bπk(a | s) + ηkQk(s, a ), so intended-group softmax is exactly PMD. Finite off-group mass yields 
+
+ζk ≤ 2Ract 
+
+> k
+
+1 + Ract 
+
+> k
+
+, Ract  
+
+> k
+
+≤ (S − 1) e−κ+2 ηk B + Se −(κ+ν)+ ηk B . (6) The critic uses lookup → local target → predecessor average . With balanced fresh packets, lookup/aggregation leakage masses λ1, λ 2 and m samples per predecessor give 
+
+δk ≤ 2B(γλ 1 + λ2) + B
+
+r 2 log(2 SAK/α )
+
+m (7) simultaneously over the declared finite calls. Resource certificates precede weight choice; the frozen decoder is then reused across admissible MDPs and histories. 3Theorem 1 (Finite-horizon causal realization) . Fix finite S, A , reward and horizon caps, deterministic step/packet caps, routing tolerances, and confidence 1 − α. One fixed causal-softmax decoder can be selected before the MDP and realized history so that repeated actor/environment/critic calls realize inexact Q-TD-PMD with actor residual bounded as above and critic residual satisfying (7) on the declared common event. 
+
+# 4 Returned-policy control and normalized compilation 
+
+Let gk(s) = max a Qk(s, a ) − ⟨ bπk+1 (· | s), Q k(s, ·)⟩ and ¯gk be its transition-lifted maximum. Bellman contraction gives Ek+1 ≤ γE k + δk + γ¯gk for Ek = ∥Q⋆ − Qk∥∞.
+
+Theorem 2 (Returned-policy error interface) . For every T ≥ 1,
+
+∥Q⋆ − QbπT ∥∞ ≤ 2γT E0
+
+1 − γ + 21 − γ 
+
+> T−2
+
+X
+
+> k=0
+
+γT −1−kδk (8) 
+
++ 21 − γ 
+
+> T−2
+
+X
+
+> k=0
+
+γT −k ¯gk + γ
+
+1 − γ ¯gT −1. (9) 
+
+No δT −1 appears because bπT is formed from QT −1 before an unused final critic backup. 
+
+PMD optimality also gives ¯gk ≤ ¯Dk/η k + Bζ k, where ¯Dk is the greedy-set prior-mass price. This identifies why low one-step actor error does not by itself certify repeated control. A specially engineered normalized construction adds a two-coordinate affine carrier. For 
+
+Embed( x) = Cc + Jx and an appropriate LayerNorm gain, J⊤ LN( Cc + Jx ) = ρH (x)x with 
+
+ρH (x) = (1 + ∥x∥2/H 2)−1/2, so sufficiently large finite H makes normalization a controlled pertur-bation. The actor readout explicitly mixes with uniform, bp = (1 − φ)p + φ1/A , giving a design-time floor and ∥bp − p∥1 ≤ 2φ(A − 1) /A . With constant η = log( A/φ )/θ , the returned policy obeys a geometric transient plus residual neighborhood 
+
+∥Q⋆ − QbπT ∥∞ ≤ (2 E0 + 4 B)γT
+
+1 − γ + 2γ
+
+(1 − γ)2 (δ + Bζ + θ). (10) This is a finite-cap real-arithmetic existence result on an engineered slice, not a raw-parameter training theorem. 
+
+4.1 Why the returned-policy indexing matters 
+
+Theorem 2 is a last-iterate statement rather than a bound on an auxiliary critic. Unrolling the critic recursion only through QT −1 gives 
+
+ET −1 ≤ γT −1E0 + 
+
+> T−2
+
+X
+
+> k=0
+
+γT −2−kδk + 
+
+> T−2
+
+X
+
+> k=0
+
+γT −1−k ¯gk. (11) For π = bπT , the Bellman resolvent satisfies ∥Q⋆ − Qπ∥∞ ≤ 2γE T −1/(1 − γ) + γ¯gT −1/(1 − γ). The policy is already determined at this point. Computing QT could be useful for another actor call, but it cannot retroactively change bπT ; charging δT −1 would therefore measure work not used by the returned policy. This causal accounting is also the reason the empirical certificate audit evaluates realized actor/critic sequences at the horizon actually returned. 40.0 0.1 0.2 0.3 0.4 0.5 0.6      
+
+> held-out actor row-L1
+> PMD Additive projected Identity / prior Boltzmann-Q
+> Reward-only rule
+> 0.036 0.112 0.239 0.606 0.607
+> (a) Fixed update-rule correspondence
+> 0.4 0.6 0.8 1.0 1.2
+> generating η
+> 0.4 0.6 0.8 1.0 1.2
+> refitted effective  η
+> (b) Step-size tracking
+> ideal tracking learned actor
+
+Figure 2: The learned actor exhibits the predicted PMD signature before closed-loop testing. (a) On prior held-out one-step inputs, PMD has mean row-L1 error 0.0357 , versus 0.1116 
+
+for the nearest fixed alternative. (b) Refitted effective step size changes monotonically with supplied 
+
+η, with shrinkage toward the training-range center. These are local mechanism measurements, not returned-policy performance. 
+
+4.2 Support, greediness, and the role of the explicit mixture 
+
+For Gk(s) = arg max a Qk(s, a ) define Dk(s) = − log bπk(Gk(s) | s). Comparing PMD with the current policy restricted to Gk(s) yields 
+
+max  
+
+> a
+
+Qk(s, a ) − ⟨ PMD ηk (bπk, Q k), Q k(s, ·)⟩ ≤ Dk(s)/η k. (12) Replacing the exact PMD row by the implemented actor costs at most Bζ k. Thus actor fidelity becomes control-relevant only together with a prior-mass/greedification condition. The explicit uniform mixture in the normalized construction gives the design-time support floor bpa ≥ φ/A , hence 
+
+Dk ≤ log( A/φ ) after the first call. This closes the finite-horizon control statement with a constant step, but it changes the executed controller and can impose a performance cost when the unmixed actor would otherwise concentrate more strongly. Section 7 reports that cost empirically rather than treating the floor as automatically beneficial. 
+
+# 5 What the learned model learns 
+
+For a predicted row p, define ℓprox (p) = DKL (p∥π) − η⟨p, Q ⟩. If q = PMD η(π, Q ), then 
+
+ℓprox (p) − ℓprox (q) = DKL (p∥q). (13) After removing the action-constant softmax gauge, a realizable centered linear effective-logit model has population gradient ∇R(ϑ) = E[Φ ⊤H(qϑ)Φ]( ϑ − ϑ⋆), with H(q) = diag( q) − qq ⊤. Bounded features and task richness therefore give convergence in these effective coordinates for gradient flow and sufficiently small-step GD. This explains objective selection, not optimization of the full deep Transformer. The evaluated model is a separate four-layer/four-head pre-LN Transformer (width 64, FFN 128, zero dropout, no positional embeddings). Earlier held-out tests report PMD row-L1 = 0 .035741 ,fitted effective η mean 0.783667 , and critic TD MAE 0.121234 . Figure 2 shows that PMD is substantially closer than additive-projected, identity, Boltzmann-Q, or reward-only fixed rules. The construction and learned network are connected through the target computation and measured residuals, not by parameter identity. 55.1 Learned architecture and training interface 
+
+The learned system uses a conventional four-layer, four-head pre-LN Transformer with dmodel = 64 ,feed-forward width 128, zero dropout, and no positional embeddings. Actor examples provide structured (π, Q, η ) fields; critic examples provide the fields required for the one-step Bellman target. The PMD-aligned actor is trained through the proximal objective above rather than direct PMD probability labels. In the fresh S = 4 block, the training range is η ∈ [0 .4, 1.2] with nominal 
+
+0.8, 24 training MDPs and 2,048 examples per run, AdamW at 3 × 10 −4, weight decay 10 −4,batch 64, and 51,200 optimizer steps. Fitted reference steps on the disjoint calibration fixture are 
+
+0.800 , 0.795 , 0.800 , 0.795 , 0.805 , so reference migration is negligible at the primary budget. The theory and learned experiment deliberately share an interface , not parameter values. The constructive decoder has sparse role-specific weights and theorem-scale margins; the learned model has ordinary dense trainable layers. We therefore test the target computation at three levels: same-context actor deviation ζ, critic deviation δ, and returned-policy loss after adaptive composition. This avoids the stronger and unsupported claim that optimization recovers the constructed sparse circuit. 
+
+# 6 Experimental Design and Estimands 
+
+The empirical program is organized to test implications of the theory rather than to infer the mechanism from reward alone. Table 2 summarizes the ladder. The local actor diagnostic uses the same (bπk, Q k) context for the learned prediction and exact PMD target. The repeated-control experiments then allow the learned and reference trajectories to diverge and score the policies each controller actually returns. Finally, the literature benchmark retains the same exact scoring metric but changes the learned method and, for the external adaptations, the information interface. 
+
+Returned-policy loss. For each evaluated MDP we compute exact Qπ for the controller’s returned policy and exact Q⋆, then normalize the sup-norm Q-loss by the common initial-policy gap. This produces a dimensionless remaining-loss coordinate shared across methods. Exact PMD is run on the same MDPs as an algorithmic reference trajectory. It is not counted as a trained competitor because its role is to expose the target algorithm’s achievable trajectory under model-based exact updates. Every learned method is scored by the same exact evaluator even when its own update rule observes only sampled transitions. 
+
+The learned/reference ratio. For the fresh confirmatory experiment, each trained run is summarized at T = 20 by 
+
+rj = median m Lj,m (learned) median m Lm(Exact PMD Ref .) . (14) A ratio below one has lower task loss than the reference on that run; one is parity; one to 1.5 is worse than the oracle trajectory but remains inside the preregistered usefulness margin. This threshold is an operational reliability criterion fixed before the fresh evidence, not a statistical equivalence margin. 
+
+Certificate audit. The returned-policy inequality is also recomputed from realized residual sequences at horizons {1, 2, 5, 10 , 20 , 40 }. Across the fresh confirmation, breadth, and reward-only evaluations, all 69,120 audited rows satisfy the inequality. The median slack is large (about 10.77), so the audit establishes consistency of indexing and measured residual interfaces; it is not used as a calibrated numerical predictor of task loss. 6Table 2: Claim-to-estimand map. Each row answers a different scientific question; evidence on one row is not substituted for another. 
+
+Question Coordinate / comparison Verified result and interpretation What actor rule was learned? same-context row-L1 to fixed update hypotheses PMD 0.0357 , nearest alternative 0.1116 : strong local PMD correspondence on held-out one-step inputs. Does local cor-respondence sur-vive feedback? learned actor + exact one-step critic / Exact PMD or-acle median ratio 1.052 ; all five trained runs satisfy the preregistered 1.5 criterion. Does the fully learned loop re-main near the or-acle? learned actor + learned critic / Exact PMD oracle descriptive median ratio 1.050 at S = 4 ; no reliability margin was registered for this comparison. Does it survive environment shift? same learned actors + ex-act critic, four no-retraining families all four families satisfy the declared criterion separately; the first three use 64 MDPs each; the structured ring is one MDP × 64 initial policies. Does the phe-nomenon persist at larger size? retrained S = 8 and S = 16 
+
+models PolicyAttention remains within 1.31 × and 1.64 × the Exact PMD oracle at T = 20 ; this is retraining, not zero-shot size generalization. How does it compare with neighboring learned ICRL? qualified common-harness adaptations exact-critic PolicyAttention is 17 .7–28 .2× lower-loss at 
+
+T = 20 ; at S = 8 the learned-critic check remains 20 .2–
+
+24 .2× lower but uses 7.2× the adaptations sampling budget. What do matched con-trols establish? learned PMD-target and reward-only controls direct PMD supervision is competitive; reward-only has lower S = 4 , T = 20 task loss, so mechanism fidelity and task optimization are distinct. 
+
+# 7 Closed-Loop Reliability and Scaling 
+
+The fresh confirmation fixed a 51,200-step budget and fresh seeds before execution. The primary comparison replaces only the exact PMD actor with the learned actor while retaining the same exact one-step critic. At T = 20 the five learned/reference ratios are 0.978 , 1.396 , 1.237 , 0.918 , 1.052 
+
+(median 1.052 ); all five meet the preregistered ≤ 1.5 criterion. A hierarchical learned-actor-minus-reference difference has median 0.000177 with 95% interval [−0.000137 , 0.000748] : this interval is a different estimand from the predeclared ratio criterion and is not an equivalence test. With the same trained checkpoints and their learned critic, the fully learned loop has descriptive median oracle ratio 1.050 and full-loop-minus-oracle median 0.000518 with interval [0 .000008 , 0.002155] ; no 1.5
+
+margin was registered for this comparison. Without retraining, all four declared S = 4 shift families pass separately: cross-run median learned/reference ratios are 0.927 , 1.003 , 1.014 , and 0.997 . The first three families contain 64 distinct environments each; the structured ring is one environment evaluated from 64 initial policies. The breadth result remains positive if the structured-ring family is omitted. Subsequent scale experiments retrain the architecture at larger state counts; these are size-scaling experiments, not zero-shot cardinality generalization. 
+
+7.1 Experimental units and statistical treatment 
+
+The trained model/run is the outer independent unit. The 64 MDPs within a run are paired fixtures used to estimate each trained controller; they are not substitutes for independent training replications. The fresh confirmation uses five trained runs. The larger-size literature benchmark 7C0 C1 C2 C3 C4 0.8 1.0 1.2 1.4 learned / Exact PMD oracle     
+
+> all five runs within the 1.5x reliability margin
+> (a) Fresh S= 4
+> sparse P
+> mixing sparse r
+> ring* 0.8 1.0 1.2 1.4 learned / Exact PMD oracle
+> cross-run medians; whiskers = observed ranges *1 env. x 64 initial policies
+> (b) No-retraining shifts
+
+Figure 3: Local PMD correspondence remains useful under repeated deployment. (a) With an exact one-step critic, all five confirmatory S = 4 runs stay within the preregistered 1.5×
+
+margin to the Exact PMD oracle. (b) The same trained actors satisfy the criterion across four no-retraining shifts; whiskers show observed five-run ranges. uses three training identities per learned method at each size. Final paired intervals resample runs first and shared MDP identities within runs second (10,000 replicates). OOD families are analyzed separately rather than pooled. A confidence interval containing zero is reported as unresolved, not as equality or equivalence. The evidence chronology is also kept separate. The original 1,600-step study met neither predeclared positive nor negative criterion. A subsequent step-count sweep was exploratory, and a 51.2k extension on reused identities was post hoc. The decisive five-run confirmation fixed 51.2k steps, new model/task seeds, and all fixtures before execution; only this fresh block supports the confirmatory repeated-control claim. The similar post-hoc and fresh medians ( 1.051 and 1.052 ) are never pooled. 
+
+# 8 Comparison with learned ICRL/control methods 
+
+The literature-facing benchmark enters only after each external adaptation reproduces a defining behavior of its source method. Linear Actor-Critic Transformer is our implementation of Liang–Lai’s one-layer linear-attention actor–critic construction/training. Algorithm Distillation is our causal Transformer trained on source-algorithm histories. AD qualified on a second preregistered qualification run after the first run failed; Liang–Lai’s actor step and AD’s source actor rate both select the largest value in the predeclared tuning grids. The learned PMD-target reference uses the same architecture, inputs, data, seeds, budget, critic objective, and exact one-step critic as PolicyAttention but is trained directly on Exact PMD targets; it is calibration rather than a headline baseline. At T = 20 , PolicyAttention minus Liang–Lai has 95% intervals [−0.486 , −0.364] (S = 8 ) and 
+
+[−0.496 , −0.402] (S = 16 ); versus AD the intervals are [−0.612 , −0.391] and [−0.620 , −0.489] . Thus PolicyAttention achieves about 18 –28 × lower median loss than the two qualified external adaptations at the tested settings. This is a common-harness separation, not a claim about the original papers and not intrinsic dominance under matched information. 8PolicyAttention Liang--Lai Algorithm Distillation 10 −1       
+
+> normalized returned-policy loss
+> Common-harness loss at T= 20
+> PolicyAttention Liang--Lai Algorithm Distillation
+> S= 8 median
+> S= 16 median training-run medians
+
+Figure 4: PolicyAttention has substantially lower T = 20 returned-policy loss than the two qualified external adaptations. Markers show medians at S = 8 , 16 and small open points show trained-run medians. PolicyAttention uses an exact one-step model-based critic here, while the external adaptations receive 20 sampled transitions per round; this is a complete-controller comparison, not an information-matched actor comparison. Table 3: Median normalized returned-policy loss in the common harness (lower is better). Every learned method has three training identities. External entries are our adaptations, not the papers’ original benchmarks.                                    
+
+> S= 8 S= 16
+> Method T20 T40 T20 T40
+> PolicyAttention .0193 .0108 .0273 .0224 PMD-target ref. (learned) .0189 .0106 .0232 .0144 PolicyAttention, learned critic .0225 .0121 ––Liang–Lai adapt. .4535 .2812 .4817 .3307 AD adapt. .5439 .3950 .5723 .3730
+> Exact PMD oracle .0148 .0026 .0167 .0046
+
+8.1 Common-harness interfaces 
+
+The learned methods receive different internal information, so the benchmark standardizes task and scoring rather than update information. PolicyAttention and the learned PMD-target reference receive the structured (π, Q, η ) packet and apply one exact model-based Bellman backup after each returned actor policy in the headline controller. Liang–Lai receives a 20-transition on-policy window per round and updates its actor/critic state. AD receives the agent’s sampled (s, a, r ) history, also 20 new transitions per round, with a sliding 200-token context after qualification. Therefore the 
+
+T = 20 comparison gives each external adaptation 400 sampled transitions and gives PolicyAttention model-based one-step evaluation. The resulting gap is a complete-controller comparison and cannot be attributed solely to softmax PMD geometry. At S = 8 , replacing PolicyAttention’s exact critic by its learned critic gives median T = 20 loss 0.0225 (1.17 × the exact-critic value); Liang–Lai and Algorithm Distillation remain 20 .2× and 24 .2× higher-loss. This is a one-sided sampled-critic bound, not a matched-information test: the learned critic uses 144 generative transitions per round, versus 20 on-policy transitions per round for each external adaptation. 9Table 4: Method interface and training context at S = 8 . “Exact backup” is one Bellman policy-evaluation step with model access, not full evaluation to Qπ. The learned-critic PolicyAttention check uses 144 generative transitions per round and is reported separately in text/Table 3.                   
+
+> Method actor/training signal online access per round parameters / train-ing data recorded train-ing cost PolicyAttention PMD variational actor exact one-step backup; 0 samples 272k; 24 MDPs, 2,048 examples, 51.2k steps 0.19–0.24 GPU-h PMD-target ref. (learned) direct Exact-PMD la-bels exact one-step backup; 0 samples same architec-ture/data/budget as PolicyAttention 0.19–0.24 GPU-h Liang–Lai adapta-tion linear-attention actor– critic teacher mimick-ing 20 on-policy tran-sitions 10.9k; 10,000 MDPs, 10 7win-dows about 17 CPU-min AD adaptation action NLL on source learning histories 20 sampled transi-tions 1.14M; 2,000 histo-ries ×1,000 source steps 0.63–0.75 GPU-h
+
+8.2 Baseline Qualification and Resources 
+
+The external methods entered the benchmark only after method-specific qualification. For Liang–Lai, the implemented linear-attention block reproduces its analytic actor–critic teacher update to about 
+
+10 −5 relative error at the harness shape, and native-shape training tracks the teacher curve. Its actor step α = 2 .0 is selected on a disjoint calibration fixture and lies at the upper edge of the predeclared grid. AD’s first registered qualification run failed to improve sufficiently. A single registered repair changed context 800 →200, batch 32 →128, and training 20k →40k steps; the second attempt improved median normalized loss from 0.821 to 0.395 over 40 rounds and qualified. Its source actor rate 4.0 is also the largest predeclared grid value. These choices are disclosed because extending either grid could improve the baselines. Resources are not matched. At S = 8 , PolicyAttention / PMD-target reference have 272,451 parameters and train on 24 MDPs/2,048 examples for 51,200 steps (about 0.19–0.24 GPU-h per run). Liang–Lai has 10,952 parameters but trains over 10,000 MDPs and 10 7 windows (about 17 CPU-min per run). AD has about 1.14M parameters and distills 2,000 histories of 1,000 source steps (about 0.63–0.75 GPU-h per run). The benchmark therefore measures returned-policy behavior under a common task/scoring harness, not a compute-normalized efficiency frontier. The learned PMD-target reference is a calibration control and tells a different story. PolicyAt-tention and PMD-target reference are unresolved at S = 8 for both horizons and at S = 16 , T = 20 .At S = 16 , T = 40 , PMD-target reference is resolved lower: PolicyAttention–PMD-target reference 
+
+= +0 .0080 , 95% interval [+0 .0007 , +0 .0159] . We therefore make no objective-superiority claim over the learned PMD-target reference. 
+
+8.3 Qualification of External Adaptations 
+
+Because neither external paper publishes this common benchmark, we first require each adaptation to reproduce a defining behavior of its source method. For Liang–Lai, the explicit linear-attention parameter block is unit-tested against the analytic semi-gradient actor–critic update, and the trained block tracks the same teacher on native S = 9 , A = 4 , γ = .5 prompts before it is moved to the S = 8 harness. The native trained model reaches relative update error 3.2 × 10 −6 and its 10 10 −1              
+
+> same-context row-L1to Exact PMD 10 −1
+> returned-policy loss
+> S= 8
+> S= 16
+> S= 8
+> S= 16
+> S= 8
+> S= 16
+> S= 8
+> S= 16
+> (a) Fidelity versus loss
+> PolicyAttention PMD-target reference Liang--Lai Algorithm Distillation external comparison envelope
+> S= 8 S= 16
+> 0510 15 20 25 30 loss / PMD-target reference
+> 1.0x 1.2x 23.9x 20.8x 28.7x 24.7x
+> (b) Gap to PMD-target reference
+> PolicyAttention Liang--Lai Algorithm Distillation
+
+Figure 5: PolicyAttention occupies the low-loss, low-deviation region. (a) Same-context row-L1 deviation from Exact PMD versus T = 20 returned-policy loss at S = 8 and S = 16 ; the dashed curve is the non-dominated envelope over the two external adaptations. (b) Common-harness 
+
+T = 20 loss normalized by the learned PMD-target reference. closed-loop improvement tracks the analytic teacher at 3,000 updates. On the harness shape the update error remains around 1.5 × 10 −5. The common benchmark then uses the calibration-selected 
+
+(α, β ) = (2 .0, 0.2) at S = 8 and (2 .0, 0.8) at S = 16 ; the larger actor step is important because the paper-default values adapt much more slowly at the 20-round common horizon. AD is qualified differently because its defining phenomenon is improvement from learning-history context rather than imitation of a closed-form update. The final long-context model improves median normalized loss from 0.821 at round 1 to 0.395 at round 40 on the disjoint qualification fixture, with 64/64 MDPs improving; a short-context control improves substantially less. The first registered training run failed its qualification criterion and remains part of the audit record. The second attempt was fixed before rerunning and is the only AD model family admitted to the benchmark. At S = 16 the recipe is retrained rather than independently re-qualified from scratch; the evaluation trajectory still shows in-context improvement from 0.923 at round 1 to 0.373 at round 40. These qualifications support the phrase “our faithful adaptations”; they do not convert our benchmark into a reproduction of either publication’s reported numbers. 
+
+8.4 PMD-target calibration 
+
+Figure 5(a) places the S = 8 and S = 16 endpoints on a common fidelity–performance plane. PolicyAttention occupies the low-deviation, low-loss region; the Liang–Lai and Algorithm Distillation points form a much higher-loss external comparison envelope. The learned PMD-target reference is shown only as calibration. Figure 5(b) normalizes T = 20 loss by that learned reference: PolicyAttention is 1.02 × and 1.18 × the reference at S = 8 and S = 16 , while the external ratios inherit the information-access difference of the common harness. 
+
+# 9 Scope and Boundaries 
+
+Four boundaries constrain interpretation. First , PMD-target reference remains a strong matched control, and one stress-horizon cell favors it. Second , the literature benchmark is not information-matched: PolicyAttention / PMD-target reference use exact one-step model-based backups and zero 11 sampled transitions, while Liang–Lai and AD receive 20 sampled transitions per round; the latter are also plausibly under-tuned because selected rates lie at the edges of the predeclared grids. Third ,larger sizes use retraining, not zero-shot state-cardinality extrapolation. Fourth , the theory is an implementation/control result under structured semantic tokens, finite caps, and generative critic coverage; it does not prove SGD/AdamW recovery of the constructed circuit. Two additional observations sharpen interpretation. A one-state counterexample shows uniformly tiny one-step PMD error can coexist with permanent suboptimal lock-up under bounded steps, motivating the closed-loop test. Separately, a paired reward-only actor achieves lower S = 4 , T = 20 
+
+task loss than the PMD-aligned actor, and the explicit φ = .01 support mixture costs +0 .0171 with 95% interval [0 .0163 , 0.0192] in S = 4 , T = 20 loss in the well-trained regime. These do not negate the PMD mechanism result; they show why algorithmic fidelity and task optimization are different axes. 
+
+# 10 Discussion 
+
+What the literature-facing advantage establishes. The literature-facing comparison is in-tentionally performance-first: after qualification, every PolicyAttention run has much lower T = 20 
+
+median returned-policy loss than every Liang–Lai and AD run at both tested sizes, and the hierar-chical intervals exclude zero by wide margins. The ratio view in Fig. 4 makes the magnitude visible without comparing to the oracle: the external adaptations incur 17 .7–28 .2× PolicyAttention’s loss. The result survives the increase from eight to sixteen states after retraining. This is the strongest empirical separation in the current project and warrants headline status. Its causal interpretation is narrower. Because the methods expose different information to their update rules, the result establishes that the complete PolicyAttention controller is substantially more effective under this registered common harness; it does not isolate which fraction of the gap comes from actor geometry, exact model-based critic access, optimization, context length, or capacity. 
+
+Why the learned PMD-target calibration is complementary. The learned PMD-target reference removes most of those differences. It uses the same Transformer architecture, actor inputs, training data, seeds, budgets, and critic objective as PolicyAttention, changing the actor supervision from the proximal variational objective to direct exact-PMD targets. The resulting frontier is mixed rather than one-sided. At S = 8 , the two objectives are unresolved at both horizons and interleave across checkpoints. At S = 16 , T = 20 , PMD-target reference has a lower point estimate but the interval still crosses zero; at T = 40 its advantage is resolved. This matched result prevents us from explaining the external-baseline gap as evidence that the proximal objective is intrinsically better than direct imitation. Instead, it supports a mechanism-centered reading: PolicyAttention learns the target computation without direct policy labels and reaches a competitive fidelity/control frontier, while direct supervision can be at least as effective and can win at a longer horizon. 
+
+Why local PMD fidelity is still worth measuring. Task loss alone cannot identify an update rule. The paired reward-only control demonstrates the point constructively: it attains lower primary-horizon task loss than the PMD-aligned actor while the registered experiment contains no same-context PMD-fidelity coordinate for that reward-only controller. Conversely, the one-state lock-up construction shows that an actor may be arbitrarily close to PMD in one step yet fail under repeated bounded-step control. The combination explains the paper’s three-axis evaluation. Same-context ζ asks which algorithm the actor resembles locally; returned-policy loss asks whether 12 the deployed controller remains useful after feedback; alternative objectives and literature baselines ask how much task performance depends on that mechanism. None of these coordinates is redundant. 
+
+What the scale evidence says. The S = 8 and S = 16 benchmark blocks retrain every method at the new problem size. They therefore test whether the phenomenon persists when the interface is rebuilt at larger tabular state count, not whether one fixed network extrapolates to an unseen cardinality. PolicyAttention’s raw median loss grows by 1.41 × from S = 8 to S = 16 at T = 20 ,while the Exact PMD oracle grows by 1.13 ×; its ratio to the oracle therefore changes from 1.31 to 
+
+1.64 . The external adaptations remain far from convergence at the common 20-round horizon, so their raw losses change little across these two sizes. These point ratios are descriptive with three trained runs per method; no uncertainty ordering is inferred for the growth factors. 
+
+# 11 Conclusion 
+
+PolicyAttention turns the softmax geometry already present in PMD into a causal in-context control mechanism. A fixed decoder realizes the actor–environment–one-step-critic computation with explicit implementation residuals, and the returned-policy theorem connects those residuals to the policy the agent actually emits. Separately trained Transformers exhibit the PMD mechanism locally, preserve useful control under repeated adaptive composition and environment shifts, and, under the common harness, operate in a much lower-loss regime than two qualified published-method adaptations. The decisive distinction is therefore between algorithmic fidelity , closed-loop reliability ,and task performance : none can be inferred from the other two. PolicyAttention supplies a common mechanism and measurement interface for studying all three. 
+
+# A Complete returned-policy proof 
+
+This appendix records the complete error propagation used in the main theorem. Set Ek =
+
+∥Q⋆ − Qk∥∞. Decompose 
+
+Q⋆ − Qk+1 = ( FQ⋆ − F Qk) + ( FQk − F bπk+1 Qk) (15) 
+
+− (Qk+1 − F bπk+1 Qk). (16) The first term is bounded by γE k. The second equals γP g k and has sup norm at most γ¯gk; the third is bounded by δk. Thus 
+
+Ek+1 ≤ γE k + δk + γ¯gk. (17) Unrolling to T − 1 gives 
+
+ET −1 ≤ γT −1E0 + 
+
+> T−2
+
+X
+
+> k=0
+
+γT −2−kδk + 
+
+> T−2
+
+X
+
+> k=0
+
+γT −1−k ¯gk. (18) For π = bπT , the Bellman fixed-point equations give 
+
+Q⋆ − Qπ = ( I − γP π)−1(FQ⋆ − F πQ⋆). (19) The inverse is nonnegative with row sums 1/(1 − γ). At each next state, 
+
+max  
+
+> a
+
+Q⋆(s, a ) − ⟨ π(· | s), Q ⋆(s, ·)⟩ ≤ ¯gT −1 + 2 ET −1, (20) 13 so 
+
+∥Q⋆ − QbπT ∥∞ ≤ 2γ
+
+1 − γ ET −1 + γ
+
+1 − γ ¯gT −1. (21) Substitution yields Eq. (9). The proof stops before QT is constructed, which is why δT −1 is absent. 
+
+A.1 From PMD residual to greedy defect 
+
+Let Gk(s) = arg max a Qk(s, a ) and let p◦ be the current policy restricted to Gk(s) and renormalized. Then DKL (p◦∥bπk) = − log bπk(Gk(s) | s) = Dk(s). PMD optimality implies 
+
+max  
+
+> a
+
+Qk(s, a ) − ⟨ qk, Q k(s, ·)⟩ ≤ Dk(s)/η k. (22) For probability rows p, q and ∥Q∥∞ ≤ B, centering Q by the midpoint of its range gives |⟨ p − q, Q ⟩| ≤ 
+
+B∥p − q∥1. Hence 
+
+gk(s) ≤ Dk(s)/η k + Bζ k. (23) This is the exact interface used by the mixture-floor closure. 
+
+# B Routing and sampling certificates 
+
+The actor partitions the visible memories into the intended state/action group and competitors. If 
+
+Zgood and Zbad are their exponential score sums and R = Zbad /Z good , the bad attention mass is 
+
+R/ (1 + R). Probability-valued outputs have L1 diameter at most two, giving ζ ≤ 2R/ (1 + R). For score margins κ, ν , ∥Q∥∞ ≤ B, and actor step η, the resulting count/score envelope is 
+
+Ract ≤ (S − 1) e−κ+2 ηB + Se −(κ+ν)+ ηB . (24) For a target 0 < ϵ r < 2, let rϵ = ϵr/(2 −ϵr). A convenient sufficient choice is κ = 2 ηmax B +log(2 S/r ϵ)
+
+and ν = 1 .The critic has two finite-temperature routing stages. With M visible transition tokens and at least m examples per predecessor, 
+
+R1 ≤ (S + A − 2) e−τ1 + ( S − 1)( A − 1) e−2τ1 + M e −3τ1 , (25) 
+
+R2 ≤ (M/m )e−τ2 + (2 SA/m )e−3τ2 , (26) and δroute ≤ 2B(γλ 1 + λ2) with λj = Rj /(1 + Rj ). Conditional on the realized actor and past, fresh TD targets lie in [−B, B ] and have conditional mean F bπk+1 Qk. Hoeffding plus a union bound over 
+
+SAK pair/call combinations yields 
+
+m ≥
+
+ 2B2
+
+ϵ2
+
+> s
+
+log 2SAK α
+
+
+
+=⇒ δstat ≤ ϵs (27) with probability at least 1 − α over the declared calls. The construction therefore requires packet and step certificates before the routing weights are frozen. 14 C Normalized finite-cap compilation 
+
+Let the normalization-free payload have dimension d and choose D = d + 2 . Let J ∈ RD×d have orthonormal columns, and choose a unit carrier c orthogonal to the image of J and to the all-ones direction. With C2 = H2 − Dϵ LN define y = Cc + Jx . The token has mean zero and variance 
+
+(C2 + ∥x∥2)/D . LayerNorm with gain H/ √D and zero bias gives 
+
+J⊤ LN( Cc + Jx ) = Hx 
+
+pH2 + ∥x∥2 = ρH (x)x. (28) On any finite compact payload domain, 1 − ρH (x) = O(H−2). Query/key score perturbations and value perturbations are therefore uniformly small for sufficiently large finite H. The final LayerNorm is handled by the same carrier identity. Action values are represented in centered coordinates ea − u with u = 1/A . The affine readout adds u, preserving the simplex. For control we use the explicit mixture 
+
+bp = (1 − φ)p + φu, (29) not an intrinsic numerical floor from LayerNorm. It guarantees bpa ≥ φ/A and adds at most 
+
+2φ(A − 1) /A row-L1 actor bias. With constant η = log( A/φ )/θ and uniform residual caps δ, ζ , the theorem in the main text follows from ¯g0 ≤ 2B and ¯gk ≤ θ + Bζ for k ≥ 1. The construction is in exact real arithmetic. Conservative sufficient carrier/margin scales can be impractical and are not claimed to match the learned network. 
+
+# D Effective-coordinate learning details 
+
+Let PA = I − 11 ⊤/A remove the action-constant softmax gauge. In a centered action-equivariant linear class, write effective logits zϑ = Φ( x)ϑ and suppose the PMD target is realizable at ϑ⋆. Since the proximal excess equals DKL (qϑ∥qϑ⋆ ), differentiation gives 
+
+∇R(ϑ) = E[Φ ⊤H(qϑ)Φ]( ϑ − ϑ⋆), H(q) = diag( q) − qq ⊤. (30) On a finite coefficient ball, bounded features imply bounded logits and hence a positive lower action probability. For centered v, v⊤H(q)v ≥ p0∥v∥2. If E[Φ ⊤Φ] ⪰ λI on the identifiable coordinates, then 
+
+(ϑ − ϑ⋆)⊤∇R(ϑ) ≥ p0λ∥ϑ − ϑ⋆∥2. (31) Gradient flow contracts on the invariant ball, and sufficiently small-step GD has the analogous geometric convergence. This proposition is intentionally restricted to effective centered coordinates; raw deep-network factorization and AdamW remain outside its scope. 
+
+# E Complete empirical evidence chronology 
+
+E.1 Fresh confirmation and alternative mechanism 
+
+The decisive fresh block uses five new trained identities at 51.2k steps under a protocol fixed before any outcomes were observed. At T = 20 the learned/reference run ratios are 0.978413 , 1.396388 , 1.236607 ,
+
+0.918064 , and 1.052287 . All five satisfy the 1.5 registered margin, none systematically stalls, and all certificate/numerical audits pass. The paired reward-only actor produces reward-only-minus-learned-actor median −0.005963 with interval [−0.009794 , −0.003191] , and reward-only-minus-full-loop 15 median −0.007066 with interval [−0.009200 , −0.004539] . These are task-loss comparisons; registered PMD-fidelity diagnostics for the reward-only actor are absent. The four no-retraining shift medians are 0.9270 (sparse transitions), 1.0035 (strong mixing), 
+
+1.0138 (sparse rewards), and 0.9967 (structured ring). The first three shift families each contain 64 independently generated environments. The ring has one fixed (P, r ) structure and 64 initial policies. The aggregate breadth class remains positive if the ring is omitted. 
+
+E.2 Matched objective and checkpoint frontiers 
+
+The matched PolicyAttention / PMD-target reference experiment varies only the actor objective under identical architecture, actor inputs, training fixtures, critic objective, optimizer and checkpoint budgets. At both S = 4 and S = 8 , the objective comparison is mixed across checkpoints rather than uniformly ordered. The S = 8 fidelity/control CSV contains five checkpoint budgets from 6.4k to 51.2k. The combined lower-is-better non-dominated envelope contains PolicyAttention at 38.4k 
+
+(ζ = 0 .01665 , L = 0 .02538) and 51.2k (0 .01574 , 0.02703) ; a PMD-target reference 51.2k point is method-nondominated but dominated in the combined set. These coordinates are descriptive of the registered checkpoint landscape, not evidence that one objective is globally Pareto-superior. 
+
+E.3 Literature-facing benchmark 
+
+At T = 20 , cross-run medians are 0.01929 /0.01894 /0.45345 /0.54390 for PolicyAttention, PMD-target reference, Liang–Lai, and AD at S = 8 , and 0.02727 /0.02321 /0.48167 /0.57232 at S = 16 . Figure 4 plots the underlying three trained-run medians for every learned method; the trained run remains the independent unit. At T = 40 , PMD-target reference is resolved lower than PolicyAttention at S = 16 : every PMD-target reference run median (0.0105–0.0158) is below every PolicyAttention run median (0.0208–0.0249). This cell is retained precisely because the external-baseline headline does not determine the matched-control conclusion. 
+
+# F External-baseline qualification details 
+
+The Liang–Lai adaptation uses the paper’s one-layer linear self-attention form, actor–critic prompt organization, analytic teacher, and teacher-mimicking training. Native-shape qualification at S =9, A = 4 , γ = .5 gives last/first training-loss ratio 4.9 × 10 −12 , median relative emitted-update error 
+
+3.2 × 10 −6, closed-loop improvement ratio 0.999 versus teacher at 3,000 updates, and normalized mean curve gap 4.3 × 10 −4. The harness-shape functional error at S = 8 is 1.5 × 10 −5. Calibration selects α = 2 .0, the maximum predeclared grid value, so under-tuning remains a directional caveat. AD uses causal tokens (at−1, r t−1, s t) and action negative log likelihood, with a side-effect-free returned-policy query. Its first registered qualification attempt ( c = 800 , batch 32, 20k steps) failed: round-1/40 losses were 0.928/0.937. After a single registered calibration-only repair to c = 200 , batch 128, 40k steps, the long-context model improves 0.821 → 0.395 with 64/64 MDPs improved and beats the short-context control by the registered gap. The source actor rate 4.0 is also the maximum predeclared grid value. We therefore use “qualified adaptation,” not “reproduction of Algorithm Distillation’s benchmark.” 16 G Negative results and boundaries 
+
+One-step fidelity is insufficient. For any bounded step cap and target ζ > 0, a one-state two-action self-loop can choose sufficiently small good-action prior mass so that exact PMD itself moves by at most ζ. An implemented actor can then stay at the prior while remaining uniformly ζ-accurate to PMD; with an exact critic initialized at Qπ, the loop remains at a suboptimal fixed point. The aligned proximal excess can simultaneously vanish. This project-specific witness motivates, but does not itself prove, the learned closed-loop result. 
+
+Support-floor cost. In the fresh S = 4 block, the fixed φ = .01 mixture has mixture-minus-unmixed-actor median 0.01711 with interval [0 .01633 , 0.01919] : once the actor is well trained, the uniform floor prevents the concentration available to the unmixed actor. The mixture is a theorem-motivated support certificate, not a guaranteed empirical exploration benefit. 
+
+Coverage and autonomy. The construction assumes structured semantic fields and fresh balanced generative critic packets. It does not infer a tabular MDP from raw observations, select state-action coverage endogenously, or support an unlimited growing transcript at fixed finite routing margins. The learned experiments are closed loop in the sense that returned policies change subsequent inputs and targets, but they are not unrestricted autonomous agents. 
+
+Size and compute. S = 16 uses retraining, not zero-shot cardinality extrapolation. External methods have unmatched capacities and training data; PolicyAttention has stronger online model access. Resource tables are therefore descriptive and not used to claim a compute Pareto optimum. 
+
+# H Reproducibility specification 
+
+The literature benchmark uses three trained identities per method and 64 fresh evaluation MDPs per size. S = 8 seeds are 18100–18102 for models and 28100–28102 for task roots; S = 16 uses 19100– 19102 and 29100–29102. Calibration/evaluation roots are disjoint. PolicyAttention / PMD-target reference checkpoints use the 51,200-step matched-control runner; external baselines have their own qualified implementations. Exact Qπ and Q⋆ are used only for scoring (and for the exact one-step critic of PolicyAttention / PMD-target reference). Final intervals use a hierarchical bootstrap with 10,000 replicates, resampling trained runs first and MDP identities within runs second. All manuscript figures are generated deterministically from the compact CSV/JSON inputs shipped with the source package; figure scripts do not train models. The archived evidence also stores per-round compressed CSV rows, returned-policy arrays, fixture manifests and checkpoint hashes. An independent verification reconstructed the run medians and decisive intervals from those raw rows and rescored stored returned policies with zero discrepancy. The manuscript figures and tables read these fixed evidence artifacts without modifying them. 
+
+# References 
+
+Ekin Akyürek, Dale Schuurmans, Jacob Andreas, Tengyu Ma, and Denny Zhou. What learning algorithm is in-context learning? investigations with linear models. International Conference on Learning Representations (ICLR), 2023. 17 Shivam Garg, Dimitris Tsipras, Percy Liang, and Gregory Valiant. What can transformers learn in-context? a case study of simple function classes. In Advances in Neural Information Processing Systems , volume 35, pages 30583–30598, 2022. Matthieu Geist, Bruno Scherrer, and Olivier Pietquin. A theory of regularized markov decision processes. In Proceedings of the 36th International Conference on Machine Learning , volume 97 of 
+
+Proceedings of Machine Learning Research , pages 2160–2169, 2019. Emmeran Johnson, Ciara Pike-Burke, and Patrick Rebeschini. Optimal convergence rate for exact policy mirror descent in discounted markov decision processes. In Advances in Neural Information Processing Systems , volume 36, pages 76496–76524, 2023. Guanghui Lan. Policy mirror descent for reinforcement learning: Linear convergence, new sampling complexity, and generalized problem classes. Mathematical Programming , 198(1):1059–1106, 2023. doi: 10.1007/s10107-022-01816-5. Michael Laskin, Luyu Wang, Junhyuk Oh, Emilio Parisotto, Stephen Spencer, Richie Steigerwald, DJ Strouse, Steven Hansen, Angelos Filos, Ethan Brooks, Maxime Gazeau, Himanshu Sahni, Satinder Singh, and Volodymyr Mnih. In-context reinforcement learning with algorithm distillation. In International Conference on Learning Representations (ICLR) , 2023. Haodong Liang and Lifeng Lai. Transformers provably implement in-context reinforcement learning with policy improvement, 2026. Jiacai Liu, Wenye Li, and Ke Wei. On the convergence of policy mirror descent with temporal difference evaluation, 2025. Chris Lu, Yannick Schroecker, Albert Gu, Emilio Parisotto, Jakob Foerster, Satinder Singh, and Feryal Behbahani. Structured state space models for in-context reinforcement learning. In Advances in Neural Information Processing Systems (NeurIPS) , 2023. Johannes von Oswald, Eyvind Niklasson, Ettore Randazzo, João Sacramento, Alexander Mordvintsev, Andrey Zhmoginov, and Max Vladymyrov. Transformers learn in-context by gradient descent. In 
+
+Proceedings of the 40th International Conference on Machine Learning , volume 202 of Proceedings of Machine Learning Research , pages 35151–35174, 2023. Jiuqi Wang, Ethan Blaser, Hadi Daneshmand, and Shangtong Zhang. Transformers can learn temporal difference methods for in-context reinforcement learning. International Conference on Learning Representations (ICLR), 2025. Lin Xiao. On the convergence rates of policy gradient methods. Journal of Machine Learning Research , 23(282):1–36, 2022. Zixuan Xie, Xinyu Liu, Claire Chen, Shuze Daniel Liu, Rohan Chandra, and Shangtong Zhang. Beyond linear attention: Softmax transformers implement in-context reinforcement learning, 2026. 18
