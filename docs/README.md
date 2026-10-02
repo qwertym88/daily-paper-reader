@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-30</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-01</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 23 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 15 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>9</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>14</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-30 23:16:58 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-02 00:05:13 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,10 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>2026-09-30 日报筛选23篇，精读9篇、速读14篇，重点锁定扩散Transformer结构与Koopman算子学习两篇9.0分工作。</p>
-<p>最值得看的是扩散Transformer中“结构化残差连接”的设计，以及非线性动力系统中Koopman框架的强制项建模，分别指向生成模型架构与动力系统线性算子学习的关键改进。</p>
-<p>普通读者可先读这两篇精读，再按兴趣速览Q-learning安全离线RL、人形羽毛球技能学习和自适应MPC规划三篇速读。</p>
+<p>今日共生成 15 篇推荐（精读 1 篇，速读 14 篇）</p>
+<p>精读：《Parameter-Efficient 3D Segmentation of Liver and Liver tumors: Depthwise factorization Scales Better Than Dense Convolution with Spatial Dimensionality》（9.0/10）</p>
+<p>速读：《Learning Robot Policies from Sparse Success Signals via STL-Guided Stein Variational Policy Gradient》（7.0/10）, 《HOI-Retarget: Contact-Centric Retargeting for Human-Object Interaction》（7.0/10）, 《Sufficiency of Zeroth-Order Reward Shaping for Policy Gradient in Stabilization Control》（7.0/10）</p>
+<p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +74,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">9 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Structured Residual Connectivity Matters for Diffusion Transformers">Structured Residual Connectivity Matters for Diffusion Transformers</span></li><li><span class="dpr-home-dashboard-paper-title" title="Forced-Term Modeling in the Koopman Framework for Linear Operator Learning in Nonlinear Dynamical Systems">Forced-Term Modeling in the Koopman Framework for Linear Operator Learning in Nonlinear Dynamical Systems</span></li><li><span class="dpr-home-dashboard-paper-title" title="HuGo: LLMs as Whole-Body Policy Code Designers for Humanoid Loco-Manipulation">HuGo: LLMs as Whole-Body Policy Code Designers for Humanoid Loco-Manipulation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Parameter-Efficient 3D Segmentation of Liver and Liver tumors: Depthwise factorization Scales Better Than Dense Convolution with Spatial Dimensionality">Parameter-Efficient 3D Segmentation of Liver and Liver tumors: Depthwise factorization Scales Better Than Dense Convolution with Spatial Dimensionality</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>3</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -89,9 +90,9 @@
     <strong class="dpr-home-dashboard-count">14 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Q-learning Penalized Transformer for Safe Offline Reinforcement Learning">Q-learning Penalized Transformer for Safe Offline Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Humanoid Badminton: Learning Dynamic Racket Skills from Limited Human Motion Data">Humanoid Badminton: Learning Dynamic Racket Skills from Limited Human Motion Data</span></li><li><span class="dpr-home-dashboard-paper-title" title="Think Fast, Plan Selectively: Adaptive Deliberation for Efficient Data-Driven MPC">Think Fast, Plan Selectively: Adaptive Deliberation for Efficient Data-Driven MPC</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Learning Robot Policies from Sparse Success Signals via STL-Guided Stein Variational Policy Gradient">Learning Robot Policies from Sparse Success Signals via STL-Guided Stein Variational Policy Gradient</span></li><li><span class="dpr-home-dashboard-paper-title" title="HOI-Retarget: Contact-Centric Retargeting for Human-Object Interaction">HOI-Retarget: Contact-Centric Retargeting for Human-Object Interaction</span></li><li><span class="dpr-home-dashboard-paper-title" title="Sufficiency of Zeroth-Order Reward Shaping for Policy Gradient in Stabilization Control">Sufficiency of Zeroth-Order Reward Shaping for Policy Gradient in Stabilization Control</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>9</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>8</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span></div>
 </section>
 </div>
 
