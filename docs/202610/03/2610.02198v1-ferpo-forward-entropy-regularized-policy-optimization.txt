@@ -1,0 +1,2602 @@
+Title: FERPO: Forward Entropy-Regularized Policy Optimization
+
+URL Source: https://arxiv.org/pdf/2610.02198v1
+
+Published Time: Fri, 02 Oct 2026 02:19:14 GMT
+
+Number of Pages: 47
+
+Markdown Content:
+Under review 
+
+# FERPO: F ORWARD ENTROPY -R EGULARIZED 
+
+# POLICY OPTIMIZATION 
+
+Sebastian Sanokowski Alireza Sarmadi Majid Khadiv 
+
+Applied and Theoretical Aspects of Robot Intelligence (ATARI) Lab Munich Institute of Robotics and Machine Intelligence (MIRMI) Technical University of Munich 
+
+## ABSTRACT 
+
+Several state-of-the-art methods for online reinforcement learning in continuous control improve policies using action gradients of a learned critic. However, critics are typically trained to predict returns, and accurate value predictions do not necessarily yield accurate action derivatives, potentially leading to unreliable policy updates. We propose Forward Entropy-Regularized Policy Optimization (FERPO), an on-policy maximum entropy reinforcement learning algorithm that performs policy improvement using critic values without differentiating the critic with respect to actions. FERPO derives an optimal target action distribution from a policy-improvement objective regularized by entropy and Kullback–Leibler (KL) divergence. We then fit the actor to this target by minimizing a forward-KL ob-jective, estimated using self-normalized importance sampling (SNIS) with actions drawn from the rollout policy. By limiting the target distribution’s deviation from the rollout policy, the KL regularization helps keep these importance weights well behaved. In contrast to reverse-KL objectives, which can favor a subset of the tar-get distribution’s modes, the forward-KL objective encourages coverage of mul-tiple high-value modes and thereby promotes exploration. Experiments and abla-tions on MuJoCo Playground and ManiSkill show competitive performance and sample-efficiency gains. Computational benchmarks also demonstrate faster ac-tor updates than Relative Entropy Pathwise Policy Optimization (REPPO). Our implementation is publicly available. 1
+
+## 1 INTRODUCTION 
+
+Reinforcement learning (RL) learns policies through interaction to maximize cumulative reward. Its successes range from game playing (Silver et al., 2017) to autonomous drone racing (Kaufmann et al., 2023) and robot locomotion (Ha et al., 2025). In robotics, massively parallel simulation has accelerated on-policy learning by collecting trajectories from thousands of environments simulta-neously. This has enabled rapid policy training and successful transfer from simulation to physical robots (Rudin et al., 2022; Zakka et al., 2025). These advances make efficient and reliable policy improvement central to scaling online robot learning. Relative Entropy Pathwise Policy Optimization (REPPO; Voelcker et al., 2026) is a recent state-of-the-art on-policy method for this setting. It learns a soft action-value critic from on-policy tra-jectories and improves the actor by differentiating the critic with respect to actions, while limiting policy changes relative to the rollout policy. This makes pathwise actor updates compatible with massively parallel on-policy learning. However, standard critic training supervises values, whereas these actor updates require accurate action derivatives. Accurate value predictions do not necessarily imply accurate derivatives: critic-gradient error can bias policy improvement (D’Oro & Ja´ skowski, 2020), and learned action gradients can show poor directional agreement with rollout-based esti-mates (Sarafian et al., 2021). In on-policy learning, biased gradients can also interact with changing data distributions and destabilize training (Gurumurthy et al., 2023). These limitations motivate policy improvement that uses critic values without requiring their action derivatives. 
+
+> 1
+
+Code: https://github.com/Atarilab/FERPO. 
+
+1arXiv:2610.02198v1 [cs.LG] 1 Oct 2026 Under review We derive the optimal target distribution for a standard RL policy-improvement objective with en-tropy and Kullback–Leibler (KL) regularization. Making this target explicit lets us replace reverse-KL projection by forward-KL fitting, which encourages coverage of target modes (Minka, 2005). The KL trust region keeps the target close to the rollout policy, helping control importance-weight concentration, as in recent diffusion and normalizing flow based sampling methods (von Klitzing et al., 2026; Blessing et al., 2025). We introduce Forward Entropy-Regularized Policy Optimization (FERPO), which applies this construction to on-policy learning. Its actor update uses critic values without differentiating the critic with respect to actions. Our contributions are: • An on-policy actor update that uses critic values to construct a regularized target action distribution and fits the actor to this target using forward KL, without differentiating the critic with respect to actions (Section 3.1). • A practical estimator using self-normalized importance sampling (SNIS), with Lagrange multipliers that regulate policy entropy and importance-weight concentration through nor-malized effective sample size (ESS) (Sections 3.1 and 3.2). • An evaluation on ManiSkill and MuJoCo Playground demonstrating competitive perfor-mance and sample-efficiency gains (Section 5.4), supported by ablations (Section 5.3) and computational benchmarks showing faster actor updates than REPPO (Section 5.2). • Cached actor updates that reduce computation, and a state-value extension based on one-step simulation, with promising results on AcrobotSwingupSparse (Section 5.3). 
+
+## 2 PROBLEM DESCRIPTION 
+
+Maximum-entropy reinforcement learning. We consider a discounted Markov decision process with continuous state space S, bounded continuous action space A, initial-state density ρ0, transition density P (s′ | s, a ), reward r(s, a ), and discount factor γ ∈ [0 , 1) . For a policy π, let ρπt denote the state distribution at time t, generated by s0 ∼ ρ0, at ∼ π(· | st), and st+1 ∼ P (· | st, a t).Define its normalized discounted state-visitation distribution as dπ (s) := (1 − γ) ∑∞ 
+
+> t=0
+
+γtρπt (s),with ∫ dπ (s) d s = 1 . Using this distribution, the maximum-entropy objective can be written as 
+
+max  
+
+> θ
+
+Jτ (πθ ) := 11 − γ E s∼dπθ 
+
+> a∼πθ(·| s)
+
+[r(s, a ) − τ log πθ (a | s)] = Eρ0,P,π θ
+
+[ ∞∑
+
+> t=0
+
+γt(r(st, a t) − τ log πθ (at | st))]
+
+,
+
+(1) where the first expectation draws a state s ∼ dπθ and then an action a ∼ πθ (· | s). The second expectation is over trajectories generated by s0 ∼ ρ0, at ∼ πθ (· | st), and st+1 ∼ P (· | st, a t).The factor 1/(1 − γ) accounts for the normalization of dπθ , making the two forms equal. Here 
+
+πθ is a neural-network policy (see Appendix A.4 for its parameterization), and τ > 0 controls its entropy. Since H(π(· | s)) = −Ea∼π [log π(a | s)] , this objective balances expected reward and policy entropy (Ziebart, 2010; Haarnoja et al., 2017; 2018a). Its soft value functions satisfy 
+
+Qπτ (s, a ) = r(s, a ) + γEs′∼P (·| s,a )[V πτ (s′)] , V πτ (s) = Ea∼π(·| s)[Qπτ (s, a ) − τ log π(a | s)] .
+
+Thus, Qπτ includes future entropy rewards, while the current action’s entropy contribution appears explicitly in V πτ .
+
+KL surrogate. Let πroll := πθroll be the frozen policy that generated the current rollout, with soft critic Qroll := Qπroll  
+
+> τ
+
+. Applying the policy-gradient theorem (Sutton et al., 1999) to Eq. 1 yields the local reverse-KL surrogate 
+
+LME (θ; θroll ) := τ
+
+1 − γ Es∼droll [DKL (πθ (· | s)∥pQ,τ (· | s))] , (2) where droll := dπθroll is the rollout policy’s normalized discounted state-visitation distribution and 
+
+pQ,τ (a | s) ∝ exp( Qroll (s, a )/τ ) is its Boltzmann policy-improvement target. The policy πθ acts as a variational approximation to this target. With Qroll and droll held fixed, the surrogate satisfies 
+
+∇θ LME (θ; θroll ) = −∇ θ Jτ (πθ ) at θ = θroll . Thus, the surrogate’s descent direction matches the return’s ascent direction at the rollout parameters; see Appendix B.1 for the derivation. 2Under review 
+
+Trust regions and total variation. Repeated updates on one rollout can change state visitation and reduce surrogate accuracy. Write πcurr = πθ and define DTV (πcurr , π roll ) := 12
+
+∫ 
+
+> A
+
+|πcurr (a) −
+
+πroll (a)| da, suppressing state conditioning. Its worst-state value is Dmax TV := sup s DTV (πcurr (· | 
+
+s), π roll (· | s)) . Let ∆Jτ := Jτ (πcurr ) − Jτ (πroll ) be the actual return change and ∆Jsurrogate := 
+
+LME (θroll ; θroll ) − L ME (θ; θroll ) the predicted gain. For an exact critic and soft advantage bounded in magnitude by ϵA, the performance-difference argument (Schulman et al., 2015; Cayci et al., 2024) gives 
+
+∆Jτ ≥ ∆Jsurrogate − 4γϵ A
+
+(1 − γ)2 (Dmax TV )2 − τ
+
+1 − γ Dmax KL , (3) where Dmax KL := sup s DKL (πcurr (· | s)∥πroll (· | s)) . The TV term bounds the advantage error; the KL term is the entropy correction (Appendix B.6). Pinsker’s inequality, 2( Dmax TV )2 ≤ Dmax KL (van Erven & Harremoës, 2014, Theorem 31), upper-bounds the total penalty by ( 2γϵ A 
+
+> (1 −γ)2
+
++ τ
+
+> 1−γ
+
+)Dmax KL .This motivates minimizing LME subject to Dmax KL ≤ δKL . For tanh-squashed Gaussians, as fre-quently used in MaxEnt-RL, uniform forward-KL constraints or TV bounds strictly below one also control the reverse-KL entropy correction (Appendix B.7). 
+
+Practical objective. Replacing the supremum by an expectation over rollout states gives the average-KL constraint ¯Dθ := Es∼droll [DKL (πθ (· | s)∥πroll (· | s))] ≤ δKL . We also require a minimum average entropy ¯Hθ := Es∼droll [H(πθ (· | s))] ≥ H target , interpreting τ as its Lagrange multiplier, as in automatic entropy tuning (Haarnoja et al., 2018b). With Qroll and droll held fixed, maximizing expected critic value under these constraints gives the Lagrangian 
+
+L(πθ , τ, λ ) := −E s∼droll  
+
+> a∼πθ(·| s)
+
+[Qroll (s, a )] + τ (Htarget − ¯Hθ ) + λ( ¯Dθ − δKL ), (4) where τ, λ ≥ 0. The policy minimizes L, while the multipliers maximize it: τ increases when entropy is below target, and λ increases when the KL bound is exceeded. The rollout-average constraint and estimated critic approximate the trust-region problem but do not guarantee its worst-state bound. This motivates a shared design principle for practical on-policy algorithms: control deviation from the rollout policy when making multiple updates on the same data, so that the local surrogate remains informative. 
+
+Connection to existing methods. TRPO controls policy changes through an explicit KL constraint (Schulman et al., 2015), while Proximal Policy Optimization (PPO) clips policy likelihood ratios in the actor surrogate to discourage large changes (Schulman et al., 2017). Relative entropy pathwise policy optimization (REPPO) learns a soft critic Qϕ from on-policy rollouts. At each state, let ̂ kθ (s)
+
+estimate the forward KL DKL (πroll (· | s)∥πθ (· | s)) , using actions drawn from πroll . For ̂ kθ (s) <δKL , REPPO minimizes the unconstrained loss ℓME (θ; s) = Ea∼πθ (·| s)[τ log πθ (a | s) − Qϕ(s, a )] 
+
+using pathwise gradients. Otherwise, it replaces this loss by λ̂ kθ (s), with adaptive λ > 0, pulling the policy back toward πroll (Voelcker et al., 2026). 
+
+## 3 METHOD : FERPO 
+
+Pathwise actor updates require accurate critic action derivatives, although standard critic learning supervises values. Value accuracy alone does not ensure derivative accuracy (D’Oro & Ja´ skowski, 2020; Sarafian et al., 2021). This motivates an actor update that uses critic values without requiring 
+
+∇aQϕ(s, a ). We introduce Forward Entropy-Regularized Policy Optimization (FERPO ). FERPO first minimizes the Lagrangian in Eq. 4 over unrestricted action distributions q(· | s) with fixed multipliers, then fits the parametric policy to the resulting target using the forward KL divergence combined with self-normalized importance sampling (SNIS). The temperature and trust-region mul-tiplier are adapted alongside the actor. The actor differentiates the policy log density with the target weights held fixed; it still depends on critic-value accuracy and adequate sampling of the target. 3.1 TARGET CONSTRUCTION AND ACTOR UPDATES 
+
+We define the target as q∗ = arg min q L(q, τ, λ ), with L from Eq. 4 and the minimization over all conditional action densities q(· | s), unrestricted by the parametric policy family. With the critic, rollout policy, τ , and λ fixed, this minimization separates across states. Introducing a Lagrange 3Under review multiplier for the normalization constraint ∫ 
+
+> A
+
+q(a | s) d a = 1 and setting the functional derivative with respect to q to zero yields the unique optimal density 
+
+q∗(a | s) = 1
+
+Z∗(s) exp 
+
+( Qroll (s, a )
+
+τ + λ
+
+)
+
+πroll (a | s)λ/ (τ +λ). (5) Here Z∗(s) normalizes the density. Thus, q∗ is the unrestricted minimizer of L(·, τ, λ ), which we subsequently approximate within the policy family. See Appendix B.2 for a derivation. The target combines high-value actions with proximity to the rollout policy: λ = 0 recovers pQ,τ , while increasing λ makes the update more conservative. Under the assumptions of Appendix B.4, repeated exact unrestricted updates with a fixed critic and temperature and a refreshed reference converge to 
+
+pQ,τ . The fixed KL multiplier λ controls the convergence rate without changing the limit. For fixed multipliers, Eq. 4 equals (τ + λ)Es∼droll [DKL (πθ ∥q∗)] plus a constant independent of the policy. FERPO replaces this reverse-KL projection by a forward-KL fit, keeping the critic and rollout parameters fixed during each actor update: 
+
+LF(θ) := Es∼droll [DKL (q∗(· | s)∥πθ (· | s))] = −E s∼droll 
+
+> a∼q∗(·| s)
+
+[log πθ (a | s)] + const .
+
+This is a weighted maximum-likelihood fit to the optimal regularized target. All state expectations below use the frozen distribution droll and are estimated using rollout batches. To estimate the action expectation, draw K candidate actions ai ∼ πroll (· | s) and minimize the SNIS loss ̂
+
+LF(θ) := −Es∼droll 
+
+[ K∑
+
+> i=1
+
+wi(s) log πθ (ai | s)
+
+]
+
+, where wi(s) := exp( ℓi(s)) 
+
+∑Kj=1 exp( ℓj (s)) , (6) with ℓi(s) := [ Qϕ(s, a i) − τ log πroll (ai | s)] /(τ + λ). The weights are held fixed during the actor update. 
+
+Multiplier losses and complete actor update. As suggested by Eq. 4, we adapt the temperature 
+
+τ and trust-region coefficient λ as Lagrange multipliers alongside the policy. We parameterize τ =exp( η) and λ = exp( ξ) to keep both multipliers positive. The temperature update follows automatic entropy tuning in SAC (Haarnoja et al., 2018b). Using fresh actions ˜as ∼ πθ (· | s), we estimate the policy entropy as ̂ Hθ := −Es∼droll [log πθ (˜as | s)] and minimize 
+
+Lτ (η) := τ stopgrad[ ̂ Hθ − H target ], (7) where stopgrad holds its argument fixed during differentiation. Gradient descent increases τ when entropy is below Htarget and decreases it when entropy exceeds the target. For λ, however, we replace direct KL control with an update based on the log normalized effective sample size (ESS) of the importance weights. This regulates weight concentration; Section 3.2 gives the detailed motivation and its connection to trust-region control. Using the weights from Eq. 6, define ̂ e(s) := ( K ∑Ki=1 wi(s)2)−1, which ranges from 1/K when one action carries all weight to 1 for uniform weights. For K ≥ 2 and a target etarget ∈ (1 /K, 1) , we minimize 
+
+Lλ(ξ) := λ stopgrad[ Es∼droll [log ̂ e(s)] − log etarget ] . (8) This increases λ when average log ESS falls below log etarget , flattening the weights, and decreases it when average log ESS exceeds the target. Together with the forward fit, these multiplier losses give the complete actor objective 
+
+Lpolicy (θ, η, ξ ) := ̂ LF(θ) + Lτ (η) + Lλ(ξ).
+
+The weights are detached from both the policy and multipliers, and the entropy and log-ESS gaps are detached in their respective losses. The critic and rollout policy stay fixed within each actor update; updated τ and λ are used to construct the next target weights. Algorithm 1 in Appendix A.4 summarizes the full training loop. 3.2 LOG ESS AND TRUST -REGION CONTROL 
+
+Controlling importance-weight concentration. Using the optimal regularized distribution q∗ as the forward-KL target tempers the importance weights needed to fit the Boltzmann target pQ,τ di-rectly. For τ > 0, q∗(a | s)/π roll (a | s) ∝ [pQ,τ (a | s)/π roll (a | s)] τ / (τ +λ). For λ > 0, the 4Under review exponent lies below one, reducing log-weight differences and flattening the normalized weights on the same candidate actions. With zero entropy regularization ( τ = 0 , λ > 0), the explicit rollout-density factor cancels entirely, leaving wi(s) ∝ exp( Qϕ(s, a i)/λ ). For positive τ , the residual factor is πroll (ai | s)−τ / (τ +λ). For a fixed critic and rollout policy, increasing τ at fixed λ strengthens this inverse-density dependence and can increase weight concentration, although it also softens the value weighting, so the overall effect need not be monotone. The update of the Lagrange multiplier λ in Eq. 8 uses this flattening effect to limit weight concentration. At the population level, a lower bound on normalized ESS also gives an upper bound on the target’s KL divergence from the rollout policy. The following proposition also transfers this control to the fitted actor in TV when its population fitting loss does not increase. This motivates using ESS to adapt λ and connects it to the policy-proximity motivation in Section 2. 
+
+Proposition 1 (ESS control of target and actor) . Fix a state and a target q∗ ≪ πroll with pop-ulation normalized ESS e∞ := 1 /Eπroll [( q∗/π roll )2] > 0. If fitting to this fixed target satisfies 
+
+DKL (q∗∥πcurr ) ≤ DKL (q∗∥πroll ), the triangle inequality and Pinsker’s inequality give 
+
+12 DTV (πcurr , π roll )2 ≤ DKL (q∗∥πroll ) ≤ D2(q∗∥πroll ) = − log e∞, (9) 
+
+where D2 is the order-two Rényi divergence (van Erven & Harremoës, 2014). 
+
+The proof is given in Appendix B.3. What the ESS target controls. FERPO uses a shared λ to regulate log ESS averaged over rollout states. Under the population fitting condition, higher popu-lation ESS tightens the bound on the total variation between πcurr and πroll . For Gaussian policies, a uniform TV bound below one also bounds DKL (πcurr ∥πroll ). In practice, ESS is estimated from sampled actions and averaged across states, so the controller does not guarantee this KL bound at every state. 3.3 CRITIC LEARNING 
+
+To improve learning of the soft action-value function Qϕ, we follow the critic-training approach of REPPO (Voelcker et al., 2026), combining multi-step temporal-difference (TD) targets with trace parameter λTD , the histogram loss with Gaussian targets (HL-Gauss) (Farebrother et al., 2024), and auxiliary prediction losses. The targets are computed from on-policy rollouts and include the entropy contributions to the soft return. Here λTD is the trace-decay parameter, separate from the actor’s KL coefficient λ. HL-Gauss encodes each scalar soft-return target as a Gaussian-smoothed histogram over value bins and trains the critic’s categorical output using cross-entropy. The scalar Qϕ(s, a ) is recovered as the mean of the predicted histogram. Following REPPO, auxiliary self-prediction trains the critic representation to predict the next transition’s latent representation, providing an additional learning signal alongside the value targets (Schwarzer et al., 2021; Voelcker et al., 2024; Fujimoto et al., 2025). 
+
+## 4 RELATED WORK 
+
+Constrained measure transport (CMT). Related methods use similar constrained target construc-tion and distribution fitting for sampling with normalizing flows (von Klitzing et al., 2026) and dif-fusion models (Blessing et al., 2025). Both adapt the trust-region multiplier λ using KL constraints. The normalizing-flow method additionally regulates temperature through a bound on entropy de-crease. 
+
+Maximum a posteriori policy optimization. MPO is an off-policy method that alternates KL-constrained target construction with forward-KL policy fitting, using replay data and Retrace for critic learning (Abdolmaleki et al., 2018). Using our notation, its variational objective uses the augmented reward r(s, a ) − λ log( q(a | s)/π roll (a | s)) , with unrestricted improvement distribution 
+
+q and frozen reference policy πroll . In MPO, this reference can differ from the behavior policies represented in replay. On-policy MPO would set q = πroll where the log ratio vanishes, so its critic estimates unregularized environment returns. MPO uses a KL constraint to limit the improvement of q away from πroll while this critic is held fixed (Abdolmaleki et al., 2018). FERPO also uses forward-KL fitting, but learns from on-policy rollouts with the entropy-augmented return r(s, a ) −
+
+5Under review −1 0 1                         
+
+> Reference mean μ0
+> 012
+> Cost  c(μ0)
+> worse well better well
+> REPPO / reverse KL
+> ABC
+> −101
+> Reference mean μ0
+> worse well better well
+> FERPO: forward KL
+> ABC
+> −1.15 −1.00 −0.85 0.0 0.4
+> Aμ0=−1
+> −0.75 −0.60 −0.45 0.00 0.06
+> Bμ0=−0.6
+> −0.15 0.00 0.15 0.0 0.1
+> Cμ0= 0
+> Filled green: toward the cost minimum ·Open red: away
+> Loss change Candidate mean μ
+> REPPO FERPO: forward KL Reverse KL
+
+Figure 1: Actor directions and local losses. Top: green/red arrows point toward/away from the cost minimum (star); lengths are illustrative, not convergence guarantees. Bottom: frozen-reference losses at A–C, zeroed at the reference; KL losses are scaled by T . Details: Appendix A.1. 
+
+τ log πθ (a | s). Its critic therefore retains future entropy contributions even when evaluating the rollout policy, while a separate λ controls policy deviation during improvement. 
+
+Advantage-weighted policy fitting. Advantage-weighted regression (AWR; Peng et al., 2019) and advantage-weighted actor–critic (AWAC; Nair et al., 2020) are off-policy methods that fit policies to actions stored in replay using exponential advantage weights. AWR can learn online from scratch, while AWAC targets offline pretraining followed by online fine-tuning. Their underlying target is 
+
+q∗(a | s) ∝ πbeh (a | s) exp( Aenv (s, a )/λ ), where πbeh is the conditional action distribution repre-sented in replay, potentially combining multiple behavior policies, and Aenv estimates unregularized advantage. The state-dependent advantage baseline cancels on normalization, so FERPO at τ = 0 
+
+has the same target for a common reference and critic. AWR and AWAC omit the state-dependent normalizer, thereby reweighting states in the policy-fitting objective (see Appendix A.5 for details). FERPO instead learns from fresh on-policy rollouts, samples candidate actions from the frozen roll-out policy, and uses SNIS to normalize their weights separately within each state. For τ > 0, FERPO also favors less likely actions at equal critic value, providing an explicit exploration incentive. 
+
+## 5 EXPERIMENTS 
+
+5.1 UPDATE DIRECTIONS AND SAMPLING 
+
+We compare actor updates on the bimodal cost c(a) = ( a2 − 1) 2 − 0.1a, whose right well is better. We use an exact critic Q = −c and Gaussian policies πμ = N (μ, σ 2), with fixed σ = 0 .4, τ = 0 .1,
+
+λ = 0 .05 , and T = τ + λ.
+
+Forward fitting changes the update direction. Let ν denote the candidate mean and m∗ := Eq∗ 
+
+> μ
+
+[a].We differentiate with respect to ν, holding the reference πμ and target q∗ 
+
+> μ
+
+fixed. At ν = μ, REPPO’s KL regularization is inactive: 
+
+∇ν LREPPO (ν)|ν=μ = T ∇ν DKL (πν ∥q∗
+
+> μ
+
+)∣∣ν=μ = Eπμ [c′(a)] ,
+
+∇ν LFERPO (ν; μ)|ν=μ = ∇ν DKL (q∗
+
+> μ
+
+∥πν )∣∣ν=μ = μ − m∗
+
+σ2 = 1
+
+λ Eq∗ 
+
+> μ
+
+[c′(a)] . (10) Both methods average the same cost derivative under different distributions (derivation: Ap-pendix B.5). FERPO’s value-based target can weight distant low-cost regions: at B ( μ = −0.6), 
+
+Eπμ [c′] = 0 .284 and Eq∗ 
+
+> μ
+
+[c′] = −0.0419 . Gradient descent moves REPPO left and FERPO right toward m∗ ≃ − 0.466 (Figure 1). 
+
+Recovering the direction with SNIS. At B, SNIS with K = 1 ,024 rollout-policy samples recovers the rightward direction in only 26 .4% of batches: the better well is rarely sampled. Keeping the 6Under review 4 8 16 32 64 Candidates K            
+
+> 0.0 2.5 5.0 Time (s)
+> (a) Actor updates
+> 4816 32 64 Candidates K
+> 05Time (s)
+> (b) All updates
+> 4816 32 64 Candidates K
+> 01000 Memory (MiB)
+> (c) Peak PyTorch allocation during optimization
+> REPPO FERPO, uncached FERPO, cached
+
+Figure 2: Update cost on an A100. Medians and ranges over three repetitions with 131,072 rollout states. Actor time includes cache construction; total updates include critic training. PyTorch alloca-tion excludes simulation and unused reservations. target fixed and sampling from rκ = N (μ, κ 2σ2) with proposal-corrected importance weights raises recovery to 98 .9% for κ = 2 and 99 .9% for κ = 3 . Appendix A.1 gives the estimator and sampling results (Figure 6). 5.2 COMPUTATIONAL COST 
+
+We time updates on fixed synthetic rollouts using REPPO’s published configuration (Voelcker et al., 2026), including its 16 KL samples per state. Uncached FERPO samples K actions and evaluates 
+
+Q at every actor epoch; cached FERPO reuses actions, rollout log probabilities, and Q values af-ter critic training, recomputing weights as the multipliers change. Cached actor updates are faster than REPPO for K = 4 –64 ; uncached updates become slower at K ≥ 32 (Figure 2; protocol in Appendix A.2). At K = 16 , uncached FERPO reduces combined actor-and-critic update time by 6.9% relative to REPPO. Caching provides a further 16.4% reduction, bringing the total saving to 22.2%. A drawback is higher GPU memory usage: on CheetahRun, peak GPU memory usage is 22.4% higher for uncached FERPO and 25.6% higher for cached FERPO than for REPPO, because PyTorch retains additional memory after updates. 5.3 ABLATIONS 
+
+Number of SNIS samples. To test whether a larger sampling budget improves learning, we vary the number of rollout-policy action samples per state, K ∈ { 2, 4, 8, 16 }, on G1 flat terrain with adaptive temperature. Mean return improves as K increases, with smaller gains at larger sample counts suggesting diminishing returns. At 50.07M environment steps, increasing K from 8 to 16 raises mean return from 34 .32 ± 0.18 to 34 .81 ± 0.24 (mean ± standard error of the mean, SEM; Figure 3, left), while doubling the number of candidate actions evaluated. 
+
+Temperature. To assess the contribution of entropy regularization, we compare adaptive tempera-ture with τ = 0 at K = 16 using the same G1 evaluation budget. Without entropy regularization, mean return falls to 30 .32 ± 0.27 (mean ± SEM; Figure 3, left), 4.49 points below the adaptive control. FERPO’s maximum-entropy formulation therefore achieves higher mean return than the variant without entropy regularization on this task (see Appendix A.3.1 for details). 
+
+ESS versus KL control. On HopperHop and AcrobotSwingupSparse, both controllers support learning at suitable settings, with task-dependent best returns. We retain ESS control because it directly regulates SNIS weight concentration and shows lower temporal variation at comparable achieved ESS in these experiments (Appendix A.3.6). 
+
+Cached Q values. To test whether caching speeds up training while retaining performance, we complete critic training before the actor phase, freeze the critic, and cache candidate actions, Q
+
+values, and rollout log probabilities. Actor updates reuse these quantities while recomputing SNIS weights. On G1 with K = 8 , cached and uncached updates reach 33 .58 ± 0.40 and 34 .03 ± 0.21 
+
+at 50.07M steps (mean ± SEM over five seeds; Figure 3, middle). Caching reduces mean time 7Under review 2 4 8 16        
+
+> Candidates K
+> 30 32 34 36
+> Final return
+> 50.07M steps; mean ± 1 SEM
+> G1: candidates and temperature
+> Adaptive temperature No entropy, τ= 0
+> 025 50
+> Rollout steps (millions)
+> 010 20 30 40
+> Return
+> 23% higher throughput
+> Timing: 3 seeds, same A100
+> G1: cached updates
+> Uncached FERPO (n=5) Cached FERPO (n=5)
+> 030 60
+> Rollout steps (millions)
+> 0100 200 300 400
+> Return
+> Acrobot swingup (sparse)
+> Uncached Q (n=12) State value V (n=12)
+
+Figure 3: Ablations. Left: G1 candidate count and temperature at 50.07M steps (eight seeds for 
+
+K = 2 , 16 and τ = 0 ; ten for K = 4 , 8). Middle: cached versus uncached G1 updates ( K = 8 ). Right: state-value versus Q critics on AcrobotSwingupSparse (sparse rewards, K = 16 ). Means with one SEM (left, middle) or one SD (right); panels use separate controls. The state-value variant uses 17 × more simulator transitions per rollout step. to complete this budget from 68.4 to 55.7 minutes, an 18.6% saving. It therefore trades a modest observed return gap for faster training. Details are provided in Appendix A.3.3. 
+
+Cached V extension. A learned Q function must approximate both the immediate reward and future returns, and may therefore fail to preserve the reward’s shape across actions. Learning this shape can be particularly difficult in sparse reward settings, where few sampled transitions yield nonzero rewards. To mitigate this source of error, we extend the cached Q variant above by replacing its critic with a soft state-value function. For each rollout state, we simulate K candidate actions and, after fitting and freezing V , cache r(s, a ) + γV (s′) as a one-sample Monte Carlo estimate of QV (s, a )
+
+for reuse throughout actor updates. This incorporates the observed immediate reward directly, at the cost of K additional environment calls per rollout state. In massively parallel online RL, these independent one-step simulations can be batched on the GPU (Zakka et al., 2025), and caching amortizes their cost across all actor epochs. With Warp graph execution and batched candidate simulation during rollout, cached V is only 8.4% slower per training iteration than uncached Q
+
+on AcrobotSwingupSparse with K = 16 : 8.51 versus 7.85 seconds on an A100, measured after warmup. The K additional transitions nevertheless increase the total simulation budget by a factor of K + 1 = 17 . Figure 3 (right) compares returns over 12 seeds. See Appendix A.3.4 for more details. 5.4 LEARNING BENCHMARKS 
+
+We evaluate whether FERPO’s policy updates translate into competitive final performance across three benchmark suites: 22 DeepMind Control Suite (DMC) tasks (Tassa et al., 2018) and four G1/T1 locomotion tasks in MuJoCo Playground (Zakka et al., 2025), and eight ManiSkill manip-ulation tasks (Tao et al., 2025). All baseline results come from the experiments accompanying the REPPO paper (Voelcker et al., 2026). For each benchmark suite, we train FERPO with exactly the same actor and critic architectures as REPPO. Alongside REPPO, we compare with PPO (Schul-man et al., 2017) and PPO (Brax) separately on DMC, PPO on ManiSkill, and FastTD3 (Seo et al., 2025), a scalable variant of TD3 (Fujimoto et al., 2018), on DMC. For each of these additional baseline families, we select one configuration per suite using performance at 50M steps and keep that configuration fixed across the suite’s tasks. Appendix A.3 provides the selection protocol and all per-environment learning curves. The G1/T1 FERPO results use K = 16 and normalized ESS target 0.65 , with eight completed seeds per task. Figure 4 aggregates results separately within each suite using the interquartile mean (IQM). Ev-ery environment receives equal total weight, divided equally among its available seeds; returns and success rates retain their original units. We focus the comparison on the final common evaluation budget: 50M interactions for DMC and G1/T1, and 49,971,200 interactions for ManiSkill. Individ-ual IQM uncertainties use pointwise 95% bootstrap confidence intervals from 10,000 seed resamples within environments, matching Figure 4. Below, estimate ± half the bootstrap interval width gives a symmetric approximation; all significance statements use the original interval bounds. 8Under review 0 25 50 250 500 750         
+
+> IQM return
+> MuJoCo DMC (22 envs)
+> 025 50 015 30
+> IQM return
+> MuJoCo G1/T1 (4 envs)
+> 025 50 0% 30% 60% 90%
+> IQM success rate
+> ManiSkill (8 envs)
+> Environment steps (millions)
+> FERPO REPPO PPO PPO (Brax) FastTD3
+
+Figure 4: Benchmark learning curves. IQM with equal environment weights and equal seed weights within environments. Bands: pointwise 95% confidence intervals from 10,000 within-environment bootstrap resamples. G1/T1 FERPO uses K = 16 , ESS target 0.65 , and eight seeds per task. Details: Appendix A.3. 
+
+Final performance. On DMC, FERPO reaches an IQM return of 897 .7 ± 6.7. REPPO reaches 
+
+891 .0 ± 6.4, FastTD3 890 .6 ± 12 .8, PPO (Brax) 542 .8 ± 30 .2, and PPO 309 .8 ± 9.4. FERPO therefore has the highest point estimate, with a small numerical lead over REPPO and FastTD3 and a much larger lead over both PPO families. On G1/T1, REPPO reaches 34 .63 ±0.17 , compared with 
+
+33 .22 ± 0.28 for FERPO. FERPO’s endpoint estimate is slightly higher on T1 flat and similar on T1 rough, while REPPO leads on both G1 tasks (Figure 14). On ManiSkill, FERPO’s success-rate IQM is (95 .67 ± 1.83)% ; REPPO reaches (95 .52 ± 1.85)% , and PPO reaches (84 .61 ± 9.49)% . The two leading ManiSkill point estimates differ by only 0.15 percentage points. Beyond final performance, FERPO reaches high returns on DMC and high success rates on Man-iSkill with fewer environment interactions than REPPO (Figure 4). This sample-efficiency advan-tage complements its lower optimization cost: at K = 16 , combined actor-and-critic updates take 6.9% less time in the matched A100 benchmark (Section 5.2). Together, these results suggest im-proved wall-clock efficiency. 
+
+## 6 CONCLUSION , LIMITATIONS , AND FUTURE WORK 
+
+FERPO performs on-policy maximum-entropy policy improvement by fitting an entropy- and KL-regularized target through forward KL. Critic values weight actions sampled from the rollout policy using self-normalized importance sampling, avoiding critic action derivatives. An ESS controller regulates the concentration of these weights. On DMC and ManiSkill, FERPO reaches high performance with fewer environment interactions than REPPO and achieves competitive final results. At K = 16 , combined actor-and-critic up-date time is 6.9% lower than REPPO for uncached FERPO and we also evaluate cached FERPO with a 22.2% actor update speedup. Ablations on G1 flat terrain highlight the benefit of entropy regularization and gains from larger SNIS candidate sets. Limitations include critic-value errors, finite-sample importance-sampling errors, restricted Gaussian policies, and higher GPU memory use. With eight seeds per task, FERPO remains below REPPO on the G1/T1 suite aggregate at the same environment-interaction budget. The gap is concentrated on the G1 tasks; T1 endpoints are similar or slightly higher for FERPO under the recorded evaluation protocols. State-value FERPO combines one-step simulation with a learned state-value critic to score candi-date actions. Its higher returns on AcrobotSwingupSparse and the modest iteration-time overhead measured for its optimized implementation make it a particularly promising direction for future work. Two further directions are FERPO in discrete action spaces and combining FERPO with dif-fusion policies. For small discrete action spaces, target normalization and the forward-KL objective could be evaluated by exact summation over actions and larger ones through sampling. Diffusion-augmented MDPs (DA-MDPs) (Sanokowski & Patil, 2026) offer a promising and relatively straight-forward route to combining FERPO with expressive diffusion policies: FERPO’s forward-KL up-dates could be applied to individual denoising transitions in the augmented MDP. 9Under review 
+
+## ACKNOWLEDGEMENTS 
+
+We acknowledge the EuroHPC Joint Undertaking for providing access to the Vega supercomputer at the Institute of Information Science (IZUM), Slovenia, and the Deucalion supercomputer at the Minho Advanced Computing Centre (MACC), Portugal. These computing resources supported the experiments reported in this work. 10 Under review 
+
+## REFERENCES 
+
+Abbas Abdolmaleki, Jost Tobias Springenberg, Yuval Tassa, Remi Munos, Nicolas Heess, and Mar-tin Riedmiller. Maximum a posteriori policy optimisation. In International Conference on Learn-ing Representations , 2018. URL https://arxiv.org/abs/1806.06920 .Denis Blessing, Julius Berner, Lorenz Richter, Carles Domingo i Enrich, Yuanqi Du, Arash Vahdat, and Gerhard Neumann. Trust region constrained measure transport in path space for stochas-tic optimal control and inference. In D. Belgrave, C. Zhang, H. Lin, R. Pascanu, P. Koniusz, M. Ghassemi, and N. Chen (eds.), Advances in Neural Information Processing Systems , vol-ume 38, Main Conference, pp. 165462–165510. Curran Associates, Inc., 2025. doi: 10.52202/ 085713-5516. URL https://proceedings.neurips.cc/paper_files/paper/ 2025/file/f1ccd13e51f610ff4a7a08db9a8b458b-Paper-Conference.pdf .Semih Cayci, Niao He, and R. Srikant. Convergence of entropy-regularized natural policy gradient with linear function approximation. SIAM Journal on Optimization , 34(3):2729–2755, 2024. doi: 10.1137/22M1540156. URL https://doi.org/10.1137/22M1540156 .Luc Devroye, Abbas Mehrabian, and Tommy Reddad. The total variation distance between high-dimensional Gaussians with the same mean, 2023. URL https://arxiv.org/abs/1810. 08693v7 . Version 7. Pierluca D’Oro and Wojciech Ja´ skowski. How to learn a useful critic? model-based action-gradient-estimator policy optimization. In H. Larochelle, M. Ranzato, R. Hadsell, M.F. Balcan, and H. Lin (eds.), Advances in Neural Information Processing Systems , volume 33, pp. 313–324. Cur-ran Associates, Inc., 2020. URL https://proceedings.neurips.cc/paper_files/ paper/2020/file/03255088ed63354a54e0e5ed957e9008-Paper.pdf .Jesse Farebrother, Jordi Orbay, Quan Vuong, Adrien Ali Taïga, Yevgen Chebotar, Ted Xiao, Alex Irpan, Sergey Levine, Pablo Samuel Castro, Aleksandra Faust, Aviral Kumar, and Rishabh Agar-wal. Stop regressing: Training value functions via classification for scalable deep RL. In 
+
+Proceedings of the 41st International Conference on Machine Learning , volume 235 of Pro-ceedings of Machine Learning Research , pp. 13049–13071. PMLR, 2024. URL https: //proceedings.mlr.press/v235/farebrother24a.html .Scott Fujimoto, Herke van Hoof, and David Meger. Addressing function approximation error in actor-critic methods. In Jennifer Dy and Andreas Krause (eds.), Proceedings of the 35th In-ternational Conference on Machine Learning , volume 80 of Proceedings of Machine Learning Research , pp. 1587–1596. PMLR, 10–15 Jul 2018. URL https://proceedings.mlr. press/v80/fujimoto18a.html .Scott Fujimoto, Pierluca D’Oro, Amy Zhang, Yuandong Tian, and Michael Rabbat. Towards general-purpose model-free reinforcement learning. In Y. Yue, A. Garg, N. Peng, F. Sha, and R. Yu (eds.), International Conference on Learning Representations , volume 2025, pp. 83509– 83552, 2025. URL https://proceedings.iclr.cc/paper_files/paper/2025/ file/cf6501108fced72ee5c47e2151c4e153-Paper-Conference.pdf .Swaminathan Gurumurthy, Zachary Manchester, and J Zico Kolter. Practical critic gradient based actor critic for on-policy reinforcement learning. In Nikolai Matni, Manfred Morari, and George J. Pappas (eds.), Proceedings of The 5th Annual Learning for Dynamics and Control Conference ,volume 211 of Proceedings of Machine Learning Research , pp. 625–638. PMLR, 15–16 Jun 2023. URL https://proceedings.mlr.press/v211/gurumurthy23a.html .Sehoon Ha, Joonho Lee, Michiel van de Panne, Zhaoming Xie, Wenhao Yu, and Majid Khadiv. Learning-based legged locomotion: State of the art and future perspectives. The International Journal of Robotics Research , 44(8):1396–1427, 2025. Tuomas Haarnoja, Haoran Tang, Pieter Abbeel, and Sergey Levine. Reinforcement learning with deep energy-based policies. In Proceedings of the 34th International Conference on Machine Learning , volume 70 of Proceedings of Machine Learning Research , pp. 1352–1361. PMLR, 2017. URL https://proceedings.mlr.press/v70/haarnoja17a.html .11 Under review Tuomas Haarnoja, Aurick Zhou, Pieter Abbeel, and Sergey Levine. Soft actor-critic: Off-policy maximum entropy deep reinforcement learning with a stochastic actor. In Proceedings of the 35th International Conference on Machine Learning , volume 80 of Proceedings of Machine Learn-ing Research , pp. 1861–1870. PMLR, 2018a. URL https://proceedings.mlr.press/ v80/haarnoja18b.html .Tuomas Haarnoja, Aurick Zhou, Kristian Hartikainen, George Tucker, Sehoon Ha, Jie Tan, Vikash Kumar, Henry Zhu, Abhishek Gupta, Pieter Abbeel, and Sergey Levine. Soft actor-critic algo-rithms and applications. arXiv preprint arXiv:1812.05905 , 2018b. URL https://arxiv. org/abs/1812.05905 .Elia Kaufmann, Leonard Bauersfeld, Antonio Loquercio, Matthias Müller, Vladlen Koltun, and Davide Scaramuzza. Champion-level drone racing using deep reinforcement learning. Nature ,620(7976):982–987, August 2023. ISSN 1476-4687. doi: 10.1038/s41586-023-06419-4. URL 
+
+https://doi.org/10.1038/s41586-023-06419-4 .Mohammad Emtiyaz Khan and Håvard Rue. The Bayesian learning rule. Journal of Machine Learn-ing Research , 24(281):1–46, 2023. URL https://jmlr.org/papers/v24/22-0291. html .Tom Minka. Divergence measures and message passing. Technical Report MSR-TR-2005-173, Microsoft Research, 2005. URL https://www.microsoft.com/en-us/research/ publication/divergence-measures-and-message-passing/ .Ashvin Nair, Abhishek Gupta, Murtaza Dalal, and Sergey Levine. AWAC: Accelerating online reinforcement learning with offline datasets. arXiv preprint arXiv:2006.09359 , 2020. URL 
+
+https://arxiv.org/abs/2006.09359 .Art B. Owen. Monte Carlo Theory, Methods and Examples . Online book, 2013. URL https: //artowen.su.domains/mc/ .Xue Bin Peng, Aviral Kumar, Grace Zhang, and Sergey Levine. Advantage-weighted regression: Simple and scalable off-policy reinforcement learning. arXiv preprint arXiv:1910.00177 , 2019. URL https://arxiv.org/abs/1910.00177 .Nikita Rudin, David Hoeller, Philipp Reist, and Marco Hutter. Learning to walk in minutes using massively parallel deep reinforcement learning. In Aleksandra Faust, David Hsu, and Gerhard Neumann (eds.), Proceedings of the 5th Conference on Robot Learning , volume 164 of Proceedings of Machine Learning Research , pp. 91–100. PMLR, 08–11 Nov 2022. URL 
+
+https://proceedings.mlr.press/v164/rudin22a.html .Sebastian Sanokowski and Kaustubh Patil. Diffusion-augmented Markov decision processes for maximum entropy reinforcement learning, 2026. URL https://arxiv.org/abs/2512. 02019 .Elad Sarafian, Shai Keynan, and Sarit Kraus. Recomposing the reinforcement learning building blocks with hypernetworks. In Marina Meila and Tong Zhang (eds.), Proceedings of the 38th International Conference on Machine Learning , volume 139 of Proceedings of Machine Learning Research , pp. 9301–9312. PMLR, 18–24 Jul 2021. URL https://proceedings.mlr. press/v139/sarafian21a.html .John Schulman, Sergey Levine, Pieter Abbeel, Michael Jordan, and Philipp Moritz. Trust region policy optimization. In Proceedings of the 32nd International Conference on Machine Learning ,volume 37 of Proceedings of Machine Learning Research , pp. 1889–1897. PMLR, 2015. URL 
+
+https://proceedings.mlr.press/v37/schulman15.html .John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 , 2017. URL https://arxiv. org/abs/1707.06347 .Max Schwarzer, Ankesh Anand, Rishab Goel, R. Devon Hjelm, Aaron Courville, and Philip Bach-man. Data-efficient reinforcement learning with self-predictive representations. In International Conference on Learning Representations , 2021. URL https://openreview.net/forum? id=uCQfPZwRaUu .12 Under review Younggyo Seo, Carmelo Sferrazza, Haoran Geng, Michal Nauman, Zhao-Heng Yin, and Pieter Abbeel. FastTD3: Simple, fast, and capable reinforcement learning for humanoid control. arXiv preprint arXiv:2505.22642 , 2025. URL https://arxiv.org/abs/2505.22642 .David Silver, Julian Schrittwieser, Karen Simonyan, Ioannis Antonoglou, Aja Huang, Arthur Guez, Thomas Hubert, Lucas Baker, Matthew Lai, Adrian Bolton, Yutian Chen, Timothy Lillicrap, Fan Hui, Laurent Sifre, George van den Driessche, Thore Graepel, and Demis Hassabis. Mastering the game of Go without human knowledge. Nature , 550(7676):354–359, October 2017. ISSN 1476-4687. doi: 10.1038/nature24270. URL https://doi.org/10.1038/nature24270 .Richard S. Sutton, David A. McAllester, Satinder P. Singh, and Yishay Mansour. Policy gradient methods for reinforcement learning with function approximation. In Advances in Neural Informa-tion Processing Systems , volume 12, 1999. URL https://proceedings.neurips.cc/ paper/1999/hash/464d828b85b0bed98e80ade0a5c43b0f-Abstract.html .Stone Tao, Fanbo Xiang, Arth Shukla, Yuzhe Qin, Xander Hinrichsen, Xiaodi Yuan, Chen Bao, Xinsong Lin, Yulin Liu, Tse-Kai Chan, Yuan Gao, Xuanlin Li, Tongzhou Mu, Nan Xiao, Ar-nav Gurha, Viswesh Nagaswamy Rajesh, Yong Woo Choi, Yen-Ru Chen, Zhiao Huang, Roberto Calandra, Rui Chen, Shan Luo, and Hao Su. Demonstrating GPU parallelized robot simulation and rendering for generalizable embodied AI with ManiSkill3. In Proceedings of Robotics: Sci-ence and Systems , Los Angeles, CA, USA, June 2025. doi: 10.15607/RSS.2025.XXI.021. URL 
+
+https://www.roboticsproceedings.org/rss21/p021.html .Yuval Tassa, Yotam Doron, Alistair Muldal, Tom Erez, Yazhe Li, Diego de Las Casas, David Bud-den, Abbas Abdolmaleki, Josh Merel, Andrew Lefrancq, Timothy Lillicrap, and Martin Ried-miller. DeepMind Control Suite, 2018. URL https://arxiv.org/abs/1801.00690 .Tim van Erven and Peter Harremoës. Rényi divergence and Kullback–Leibler divergence. IEEE Transactions on Information Theory , 60(7):3797–3820, 2014. doi: 10.1109/TIT.2014.2320500. URL https://arxiv.org/abs/1206.2459 .Claas A. Voelcker, Tyler Kastner, Igor Gilitschenski, and Amir-massoud Farahmand. When does self-prediction help? understanding auxiliary tasks in reinforcement learning. Reinforce-ment Learning Journal , 4:1567–1597, 2024. URL https://rlj.cs.umass.edu/2024/ papers/Paper197.html .Claas A. Voelcker, Axel Brunnbauer, Marcel Hussing, Michal Nauman, Pieter Abbeel, Eric Eaton, Radu Grosu, Amir-massoud Farahmand, and Igor Gilitschenski. Relative entropy pathwise pol-icy optimization. In The Fourteenth International Conference on Learning Representations ,2026. URL https://proceedings.iclr.cc/paper_files/paper/2026/hash/ 3c2fd72a28fb98facf98546727320249-Abstract-Conference.html .Christopher von Klitzing, Denis Blessing, Henrik Schopmans, Pascal Friederich, and Ger-hard Neumann. Learning Boltzmann generators via constrained mass transport. In C. Vondrick, B. Hariharan, C. Raffel, L. Pinto, D. Yang, and A. Faust (eds.), In-ternational Conference on Learning Representations , volume 2026, pp. 88771–88810, 2026. URL https://proceedings.iclr.cc/paper_files/paper/2026/file/ 8f38c9d65d89ce60a630b2619b383e55-Paper-Conference.pdf .Kevin Zakka, Baruch Tabanpour, Qiayuan Liao, Mustafa Haiderbhai, Samuel Holt, Jing Yuan Luo, Arthur Allshire, Erik Frey, Koushil Sreenath, Lueder A. Kahrs, Carmelo Sferrazza, Yuval Tassa, and Pieter Abbeel. MuJoCo playground, 2025. URL https://arxiv.org/abs/2502. 08844 .Yufeng Zhang, Jialu Pan, Kenli Li, Wanwei Liu, Zhenbang Chen, Xinwang Liu, and Ji Wang. On the properties of Kullback–Leibler divergence between multivariate Gaussian distributions. In A. Oh, T. Naumann, A. Globerson, K. Saenko, M. Hardt, and S. Levine (eds.), Advances in Neural Information Processing Systems , volume 36, pp. 58152–58165. Curran Associates, Inc., 2023. doi: 10.52202/075280-2535. Brian D. Ziebart. Modeling Purposeful Adaptive Behavior with the Principle of Maximum Causal Entropy . PhD thesis, Carnegie Mellon University, December 2010. URL https://www.cs. cmu.edu/~bziebart/publications/thesis-bziebart.pdf .13 Under review 
+
+## APPENDIX CONTENTS 
+
+A Extended paper sections 15 
+
+A.1 Motivating experiment details . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15 A.2 Computation and memory on the A100 . . . . . . . . . . . . . . . . . . . . . . . . 17 A.2.1 Update-cost protocol . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17 A.2.2 Memory cost . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17 A.2.3 Memory across rollout and update phases . . . . . . . . . . . . . . . . . . 17 A.3 Learning ablations and benchmarks . . . . . . . . . . . . . . . . . . . . . . . . . 18 A.3.1 Ablation details . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18 A.3.2 Critic-width protocol . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19 A.3.3 Cached-Q timing protocol and elapsed-time curves . . . . . . . . . . . . . 20 A.3.4 State-value critic with candidate simulation . . . . . . . . . . . . . . . . . 21 A.3.5 Additional planned ablation . . . . . . . . . . . . . . . . . . . . . . . . . 21 A.3.6 ESS versus policy-KL control . . . . . . . . . . . . . . . . . . . . . . . . 22 A.3.7 Data and comparison protocol . . . . . . . . . . . . . . . . . . . . . . . . 24 A.3.8 Pairwise comparisons of final benchmark performance . . . . . . . . . . . 26 A.3.9 DMC tasks . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 27 A.3.10 G1/T1 locomotion and ManiSkill manipulation . . . . . . . . . . . . . . . 29 A.4 FERPO pseudocode . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 31 A.5 State-dependent normalization in policy fitting . . . . . . . . . . . . . . . . . . . . 32 
+
+B Proofs 32 
+
+B.1 Derivation of the KL surrogate . . . . . . . . . . . . . . . . . . . . . . . . . . . . 32 B.2 Derivation of the optimal regularized target . . . . . . . . . . . . . . . . . . . . . 33 B.3 Log ESS and divergence control . . . . . . . . . . . . . . . . . . . . . . . . . . . 34 B.3.1 From target ESS to policy total variation . . . . . . . . . . . . . . . . . . . 34 B.4 Convergence under exact fitting . . . . . . . . . . . . . . . . . . . . . . . . . . . 35 B.5 Update directions and importance sampling . . . . . . . . . . . . . . . . . . . . . 36 B.5.1 Cost gradients under the policy and the target . . . . . . . . . . . . . . . . 36 B.5.2 Recovering the target-mean direction from samples . . . . . . . . . . . . . 38 B.6 From surrogate improvement to return improvement . . . . . . . . . . . . . . . . . 39 B.7 Trust regions for Gaussian policies . . . . . . . . . . . . . . . . . . . . . . . . . . 45 B.7.1 Forward KL bounds reverse KL . . . . . . . . . . . . . . . . . . . . . . . 45 B.7.2 TV bounds both KL directions . . . . . . . . . . . . . . . . . . . . . . . . 46 B.7.3 Implications for the return bound . . . . . . . . . . . . . . . . . . . . . . 47 14 Under review 
+
+## A EXTENDED PAPER SECTIONS 
+
+A.1 MOTIVATING EXPERIMENT DETAILS 
+
+We expand on the bimodal experiment in Section 5.1. The cost is c(a) = ( a2 − 1) 2 − 0.1a, and the critic is exact, Q = −c. We use Gaussian policies with fixed standard deviation σ = 0 .4,temperature τ = 0 .1, and FERPO multiplier λ = 0 .05 . The reference means are μ0 = −1, −0.6, 0
+
+(A–C). Each loss curve keeps the reference policy and its target fixed while varying the candidate mean ν.In Figure 1, each direction uses a newly constructed target, frozen for differentiation. Filled green and open red arrows indicate geometric direction toward and away from the global cost minimum, not immediate cost decrease or eventual convergence. Dotted lines mark the best fixed-width Gaus-sian mean; black dots mark the references and diamonds visible FERPO loss minima. All candidates in the local loss windows satisfy REPPO’s KL bound 0.1.
+
+Exact actor losses. We compute REPPO’s expected cost analytically and FERPO’s target mean by numerical quadrature. REPPO uses its cost-and-entropy loss while k(ν) = DKL (πμ0 ∥πν ) < 0.1,and the loss 0.1k(ν) otherwise. Figure 5 shows this full loss at B, together with forward and reverse KL to the same FERPO target. We scale both KL losses by T = τ + λ = 0 .15 to express them in cost units. At B, the target mean is m∗ ≃ − 0.466 , so forward fitting moves right, whereas REPPO and reverse KL initially move left. 
+
+Estimating the target from samples. At B, sampling from the rollout policy recovers FERPO’s rightward direction in only 26 .4% of batches with K = 1 ,024 . To study sampling coverage, we draw actions from rκ = N (μ0, κ 2σ2) with κ ∈ { 1, 2, 3}, keeping the rollout policy and target fixed. The proposal-corrected weights and estimated target mean are 
+
+ui = e−c(ai)/T πμ0 (ai)λ/T 
+
+rκ(ai) , wi = ui
+
+∑ 
+
+> j
+
+uj
+
+,̂ m = ∑
+
+> i
+
+wiai. (11) We use 5,000 batches for each K ∈ { 64 , 1,024 }, with paired standard-normal draws across proposal widths. An update points right when ̂ m > μ 0. Table 1 reports the resulting direction frequencies and target-mean estimates. For each batch, we use the SNIS weights to estimate FERPO’s fitting loss as a function of the candidate policy mean. Figure 6 shows the median and pointwise 5th–95th percentiles of these estimated loss curves across 5,000 batches, together with the exact population loss. Wider proposals sample the better right well more often and recover the rightward direction in 
+
+98 .9% and 99 .9% of batches at K = 1 ,024 .−1.5 0.0 1.5        
+
+> Candidate mean μ
+> 0.0 0.5 1.0 1.5
+> Actor loss (cost units)
+> REPPO
+> Inside bound KL-only outside
+> −1.5 0.0 1.5
+> Candidate mean μ
+> 0.0 0.5 1.0 1.5 2.0
+> T D KL  (cost units)
+> FERPO: forward KL
+> −1.5 0.0 1.5
+> Candidate mean μ
+> 012345
+> T D KL  (cost units)
+> Reverse KL
+
+Figure 5: Frozen-reference losses at B. Left: REPPO’s active expected-cost/entropy branch (pur-ple) and KL-only branch (orange); the pale dashed curve extends the inactive cost branch. Open and filled endpoints show the loss switch. Middle: forward KL from the fixed FERPO target to the candidate Gaussian. Right: reverse KL to that same target. Both KL curves are scaled by T = 0 .15 ;this positive scaling preserves directions. Vertical dotted lines and black dots mark the reference 
+
+μ0 = −0.6.15 Under review −0.1 0.0 0.1           
+
+> K = 64 Loss change  6.6% rightward
+> σr= 0.4 (= policy)
+> 67.1% rightward
+> σr= 0.8
+> 75.5% rightward
+> σr= 1.2
+> −0.75 −0.60 −0.45
+> −0.1 0.0 0.1
+> K = 1, 024 Loss change  26.4% rightward
+> −0.75 −0.60 −0.45
+> 98.9% rightward
+> −0.75 −0.60 −0.45
+> 99.9% rightward Candidate mean μ
+> REPPO (analytic) FERPO (population) FERPO (SNIS median) 5th –95th percentiles
+
+Figure 6: Wider proposals recover the population fitting loss. Losses at B with the same reference policy and target throughout. Teal: SNIS median and pointwise 5th–95th percentiles across 5,000 batches; dotted black: population FERPO; purple: analytic REPPO. Percentages give the frequency of rightward SNIS directions. Shading shows batch variation, not confidence intervals for the mean. Losses are zeroed at the reference, and forward losses are scaled by T .
+
+Proposal σr K Median ̂ m 5th–95th percentiles Rightward 0.4 64 −0.916 [−0.963 , −0.416] 6.6% 0.8 64 −0.498 [−0.863 , −0.066] 67.1% 1.2 64 −0.472 [−0.753 , −0.091] 75.5% 0.4 1,024 −0.824 [−0.923 , 0.275] 26.4% 0.8 1,024 −0.468 [−0.565 , −0.369] 98.9% 1.2 1,024 −0.466 [−0.546 , −0.381] 99.9% 
+
+Table 1: SNIS target-mean estimates at B. The population target mean is −0.465943 . . . and rightward movement means ̂ m > −0.6. Intervals are the empirical 5th–95th percentiles across 5,000 batches, not confidence intervals. Policy standard deviation remains 0.4 in every row. 16 Under review A.2 COMPUTATION AND MEMORY ON THE A100 A.2.1 UPDATE -COST PROTOCOL 
+
+The update-cost measurements use one NVIDIA A100-SXM4-40GB with AMD EPYC 7H12 host CPUs, PyTorch 2.9.1+cu128, FP32 parameters, matmul precision medium , and one PyTorch CPU thread, without AMP or compilation. We use the official REPPO PyTorch implementation at commit 
+
+05a5776 and the published large-data MuJoCo Playground configuration described in Section 5.2. 2
+
+Each rollout has 131,072 states, with eight epochs of 64 minibatches of 2048. The shared baseline has 17 observation and six action dimensions, a three-layer width-512 actor, and two-layer width-512 critic encoder, Q head, and auxiliary predictor. FERPO evaluates all 2,048 K candidate state-action pairs in each minibatch together. FERPO completes critic training before its actor phase; REPPO retains its interleaved update sched-ule. Three warmup minibatches precede each trial. We use seeds 1–3 and randomize method order within each repetition. CUDA events measure actor time; synchronized wall time measures the complete update. Peak allocated PyTorch memory covers the complete update, including rollout tensors and optimizer state, but excludes simulator memory and allocator reservation. A.2.2 MEMORY COST 
+
+REPPO backpropagates through Q for one action per state; its 16 KL samples require policy eval-uations only. FERPO instead evaluates many actions together through Q. Even without retaining a backward graph, these larger batches require larger temporary tensors. FERPO’s peak allocated memory therefore increases with K (Figure 2). Cached FERPO additionally stores K actions, reference log probabilities, and Q values for each of 
+
+S rollout states. With action dimension d and FP32 storage, this requires 
+
+Mcache = 4 SK (d + 2) bytes . (12) For the measured rollout size at K = 16 , the cache occupies 64 MiB for d = 6 and 528 MiB for 
+
+d = 64 .A.2.3 MEMORY ACROSS ROLLOUT AND UPDATE PHASES 
+
+We separately profile CheetahRun with the same network and rollout configuration at K = 16 . The matched comparison uses seeds 2 and 3 on one A100 node, with a fresh process per method and seed, two warmup iterations, and three measured iterations. The simulator and a 32-environment evaluation instance remain resident; initialization and evaluation are excluded from the measure-ment windows. NVML samples total process memory every 5 ms, including runtime and allocator reservations; these sampled peaks are lower bounds. PyTorch records allocated and reserved peaks separately for each phase. We exclude seed 1 from this comparison because uncached FERPO ran on a second A100 with a different driver.                       
+
+> Process peak PyTorch allocated peak PyTorch reserved Method Rollout Update Rollout Update Rollout REPPO 1,438 1,408 601 422 614 FERPO 1,760 1,728 600 658 936 Cached FERPO 1,806 1,774 600 723 982
+
+Table 2: Memory across rollout and update phases (MiB). Peaks are identical across the two matched seeds. Reserved memory includes active tensors. All three methods reach their process peak during rollouts (Table 2). Active PyTorch rollout allo-cations are nearly equal, while larger pools remain reserved after FERPO’s updates. These process footprints therefore reflect allocator retention as well as live tensors, rather than minimum GPU capacity requirements. 
+
+> 2Pinned REPPO source; the PyTorch and JAX implementations both use 16 samples for the KL estimate.
+
+17 Under review A.3 LEARNING ABLATIONS AND BENCHMARKS 
+
+A.3.1 ABLATION DETAILS 
+
+The candidate-count ablation uses per-seed G1JoystickFlatTerrain evaluation logs for K =2, 4, 8, 16 . All four settings use actor/critic and temperature learning rates of 0.0003 , entropy target factor −0.5, and normalized ESS target 0.85 . The replacements correct the historical K = 2 entropy target of −1.0 and K = 16 temperature learning rate of 0.003 ; those superseded observations are excluded from the plots. We report arithmetic means with one-SEM error bars and bands. The tem-perature comparison reuses the corrected K = 16 control. These ablation cohorts remain separate from the G1/T1 benchmark cohort below, which uses normalized ESS target 0.65 .The candidate-count plot in Figure 3 (left) uses the final common evaluation at 50,069,504 envi-ronment steps, rather than selecting a best checkpoint or averaging a trailing window. There are eight seeds at this endpoint for K = 2 , 16 , ten for K = 4 , 8, and eight for the additional τ = 0 
+
+marker at K = 16 . The no-entropy learning curve in Figure 7 uses the same eight completed seeds at every evaluation. The corrected adaptive-temperature control uses seeds 1–8. Both temperature curves and all candidate-count endpoints show mean ± one SEM. All eight no-entropy runs reach 50,069,504 steps, with final mean 30 .32 ± 0.27 . They disable entropy regularization and its temper-ature update. The entropy target changed from −1.0 in the historical runs to −0.5 in the new runs, but is inactive when τ = 0 . For all G1 ablations, including cached-Q and critic-width comparisons, we compute SEM = s/ √n, where s is the sample standard deviation (with n − 1 in its variance denominator) and n is the number of contributing seeds. These are standard errors of the mean, not 95% confidence intervals. Benchmark curves use IQM and bootstrap intervals as specified below. 0 10 20 30 40 50 
+
+> Environment steps (millions)
+> 015 30
+> Evaluation return
+> Mean ± 1 SEM
+> Temperature comparison
+> Adaptive temperature (n=8) No entropy (n=8)
+
+Figure 7: Temperature learning curves. Adap-tive temperature versus no entropy regularization at K = 16 . Both curves show seed means with one-SEM bands. Both curves use eight com-pleted seeds at every evaluation; the adaptive control uses corrected temperature learning rate 
+
+0.0003 . Final returns are 34 .81 ±0.24 with adap-tive temperature and 30 .32 ± 0.27 without en-tropy regularization. The final evaluations also appear in Figure 3 (left). 18 Under review A.3.2 CRITIC -WIDTH PROTOCOL 
+
+The width comparison uses the uploaded G1 preset on G1JoystickFlatTerrain with learning rate 
+
+3 × 10 −4, target entropy factor −0.5, eight critic epochs, HL-Gauss loss, and auxiliary weight one. Both methods use the full rollout. FERPO uses K = 8 ; REPPO retains its pathwise actor update and KL bound 0.1. We vary hidden width in the critic encoder, Q head, and auxiliary predictor together; depth and the 512-wide actor are fixed. Each endpoint is the final deterministic evaluation at 50,069,504 rollout interactions. Seeds 1–2 contribute at each width except REPPO width 1,024, for which only seed 1 is available. These are dedicated critic-width runs, separate from the published REPPO benchmark results. We have not measured action-gradient approximation error in these runs. At 50.07M interactions, reducing critic width from 124 to 62 lowers FERPO’s mean return from 23.04 to 6.29 and REPPO’s from 22.12 to 4.19. Both methods therefore rely on sufficient critic capacity. 62 124 256 512 1024 Critic hidden width (log scale) 010 20 30 Final evaluation return 
+
+> 50.07M interactions; mean ± SEM
+> FERPO REPPO
+
+Figure 8: Final return versus critic width on G1. Points show seed means and error bars show one SEM. The open square marks the single-seed REPPO reference at width 1,024, for which no error bar is reported. Both methods lose substantial return at width 62; FERPO reaches 6.29 and REPPO 4.19. These endpoints do not identify the source of critic approximation error. 19 Under review A.3.3 CACHED -Q TIMING PROTOCOL AND ELAPSED -TIME CURVES 
+
+We compare interleaved critic/actor updates with a staged variant that first fits the critic, then freezes it and caches K = 8 actions, their Q values, and rollout log probabilities. Actor training recomputes SNIS weights as the multipliers change. Both methods use eight full-rollout critic epochs, 1,024-wide critics, learning rate 3 × 10 −4, and target entropy factor −0.5. The five-seed rollout curves are unsmoothed. Final mean returns at 50,069,504 steps are 34 .03 ± 0.21 uncached and 33 .58 ± 0.40 
+
+cached (mean ± SEM). The timing annotation in Figure 3 (middle) and elapsed-time curves in Figure 9 use seeds 3–5 for each method. These six runs shared the same Vega allocation and node, with one NVIDIA A100-SXM4-40GB and a separate CPU set per run. Seeds 1–2 remain in the five-seed rollout comparison in Figure 3 (middle), but are excluded from timing because their cached and uncached runs used different clusters. The per-run clock starts before environment construction and includes simulation, learning, evaluation, and checkpointing; scheduler waiting time is excluded. Mean completion times at 50,069,504 rollout steps are 55.7 minutes cached and 68.4 minutes uncached. The time reduction is 1 − Tcached /T uncached = 18 .6% ; the throughput increase is Tuncached /T cached − 1 = 22 .9% .These are measured runtimes for this allocation. We use recorded evaluation timestamps for the time curves. Within each method, we linearly inter-polate each seed’s return to common elapsed times, then compute the mean and SEM over all three seeds. The bold mean curve ends when the first run in that method finishes; faint individual curves continue to their own final evaluation. We do not extrapolate or carry completed returns forward. The arrow separately marks the mean completion times from the run summaries, including the final checkpoint. The five-seed curves in Figure 3 (middle) use recorded rollout-step coordinates directly, without interpolation. 0 15 30 45 60   
+
+> Elapsed wall-clock time (minutes)
+> 010 20 30 40
+> Evaluation return
+> Cached: 23% faster
+> 18.6% less elapsed time
+> Mean ± 1 SEM 55.7m 68.4m
+> G1: return versus elapsed time
+> Uncached Q (n=3) Cached Q (n=3)
+
+Figure 9: Cached versus uncached Q against elapsed time. G1 deterministic evaluation return for seeds 3–5 per method on the same Vega A100 node. Both use K = 8 and eight critic epochs on the full rollout. Bold curves and one-SEM bands use linear interpolation at common times; faint curves show individual runs. The arrow marks mean completion times at 50,069,504 in-teractions: 55.7 versus 68.4 minutes. At 50 min-utes, interpolated mean returns are 33.55 cached and 32.86 uncached. Figure 3 (middle) shows all five seeds against environment interactions. 20 Under review A.3.4 STATE -VALUE CRITIC WITH CANDIDATE SIMULATION 
+
+We compare standard uncached FERPO with its cached V extension on AcrobotSwingupSparse. For a fixed fitted critic, the ideal candidate score is QV (s, a ) = r(s, a ) + γEs′∼P (·| s,a )[Vψ (s′)] .We approximate the transition expectation with one simulated successor per candidate, giving ̂
+
+QV (s, a ) = r(s, a ) + γV ψ (s′). This incorporates the observed immediate reward directly while using a one-sample Monte Carlo estimate of the future value. Scores are computed after fitting Vψ
+
+and held fixed throughout actor training. The bootstrap is zero at true terminals; time limits retain the value of the final observation. Both methods use K = 16 , 512-wide critics, eight critic epochs, HL-Gauss loss, auxiliary weight one, learning rate 10 −3, and target entropy factor −1. Across 12 matched seed identifiers, cached V
+
+reaches 324 .79 ± 75 .28 at 59.90 million rollout steps, compared with 99 .46 ± 110 .75 for uncached 
+
+Q (mean ± one SD; Figure 3, right). The deterministic evaluation curves are unsmoothed. Each rollout step requires K additional candidate transitions, so cached V uses 17 times as many simulator transitions at this rollout budget. 
+
+Efficient candidate simulation. We combine Warp graph execution with parallel simulation of all 
+
+K candidates across environments. Candidates are sampled and simulated during rollout, branching from each state without altering the rollout trajectory. Their rewards and next observations remain on the GPU until the critic has been fitted, then serve to construct the score cache. This avoids repeated transfers of simulator states between CPU and GPU. Actor epochs reuse the candidates and scores while updating their SNIS weights. Since observation normalization can change during rollout, we retain the sampling densities and correct these weights for any difference from the frozen rollout reference. 
+
+Timing protocol. We benchmark both methods on the same NVIDIA A100-SXM4-40GB with Warp graphs enabled. Both use 1,024 environments, 128 rollout steps per iteration, actor and critic widths of 512, eight actor and critic epochs, 64 minibatches, and one PyTorch CPU thread. We run three repetitions in separate processes, randomizing method order and averaging five iterations after two warmup iterations. GPU synchronization at iteration boundaries ensures that timings include all simulation and learning work; startup, compilation warmup, evaluation, external logging, and checkpointing are excluded. Cached V takes 8.508 seconds per iteration versus 7.846 seconds for uncached Q, an 8.4% overhead. A.3.5 ADDITIONAL PLANNED ABLATION 
+
+The following additional G1 comparison remains planned. It will use matched seeds, interaction budgets, and evaluation protocols, keeping other settings fixed. 
+
+Forward KL instead of ESS regularization. We will replace the log-ESS constraint with 
+
+Es∼droll [DKL (πroll (· | s)∥πθ (· | s))] ≤ 0.1, matching REPPO’s bound. The action expectation in this forward KL is under the old rollout policy. We will adapt λ using the KL constraint gap and compare return, achieved KL, and normalized ESS against the ESS-controlled baseline. 21 Under review A.3.6 ESS VERSUS POLICY -KL CONTROL 
+
+We compare log-ESS control (Eq. 8) at etarget ∈ { 0.40 , 0.50 , 0.65 , 0.85 } with control of the rollout-state mean DKL (πroll ∥πcurr ) at ϵ ∈ { 0.03 , 0.10 , 0.20 , 0.30 } nats. Both adapt λ with the same forward-KL actor objective. ESS controls SNIS weight concentration; policy KL measures policy displacement. We use uncached FERPO ( K = 16 ) on HopperHop and AcrobotSwingupSparse with 12 seeds per setting. All runs use width-512 critics, eight epochs, 64 minibatches, HL-Gauss loss, auxiliary weight one, actor/critic and temperature learning rates 10 −3, and entropy target factor −1. Rollouts comprise 1,024 environments and 128 steps. Final returns average the first episode from each of 128 deterministic evaluation environments, with frozen normalizers and fixed initial states within each run. Both controllers support learning at suitable settings, with task-dependent preferred regularization strengths and no consistent return advantage for either controller (Figure 10). 0.40 0.50 0.65 0.85            
+
+> Normalized ESS target
+> 0100 200 300 400
+> Final evaluation return
+> 301.1 361.4 222.9 191.8
+> HopperHop · ESS
+> 0.03 0.10 0.20 0.30
+> KL bound (nats)
+> 148.4 253.3 317.9 278.4
+> HopperHop · KL
+> 0.40 0.50 0.65 0.85
+> Normalized ESS target
+> 050 100
+> Final evaluation return
+> 10.5 18.2 37.2 76.4
+> AcrobotSwingupSparse · ESS
+> 0.03 0.10 0.20 0.30
+> KL bound (nats)
+> 82.6 46.8 30.3 10.8
+> AcrobotSwingupSparse · KL
+
+Figure 10: Final return versus controller target. HopperHop (top) and AcrobotSwingupSparse (bottom), with ESS targets (left) and policy-KL bounds (right). Points show mean final return at 50.07M interactions with one SEM over 12 seeds. 22 Under review Direct ESS control generally tracks its target, whereas fixed policy-KL bounds produce ESS that varies across tasks and training (Figure 11). At comparable mean achieved ESS, direct control shows less temporal variation, although the aggressive ESS target 0.40 remains variable on Acrobot. These observations motivate ESS as a direct, interpretable control of sampling-weight concentration. 0.0 0.2 0.4 0.6 0.8 1.0 
+
+> Achieved normalized ESS
+
+HopperHop · ESS controller 
+
+> ESS target 0.40 0.50 0.65 0.85
+
+HopperHop · KL controller      
+
+> KL bound (nats) 0.03 0.10 0.20 0.30
+> 010 20 30 40 50
+> Environment interactions (millions)
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> Achieved normalized ESS
+
+AcrobotSwingupSparse · ESS controller      
+
+> ESS target 0.40 0.50 0.65 0.85
+> 010 20 30 40 50
+> Environment interactions (millions)
+
+AcrobotSwingupSparse · KL controller 
+
+> KL bound (nats) 0.03 0.10 0.20 0.30
+
+Figure 11: Achieved ESS under both controllers. Per-iteration geometric mean of normalized SNIS ESS under direct ESS control (left) and policy-KL control (right). Curves show unsmoothed means with one-SEM bands across 12 seeds. Dotted lines mark ESS targets; right-panel legends give policy-KL bounds in nats. 23 Under review A.3.7 DATA AND COMPARISON PROTOCOL 
+
+The benchmark comprises 22 DMC, four G1/T1, and eight ManiSkill tasks. FERPO uses training-log return evaluations for 19 DMC tasks and success rates for ManiSkill. The three Walker tasks use separate policy-evaluation CSVs, whose task metadata and reconstructed means and counts match the original benchmark summaries. Walker has ten evaluated seeds per task beyond 50M steps, replacing the older partial training-log evaluations. For Walker, we display the available positive checkpoint evaluations from 3,014,656 through 50,987,008 interactions; seeds 11–12 have no ex-ported evaluation curves and are not counted. The other 19 DMC tasks retain their own recorded evaluation schedules. These existing evaluations use deterministic actions and report 1,000-step episode lengths, but sampling settings differ: the older training evaluator uses 1,024 environments, the newer one uses 128, and the Walker checkpoint evaluator uses 128 episodes. Initial evaluation states are fixed within a run rather than refreshed at every checkpoint. Thus these are existing eval-uation exports, not a reevaluation under one identical sampling protocol. The G1/T1 benchmark uses the completed K = 16 , normalized ESS target 0.65 runs, with seeds 1–8 for each task. Ac-tor/critic and temperature learning rates are 0.0003 , and the entropy target factor is −0.5. We use all 21 recorded deterministic training evaluations through 50,069,504 interactions, averaging the first episode from each of 128 parallel environments. The ManiSkill source label “FEPPO architecture” denotes FERPO. We retain all available evaluated seeds within their observed ranges, so counts may vary across checkpoints; training-only runs contribute no observations. Each DMC panel labels the number of contributing seeds for every method; a range indicates changing availability along the displayed curve. We retain the common 50M budget for numerical method comparisons and do not extrapolate baselines to the last Walker checkpoint. 
+
+Baseline sources and configuration selection. All baseline results are drawn from the experiments accompanying the REPPO paper (Voelcker et al., 2026). REPPO uses the official per-task trial CSVs at commit 05a5776 .3 The local alternative REPPO configurations and baselines embedded in FERPO’s summary files are excluded. Following Figure 15 of Voelcker et al. (2026), we dis-tinguish PPO and PPO (Brax) on DMC. We use the available CSV exports at their recorded step coordinates; these are not verified as the exact trials behind that published figure. We neither rescale their training horizons nor combine the two PPO families. For the remaining methods, we compare configurations separately by method family and suite (DMC, G1/T1, or ManiSkill). A candidate must cover every task available for its method in that group and span the 50-million-step selection budget. We linearly interpolate each task’s seed-mean return to that budget. For DMC, we min–max normalize each task’s score across eligible configurations of the same method, assign 0.5 when all candidates tie, and average over tasks. For ManiSkill, we average success rates directly. The highest-scoring configuration is then fixed across all tasks in its group, with alphabetical tie-breaking. This is retrospective selection on the displayed runs, rather than selection on an independent validation set.                 
+
+> Group Method Selected configuration or source DMC REPPO Official published trials DMC PPO ppo_4
+> DMC PPO (Brax) ppo_brax
+> DMC FastTD3 fasttd3_small
+> G1/T1 REPPO Official published trials ManiSkill REPPO Official published trials ManiSkill PPO maniskill_ppo_short
+
+Table 3: Baseline sources, fixed across tasks within each group. The archive contains no PPO or FastTD3 G1/T1 curves, and no FastTD3 ManiSkill curves. 
+
+Statistics and display. All benchmark methods show IQM over the available independent seeds. We compute IQM by integrating the middle 50% of empirical probability mass, including fractional observations at quartile boundaries. FERPO runs are aligned on the union of their recorded eval-uation steps, using linear interpolation only between observed evaluations of the same run. We do not extrapolate or fill in missing run endpoints. At each checkpoint, we resample the available seeds with replacement 10,000 times and report the 2.5th and 97.5th percentiles, using fixed random seeds. Checkpoints with the same available seeds share the same trajectory resampling; a changed 
+
+> 3Official REPPO result CSVs at the pinned commit.
+
+24 Under review seed cohort is resampled separately. At least two observed seeds are required. These are pointwise 95% intervals conditional on the observed seeds and selected configuration; they do not correct for missing runs or configuration search. Baselines have complete trial grids and use whole-trajectory resampling. FERPO uses exactly the same actor and critic architectures as REPPO for each bench-mark suite. REPPO evaluations labeled step zero are placed at 2,490,368 environment steps; nonzero REPPO coordinates and all other methods’ coordinates remain as recorded. Figures display up to 50 million steps without smoothing or extrapolation, except that the DMC task panels extend to the recorded Walker checkpoint at 50,987,008. FERPO’s ManiSkill curves end at their last recorded evaluation, 49,971,200 steps. Bootstrap success-rate intervals lie within [0 , 1] without clipping. 
+
+Aggregation across environments and seeds. Figure 4 pools scores within each suite. For T
+
+environments and nt available seeds in environment t, each seed receives weight 1/(T n t) before IQM trimming. Scores retain their original units without cross-task normalization. We use 21 shared checkpoints, requiring at least two seeds per environment and method. The common ranges are 3.01–50M steps for DMC, 2.49–50M for G1/T1, and 2.49–49.97M for ManiSkill. The 10,000-resample seed bootstrap is stratified by environment, keeping the environment set and its equal weights fixed. In particular, each of the three Walker tasks contributes 1/22 of the DMC probability mass before trimming, split among its ten evaluated seeds: 1/220 per seed. A task with twenty evaluated seeds still contributes 1/22 , with 1/440 per seed. We do not duplicate Walker seeds or discard seeds from other tasks to equalize counts. At 50M, FERPO contributes 372 task–seed observations across the 22 tasks (7–20 per task). The aggregate uses the same positive FERPO evaluations as the task panels; its first checkpoint is 3,014,656 steps, and it ends at the common 50M budget without extrapolating baselines to Walker’s last checkpoint. 25 Under review A.3.8 PAIRWISE COMPARISONS OF FINAL BENCHMARK PERFORMANCE 
+
+The endpoint comparison uses the same tasks, available seeds, configuration choices, and weighting as Figure 4. All methods within a suite are compared at its final common budget: 50,000,000 steps for DMC and G1/T1, and 49,971,200 steps for ManiSkill. Each seed contributes its linearly interpolated evaluation score only when that budget lies within its observed range. Individual IQMs and their marginal 95% intervals in Section 5.4 are the existing 10,000-resample Figure 4 estimates. For the pairwise analysis, we independently resample seeds with replacement within each fixed environment and method, preserving each environment’s seed count and total weight. Numerical seed labels do not establish paired runs across methods, so we do not use a paired-method bootstrap. For each of 100,000 resamples, we compute the suite IQM for each method and subtract the two IQMs of interest. We retain the environment set rather than resampling environments. The procedure uses deterministic method-specific random seeds and reproduces the plotted endpoint IQMs before computing differences. There are fourteen comparisons: ten on DMC, one on G1/T1, and three on ManiSkill. We use quantiles 0.025 /14 and 1 − 0.025 /14 of each bootstrap difference distribution. These are approx-imately 99.643% per-comparison intervals, corresponding to a Bonferroni correction that targets at least 95% coverage for the family of fourteen comparisons, subject to the bootstrap approximation. A difference interval entirely above zero supports higher IQM for method A; an interval entirely be-low zero supports method B. An interval spanning zero is inconclusive and does not establish equal performance. The intervals condition on the observed seeds and selected configurations; they do not account for configuration search or informative missingness.                                                                                          
+
+> Suite Method A −method B IQM difference Adjusted interval MuJoCo DMC FERPO −REPPO 6.67 [−6.89 ,20 .65]
+> MuJoCo DMC FERPO −FastTD3 7.10 [−11 .82 ,30 .90]
+> MuJoCo DMC FERPO −PPO 587 .89 [570 .19 ,604 .70]
+> MuJoCo DMC FERPO −PPO (Brax) 354 .86 [307 .06 ,398 .14]
+> MuJoCo DMC REPPO −FastTD3 0.44 [−18 .30 ,23 .87]
+> MuJoCo DMC REPPO −PPO 581 .22 [563 .44 ,597 .76]
+> MuJoCo DMC REPPO −PPO (Brax) 348 .19 [300 .83 ,391 .24]
+> MuJoCo DMC FastTD3 −PPO 580 .78 [554 .61 ,602 .24]
+> MuJoCo DMC FastTD3 −PPO (Brax) 347 .76 [297 .07 ,393 .03]
+> MuJoCo DMC PPO −PPO (Brax) −233 .02 [−281 .80 ,−188 .12]
+> MuJoCo G1/T1 FERPO −REPPO −1.41 [−1.94 ,−0.94]
+> ManiSkill (pp) FERPO −REPPO 0.15 [−3.75 ,4.31]
+> ManiSkill (pp) FERPO −PPO 11 .07 [0 .67 ,27 .83]
+> ManiSkill (pp) REPPO −PPO 10 .91 [0 .40 ,27 .78]
+
+Table 4: Pairwise differences in final suite IQM. Intervals use 100,000 seed bootstrap resamples and a Bonferroni correction across all fourteen comparisons (95% family-wise target). MuJoCo differences are in return units; ManiSkill differences are in percentage points (pp). Positive values favor method A. The G1/T1 comparison uses eight FERPO seeds per task. 26 Under review A.3.9 DMC TASKS 0 10 20 30 40 50 0200 400 
+
+> Return
+
+Acrobot swingup 
+
+FERPO (n=19) REPPO (n=50) PPO (n=40) PPO (Brax) (n=5) FastTD3 (n=25) 
+
+0 10 20 30 40 50 040 80 120 
+
+Acrobot swingup (sparse) 
+
+FERPO (n=20) REPPO (n=40) PPO (n=32) PPO (Brax) (n=5) FastTD3 (n=24) 
+
+0 10 20 30 40 50 400 600 800 1000 
+
+Cartpole balance 
+
+FERPO (n=20) REPPO (n=40) PPO (n=32) PPO (Brax) (n=5) FastTD3 (n=30) 
+
+0 10 20 30 40 50 300 600 900 
+
+> Return
+
+Cartpole balance (sparse) 
+
+FERPO (n=20) REPPO (n=40) PPO (n=32) PPO (Brax) (n=5) FastTD3 (n=26) 
+
+0 10 20 30 40 50 250 500 750 
+
+Cartpole swingup 
+
+FERPO (n=20) REPPO (n=40) PPO (n=32) PPO (Brax) (n=5) FastTD3 (n=25) 
+
+0 10 20 30 40 50 0250 500 750 
+
+Cartpole swingup (sparse) 
+
+FERPO (n=20) REPPO (n=40) PPO (n=32) PPO (Brax) (n=5) FastTD3 (n=26) 
+
+0 10 20 30 40 50 0300 600 900 
+
+> Return
+
+Cheetah run 
+
+FERPO (n=20) REPPO (n=40) PPO (n=32) PPO (Brax) (n=5) FastTD3 (n=26) 
+
+0 10 20 30 40 50 0300 600 900 
+
+Finger spin 
+
+FERPO (n=20) REPPO (n=39) PPO (n=32) PPO (Brax) (n=5) FastTD3 (n=25) 
+
+0 10 20 30 40 50 250 500 750 1000 
+
+Finger turn (easy) 
+
+FERPO (n=20) REPPO (n=40) PPO (n=32) PPO (Brax) (n=5) FastTD3 (n=22) 
+
+0 10 20 30 40 50 250 500 750 1000 
+
+> Return
+
+Finger turn (hard) 
+
+FERPO (n=20) REPPO (n=40) PPO (n=32) PPO (Brax) (n=5) FastTD3 (n=24) 
+
+0 10 20 30 40 50 200 400 600 
+
+Fish swim 
+
+FERPO (n=20) REPPO (n=40) PPO (n=32) PPO (Brax) (n=5) FastTD3 (n=22) 
+
+0 10 20 30 40 50 080 160 240 
+
+Hopper hop 
+
+FERPO (n=20) REPPO (n=40) PPO (n=32) PPO (Brax) (n=5) FastTD3 (n=21) 
+
+Environment steps (millions) 
+
+IQM with 95% bootstrap con fi dence intervals n = contributing seeds; ranges indicate changes along the displayed curve. 
+
+MuJoCo Playground: control tasks (1/2) 
+
+Figure 12: DMC learning curves (1/2). The first 12 of 22 tasks. All methods show IQM with pointwise 95% bootstrap confidence intervals. Legends report contributing seeds n; ranges indicate changes across the displayed evaluations. Curves retain their source evaluation schedules. Baseline configurations are fixed across all DMC tasks as specified in Table 3. 27 Under review 0 10 20 30 40 50 0300 600 900 
+
+> Return
+
+Hopper stand 
+
+FERPO (n=20) REPPO (n=40) PPO (n=32) PPO (Brax) (n=5) FastTD3 (n=22) 
+
+0 10 20 30 40 50 0250 500 750 
+
+Humanoid run 
+
+FERPO (n=9–19) REPPO (n=32) PPO (n=5) PPO (Brax) (n=5) FastTD3 (n=2) 
+
+0 10 20 30 40 50 0300 600 900 
+
+Humanoid stand 
+
+FERPO (n=7–16) REPPO (n=33) PPO (n=5) PPO (Brax) (n=5) FastTD3 (n=4) 
+
+0 10 20 30 40 50 0300 600 900 
+
+> Return
+
+Humanoid walk 
+
+FERPO (n=7–17) REPPO (n=25) PPO (n=5) PPO (Brax) (n=5) FastTD3 (n=5) 
+
+0 10 20 30 40 50 0250 500 750 
+
+Pendulum swingup 
+
+FERPO (n=20) REPPO (n=40) PPO (n=32) PPO (Brax) (n=5) FastTD3 (n=22) 
+
+0 10 20 30 40 50 400 600 800 1000 
+
+Reacher (easy) 
+
+FERPO (n=20) REPPO (n=40) PPO (n=32) PPO (Brax) (n=5) FastTD3 (n=22) 
+
+0 10 20 30 40 50 250 500 750 1000 
+
+> Return
+
+Reacher (hard) 
+
+FERPO (n=20) REPPO (n=40) PPO (n=32) PPO (Brax) (n=5) FastTD3 (n=22) 
+
+0 10 20 30 40 50 0300 600 900 
+
+Walker run 
+
+FERPO (n=10) REPPO (n=40) PPO (n=32) PPO (Brax) (n=5) FastTD3 (n=23) 
+
+0 10 20 30 40 50 250 500 750 1000 
+
+Walker stand 
+
+FERPO (n=10) REPPO (n=40) PPO (n=32) PPO (Brax) (n=5) FastTD3 (n=25) 
+
+0 10 20 30 40 50 300 600 900 
+
+> Return
+
+Walker walk 
+
+FERPO (n=10) REPPO (n=40) PPO (n=32) PPO (Brax) (n=5) FastTD3 (n=23) 
+
+Environment steps (millions) 
+
+IQM with 95% bootstrap con fi dence intervals n = contributing seeds; ranges indicate changes along the displayed curve. 
+
+MuJoCo Playground: control tasks (2/2) 
+
+Figure 13: DMC learning curves (2/2). The remaining ten tasks, under the same protocol as Figure 12. All methods show IQM with pointwise 95% bootstrap confidence intervals. Walker markers denote the available checkpoint evaluations from 3.01M to 50.99M steps, with ten seeds per task. Legends report contributing seed counts. 28 Under review A.3.10 G1/T1 LOCOMOTION AND MANI SKILL MANIPULATION 
+
+At 50M interactions, FERPO’s IQM returns are 35.56 and 30.38 on G1 flat and rough terrain, com-pared with REPPO’s 37.60 and 32.89. On T1 flat and rough terrain, FERPO reaches 37.05 and 30.68, compared with REPPO’s 36.48 and 30.73. Thus FERPO has a slightly higher point estimate on T1 flat and a similar endpoint on T1 rough, while REPPO retains a larger lead on both G1 tasks. 0 10 20 30 40 50 015 30 
+
+> Return
+
+G1 fl at terrain       
+
+> FERPO (n=8) REPPO (n=39)
+> 010 20 30 40 50 015 30
+
+G1 rough terrain       
+
+> FERPO (n=8) REPPO (n=24)
+> 010 20 30 40 50 015 30
+> Return
+
+T1 fl at terrain       
+
+> FERPO (n=8) REPPO (n=39)
+> 010 20 30 40 50 010 20 30
+
+T1 rough terrain  
+
+> FERPO (n=8) REPPO (n=38)
+> Environment steps (millions)
+> IQM with 95% bootstrap con fi dence intervals n = contributing seeds; ranges indicate changes along the displayed curve.
+
+MuJoCo Playground: humanoid locomotion 
+
+Figure 14: All four G1/T1 locomotion tasks. FERPO and official REPPO trials show IQM with pointwise 95% bootstrap confidence intervals. FERPO uses K = 16 , normalized ESS target 0.65 ,and eight completed seeds per task; legends report each method’s seed count. Results use the recorded evaluation protocols described in Appendix A.3.7. 29 Under review 0 10 20 30 40 50 0% 50% 100% 
+
+> Success rate
+
+Lift peg upright      
+
+> 010 20 30 40 50 0% 50% 100%
+
+Peg insertion (side)      
+
+> 010 20 30 40 50 0% 50% 100%
+
+Pick single YCB      
+
+> 010 20 30 40 50 0% 50% 100%
+
+Poke cube      
+
+> 010 20 30 40 50 0% 50% 100%
+> Success rate
+
+Pull cube      
+
+> 010 20 30 40 50 0% 50% 100%
+
+Roll ball      
+
+> 010 20 30 40 50 0% 50% 100%
+
+G1 apple in bowl      
+
+> 010 20 30 40 50 0% 50% 100%
+
+G1 transport box 
+
+Environment steps (millions) 
+
+> IQM with 95% bootstrap con fi dence intervals
+
+ManiSkill: manipulation success   
+
+> FERPO REPPO PPO
+
+Figure 15: All eight ManiSkill tasks. All methods show success-rate IQM with pointwise 95% bootstrap confidence intervals. FERPO uses 20 seeds per task except G1 transport box (ten). PPO uses one configuration across all eight tasks; REPPO uses the official published trial CSVs. 30 Under review A.4 FERPO PSEUDOCODE 
+
+Algorithm 1 shows the interleaved critic and actor updates used in the main learning setup. Critic targets are computed once per rollout; candidate actions and their Q values are refreshed for each actor update. We write ⟨·⟩ B for a minibatch average and sg for stop-gradient. Bootstrap states use the final observation before any environment reset. The frozen parameters ¯ϕ are a snapshot for target construction. 
+
+Algorithm 1 FERPO with interleaved critic and actor updates 
+
+Require: Environment, rollout length T , discount γ, trace parameter λTD , auxiliary weight caux , candidate count K ≥ 2, epochs E, minibatch size, entropy target Htarget , ESS target etarget ∈ (1 /K, 1) , critic settings from Section 3.3. 1: Initialize policy πθ , critic Qϕ, log multipliers η, ξ , and their optimizers. 2: while the environment interaction budget remains do 
+
+3: Freeze πroll ← πθ and ¯ϕ ← ϕ, τroll ← eη .4: Collect rollout transitions D using at ∼ πroll (· | st), including terminal and truncation flags. 5: For each transition t, set mt ← 0 at a true terminal and mt ← 1 otherwise, including truncations. 6: Set ct ← 1 if t < T − 1 and transition t is neither terminal nor truncated; otherwise set ct ← 0.7: At each nonterminal successor, use a+ 
+
+> t
+
+← at+1 if ct = 1 ; otherwise draw a+ 
+
+> t
+
+∼ πroll (· | st+1 ).8: Store v+ 
+
+> t
+
+← Q ¯ϕ(st+1 , a + 
+
+> t
+
+) and b+ 
+
+> t
+
+← log πroll (a+ 
+
+> t
+
+| st+1 ) without gradients; set both to zero at true terminals. 9: Set GT ← 0 at the rollout end; cT −1 = 0 ensures bootstrapping uses v+ 
+
+> T−1
+
+.10: for t = T − 1, . . . , 0 in each environment do 
+
+11: Gt ← rt + γm t[(1 − λTD ct)v+ 
+
+> t
+
++ λTD ctGt+1 − τroll b+ 
+
+> t
+
+].12: end for 
+
+13: Store detached Gt, next-feature targets from the frozen encoder ¯ϕ, and reward targets rt in D.14: for epoch = 1 , . . . , E do 
+
+15: for each shuffled minibatch B ⊂ D do 
+
+16: LQ ← 〈1{not truncated }[LHL -Gauss (ϕ; st, a t, G t) + caux Laux (ϕ; t)] 〉 
+
+> B
+
+.17: Take an optimizer step to minimize LQ with respect to ϕ, holding the critic targets fixed. 18: τ ← eη , λ ← eξ .19: For each s ∈ B , draw ai(s) ∼ πroll (· | s), i = 1 , . . . , K , without gradients. 20: Evaluate vi(s) ← Qϕ(s, a i(s)) and bi(s) ← log πroll (ai(s) | s) without gradients. 21: ℓi(s) ← [vi(s) − τ b i(s)] /(τ + λ).22: wi(s) ← sg [softmax i(ℓ(s)) ] {normalize over the K actions at each state} 23: ̂ LF ← − 〈∑ Ki=1 wi(s) log πθ (ai(s) | s)〉 
+
+> B
+
+.24: Draw fresh ˜as ∼ πθ (· | s) and estimate ̂ H ← −⟨ log πθ (˜as | s)⟩B .25: ̂ e(s) ← (K ∑Ki=1 wi(s)2)−1.26: Lτ ← τ sg[ ̂ H − H target ].27: Lλ ← λ sg[ ⟨log ̂ e(s)⟩B − log etarget ].28: Take an optimizer step to minimize ̂ LF + Lτ + Lλ with respect to (θ, η, ξ ), holding ϕ and πroll 
+
+fixed. 29: end for 
+
+30: end for 
+
+31: Discard D before collecting the next rollout. 32: end while 
+
+33: return πθ .
+
+LHL -Gauss matches the critic’s categorical prediction to a Gaussian-smoothed histogram of the scalar target Gt; Qϕ(s, a ) is the mean of this prediction. Laux predicts the next critic representation and reward, with fixed targets and zero loss at episode ends (Section 3.3). The target recursion adds the next action’s entropy contribution once, outside the TD mixture. Actor updates differentiate only policy log probabilities and multiplier losses; their gradients do not change the critic or rollout policy. 
+
+Policy parameterization and action bounds. For bounded-action environments, we use a tanh-squashed Gaussian policy πθ , following REPPO (Voelcker et al., 2026) and SAC (Haarnoja et al., 2018a): z ∼ N (μθ (s), diag( σ2 
+
+> θ
+
+(s))) , a = tanh( z), where a neural network parameterizes μθ and 
+
+σθ . Actions are rescaled to the environment’s action bounds where needed. Policy log densities include the corresponding change-of-variables correction. 31 Under review For cached FERPO, complete critic training first, freeze Qϕ, and sample and store ai(s), vi(s), and 
+
+bi(s) once for every rollout state. Reuse these tensors throughout actor training, recomputing ℓi(s)
+
+and wi(s) as τ and λ change; release the cache before the next rollout. Appendix A.2 reports the runtime and memory costs of this schedule. A.5 STATE -DEPENDENT NORMALIZATION IN POLICY FITTING 
+
+AWR’s practical regression objective omits the per-state normalizer (Peng et al., 2019, Eqs. 8–10); AWAC explicitly discusses the same omission (Nair et al., 2020, Appendix A-B). To isolate its effect, fix a state distribution d, the rollout policy πroll (· | s), advantage estimates A(s, a ), and λ > 0. We consider the exponential weights before clipping and assume the expectations and gradients below exist. Define 
+
+u(s, a ) := exp( A(s, a )/λ ), Z(s) := Ea∼πroll (·| s)[u(s, a )] ,qA(a | s) := πroll (a | s)u(s, a )
+
+Z(s) , 0 < Z (s) < ∞. (13) Let ℓθ (s) := −Ea∼qA(·| s)[log πθ (a | s)] . The normalized forward-KL fit minimizes Lnorm (θ) := 
+
+Es∼d[ℓθ (s)] , up to a constant independent of θ. Omitting Z(s) instead gives 
+
+Lomit (θ) := −Es∼dEa∼πroll (·| s)[u(s, a ) log πθ (a | s)] = Es∼d[Z(s)ℓθ (s)] . (14) Thus, holding the target weights fixed during actor fitting and writing gθ (s) := ∇θ ℓθ (s),
+
+∇θ Lnorm = Es∼d[gθ (s)] , ∇θ Lomit = Es∼d[Z(s)gθ (s)] . (15) The omission therefore changes the relative influence of states even with unlimited data. A constant 
+
+Z(s) only rescales the gradient. With independent, unrestricted fitting at each state, both objectives recover qA. With a shared neural policy, varying Z(s) can change the overall gradient direction and, when the target cannot be fitted exactly, the optimal approximation. The size of this effect depends on the variation in Z(s) and the alignment of gradients across states. An advantage baseline does not generally remove this reweighting: for A(s, a ) = Q(s, a ) − V (s),
+
+Z(s) = e−V (s)/λ Ea∼πroll (·| s)[eQ(s,a )/λ ], which need not equal one. The baseline cancels from 
+
+qA after normalization, but affects state weights when Z(s) is omitted. AWR’s additional weight clipping changes the action weights as well (Peng et al., 2019, Section 3.3). FERPO estimates normalized weights separately within each state using Eq. 6. SNIS has finite-sample bias but is consistent under the usual integrability and sampling assumptions (Owen, 2013, Section 9.2); see also Appendix B.5.2. This establishes a difference in the fitted objective, rather than a general performance ordering. 
+
+## B PROOFS 
+
+B.1 DERIVATION OF THE KL SURROGATE 
+
+State distribution and expectation in Eq. 1. For a fixed policy π, let ρπt denote the state density at time t in trajectories generated by s0 ∼ ρ0, at ∼ π(· | st), and st+1 ∼ P (· | st, a t). Thus ρπ 
+
+> 0
+
+= ρ0.As in Section 2, define the normalized discounted state-visitation distribution 
+
+dπ (s) := (1 − γ)
+
+> ∞
+
+∑
+
+> t=0
+
+γtρπt (s), droll := dπroll .
+
+Whereas ρπt describes the states at a single time step, dπ averages these distributions over time with normalized discount weights. For any function f (s, a ) with finite absolute discounted expectation, the definition of dπ gives 
+
+11 − γ E s∼dπ
+
+> a∼π(·| s)
+
+[f (s, a )] = 
+
+> ∞
+
+∑
+
+> t=0
+
+γtE s∼ρπt
+
+> a∼π(·| s)
+
+[f (s, a )] = Eρ0,P,π 
+
+[ ∞∑
+
+> t=0
+
+γtf (st, a t)
+
+]
+
+.
+
+32 Under review Taking f (s, a ) = r(s, a ) − τ log π(a | s) shows that Eq. 1 is exactly the discounted maximum-entropy return. To describe one step of state evolution under the policy, define the transition kernel 
+
+Pπ (s′ | s) := 
+
+∫
+
+π(a | s)P (s′ | s, a ) d a. 
+
+The state distribution evolves by averaging the next-state distribution over the current states: 
+
+ρπt+1 (s′) = 
+
+∫
+
+ρπt (s)Pπ (s′ | s) d s =: ( ρπt Pπ )( s′).
+
+Thus ρπt+1 = ρπt Pπ is shorthand for this integral; it describes one step under the environment dynam-ics. Using this recursion and shifting the index in the discounted sum yields dπ = (1 −γ)ρ0+γd π Pπ .
+
+Gradient of the KL surrogate. Applying the policy-gradient theorem (Sutton et al., 1999) to the entropy-regularized objective gives 
+
+∇θ Jτ (πθ ) = 11 − γ E s∼dπθ 
+
+> a∼πθ(·| s)
+
+[∇θ log πθ (a | s)(Qπθ 
+
+> τ
+
+(s, a ) − τ log πθ (a | s))] . (16) The additional derivative of the entropy term has zero expectation by Ea∼πθ [∇θ log πθ (a | s)] = 0 .For the frozen rollout critic, define the normalized Boltzmann target 
+
+pQ,τ (a | s) := exp( Qroll (s, a )/τ )
+
+ZQ(s) , ZQ(s) := 
+
+∫
+
+> A
+
+exp( Qroll (s, a )/τ ) d a. (17) Expanding the reverse KL gives the per-state identity 
+
+τ D KL (πθ ∥pQ,τ ) = −Ea∼πθ [Qroll (s, a )] − τ H(πθ (· | s)) + τ log ZQ(s). (18) Differentiating this identity while holding the rollout critic and state distribution fixed and comparing with Eq. 16 yields the gradient-matching condition stated in Section 2. Thus, minimizing Eq. 2 matches the local return-ascent direction at the rollout parameters. The equivalence is local because the frozen critic and state distribution do not track subsequent policy changes. B.2 DERIVATION OF THE OPTIMAL REGULARIZED TARGET 
+
+Fix a state s and write Q(a) := Qroll (s, a ) and μ(a) := πroll (a | s). Assume μ > 0 almost everywhere on A and that the integrals below are finite. For τ > 0 and λ ≥ 0, the per-state contribution to Eq. 4 is 
+
+Ls(q; τ, λ ) := −Ea∼q [Q(a)] + τ (Htarget − H (q)) + λ(DKL (q∥μ) − δKL )=
+
+∫
+
+> A
+
+q(a)[(τ + λ) log q(a) − Q(a) − λ log μ(a)] da + τ Htarget − λδ KL . (19) Introduce a multiplier ν for the normalization constraint: ˜Ls(q, ν ; τ, λ ) := Ls(q; τ, λ ) + 
+
+ν(∫ 
+
+> A
+
+q(a) d a − 1) . The stationarity condition is 
+
+δ ˜Ls
+
+δq (a) = ( τ + λ)(log q(a) + 1) − Q(a) − λ log μ(a) + ν = 0 . (20) Solving for q and normalizing gives 
+
+q∗(a) = 1
+
+Z∗(s) exp 
+
+( Q(a)
+
+τ + λ
+
+)
+
+μ(a)λ/ (τ +λ),Z∗(s) := 
+
+∫
+
+> A
+
+exp 
+
+( Q(a)
+
+τ + λ
+
+)
+
+μ(a)λ/ (τ +λ) da, 
+
+(21) which is Eq. 5. Substituting log q∗ into Eq. 19 yields the exact identity 
+
+Ls(q; τ, λ ) = ( τ + λ)DKL (q∥q∗) − (τ + λ) log Z∗(s) + τ Htarget − λδ KL . (22) 33 Under review Since KL is nonnegative and vanishes only when its arguments agree almost everywhere, q∗ is the unique global minimizer. Averaging this identity over droll also proves the reverse-KL projection form of Eq. 4 used in Section 3.1. For the forward-KL fit, the target-to-proposal density ratio is 
+
+q∗(a)
+
+μ(a) = 1
+
+Z∗(s) exp 
+
+( Q(a) − τ log μ(a)
+
+τ + λ
+
+)
+
+. (23) Self-normalizing these ratios across sampled actions cancels Z∗(s) and gives Eq. 6, with the exact critic replaced by Qϕ in practice. B.3 LOG ESS AND DIVERGENCE CONTROL 
+
+Target-divergence bound in Proposition 1 and ESS identities. Fix a state s, and write q(a) = q∗
+
+> λ
+
+(a |
+
+s) for the target density and μ(a) = πroll (a | s) for the rollout-policy density. Define the importance ratio r(a) := q(a)/μ (a) wherever μ(a) > 0. As assumed in the proposition, q ≪ μ and Eμ[r2] <
+
+∞. The population normalized ESS is e∞ := 1 /Eμ[r2]. Because q and μ are probability densities and q ≪ μ, Eμ[r] = ∫ q(a) d a = 1 . Therefore, 
+
+χ2(q∥μ) = Eμ[( r − 1) 2] = Eμ[r2] − 1, e∞ = 11 + χ2(q∥μ) .
+
+Jensen’s inequality for the concave logarithm gives 
+
+DKL (q∥μ) = Eq [log r] ≤ log Eq [r] = log Eμ[r2] = D2(q∥μ) = − log e∞.
+
+Since − log x is decreasing, e∞ ≥ etarget implies DKL (q∥μ) ≤ − log etarget . For independent samples a1, . . . , a K ∼ μ, define the normalized weights wi = r(ai)/ ∑ 
+
+> j
+
+r(aj ) and empirical normalized ESS ̂ e := 1 /(K ∑ 
+
+> i
+
+w2 
+
+> i
+
+). Substituting the weights gives ̂
+
+e =
+
+(K−1 ∑Ki=1 r(ai))2
+
+K−1 ∑Ki=1 r(ai)2a.s.
+
+−−−−→
+
+> K→∞
+
+(Eμ[r]) 2
+
+Eμ[r2] = e∞.
+
+The convergence follows from the strong law of large numbers and the finite second-moment as-sumption. If an initial batch has zero total weight, the normalized estimate is undefined; the sample average of r converges to one, so the denominator for weight normalization is positive for all suffi-ciently large K almost surely. 
+
+Finite-batch interpretation. There is an exact identity for any finite batch of normalized weights 
+
+w = ( w1, . . . , w K ). With uK (i) = 1 /K on sample indices, 
+
+χ2(w∥uK ) = K ∑
+
+> i
+
+w2 
+
+> i
+
+− 1, − log ̂ e = log (1 + χ2(w∥uK )) = D2(w∥uK ).
+
+This finite-batch equality concerns probability vectors on sampled indices. It does not identify 
+
+− log ̂ e with the divergence between the full action distributions q and μ.B.3.1 FROM TARGET ESS TO POLICY TOTAL VARIATION 
+
+A decrease in the population forward-KL fitting loss suffices to transfer the target’s divergence con-trol to the actor in total variation. We use the half-L1 convention in Section 2 and natural logarithms throughout. We restate the actor-control assumption of Proposition 1. Fix a state and a target q∗, suppressing state conditioning. Assume q∗ ≪ πroll and Eπroll [( q∗/π roll )2] < ∞, and let e∞ := 1 /Eπroll [( q∗/π roll )2].Suppose the actor update does not increase the population forward-KL fitting objective: 
+
+DKL (q∗∥πcurr ) ≤ DKL (q∗∥πroll ). (24) Then Eq. 9 holds: 12 DTV (πcurr , π roll )2 ≤ DKL (q∗∥πroll )
+
+≤ D2(q∗∥πroll ) = − log e∞.
+
+No exact minimization or Gaussian policy assumption is required. 34 Under review 
+
+Proof of the actor-TV bound in Proposition 1. The triangle inequality, obtained by adding and sub-tracting q∗ inside the absolute value in the TV definition, gives 
+
+DTV (πcurr , π roll ) ≤ DTV (πcurr , q ∗) + DTV (q∗, π roll ).
+
+TV is symmetric, so Pinsker’s inequality (van Erven & Harremoës, 2014, Theorem 31) can bound both terms using KL divergences with q∗ as their first argument. Applying Eq. 24 then yields 
+
+DTV (πcurr , π roll ) ≤
+
+√ 12 DKL (q∗∥πcurr ) + 
+
+√ 12 DKL (q∗∥πroll )
+
+≤ 2
+
+√ 12 DKL (q∗∥πroll ) = √2DKL (q∗∥πroll ).
+
+Squaring both sides and dividing by two gives 12 DTV (πcurr , π roll )2 ≤ DKL (q∗∥πroll ). The target-divergence result proved above supplies the remaining inequality and identity, DKL (q∗∥πroll ) ≤
+
+D2(q∗∥πroll ) = − log e∞.
+
+Meaning of fitting improvement. With q∗ fixed, the difference of the fitting objectives is 
+
+DKL (q∗∥πcurr ) − DKL (q∗∥πroll ) = −Eq∗
+
+[
+
+log πcurr 
+
+πroll 
+
+]
+
+.
+
+Thus Eq. 24 requires only that the actor increase or preserve the target-weighted population log like-lihood. This is the objective approximated by the SNIS actor loss; it is distinct from an assumption of higher environment return. 
+
+Averaging over rollout states. The result also holds on average without per-state fitting improve-ment. All distributions below are conditioned on s. Squaring the first Pinsker bound above and using 
+
+(√x + √y)2 ≤ 2( x + y) gives the pointwise inequality 
+
+DTV (πcurr , π roll )2 ≤ DKL (q∗∥πcurr ) + DKL (q∗∥πroll ).
+
+Assume the relevant expectations are finite and that 
+
+Es∼droll [DKL (q∗∥πcurr )] ≤ Es∼droll [DKL (q∗∥πroll )] .
+
+Averaging the pointwise inequality and applying the target-divergence bound in Eq. 9 yields 
+
+12 Es∼droll [DTV (πcurr , π roll )2] ≤ Es∼droll [DKL (q∗∥πroll )] 
+
+≤ − Es∼droll [log e∞(s)] .
+
+If the geometric mean of population ESS meets the controller target, Es∼droll [log e∞(s)] ≥
+
+log etarget , the right-hand side is at most − log etarget . This controls average squared TV, rather than the largest deviation across states. Decreases in finite-sample SNIS loss and empirical ESS control do not by themselves guarantee these population conditions. Nor does the TV bound imply an upper bound on the fitted actor’s KL; it cannot replace the KL penalty in Eq. 3 without further assumptions. B.4 CONVERGENCE UNDER EXACT FITTING 
+
+The regularized target in Eq. 5 interpolates between the reference policy and the Boltzmann distri-bution. Repeated exact updates reach the Boltzmann distribution when the reference is replaced by the fitted policy after every update. The following result quantifies how λ controls this convergence for a fixed critic. 
+
+Proposition 2 (Convergence of exact FERPO updates for a fixed critic) . Fix a state s, a critic 
+
+Q(s, ·), and a temperature τ > 0. Suppress state conditioning and let p(a) := exp( Q(s, a )/τ )/Z (s)
+
+be normalizable. Assume DKL (p∥π0) < ∞ and fix 0 < λ < ∞. At each iteration, compute the unrestricted target and fit it exactly: 
+
+q∗ 
+
+> n
+
+:= arg min 
+
+> q
+
+{τ D KL (q∥p) + λD KL (q∥πn)} , πn+1 = q∗
+
+> n
+
+.
+
+35 Under review 
+
+The policy after n ≥ 1 exact updates is 
+
+πn(a) = 1
+
+Zn(s) π0(a)( λτ +λ )n
+
+exp 
+
+ 1 −
+
+( λτ +λ
+
+)n
+
+τ Q(s, a )
+
+ , (25) 
+
+where Zn(s) normalizes the density. Since (λ/ (τ + λ)) n → 0 as n → ∞ , the initial policy’s exponent vanishes and the coefficient of Q(s, a ) approaches 1/τ . Consequently, 
+
+lim  
+
+> n→∞
+
+πn(a) = exp( Q(s, a )/τ )
+
+∫ 
+
+> A
+
+exp( Q(s, b )/τ ) d b = p(a) almost everywhere ,
+
+and convergence also holds in total variation. The limit is the unique maximizer of Ea∼q [Q(s, a ) −
+
+τ log q(a)] , independently of the fixed finite value of λ. For λ = 0 , the target is reached in one exact update. 
+
+The role of λ. Equation 25 separates the influence of the initial policy from the Boltzmann target. Larger λ makes λ/ (τ +λ) closer to one, so the initial policy’s influence decays more slowly. Smaller 
+
+λ gives faster progress toward the same target. Thus, λ controls the rate of approach, while τ
+
+determines the limiting Boltzmann distribution. The proposition assumes exact forward-KL fits and a refreshed reference policy at every iteration. Repeated fitting to a single frozen target only recovers that target. It establishes convergence to the Boltzmann distribution of the fixed critic; convergence of full RL training, where the critic is re-estimated, requires a separate policy-iteration argument. 
+
+Proof of Proposition 2. Write β := λ/ (τ + λ) ∈ (0 , 1) . Equation 5 gives πn+1 = p1−β πβn /C n,where Cn := ∫ p1−β πβn da. Induction gives πn ∝ p1−βn
+
+πβn 
+
+> 0
+
+. Substituting p ∝ exp( Q/τ ) and 
+
+β = λ/ (τ + λ) yields Eq. 25. The finite-KL assumption ensures that π0 covers the support of p; this property is preserved by the update. As n → ∞ , p1−βn
+
+πβn 
+
+> 0
+
+→ p almost everywhere. The bound 
+
+p1−tπt 
+
+> 0
+
+≤ p + π0 for 0 < t < 1 permits dominated convergence, so the normalizing integral of this geometric mixture tends to one. This proves the stated almost-everywhere limit. To quantify convergence, Hölder’s inequality and normalization imply 0 < C n ≤ 1. Therefore, 
+
+DKL (p∥πn+1 ) = βD KL (p∥πn) + log Cn ≤ βD KL (p∥πn). (26) Iterating gives the KL contraction bound 
+
+DKL (p∥πn+1 ) ≤ βD KL (p∥πn), DKL (p∥πn) ≤ βnDKL (p∥π0). (27) Pinsker’s inequality then implies convergence in total variation. Optimality of p follows from Eq. 18. For λ = 0 , the update minimizes DKL (q∥p) and reaches p immediately. 
+
+Finite-step accuracy and varying multipliers. If D0 := DKL (p∥π0) > ε > 0, then n ≥⌈log( D0/ε )/ log(1 + τ /λ )⌉ exact updates suffice for DKL (p∥πn) ≤ ε. For varying coefficients 
+
+λk > 0 at fixed Q and τ , βn is replaced by ∏n−1 
+
+> k=0
+
+λk/(τ + λk); convergence follows if this product tends to zero, as it does for uniformly bounded λk.B.5 UPDATE DIRECTIONS AND IMPORTANCE SAMPLING 
+
+For a Gaussian policy with fixed covariance, both REPPO and FERPO have mean gradients that can be expressed as averages of cost gradients. REPPO averages under the current policy; FERPO averages under its cost-reweighted target, with a factor 1/λ . We derive these identities and explain how the different distributions produce the opposing directions in Figure 1. We then show why recovering the target direction from samples requires adequate proposal coverage. B.5.1 COST GRADIENTS UNDER THE POLICY AND THE TARGET 
+
+Fix a state and a cost c(a) = −Qϕ(s, a ) on Rd. Let πm = N (m, Σ) be the reference and initial actor, with fixed covariance Σ ≻ 0. The candidate actor is πn = N (n, Σ) . Fix τ, λ > 0 and write 
+
+T = τ + λ. FERPO constructs 
+
+q∗
+
+> m
+
+(a) = 1
+
+Zm
+
+e−c(a)/T πm(a)λ/T , (28) 36 Under review and holds q∗ 
+
+> m
+
+fixed while fitting πn. Let m∗(m) := Ea∼q∗ 
+
+> m
+
+[a] denote the target mean. Assume c
+
+is continuously differentiable and bounded below, and that c and ∇c grow at most polynomially. These conditions ensure finite target moments and justify the differentiation below. 
+
+Proposition 3 (Initial mean-descent directions) . At n = m, REPPO’s KL regularization is inactive. Its mean loss is LR(n) = Eπn [c] − τ H (πn), while FERPO fits LF(n; m) = DKL (q∗
+
+> m
+
+∥πn). Their negative gradients are 
+
+dR(m) := − ∇ nLR(n)|n=m = −Ea∼πm [∇c(a)] ,dF(m) := − ∇ nLF(n; m)|n=m = Σ −1(m∗(m) − m) = − 1
+
+λ Ea∼q∗ 
+
+> m
+
+[∇c(a)] . (29) 
+
+The exact forward-KL mean fit sets n = m∗(m). Reverse KL to the same frozen target has the same initial descent direction as REPPO, with its negative gradient equal to dR(m)/T .Proof. Using the reparameterization a = n + Σ 1/2z, where z ∼ N (0 , I ), we obtain 
+
+∇nEa∼πn [c(a)] = Ea∼πn [∇ac(a)] .
+
+Since the covariance is fixed, the entropy does not depend on n. This gives REPPO’s mean-descent direction. For FERPO, expansion of the Gaussian log density gives 
+
+LF(n; m) = 12
+
+(n − m∗(m))⊤Σ−1(n − m∗(m)) + const( m). (30) Differentiating with respect to n gives the FERPO gradient, and the quadratic is minimized at n =
+
+m∗(m).To express FERPO’s gradient in terms of cost gradients, differentiate the target log density with respect to the action: 
+
+∇a log q∗
+
+> m
+
+(a) = − 1
+
+T
+
+(∇c(a) + λΣ−1(a − m)). (31) The Gaussian factor and the lower bound on c make the target density vanish at infinity; the poly-nomial growth assumptions ensure integrability. Integrating its derivative over Rd therefore gives 
+
+Eq∗ 
+
+> m
+
+[∇a log q∗
+
+> m
+
+] = ∫ ∇aq∗
+
+> m
+
+(a) d a = 0 . Taking expectations in Eq. 31 yields 
+
+Eq∗ 
+
+> m
+
+[∇c(a)] = λΣ−1(m − m∗(m)), (32) which proves the final equality for dF.
+
+Connection to REPPO. We now consider fitting the same frozen target using reverse KL, 
+
+DKL (πn∥q∗
+
+> m
+
+). FERPO instead minimizes the forward KL, DKL (q∗
+
+> m
+
+∥πn). The following decom-position shows that reverse-KL fitting gives the same initial descent direction as REPPO, up to a positive scaling factor. Substituting the target density in Eq. 28 yields 
+
+T D KL (πn∥q∗
+
+> m
+
+) = Eπn [c] − τ H (πn) + λD KL (πn∥πm) + T log Zm. (33) At n = m, the KL penalty contributes no gradient, and Zm is independent of the candidate mean 
+
+n. Differentiating the right-hand side therefore gives REPPO’s loss gradient. Consequently, mini-mizing DKL (πn∥q∗
+
+> m
+
+) gives the initial descent direction dR(m)/T : the same direction as REPPO, scaled by 1/T .
+
+Shared small-variance limit. Assume additionally that c is three-times continuously differentiable and its derivatives through order three grow at most polynomially. Fix the mean m and positive constants τ and λ. Let Σ = σ2I with σ → 0. The Taylor expansion underlying the delta method (Khan & Rue, 2023, Appendix C) applies to both averages. Under πm, E[a − m] = 0 and E∥a −
+
+m∥2 = O(σ2). The target is proportional to e−c(a)/T times the density of N (m, (T /λ )σ2I). The lower bound on c and the growth assumptions imply Eq∗ 
+
+> m
+
+∥a − m∥2 = O(σ2) and Eq∗ 
+
+> m
+
+[∇c(a)] = 
+
+O(1) . Equation 32 then gives Eq∗ 
+
+> m
+
+[a − m] = O(σ2). Expanding ∇c(a) around m therefore yields, for the initial loss gradients gR := −dR(m) and gF := −dF(m),
+
+gR = ∇c(m) + O(σ2), λg F = ∇c(m) + O(σ2).
+
+37 Under review Thus both methods approach the same descent direction wherever ∇c(m)̸ = 0 ; in one dimension, their signs agree for sufficiently small σ. This shared limit does not imply agreement at finite width, where the target can be broad or multimodal, or uniformly near stationary points. Figure 1 uses the exact expectations at finite width. At B in Figure 1, m = −0.6 and σ = 0 .4. The expected cost derivative is 0.284 , while m∗(m) ≃−0.466 , giving 
+
+dR = −0.284 , dF ≃ −0.466 + 0 .60.42 = 0 .838 .
+
+Thus FERPO initially moves toward the better right well while REPPO moves toward the worse left well. This is the potential benefit illustrated by the experiment: fitting the reweighted mean can give an update toward a better region even when the expected-cost gradient points elsewhere. The comparison concerns directions, not matched step sizes or eventual optimization success. It applies at the reference policy with fixed covariance. B.5.2 RECOVERING THE TARGET -MEAN DIRECTION FROM SAMPLES 
+
+The update-direction comparison in Appendix B.5.1 uses the exact target mean. With SNIS, FERPO instead uses ̂ m∗ = ∑ 
+
+> i
+
+wiai and the estimated negative gradient is ̂ dF = Σ −1(̂ m∗ − m). The integration-by-parts identity holds for the population target; it need not hold for a finite weighted sample. In particular, SNIS is generally biased at finite K. For a proposal r that is positive wherever 
+
+q∗ 
+
+> m
+
+is positive, independent samples ai ∼ r receive weights 
+
+ui = e−c(ai)/T πm(ai)λ/T 
+
+r(ai) , wi = ui
+
+∑ 
+
+> j
+
+uj
+
+. (34) Changing r changes the estimate’s accuracy while preserving the same target, provided the denom-inator uses the actual proposal. 
+
+Proposition 4 (Accuracy of the sampled target mean) . For fixed q∗ 
+
+> m
+
+and r,̂ m∗ → m∗(m) almost surely as K → ∞ . If the matrix 
+
+Ωr := 
+
+∫ q∗
+
+> m
+
+(a)2
+
+r(a) (a − m∗(m))( a − m∗(m)) ⊤ da (35) 
+
+has finite trace, then √K(̂ m∗ − m∗(m)) =⇒ N (0 , Ωr ). Here, =⇒ denotes convergence in distri-bution. For large K, the estimated target mean is approximately Gaussian around the exact mean, with covariance Ωr /K . Thus, the typical estimation error decreases as 1/√K, while its magnitude depends on how well the proposal covers the target distribution. Proof. This is the standard SNIS argument (Owen, 2013, Section 9.2). Let W = q∗
+
+> m
+
+/r . Then 
+
+Er W = 1 , Er [W a ] = m∗(m), and ̂ m∗ = ( ∑ 
+
+> i
+
+W (ai)ai)/(∑ 
+
+> i
+
+W (ai)) . The strong law of large numbers proves consistency, since the target has a finite first moment. For the limiting distribution, write 
+
+√K(̂ m∗ − m∗(m)) = K−1/2 ∑ 
+
+> i
+
+W (ai)( ai − m∗(m)) 
+
+K−1 ∑ 
+
+> i
+
+W (ai) .
+
+The numerator summands have mean zero and covariance Ωr . The multivariate central limit theorem and convergence of the denominator to one give the result. 
+
+Why a wider proposal can help. The covariance in Eq. 35 is large when the target places mass far from its mean in a region that the proposal rarely samples. Such a region contributes to the exact mean but is often absent from a finite batch. Increasing proposal density there can reduce this source of error. This explains the improvement from wider proposals in Figure 6; increasing width is useful only insofar as it improves coverage of influential target regions. Although SNIS is consistent, finite-sample error can place the estimated target mean on the wrong side of the current policy mean, reversing the update direction. 38 Under review B.6 FROM SURROGATE IMPROVEMENT TO RETURN IMPROVEMENT 
+
+Statement to be proved. We restate Eq. 3 from the main text. For a fixed temperature τ , an exact rollout critic, and bounded soft advantage, define the actual return change, the surrogate loss change, and the predicted return gain as 
+
+∆Jτ := Jτ (πθ ) − Jτ (πroll ),
+
+∆LME := LME (θ; θroll ) − L ME (θroll ; θroll ),
+
+∆Jsurrogate := −∆LME .
+
+Both ∆Jτ and ∆LME are defined as candidate minus rollout. Since Jτ is maximized but LME is minimized, a negative loss change gives a positive predicted return gain ∆Jsurrogate . Under the assumptions detailed below, we prove the bound with a TV advantage penalty and a KL entropy correction: 
+
+∆Jτ ≥ ∆Jsurrogate − 4γϵ A
+
+(1 − γ)2 (Dmax TV )2 − τ
+
+1 − γ Dmax KL ,Dmax TV := sup 
+
+> s
+
+DTV (πθ (· | s), π roll (· | s)) ,Dmax KL := sup 
+
+> s
+
+DKL (πθ (· | s)∥πroll (· | s)) .
+
+(3) Here ϵA = sup s,a |Aroll (s, a )| bounds the soft advantage, defined below. If ∆Jsurrogate exceeds the sum of the two penalties, then Jτ (πθ ) > J τ (πroll ).
+
+Proof roadmap. The surrogate uses rollout states, whereas the return depends on states visited by the candidate policy. To bound the resulting prediction error, we proceed as follows. 1. Express the surrogate gain. Expand the KL losses in Substep 1.2, then average the result-ing advantage and entropy correction over rollout states in Substep 1.4. 2. Express the return gain in the same form. Telescope the rollout value terms in Sub-step 2.2. In Substep 2.4, show that the two gains differ only in their state distributions. 3. Bound the advantage error. Bound the expected advantage in Substep 3.1 and the change in visited states in Substep 3.5. Combine these bounds into a TV penalty in Substep 3.6. 4. Complete the return-improvement bound. Bound the entropy correction in Substep 4.1, combine the two penalties in Substep 4.2, and state the sufficient condition for improvement in Substep 4.3. We adapt the entropy-regularized performance-difference identity of Cayci et al. (2024, Lemma B.1) (Substep 2.4) and combine it with the TRPO state-distribution mismatch argument (Schulman et al., 2015) (Substep 3.6). 
+
+Notation and assumptions. Keep τ and πroll fixed throughout the update, and let πθ be the candi-date policy. We use the main text’s ∆Jτ and ∆Jsurrogate , with a positive sign denoting improvement in both cases. The exact rollout critic defines 
+
+Aroll (s, a ) = Qroll (s, a ) − τ log πroll (a | s) − V πroll  
+
+> τ
+
+(s), ϵA := sup 
+
+> s,a
+
+|Aroll (s, a )| < ∞.
+
+Its expectation under the rollout policy is zero at every state. Define 
+
+¯Aθ (s) := Ea∼πθ (·| s)[Aroll (s, a )] ,k(s) := DKL (πθ (· | s)∥πroll (· | s)) , D := sup 
+
+> s
+
+k(s) = Dmax KL (πθ ∥πroll ) < ∞. (36) Here ¯Aθ (s) averages the rollout advantage over the candidate’s actions. The divergence k(s) mea-sures change from the rollout policy; the KL in Eq. 2 instead measures distance to the Boltzmann target. We assume the relevant discounted expectations are finite and γtEρ0,P,π θ [|V πroll  
+
+> τ
+
+(st)|] → 0.The latter condition, satisfied for bounded soft values, removes the terminal term in Substep 2.2. STEP 1: EXPRESS THE SURROGATE IMPROVEMENT 
+
+We show that the surrogate gain is the rollout-state average of ¯Aθ (s) − τ k (s), scaled by 1/(1 − γ).This form will allow a direct comparison with the return gain. 39 Under review 
+
+Substep 1.1: Write the difference of the two losses. First, negate the candidate-minus-rollout loss change to obtain the predicted return gain, then expand it as a difference of KL divergences to the same Boltzmann target. Both surrogate losses use the same frozen critic Qroll , Boltzmann target 
+
+pQ,τ , and state distribution droll . Only the policy inside the KL changes. Starting from the definition of improvement in the main text and substituting Eq. 2, 
+
+∆Jsurrogate = −∆LME = LME (θroll ; θroll ) − L ME (θ; θroll )= τ
+
+1 − γ Es∼droll [DKL (πroll ∥pQ,τ ) − DKL (πθ ∥pQ,τ )] .
+
+In the following per-state calculations, all action distributions and action expectations are conditional on the same state s.
+
+Substep 1.2: Expand the KL losses and cancel the normalizer. We turn the KL difference into a difference of entropy-augmented critic values. The target’s normalizing constant cancels because it is identical in both losses. From Eq. 17, log pQ,τ (a | s) = Qroll (s, a )/τ − log ZQ(s). For either 
+
+π = πroll or π = πθ , this gives 
+
+τ D KL (π∥pQ,τ ) = Ea∼π [τ log π(a | s) − τ log pQ,τ (a | s)] = Ea∼π [τ log π(a | s) − Qroll (s, a )] + τ log ZQ(s).
+
+The last term is outside the action expectation because it depends only on s. Subtracting the candi-date’s KL from the rollout policy’s KL now makes the cancellation explicit: 
+
+τ [DKL (πroll ∥pQ,τ ) − DKL (πθ ∥pQ,τ )]
+
+= Ea∼πroll [τ log πroll (a | s) − Qroll (s, a )] + τ log ZQ(s)
+
+− Ea∼πθ [τ log πθ (a | s) − Qroll (s, a )] − τ log ZQ(s)= Ea∼πθ [Qroll (s, a ) − τ log πθ (a | s)] − V πroll  
+
+> τ
+
+(s).
+
+Here we used the soft-value definition from Section 2, 
+
+V πroll  
+
+> τ
+
+(s) = Ea∼πroll [Qroll (s, a ) − τ log πroll (a | s)] .
+
+Thus the rollout expectation in the subtraction equals −V πroll  
+
+> τ
+
+(s).
+
+Substep 1.3: Identify the advantage and entropy correction. We now show that the remaining candidate expectation equals ¯Aθ (s) − τ k (s). Add and subtract τ log πroll (a | s) for each action: 
+
+Qroll (s, a ) − τ log πθ (a | s) − V πroll  
+
+> τ
+
+(s)= Qroll (s, a ) − τ log πroll (a | s) − V πroll  
+
+> τ
+
+(s)
+
+︸ ︷︷ ︸ 
+
+> Aroll (s,a )
+
+−τ [log πθ (a | s) − log πroll (a | s)]
+
+= Aroll (s, a ) − τ log πθ (a | s)
+
+πroll (a | s) .
+
+Taking the action expectation under πθ yields 
+
+Ea∼πθ [Qroll (s, a ) − τ log πθ (a | s)] − V πroll  
+
+> τ
+
+(s)= Ea∼πθ [Aroll (s, a )] 
+
+︸ ︷︷ ︸ 
+
+> ¯Aθ(s)
+
+−τ Ea∼πθ
+
+[
+
+log πθ (a | s)
+
+πroll (a | s)
+
+]︸ ︷︷ ︸  
+
+> DKL (πθ∥πroll )= k(s)
+
+.
+
+The action distribution in this expectation determines the direction of the KL: its first argument is the candidate policy. 
+
+Substep 1.4: Average over rollout states. We complete the surrogate identity by inserting the per-state result from Substep 1.3 into the loss difference from Substep 1.1: 
+
+∆Jsurrogate = 11 − γ Es∼droll [Ea∼πθ [Qroll (s, a ) − τ log πθ (a | s)] − V πroll  
+
+> τ
+
+(s)] = 11 − γ Es∼droll [ ¯Aθ (s) − τ k (s)] .
+
+(37) Thus, the surrogate gain is the candidate’s expected rollout advantage, minus the correction needed to evaluate entropy under the candidate policy. 40 Under review STEP 2: EXPRESS THE ACTUAL RETURN IMPROVEMENT 
+
+We show that ∆Jτ averages the same quantity ¯Aθ (s) − τ k (s) as the surrogate, but over the candi-date’s state distribution dπθ . We derive this identity directly from the return definition. 
+
+Substep 2.1: Subtract the returns using a common initial distribution. We first write the return difference as an expectation over candidate trajectories. Restating Eq. 1, 
+
+Jτ (πθ ) = 11 − γ E s∼dπθ 
+
+> a∼πθ(·| s)
+
+[r(s, a ) − τ log πθ (a | s)] = Eρ0,P,π θ
+
+[ ∞∑
+
+> t=0
+
+γt(r(st, a t) − τ log πθ (at | st))]
+
+.
+
+By definition, the rollout policy’s soft value is its expected entropy-augmented return from a given state. Hence Jτ (πroll ) = Es0∼ρ0 [V πroll  
+
+> τ
+
+(s0)] . Both policies start from the same ρ0, so this subtrac-tion can be placed inside the expectation over candidate trajectories: 
+
+∆Jτ = Eρ0,P,π θ
+
+[ ∞∑
+
+> t=0
+
+γt(r(st, a t) − τ log πθ (at | st)) − V πroll  
+
+> τ
+
+(s0)
+
+]
+
+.
+
+Substep 2.2: Telescope the rollout values. We replace the subtracted initial value by a sum of dif-ferences between successive values. This puts every contribution to ∆Jτ inside the same discounted sum. For any trajectory and finite horizon N , the intermediate value terms cancel: 
+
+> N
+
+∑
+
+> t=0
+
+γt[γV πroll  
+
+> τ
+
+(st+1 ) − V πroll  
+
+> τ
+
+(st)] = 
+
+> N+1
+
+∑
+
+> t=1
+
+γtV πroll  
+
+> τ
+
+(st) −
+
+> N
+
+∑
+
+> t=0
+
+γtV πroll  
+
+> τ
+
+(st)= −V πroll  
+
+> τ
+
+(s0) + γN +1 V πroll  
+
+> τ
+
+(sN +1 ).
+
+This cancellation also holds along candidate trajectories: it only uses successive evaluations of the same rollout value function. Taking expectations and letting N → ∞ , the terminal term vanishes by the assumption stated above. Substituting this sum for the initial-value subtraction therefore gives 
+
+∆Jτ = Eρ0,P,π θ
+
+[ ∞∑
+
+> t=0
+
+γt(
+
+r(st, a t) − τ log πθ (at | st) + γV πroll  
+
+> τ
+
+(st+1 ) − V πroll  
+
+> τ
+
+(st)
+
+)]
+
+.
+
+Each summand is the reward plus entropy contribution at the current step, plus the discounted next-state value, minus the current-state value. 
+
+Substep 2.3: Evaluate the conditional one-step contribution. We show that each summand, averaged over the candidate’s action and the next state, equals ¯Aθ (s) − τ k (s). For fixed s and a, the rollout Bellman equation is 
+
+Qroll (s, a ) = r(s, a ) + γEs′∼P (·| s,a )[V πroll  
+
+> τ
+
+(s′)] .
+
+Thus, averaging over the next state replaces r(s, a ) + γV πroll  
+
+> τ
+
+(s′) by Qroll (s, a ). Averaging next over the candidate’s action and using Substep 1.3 gives 
+
+E a∼πθ (·| s) 
+
+> s′∼P(·| s,a )
+
+[r(s, a ) − τ log πθ (a | s) + γV πroll  
+
+> τ
+
+(s′) − V πroll  
+
+> τ
+
+(s)] = Ea∼πθ (·| s)[Qroll (s, a ) − τ log πθ (a | s) − V πroll  
+
+> τ
+
+(s)] = Ea∼πθ (·| s)
+
+[
+
+Aroll (s, a ) − τ log πθ (a | s)
+
+πroll (a | s)
+
+]
+
+= ¯Aθ (s) − τ k (s).
+
+These nested averages are the law of total expectation applied to the candidate trajectories. The value functions remain those of the rollout policy throughout. 
+
+Substep 2.4: Average over candidate states and compare the gains. We now obtain the return-improvement identity and compare it with Eq. 37. At time t, these states follow ρπθ 
+
+> t
+
+. Using dπθ =(1 − γ) ∑ 
+
+> t≥0
+
+γtρπθ 
+
+> t
+
+, we obtain 
+
+∆Jτ =
+
+> ∞
+
+∑
+
+> t=0
+
+γtEs∼ρπθt [ ¯Aθ (s) − τ k (s)] = 11 − γ Es∼dπθ [ ¯Aθ (s) − τ k (s)] . (38) 41 Under review For a direct comparison, restate the actual return improvement and the surrogate improvement from Eq. 37: 
+
+∆Jτ = 11 − γ Es∼dπθ [ ¯Aθ (s) − τ k (s)] , ∆Jsurrogate = 11 − γ Es∼droll [ ¯Aθ (s) − τ k (s)] .
+
+With an exact rollout critic and fixed temperature, the two improvements differ only in how states are weighted. Both use the candidate policy’s actions inside ¯Aθ (s) and k(s). The surrogate evaluates the candidate policy on states visited by the rollout policy, whereas the actual return reflects states visited by the candidate itself. If these state distributions coincide, the two improvements are exactly equal. The remaining proof bounds the discrepancy caused by changing the visited states. STEP 3: BOUND THE ERROR IN THE ADVANTAGE TERM 
+
+We bound the error from averaging ¯Aθ over rollout states instead of candidate states. The argument has two parts: a small policy change limits both the expected rollout advantage and the change in visited states. Their product gives the advantage penalty in Eq. 3. 
+
+Substep 3.1: Bound the expected rollout advantage. We show that | ¯Aθ (s)| ≤ 2ϵAα, where α is the largest policy change in total variation. Recall ϵA and define α by 
+
+ϵA := sup 
+
+> s,a
+
+|Aroll (s, a )|,α := sup 
+
+> s
+
+DTV (πθ (· | s), π roll (· | s)) = 12 sup 
+
+> s
+
+∫
+
+> A
+
+|πθ (a | s) − πroll (a | s)| da. 
+
+Here ϵA bounds the advantage magnitude, while α ∈ [0 , 1] measures the largest policy change across states in total variation (TV). By the soft-value definition, 
+
+∫
+
+> A
+
+πroll (a | s)Aroll (s, a ) d a = Ea∼πroll [Qroll (s, a ) − τ log πroll (a | s)] − V πroll  
+
+> τ
+
+(s) = 0 .
+
+Subtracting this zero from ¯Aθ (s) = ∫ 
+
+> A
+
+πθ (a | s)Aroll (s, a ) d a introduces the difference between the two policies. The triangle inequality and the definitions above give 
+
+| ¯Aθ (s)| =
+
+∣∣∣∣∫
+
+> A
+
+[πθ (a | s) − πroll (a | s)] Aroll (s, a ) d a
+
+∣∣∣∣
+
+≤
+
+∫
+
+> A
+
+|πθ (a | s) − πroll (a | s)|| Aroll (s, a )| da
+
+≤ ϵA
+
+∫
+
+> A
+
+|πθ (a | s) − πroll (a | s)| da ≤ 2ϵAα. 
+
+(39) 
+
+Substep 3.2: Derive the balance equation for discounted visits. To compare state distributions, we first derive dπ = (1 − γ)ρ0 + γd π Pπ from the definition of discounted visitation. This identity separates the initial visit from all later visits. We begin by defining the one-step transition operator 
+
+Pπ . Starting at state s, first draw an action from π(· | s), then draw the next state from P (· | s, a ).Averaging over the action gives the next-state distribution under the policy: 
+
+Pπ (s′ | s) := 
+
+∫
+
+> A
+
+π(a | s)P (s′ | s, a ) d a. 
+
+This conditional distribution is called the policy’s transition kernel. If the current state has distribu-tion ρ, the next-state distribution is written ρP π , meaning 
+
+(ρP π )( s′) := 
+
+∫
+
+ρ(s)Pπ (s′ | s) d s. 
+
+Thus multiplication by Pπ means advancing a state distribution by one time step. In particular, 
+
+ρπt+1 = ρπt Pπ .Next, separate the initial visit from the later visits. The definition of dπ includes every time step, starting at t = 0 . Separating out its first term gives an equivalent expression: 
+
+dπ := (1 − γ)
+
+> ∞
+
+∑
+
+> t=0
+
+γtρπt = (1 − γ)ρ0 + (1 − γ)
+
+> ∞
+
+∑
+
+> t=1
+
+γtρπt .
+
+42 Under review The t = 0 term is (1 − γ)γ0ρπ 
+
+> 0
+
+= (1 − γ)ρ0. Both expressions describe the same distribution; the second writes its initial-state contribution separately. Now rewrite the remaining sum. Set u = t − 1 and use ρπu+1 = ρπuPπ :
+
+(1 − γ)
+
+> ∞
+
+∑
+
+> t=1
+
+γtρπt = γ(1 − γ)
+
+> ∞
+
+∑
+
+> u=0
+
+γuρπu+1 
+
+= γ(1 − γ)
+
+> ∞
+
+∑
+
+> u=0
+
+γu(ρπuPπ ) = γ
+
+[
+
+(1 − γ)
+
+> ∞
+
+∑
+
+> u=0
+
+γuρπu
+
+]︸ ︷︷ ︸
+
+> dπ
+
+Pπ = γd π Pπ .
+
+The same transition operator Pπ acts linearly on every term, so we can first form the weighted sum in brackets. This bracket is exactly the original definition of dπ , which explains why it reappears. Applying Pπ advances every visit by one step, and the factor γ adds the corresponding discount: the first term of γd π Pπ is (1 − γ)γρ π 
+
+> 1
+
+. Thus it collects visits from time 1 onward. Adding the initial visit gives 
+
+dπ = (1 − γ)ρ0 + γd π Pπ .
+
+Substep 3.3: Separate propagation from policy change. We express the difference in visited states as two contributions: propagation of an existing state difference, and the effect of choosing different actions. Apply the balance equation from Substep 3.2 to each policy. Both policies use the same ρ0, so their initial-state terms cancel. We then add and subtract γd roll Pπθ :
+
+dπθ − droll = γ[dπθ Pπθ − droll Pπroll 
+
+] = γ[dπθ Pπθ − droll Pπθ + droll Pπθ − droll Pπroll 
+
+]
+
+= γ(dπθ − droll )Pπθ + γd roll (Pπθ − Pπroll ).
+
+The first term propagates the difference in current-state distributions through the same candidate transition kernel. The second starts from the same rollout state distribution and measures the effect of changing the policy’s action probabilities. We bound these two contributions separately below. 
+
+Substep 3.4: Bound propagation through a common transition kernel. We show that one step under the same policy cannot increase the L1 distance between state distributions. This bounds the first contribution from Substep 3.3. Write δd := dπθ − droll for the signed difference of the two state distributions, with ∥δd ∥1 := ∫ |δd (s)| ds. Taking norms in the preceding identity and applying the triangle inequality gives 
+
+∥δd ∥1 ≤ γ∥δdP πθ ∥1 + γ∥droll (Pπθ − Pπroll )∥1.
+
+For the first term, use the nonnegativity and normalization of the transition probabilities: 
+
+∥δdP πθ ∥1 =
+
+∫ ∣∣∣∣∫
+
+δd (s)Pπθ (s′ | s) d s
+
+∣∣∣∣ ds′ ≤
+
+∫
+
+|δd (s)|
+
+[∫ 
+
+Pπθ (s′ | s) d s′
+
+]︸ ︷︷ ︸
+
+> 1
+
+ds = ∥δd ∥1.
+
+Thus applying the same transition kernel cannot increase the L1 distance between state distributions. 
+
+Substep 3.5: Bound policy change and the resulting state shift. We bound the second contribution by 2α. Combining it with Substep 3.4 then gives ∥dπθ − droll ∥1 ≤ 2γα/ (1 − γ). First fix a state s
+
+and expand the two policy-averaged transition kernels: 
+
+∫
+
+|Pπθ (s′ | s) − Pπroll (s′ | s)| ds′ =
+
+∫ ∣∣∣∣∫
+
+> A
+
+[πθ (a | s) − πroll (a | s)] P (s′ | s, a ) d a
+
+∣∣∣∣ ds′
+
+≤
+
+∫
+
+> A
+
+|πθ (a | s) − πroll (a | s)|
+
+[∫ 
+
+P (s′ | s, a ) d s′
+
+]︸ ︷︷ ︸
+
+> 1
+
+da ≤ 2α. 
+
+The last inequality is the definition of α: at every state, the L1 distance between the action distribu-tions is at most 2α. Averaging over the normalized rollout state distribution preserves this bound: 
+
+∥droll (Pπθ − Pπroll )∥1 ≤
+
+∫
+
+droll (s)
+
+[∫ 
+
+|Pπθ (s′ | s) − Pπroll (s′ | s)| ds′
+
+]
+
+ds
+
+≤ 2α
+
+∫
+
+droll (s) d s = 2 α. 
+
+43 Under review Substituting these two bounds into the triangle inequality gives ∥δd ∥1 ≤ γ∥δd ∥1 + 2 γα . Move the term γ∥δd ∥1 to the left and divide by 1 − γ > 0. This gives 
+
+(1 − γ)∥dπθ − droll ∥1 ≤ 2γα, ∥dπθ − droll ∥1 ≤ 2γα 
+
+1 − γ . (40) 
+
+Substep 3.6: Combine the advantage bounds in TV. We now bound the advantage-expectation error by multiplying sup s | ¯Aθ (s)| by the state-distribution distance. Both bounds are proportional to α, so their product is proportional to α2. Combining Eqs. 39 and 40 gives 
+
+11 − γ
+
+∣∣Edπθ [ ¯Aθ ] − Edroll [ ¯Aθ ]∣∣ ≤ ∥dπθ − droll ∥1 sup s | ¯Aθ (s)|
+
+1 − γ
+
+≤ 4γϵ A
+
+(1 − γ)2 α2.
+
+(41) This step bounds the contribution of the advantage term to the discrepancy between ∆Jτ and 
+
+∆Jsurrogate . Small policy changes limit both the change in visited states and the expected rollout advantage, producing the quadratic total-variation bound above. Step 4 accounts for the remaining entropy correction. STEP 4: COMPLETE THE RETURN -IMPROVEMENT BOUND 
+
+We bound the remaining entropy correction and add it to the advantage error. This proves Eq. 3 and gives a sufficient condition for Jτ to improve. 
+
+Substep 4.1: Bound the entropy correction. Subtracting the two gain identities from Substep 2.4, the contribution from −τ k (s) is τ 
+
+> 1−γ
+
+(Edroll [k] − Edπθ [k]) . We show that this contribution is at least 
+
+−τ D/ (1 − γ). Since 0 ≤ k(s) ≤ D, both state averages lie in [0 , D ]. Hence 
+
+τ
+
+1 − γ (Es∼droll [k(s)] − Es∼dπθ [k(s)]) ≥ − τ
+
+1 − γ D. 
+
+Substep 4.2: Combine the advantage and entropy bounds. We obtain the claimed lower bound on ∆Jτ by subtracting the two gain identities and applying Substep 3.6 to the advantage term, then Substep 4.1 to the entropy term: 
+
+∆Jτ ≥ ∆Jsurrogate − 4γϵ A
+
+(1 − γ)2 α2 + τ
+
+1 − γ (Es∼droll [k(s)] − Es∼dπθ [k(s)]) 
+
+≥ ∆Jsurrogate − 4γϵ A
+
+(1 − γ)2 α2 − τ
+
+1 − γ D. 
+
+(42) This proves Eq. 3. The first penalty bounds the error in the advantage prediction; the second bounds the error in its entropy correction. Both arise from evaluating the update on rollout states instead of the states visited by the candidate. 
+
+Substep 4.3: State the improvement condition and its practical meaning. The bound guarantees an increase in Jτ when the surrogate gain exceeds the two error penalties. Explicitly, 
+
+∆Jsurrogate > 4γϵ A
+
+(1 − γ)2 α2 + τ
+
+1 − γ D =⇒ Jτ (πθ ) > J τ (πroll ).
+
+To express a sufficient condition using only KL, apply Pinsker’s inequality, 2α2 ≤ D:
+
+4γϵ A
+
+(1 − γ)2 α2 + τ
+
+1 − γ D ≤
+
+( 2γϵ A
+
+(1 − γ)2 + τ
+
+1 − γ
+
+)
+
+D. 
+
+The surrogate gain exceeding this KL upper bound is therefore also sufficient for return improve-ment. In words, the predicted improvement must exceed the bound on the prediction error. A small KL alone does not imply improvement, and failing this sufficient condition does not imply that the update is harmful. This motivates the KL term in Eq. 4: minimize the surrogate while limiting policy change. Replacing the worst-state KL constraint by a rollout-average constraint gives the average penalty. With the critic and rollout distribution fixed, the full Lagrangian satisfies 
+
+L(πθ , τ, λ ) = (1 − γ)LME (θ; θroll ) + λEs∼droll [k(s)] + τ Htarget − λδ KL − τ Es∼droll [log ZQ(s)] .
+
+44 Under review The second line is independent of the policy when the multipliers are fixed. The average constraint is a practical relaxation. With this relaxation and an estimated critic, minimizing L over the policy does not by itself guarantee the sufficient condition above. B.7 TRUST REGIONS FOR GAUSSIAN POLICIES 
+
+For Gaussian policies, a bound on either KL direction also bounds the other. A TV bound strictly below one bounds both KL directions. The short proofs below give conservative constants sufficient to control the entropy correction in Eq. 3. 
+
+Setup and notation. Fix a state and suppress the conditioning on s. Assume positive-definite covariances, meaning every variance is strictly positive for our diagonal Gaussian policies, and use natural logarithms. KL and TV are unchanged by a common invertible transformation: its Jacobian cancels in the density ratio and the integral. We can therefore undo the common tanh squashing and action rescaling, then subtract the rollout mean and divide by the rollout standard deviation in each coordinate. In these standardized coordinates, 
+
+πroll = N (0 , I ), πcurr = N (m, diag( σ21 , . . . , σ 2
+
+> d
+
+)) .
+
+Here mi is the standardized mean change, and σ2 
+
+> i
+
+is the current variance relative to the rollout variance. Full covariance matrices reduce to the same form by whitening and rotation. The Gaussian KL formulas separate variance changes from mean changes: 
+
+DKL (πroll ∥πcurr ) = 12
+
+∑
+
+> i
+
+[
+
+log σ2 
+
+> i
+
++ 1
+
+σ2
+
+> i
+
+− 1 + m2
+
+> i
+
+σ2
+
+> i
+
+]
+
+,DKL (πcurr ∥πroll ) = 12
+
+∑
+
+> i
+
+[σ2 
+
+> i
+
+− 1 − log σ2 
+
+> i
+
++ m2
+
+> i
+
+] .
+
+(43) Each variance term and each mean term is nonnegative. B.7.1 FORWARD KL BOUNDS REVERSE KL Suppose DKL (πroll ∥πcurr ) ≤ δ. We prove the explicit bound 
+
+DKL (πcurr ∥πroll ) ≤ δe 1+2 δ . (44) This bound tends to zero with δ and does not depend on the action dimension. A sharper bound is given by Zhang et al. (2023, Theorem 1). 
+
+Step 1: bound the variance ratios. Since every contribution to forward KL is nonnegative, 
+
+log σ2 
+
+> i
+
++ 1
+
+σ2
+
+> i
+
+− 1 ≤ 2δ. 
+
+Rearranging and using 1/σ 2 
+
+> i
+
+> 0 gives 
+
+log σ2 
+
+> i
+
+≤ 1 + 2 δ − 1
+
+σ2
+
+> i
+
+≤ 1 + 2 δ. 
+
+Exponentiating preserves the inequality, so 
+
+σ2 
+
+> i
+
+≤ e1+2 δ =: Mδ .
+
+This is a conservative upper bound on the variance; the corresponding standard deviation satisfies 
+
+σi ≤ e1/2+ δ .
+
+Step 2: compare the KL terms. For any x > 0,
+
+x − 1 − log x ≤ max {1, x }(x−1 − 1 + log x). (45) To see this, both scalar expressions vanish at x = 1 , and the derivative of the left expression is x
+
+times the derivative of x−1 −1+log x. Integrating between 1 and x bounds this factor by max {1, x }.45 Under review Apply Eq. 45 with x = σ2 
+
+> i
+
+. Step 1 gives both Mδ ≥ 1 and σ2 
+
+> i
+
+≤ Mδ , so max {1, σ 2 
+
+> i
+
+} ≤ Mδ . Thus the variance contribution in each coordinate satisfies 
+
+σ2 
+
+> i
+
+− 1 − log σ2 
+
+> i
+
+≤ max {1, σ 2 
+
+> i
+
+}
+
+( 1
+
+σ2
+
+> i
+
+− 1 + log σ2
+
+> i
+
+)
+
+≤ Mδ
+
+( 1
+
+σ2
+
+> i
+
+− 1 + log σ2
+
+> i
+
+)
+
+.
+
+The mean contribution satisfies the same comparison: 
+
+m2 
+
+> i
+
+= σ2
+
+> i
+
+m2
+
+> i
+
+σ2
+
+> i
+
+≤ Mδ
+
+m2
+
+> i
+
+σ2
+
+> i
+
+.
+
+Add these two inequalities in each coordinate, then sum over i. The same Mδ applies to every coordinate, so it factors out: 
+
+DKL (πcurr ∥πroll ) = 12
+
+∑
+
+> i
+
+[σ2 
+
+> i
+
+− 1 − log σ2 
+
+> i
+
++ m2
+
+> i
+
+]
+
+≤ 12
+
+∑
+
+> i
+
+[
+
+Mδ
+
+( 1
+
+σ2
+
+> i
+
+− 1 + log σ2
+
+> i
+
+)
+
++ Mδ
+
+m2
+
+> i
+
+σ2
+
+> i
+
+]
+
+= Mδ
+
+12
+
+∑
+
+> i
+
+[
+
+log σ2 
+
+> i
+
++ 1
+
+σ2
+
+> i
+
+− 1 + m2
+
+> i
+
+σ2
+
+> i
+
+]
+
+= Mδ DKL (πroll ∥πcurr ) ≤ Mδ δ. 
+
+The last inequality uses the assumed forward-KL budget DKL (πroll ∥πcurr ) ≤ δ, proving Eq. 44. Exchanging the policies proves the reverse implication. If their covariances are equal, the two KL divergences are exactly equal. B.7.2 TV BOUNDS BOTH KL DIRECTIONS 
+
+At a fixed state, Gaussians with positive-definite covariances satisfy ρ := DTV (πroll , π curr ) <
+
+1. Let BG(δ) denote the dimension-independent reverse-KL bound given a forward-KL budget δ,established by Zhang et al. (2023, Theorem 1). This bound is finite and tends to zero with δ. Writing 
+
+tρ = −2 log(1 − ρ), we obtain the following corollary: 
+
+max {DKL (πcurr ∥πroll ), D KL (πroll ∥πcurr )} ≤ 2BG(tρ) + tρ
+
+︸ ︷︷ ︸ 
+
+> CTV (ρ)
+
+. (46) 
+
+Proof. Define the affinity and normalized geometric mean 
+
+A =
+
+∫ √πroll (a)πcurr (a) d a, πmid (a) = 
+
+√πroll (a)πcurr (a)
+
+A .
+
+The distribution πmid is Gaussian because its log density is quadratic. The TV–Hellinger inequality gives A ≥ 1 − ρ (Devroye et al., 2023, Section 2). Substituting the definition of πmid yields 
+
+DKL (πmid ∥πroll ) + DKL (πmid ∥πcurr ) = −2 log A ≤ tρ.
+
+Both terms are nonnegative, so each is at most tρ. Zhang et al.’s theorem therefore gives 
+
+DKL (πcurr ∥πmid ) ≤ BG(tρ). Finally, the same density identity implies 
+
+DKL (πcurr ∥πroll ) = 2 DKL (πcurr ∥πmid ) − 2 log A
+
+≤ 2BG(tρ) + tρ.
+
+Exchanging the policies proves the other direction. □
+
+Thus CTV (ρ) is finite for every ρ < 1 and tends to zero as ρ → 0. A common invertible tanh transformation preserves both divergences. Applying this result uniformly across states requires a common TV bound strictly below one. 46 Under review B.7.3 IMPLICATIONS FOR THE RETURN BOUND 
+
+If the forward-KL budget δ holds at every state, Pinsker and Eq. 44 give (Dmax TV )2 ≤ δ/ 2 and 
+
+Dmax KL ≤ δe 1+2 δ . A uniform TV budget ρ < 1 instead gives Dmax KL ≤ CTV (ρ). Thus either constraint controls both penalties in Eq. 3. Small temperature further reduces the entropy penalty. The exact-critic and bounded-soft-advantage assumptions still apply, and the surrogate gain must exceed the penalties to guarantee improvement. These are uniform, population-level statements. REPPO’s sampled forward-KL constraint (Voelcker et al., 2026) and FERPO’s state-average ESS objective do not establish worst-state control. For FERPO, the fitting condition of Proposition 1 and a population ESS floor e∞(s) ≥ e0 > e −1/2
+
+at every state would give Dmax TV ≤ √−2 log e0 < 1; the TV result then also bounds the entropy-related KL. These comparisons concern the two Gaussian actors; the unrestricted target q∗ need not be Gaussian. 47

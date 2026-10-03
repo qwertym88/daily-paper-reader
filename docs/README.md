@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-02</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-03</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 22 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 23 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>9</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>14</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-02 23:30:56 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-03 22:24:47 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>2026-10-02 日报精选 22 篇论文，精读 8 篇、速读 14 篇，聚焦神经架构搜索与机器人学习前沿。最值得关注的是《Prediction-powered Neural Architecture Search》（9.0/10）提出的预测驱动 NAS 思路，以及《DexWeave》（8.0/10）从人类演示学习人形灵巧移动操作；速读中《ZeroBot》的生成式 Real2Sim 几分钟从零学习也很有潜力。普通读者可优先浏览这三篇的摘要与演示，判断其思路能否迁移到自己的任务。</p>
+<p>2026-10-03 日报精选23篇，精读9篇，重点聚焦概率时间序列预测与长程人形机器人操作。最值得看的是拿下9.0分的《Variational Augmented Invertible Koopman Autoencoder》和《EgoAlign》，前者探索可逆Koopman自编码器用于概率预测，后者致力于缩小人类与人形机器人之间的长程移动操作差距。普通读者可优先从这两篇精读入手，再顺带浏览策略优化方向的速读文章。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">8 篇</strong>
+    <strong class="dpr-home-dashboard-count">9 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Prediction-powered Neural Architecture Search">Prediction-powered Neural Architecture Search</span></li><li><span class="dpr-home-dashboard-paper-title" title="DexWeave: Learning Dexterous Humanoid Loco-Manipulation from Human Demonstrations">DexWeave: Learning Dexterous Humanoid Loco-Manipulation from Human Demonstrations</span></li><li><span class="dpr-home-dashboard-paper-title" title="KPI: A Promptable Kernel for Physical Interaction on Humanoids">KPI: A Promptable Kernel for Physical Interaction on Humanoids</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Variational Augmented Invertible Koopman Autoencoder for probabilistic time series forecasting">Variational Augmented Invertible Koopman Autoencoder for probabilistic time series forecasting</span></li><li><span class="dpr-home-dashboard-paper-title" title="EgoAlign: Bridging the Human-Humanoid Gap for Long-Range Loco-Manipulation">EgoAlign: Bridging the Human-Humanoid Gap for Long-Range Loco-Manipulation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Finite-Sample Theory for Fitted Q-Iteration When Actions Are Functions">Finite-Sample Theory for Fitted Q-Iteration When Actions Are Functions</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>5</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>3</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,9 +87,9 @@
     <strong class="dpr-home-dashboard-count">14 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ZeroBot: Learning from Scratch in Minutes with Generative Real2Sim">ZeroBot: Learning from Scratch in Minutes with Generative Real2Sim</span></li><li><span class="dpr-home-dashboard-paper-title" title="QAMM: Adjoint MeanFlow Matching for Few-Step Offline Reinforcement Learning">QAMM: Adjoint MeanFlow Matching for Few-Step Offline Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="HOI-Retarget: Contact-Centric Retargeting for Human-Object Interaction">HOI-Retarget: Contact-Centric Retargeting for Human-Object Interaction</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Towards Optimal Policy Improvement">Towards Optimal Policy Improvement</span></li><li><span class="dpr-home-dashboard-paper-title" title="ReCo: Response-Consistent Locomotion with Policy-Aware MPC for Legged Manipulation">ReCo: Response-Consistent Locomotion with Policy-Aware MPC for Legged Manipulation</span></li><li><span class="dpr-home-dashboard-paper-title" title="FERPO: Forward Entropy-Regularized Policy Optimization">FERPO: Forward Entropy-Regularized Policy Optimization</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>9</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>10</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
 </div>
 
