@@ -1,0 +1,1449 @@
+Title: Right In-Place (RiP) Convolution: A Simple, General, and Near-Optimal Strategy for Memory-Efficient CNN Inference
+
+URL Source: https://arxiv.org/pdf/2610.00586v1
+
+Published Time: Fri, 02 Oct 2026 00:24:16 GMT
+
+Number of Pages: 21
+
+Markdown Content:
+# Right In-Place (RiP) Convolution: A Simple, General, and Near-Optimal Strategy for Memory-Efficient CNN Inference 
+
+## Opegbemi Matthias Busoye Tolulope Matthew Busoye Eghonghon-aye Eigbe PowerLabs Technologies, Lagos, Nigeria 
+
+{matthias, matthew, eghonghon }@powerlabstech.com 
+
+## Abstract 
+
+Activation memory, not compute, limits CNN inference on constrained hardware such as microcontrollers. Direct in-place convolution removes the dual-buffer cost, but the memory-optimal formulation of Gural and Murmann [9] assumes valid padding, unit stride, unit dilation, and odd square kernels, and needs a non-sequential traversal cost-ing 2× inference time in transposes. We identify two regimes in which their published closed form does not hold: (1) an under-allocation of exactly (k − 1) Cin mod ( Cout −
+
+Cin ) scalars, active on every convolutional layer of their own deployed network and manifesting as a silent corrup-tion of still-live input; (2) an unbounded overestimate, up to 2,432 ×, once the critical leg leaves the output grid. We correct both and generalize to arbitrary stride, dila-tion, padding, and rectangular kernels. We then propose Right In-Place (RiP) convolution, a bit-identical opera-tion in which every layer reads its input right-aligned in a shared workspace and writes its output left-aligned from index zero. The debt is piecewise affine in the output pixel index, so evaluating its breakpoints in O(1) yields the min-imum safe gap without enumerating the output grid, with row-major access preserved. Across 10 ,000 random lay-ers RiP produced no corruption, and across 84 convolu-tional layers from 25 architectures it matches the herring-bone workspace exactly on 58 and within 5% on 81, using 24.8% less memory than dual buffering on average. Written into TinyEngine’s [19] kernels and deployed to a Raspberry Pi Pico 1 and Pico 2, it cuts peak activation memory across eleven MCUNet models by 12.5 to 33.3% at unchanged cy-cle counts and bit-identical outputs, raising the number of models that fit the Pico 1’s 256 KB SRAM from six to nine. 
+
+## 1. Introduction 
+
+Inference is moving from the cloud to the edge, where run-ning locally keeps user data on the device, tolerates inter-mittent connectivity, and fits a single-Joule power envelope. The memory hierarchy is what constrains it: a modern GPU has tens of gigabytes of DRAM, a mid-range microcon-troller (MCU) such as the RP2040 has 256 KB 1 of SRAM, and the low-end 8-bit class still shipped by the billion pro-vides 2–16 KB. That makes deployment a memory problem before it is a compute problem, and one question decides whether a net-work runs well: does the working set fit in the fast memory tier, or must it spill to a slower and more energy-expensive one [14]? Weights are by now well served, with pruning, quantization, and bit-packing reaching compression above 
+
+50 × [3]. Activations are not. They must be materialized during inference, and for the early layers of a typical CNN, the input feature map alone can exceed the budget. Mi-crocontrollers make this hardest and motivate our analysis, but nothing in it is specific to them: the same accounting governs any device whose working set competes for a fast memory tier. Direct in-place convolution, overwriting stale input acti-vations with new outputs as computation proceeds, needs no auxiliary buffer, no cross-layer scheduling, and no hardware modification. It works because convolution sits between two extremes. In-place execution is routine for an element-wise operator such as ReLU, where each output depends on one input, and impossible for a dense layer y = W x , where nothing goes stale until the whole output exists. Specifi-cally, a convolution output depends on a bounded neighbor-hood of khkwCin inputs, so what is needed is not a second buffer but a gap : a bounded region of slack memory be-tween the write frontier and the next live input. Determining that gap is the problem this paper solves. Gural and Murmann [9] prove that a herringbone traver-sal minimizes activation memory for direct convolution, fit-ting an MNIST classifier into 2 KB of SRAM. Two gaps remain. Their analysis assumes valid padding, unit stride, 
+
+> 1We report 256 KB, not the RP2040 full 264 KB, since the last two 4 KB banks (SCRATCH X/SCRATCH Y) are reserved by the Pico SDK’s default linker script for per-core stacks and are not part of the contiguous RAM region available to the application.
+
+1arXiv:2610.00586v1 [cs.LG] 30 Sep 2026 unit dilation, and odd square kernels. Modern CNNs violate every one of these assumptions: strided downsampling [22], dilated convolutions [6], non-square kernels [28], and same-padding are staples of ResNet [12], MobileNet [15], Ef-ficientNet [29], and MCUNet [19]. Also, the geomet-ric lemma at its heart does not generalize to anisotropic receptive fields. Moreover, optimality demands a non-sequential traversal, forcing an in-place transpose at every row–column switch and a final inverse permutation, which the authors report costs 2× inference time. 
+
+Contributions. We identify two regimes in which the published closed form fails, one under-allocating and one overestimating without bounds, and correct both. We gen-eralize the analysis to arbitrary stride, dilation, padding, rectangular kernels, and uneven output grids. We then pro-pose Right In-Place (RiP) convolution, a row-major layout whose minimum safe gap is obtained by breakpoint evalu-ation, and validate it on 10 ,000 synthetic layers, 84 layers from 25 architectures, and nine and eleven MCUNet models deployed to a Raspberry Pi Pico 1 and Pico 2 respectively. 
+
+## 2. Related Work 
+
+Work on activation memory for kilobyte-scale devices di-vides along the axis of memory reuse that each method ex-ploits. Tab. 1 places our contribution (a fine-grained spatial 
+
+in-place scheme for general channel-mixing convolutions) against the rest. 
+
+Spatial in-place convolution. Gural & Murmann [9] first showed that direct convolution can overwrite stale input ac-tivations with new outputs, and proved that a herringbone 
+
+traversal of the output grid, alternating rows and columns so that edge pixels are reclaimed as early as possible, achieves the minimum activation memory under valid padding, unit stride, unit dilation, and odd square kernels. The result is memory-optimal but costs a non-sequential output order, an in-place transpose at every row-to-column switch, and a fi-nal inverse permutation; their Arduino case study reports 
+
+2× inference overhead ( 819 s against 396 s ). Their concur-rently introduced Replace strategy runs row-major at naive speed, but is only analyzed for the same restricted setting and fragments freed memory at row ends. Neither has been extended to arbitrary stride, dilation, padding, or rectangu-lar kernels, and few subsequent methods have revisited the layout problem itself. Zhang et al. [30] reorder loops for “zero-memory-overhead” direct convolution, but measure overhead beyond the storage of the input and output activa-tions, so a full output buffer is still allocated. RiP extends the Gural & Murmann analysis to arbitrary parameters and removes the transpose overhead, using a fragmentation-free single-gap layout with an O(1) closed-form gap. The closest confusable work is buffer replacement. Sakr et al. [25] extend CMSIS-NN with a single arena sized to the largest pair of adjacent layer activations so that every layer draws its input and output from the same reused space, cut-ting whole-network activation memory by roughly 27 .2% .However, within a layer, the convolution is still dual-buffered; the granularity is the whole tensor, and the de-cision is made between layers so a layer’s own input and output coexist while it runs. RiP overlaps those two in one buffer sized by the worst instant, and the two compose: our per-layer bound sets the size of the very tensors such an arena must pack. 
+
+Other axes. Channel in-place exploits the fact that depth-wise convolutions do not mix channels, so the input ac-tivation of channel γ may be overwritten by the output of channel γ+1 . TinyEngine [19, 20] measures a 1.6×
+
+peak reduction on depthwise layers and TinyAD [27] for-malizes the same reschedule with a transit buffer. Nei-ther can apply to the 3×3 and pointwise 1×1 convolutions that dominate modern activation memory, which is exactly the case RiP targets. Cross-layer methods attack the peak from outside the layer: MCUNetV2 [21] computes a spa-tial patch across several layers before advancing, cutting MobileNetV2’s peak by up to 8× at the cost of recomputa-tion, and fused depthwise tiling [26] and line-buffer pipelin-ing [17] reach the same end by other means. All still pay the full HpWpCin + Hout Wout Cout inside any single bottle-neck layer; RiP attacks that residual, and the patch itself can be executed in our layout. In silicon, RAMAN [18] overlays the input and output activation buffers on one on-chip region for up to 50% storage reduction — the coarse, whole-buffer analogue of our idea, tied to a specific dataflow and requir-ing custom hardware. 
+
+Memory planning. A parallel line treats activation memory as tensor-lifetime allocation. TFLite Micro packs tensors into a fixed arena by first fit [8]; iterative graph optimization [31] cuts the peak by up to 26.4% against it, and MoteNN [7] by up to 80% against prior coarse-grained schedulers. These answer “given a set of tensor lifetimes, how tightly can we pack them?” RiP answers the lower-level question of what the smallest workspace is un-der which a single convolution can execute at all, so a tighter per-layer bound shrinks the tensors any planner must pack. Weight quantization [11, 16, 24], pruning [10, 13, 23], ar-chitecture search [4, 5], bit-packing [3], and fused-layer ac-celerators [2] all reduce total model footprint or cross-layer traffic without altering the intra-layer activation peak, and are complementary throughout. 
+
+## 3. Generalized Herringbone Debt 
+
+The herringbone traversal (as in [9]) processes output pix-els in an alternating row–column order (Fig. 2a), reclaim-20 10 20 30 40 50 60                 
+
+> Life cycle (operator)
+> 0100 200 300
+> Memory Footprint (KB)  Naive, Dual Buffer peak 358.7 KB
+> Pico 1 RAM 256 KB · over by 103 KB
+> 010 20 30 40 50 60
+> Life cycle (operator) MCUNet, Inplace Depthwise peak 267.9 KB
+> Pico 1 RAM 256 KB · over by 12 KB
+> 010 20 30 40 50 60
+> Life cycle (operator) Right In-Place (RiP) peak 207.4 KB
+> Pico 1 RAM 256 KB · +49 KB spare
+> CONV_2D DEPTHWISE_CONV_2D ADD AVERAGE_POOL_2D sbuf (17.3 KB) kbuf (0.8 KB) SDK + stdio (7.8 KB)
+
+Figure 1. Workspace layout on a Pico 1 for MCUNet-in3 under naive dual buffering, TinyEngine’s scheduler, and RiP. All three are placed by the same MILP memory allocator (Sec. 4.3). On the first two it reaches the same peak as TinyEngine’s first-fit memory allocator [19], so the allocator alone does not account for the saving; under in-place convolution first-fit fragments the arena and does not allow the full utilization of the extra memory, so the MILP is what lets RiP’s gap be reclaimed rather than stranded. Table 1. Memory-reduction axes for CNN inference on tiny devices. “General” = applies to standard channel-mixing convolutions; “Sequential” = preserves row-major output order without reordering; “Bound” = derives a closed-form minimum workspace for the layer. 
+
+Method Axis General Sequential Bound Restrictions 
+
+Herringbone [9] spatial in-place ✓ × ✓ valid, s=1 , d=1 , odd k square Replace [9] spatial in-place ✓ ✓ × valid, s=1 , d=1 , odd k square In-place DW [19] channel in-place × ✓ – depthwise only MCUNetV2 [21] cross-layer patch ✓ – – recomputation overhead RAMAN [18] hardware overlay ✓ – × requires custom accelerator CMSIS-NN Replace [25] inter-layer arena ✓ ✓ × whole-tensor granularity MoteNN [7] tensor packing ✓ – – orthogonal to per-layer bound 
+
+RiP (ours) spatial in-place ✓ ✓ ✓ —
+
+ing edge input pixels as they go stale. Under the restricted setting, a leg of length x contributes net debt D(x) =
+
+x(Cout − Cin ) − (k − 1) Cin , which increases with x. Legs are processed in decreasing length, so the running sum rises while legs are long enough to have a positive debt and falls once they are not; the peak sits where the sign changes, at the critical point x∗ = ( k − 1) Cin /(Cout − Cin ). The as-published closed form [9, Eq. 2] is 
+
+DG&M  
+
+> hb
+
+=  Hout Wout − ⌊ x∗⌋2Cout 
+
+−  Hin Win − (⌊x∗⌋ + k − 1) 2 − kCin . (1) 124578D (3), 1 row  st D (2), 3 row  rd 036D (1), 5 row  th D (2), 2 col  nd D (1), 4 col  th 
+
+(a) Herringbone order 1245781st 2nd 0363rd D (1), 4 col  th  (b) Row-major in-place order 
+
+Figure 2. Convolution traversal order. 
+
+Sec. 2 noted that the memory-optimal herringbone has never been extended beyond valid padding, unit stride, unit dilation, and odd square kernels. In working out that exten-sion we found two independent regimes in which Eq. (1) does not hold. This section identifies both limitations (Sec. 3.1), states a corrected closed form on square output grids (Sec. 3.2), and summarizes the generalization to arbi-trary convolution parameters (Sec. 3.3). 
+
+3.1. Two Limitations of Eq. (1) 
+
+Limitation 1: the peak is not attained at an integer leg. 
+
+Eq. (1) evaluates the remaining square of unprocessed out-put at ⌊x∗⌋, which is correct only when x∗ is an integer. Take k = 3 , Cin = 3 (Fig. 2a shows the output grid). At 
+
+Cout = 6 we have x∗ = 2 , the square of side ⌊x∗⌋ falls ex-actly between processing Dcol (2) and Drow (2) , and since 
+
+D(x∗) = 0 , the formula evaluates the peak correctly. At 
+
+Cout = 8 we have x∗ = 1 .2, and the peak now sits between 
+
+Drow (2) and Dcol (1) : the square of side ⌊x∗⌋ is 1 × 1 (only pixel 8), but the unprocessed output at that moment is the 
+
+⌊x∗⌋ × ⌈ x∗⌉ rectangle, 1 × 2 (pixels 7 and 8). The formula therefore evaluates a peak that omits one leg of output. The shortfall is exactly (k − 1) Cin mod ( Cout − Cin ),derived in Lemma 9 2. An implementation allocating DG&M 
+
+> hb
+
+scalars therefore lets the write frontier advance into input 
+
+> 2
+
+Proofs, the generalized derivation, the validation protocol and the per-layer results are in the supplementary material. 
+
+3Table 2. The two limitations in the as-published herringbone for-mula (Eq. (1)). Truth is the minimum corruption-free gap, found by binary search against the simulator; Err. is G&M minus Truth, so negative entries are under-allocations. Corollary 1 reproduces Truth on every row. H=W is the input spatial size.                                                         
+
+> Cin Cout kH=Wx∗G&M Truth Err.
+> Limitation 1: G&M’s deployed MNIST network, conv 0–conv 2
+> 15314 0.5 531 533 −2
+> 58312 3.3 148 149 −1
+> 811 310 5.3 45 46 −1
+> Limitation 2: critical leg exceeds the output grid
+> 345812 79 7+72
+> 897948 2,081 11 +2 ,070
+> 16 17 912 128 15,520 20 +15 ,500
+> 16 17 15 18 224 48,640 20 +48 ,620
+
+an unprocessed output still needs, overwriting that many scalars. Two things keep this silent: the write lands inside the workspace, so it raises no runtime fault and the count is small (one or two scalars on the layers of Tab. 2 against low-bit activations). However, it does not stay small, being bounded by Cout − Cin : a 16 → 64 , k = 3 layer loses 32. All three convolutional layers of the network deployed in [9] have non-integer x∗ (Tab. 2). 
+
+Limitation 2: unbounded overestimate outside the grid. 
+
+Eq. (1) implicitly assumes the square of side ⌊x∗⌋ fits inside the output grid, that is ⌊x∗⌋ ≤ min( Hout , W out ) − 1. That assumption fails whenever Cout − Cin is small relative to 
+
+(k − 1) Cin : a near-channel-preserving layer whose kernel is large relative to its output grid. The quadratic terms are then evaluated outside the grid and return peak debts larger than the layer’s whole activation footprint, by up to 2,432 ×
+
+on the configurations of Tab. 2. 
+
+3.2. Corrected Closed Form 
+
+Limitation 1 is repaired by the partial-leg remainder (ρ −
+
+αhb ⌊x∗⌋) = ( k − 1) Cin mod ( Cout − Cin ), which is the debt sum leaves unpaired at its lower bound; Limitation 2, by clamping the critical leg to the grid it is supposed to lie in. Both are proved in Sec. D.1. 
+
+Corollary 1 (Corrected restricted form) . Under the restric-tions of [9], write αhb ≡ Cout − Cin , ρ ≡ (k − 1) Cin ,and 
+
+ˆx = min  ⌊x∗⌋, W out − 1, x∗ = ρ/α hb . (2) 
+
+If αhb ≤ 0 then Dhb = Cout . Otherwise 
+
+Dhb = Cout 
+
+ Hout Wout − ˆx2
+
+− Cin (Hin Win − (ˆ x + k − 1) 2 − k)+ ( ρ − αhb ˆx).
+
+(3) It is a corollary in the literal sense: specializing the gen-eralized theorem of Sec. 3.3 to square output, valid padding, unit stride and unit dilation returns Eq. (3), and our imple-mentation has no separate restricted path. Sec. D.1 nonethe-less proves it directly from the restricted accounting, since that is the setting in which Eq. (1) was stated and the com-parison has to be made there. 
+
+3.3. Generalization and the Restricted Case 
+
+Lifting the restrictions of [9] breaks the row–column sym-metry. The traversal starts on the longer output axis and alternates, each major leg pairing with a shorter minor leg, and closes on a final unpaired major leg. Sec. E develops this in full: it defines the traversal, proves it visits every output pixel exactly once, and derives the three leg types, whose debts are linear in position within a leg and quadratic in leg length across legs. The peak is therefore a maximum over a constant number of candidates and is evaluated in 
+
+O(1) .We use the generalized form only as a baseline. It gives the exact peak debt of the generalized traversal , not op-timality among all traversals: the isoperimetric argument of [9, Lemma 3.1] assumes an isotropic square kernel and does not extend to anisotropic receptive fields. What it does establish is that the comparison in Sec. 5.3 exists at all, since 43 of the 84 layers we measure fall outside the parameter range in which Eq. (1) is defined. A simulator that exe-cutes the traversal in an allocation-tracked workspace con-firms both forms: the generalized form on all 10 ,000 syn-thetic configurations of Sec. 5.2 and on all 84 real layers, and Corollary 1 on every row of Tab. 2. 
+
+## 4. Right In-Place Convolution 
+
+Sec. 3 corrected the herringbone peak debt but kept its non-sequential traversal, and with it the transpose over-head. This section presents Right In-Place (RiP) convolu-tion: a row-major 3 (Fig. 2b) single-gap layout whose mini-mum safe gap follows from a piecewise affine debt function. The gap is solved in O(1) by evaluating that function at nine breakpoints, no transpose and no reorder are required, and the derivation places no restriction on stride, dilation, padding, or kernel shape. 
+
+4.1. Workspace Layout and Safety 
+
+We allocate one contiguous workspace: 
+
+[ 0 , . . . , 0 ] 
+
+| {z } 
+
+> ∆slack memory
+
+X[0 , 0, 0] , . . . , X [Hp−1, W p−1, C in −1] 
+
+| {z }
+
+> padded input, right-aligned
+
+(4) holding ∆ scalars of slack memory followed by the padded input. Input pixels are stored right aligned in the 
+
+> 3Throughout Sec. 4, “row-major“ refers to traversal order in the tradi-tional raster sense, distinct from the “major/minor axis“ of Sec. 3, which denotes the longer and shorter output dimension.
+
+4workspace, offset by ∆ and output pixels are written left-aligned from index 0 in row-major order, so the input pixel 
+
+(r, c ) sits at ∆ + ( rW p + c)Cin and the output pixel (r, c )
+
+at (rW out + c)Cout .Safety requires every output write to end before the next live input (NLI) begins in the workspace, that being the low-est workspace index still required by an unprocessed output: 
+
+NLI( r, c ) = 
+
+
+
+∆ +  rs hWp + ( c+1) sw
+
+Cin 
+
+if (c+1) < W out ,
+
+∆ + ( r+1) shWp Cin 
+
+if (c+1) ≥ Wout and (r+1) < H out ,
+
++ ∞
+
+otherwise (last pixel). (5) The stride-aware factor (c+1) sw rather than c+1 is the key correction: after output pixel c is written with sw > 1,input columns cs w through (c+1) sw −1 are already stale, so RiP frees memory earlier than the unit-stride analysis of [9] permits. The second branch applies the same accounting to a row end, where the wider stale region is a full input row; the third marks the last output pixel, after which no input is live. The kernel may read its taps in either of two orders, and the choice changes what the write frontier must clear. The receptive field of an output pixel may be gathered into a temporary buffer first, after which the output no longer de-pends on the workspace copy; or each tap may be read from its workspace address directly into a register, which requires the input to survive intact until the pixel’s last channel is written [9]. Write 
+
+σ =
+
+(
+
+0 receptive field gathered first, 
+
+Cout taps read from the workspace, (6) for the headroom the second order demands. It is not ge-ometric debt: it is what production order costs, since an out-put pixel must reach its final slot before the inputs it over-writes can be declared stale. 
+
+Definition 2 (Total debt) . The total debt after writing output pixel (r, c ), before releasing the next stale inputs, is 
+
+D(r, c ) = out end( r, c ) −  NLI( r, c ) − ∆ + σ, (7) where out end( r, c ) =  rW out + ( c+1) Cout is the first address past the pixel just written. A gap of ∆ scalars is safe at (r, c ) exactly when ∆ ≥ D (r, c ).
+
+Lemma 3 (Piecewise affine debt) . Under the layout of Eq. (4) and row-major traversal, D is affine in (r, c ) on each branch of Eq. (5) :
+
+D(r, c ) = 
+
+
+
+β r + α (c+1) + σ
+
+if (c+1) < W out ,β (r+1) + σ
+
+if (c+1) ≥ Wout and (r+1) < H out ,σ
+
+otherwise, 
+
+(8) 
+
+where β ≡ Cout Wout − shWpCin is the net cost of ad-vancing one output row and α ≡ Cout − swCin that of ad-vancing one column. Either may be negative, meaning the step frees more input than the output it writes consumes. Proof. Substitute Eq. (5) into Eq. (7). On the first branch,  rW out + ( c+1) Cout −  rs hWp + ( c+1) sw
+
+Cin + σ col-lects to βr + α(c+1) + σ. On the second, c+1 = Wout ,so out end = ( r+1) Wout Cout and the subtracted term is 
+
+(r+1) shWpCin , giving β(r+1) + σ. On the third nothing is live and only σ remains. 
+
+4.2. The Minimum Gap 
+
+Theorem 4 (Minimum sequential gap) . Let 
+
+Rs = {0, H out −2, H out −1}, C s = {0, W out −2, W out −1},
+
+(9) 
+
+clipped to non-negative values. The minimum gap ad-mitting no corruption is 
+
+∆∗ = max 
+
+
+
+max   
+
+> (r,c )∈Rs×Cs
+
+D(r, c ), Nout − HpWpCin 
+
+
+
+,
+
+(10) 
+
+with Nout = Hout Wout Cout , and the total workspace is 
+
+W∗ = ∆ ∗ + HpWpCin . The result holds for any kernel shape kh ×kw, strides (sh, s w) ≥ 1, dilations (dh, d w) ≥ 1,padding (ph, p w) ≥ 0, and channel ratio Cout /C in > 0.Proof. Nine breakpoints suffice. By Lemma 3, D is affine on each of the three branches of Eq. (5), and the branches partition the output grid along c = Wout −1 and r =
+
+Hout −1. An affine function on a closed interval attains its maximum at an endpoint, and the two axes enter Eq. (8) in-dependently, so the candidate set is the product Rs ×Cs: the 
+
+−1 entries are the last row and column, where the next live input jumps to the following output row, and the 0 and −2
+
+entries are the extremes of the monotone debt on each axis either side of that jump. All nine are load-bearing; dropping any one lowers the computed maximum on some configu-ration. 
+
+Safety. Take ∆ = ∆ ∗. At any (r, c ) the write ends at 
+
+out end( r, c )−1 and the first live input begins at NLI( r, c ),separated by ∆∗ − D (r, c ) ≥ 0, which is non-negative by 5Eq. (10). No output write reaches a live input, so every output is computed from uncorrupted inputs. 
+
+Tightness. At the maximizing breakpoint the separation is exactly zero, so any smaller ∆ places a write inside at least one live input. 
+
+Workspace. The output occupies [0 , N out ) and the in-put [∆ ∗, ∆∗ + HpWpCin ), so the workspace must hold 
+
+max  Nout , ∆∗ +HpWpCin 
+
+. The second term of Eq. (10) forces ∆∗ + HpWpCin ≥ Nout , so the maximum is always the second argument and W∗ = ∆ ∗ + HpWpCin .
+
+Generality. Eq. (8) depends only on the flat-index arith-metic of HWC layout and row-major traversal, neither of which restricts the convolution parameters. Kernel shape and dilation enter only through keff  
+
+> h
+
+and keff  
+
+> w
+
+in the out-put dimensions, stride directly through sh, s w, and padding through Hp, W p.Two corollaries follow by inspection and are worth nam-ing, because between them they cover most of the layers in a modern network. Since (Hout −1, W out −1) ∈ Rs × Cs, we always have ∆∗ ≥ σ. When α ≤ 0 and β ≤ 0 the bound is met with equality: the whole output tensor is absorbed into the space its input vacates, and only the production-order headroom remains. At unit stride this is just Cout ≤ Cin ,the same-or-decreasing-channel case, where RiP degener-ates to plain in-place replacement. 
+
+4.3. Execution and Re-Alignment 
+
+Given a workspace of ∆∗ + HpWpCin scalars with the padded input right-aligned at offset ∆∗, the layer visits 
+
+(r, c ) in row-major order and writes each output pixel to 
+
+(rW out +c)Cout . How that pixel is computed (nested loops, im2col plus GEMV, or a fused kernel) is unconstrained. The one prerequisite is that the input is not needed again, which holds for any layer whose input is not consumed by a skip connection off the same tensor. Both tap-read orders appear in this paper, and which one is used is dictated by what is being compared. The deploy-ment of Sec. 5.4 relies on TinyEngine’s default behavior of gathering the receptive field into a temporary buffer [19]. Because this buffer is an engine-level constant required identically by the dual-buffer baseline, it sits outside the activation arena, setting σ = 0 so the RiP gap carries no production-order headroom penalty. On the other hand, the layer-level comparison of Sec. 5.3 uses σ = Cout , be-cause the herringbone accounting of [9] assumes taps are read from the workspace and matching it is what makes that comparison like for like. RiP is therefore measured against herringbone under herringbone’s own execution order, and deployed under the cheaper one. In RiP, output emerges left-aligned while the next layer expects its input right-aligned, so the two must reconcile. Under dynamic allocation this is free: the next layer’s in-put pointer is set ∆∗ scalars past the buffer origin and no data moves. A device working from a single predetermined workspace has no pointer to move, and the obvious rem-edy is one O(HpWpCin ) memmove (right shift) per layer against the O(Hout Wout khkwCin Cout ) convolution. In practice it does not come to that, because what a layer needs is slack memory to the left of its input, and the gap may sit at either end of that layer’s allocation. Therefore, a move is forced only when the layer’s input already occupies its workspace from the left. Consequently, we solve the placement once for the whole network, offline, with a mixed-integer linear pro-gram (MILP) that replaces the greedy first-fit allocator of TinyEngine’s code generator. Each activation tensor t car-ries a byte offset variable xt; each candidate in-place input tensor i carries two binaries, di for whether the op over-writes it and ri for whether it must be separated from the output by a physical shift ( ri = 1 ) or by placing the output 
+
+∆∗ 
+
+> i
+
+below the input ( ri = 0 ). Tensors that are alive together may not share an address, each output overwrites at most one input, and ri ≤ di. Every offset is constrained to a multiple of V bytes ( V = 4 on both Picos) so that aligned SIMD loads stay legal, which also requires the gap ∆∗ 
+
+> i
+
+to be a multiple of V . The objective minimizes the peak address used by the model, max t(xt + size t), plus C P 
+
+> i
+
+size iri, so a move is chosen only where placing the output low would cost more peak than the move is worth. At C = 10 −4,a move of the largest tensor in our suite prices at roughly 30 B of peak. It still returns ri = 0 everywhere: across all eleven deployed models, between 44% and 57% of ten-sors are placed in-place and not one memmove is scheduled. The re-alignment cost we measure is zero, and the bias in the objective is the reason that is a result. The allocator is not itself a source of saving. On naive dual buffering and on TinyEngine’s own schedule, the pro-gram reaches the same peak as first-fit, so the reductions in Sec. 5.4 are attributable to the layout alone. Under RiP it is load-bearing for a different reason. A layer’s freed gap is useful only if a later tensor can be placed in it, and first-fit commits offsets in schedule order without a lookahead; on MCUNet-in2 and in3 (Fig. 1), whose branch connec-tions keep two tensors alive across the shrunken layer, it strands the reclaimed space between live tensors and returns no peak reduction at all despite the smaller buffers. Solv-ing placement globally is what converts a per-layer bound into a network-level saving. Either way the layout resolves the “inconveniently laid-out stale memory” obstacle that led Gural and Murmann to abandon the row-major setting [9, §3.4.1], without herringbone’s 2× transpose overhead. Ten-sor packing is NP-hard, but the instances are small: across 33 convolutional keras.applications models the full offline step (parse, model build, and solve) takes under 150 s; Sec. I details this experiment. 6Padding need not be materialized. Eq. (4) stores the padded input in full, as TensorFlow does [1], although the 
+
+(HpWp − Hin Win )Cin border cells all hold the same pad value: for a same-padded 3×3 convolution on a 32 ×32 fea-ture map they are ∼11% of the input footprint. Storing only the Hin Win Cin real scalars is possible, and the supplemen-tary material re-derives the bound under this dense layout, at O(khkw) rather than O(1) because the debt now kinks wherever a tap crosses the padding boundary. The result belongs here because its sign inverts: the gap grows, since a smaller input footprint pre-allocates less slack for the output to consume, while the workspace shrinks. What has to fit in SRAM is the workspace, and Eq. (42) makes the trade pre-cise. A practitioner comparing the two layouts by gap will therefore reject the one that wins. The saving costs only in-dex arithmetic; Sec. F.4 gives the one regime in which the bound is safe but not tight. 
+
+## 5. Results 
+
+5.1. Experiment Setup 
+
+We evaluate three claims separately: that the closed forms are safe and tight (Sec. 5.2), that they are competitive on the layers from which real networks are built (Sec. 5.3), and that the savings survive deployment (Sec. 5.4). The first is analytic and is checked against a simulator that never eval-uates a closed form; the other two are measured on device. 
+
+5.2. Synthetic Layers 
+
+A traversal is correct exactly when no output write lands on an input scalar that an unwritten output still needs; the dot product itself is unchanged, so liveness is the only prop-erty at issue. We generated 10,000 layers across 20 param-eter categories, spanning the ranges real networks occupy together with small-grid, thin-axis, and degenerate regimes that are rare or absent in practice, and ran each through the corruption simulator under five execution configurations. Of the 10,000, 22.6% fall inside the restrictions of [9]; the rest are reachable only through the generalization in Theo-rem 11. No configuration produced an unsafe gap. The RiP and generalized herringbone bounds are not merely safe but tight, equal to the simulator’s minimum on every one of the 10,000 layers. The dense bound is tight on 99 .1% when taps are read directly from the workspace. The exception is layers in which some real input is never read by any out-put and is dead before the layer starts, so that the count of dead scalars no longer determines which addresses are dead; Sec. F.4 gives the mechanism and the two conditions under which it costs anything. The bound remains safe there, overshooting by 91 .85 scalars on average. Gather-ing the receptive field into a temporary buffer first removes the exception and the bound is tight on all 10,000. 
+
+5.3. Real Architectures 
+
+We then compared the naive dual-buffer workspace, the generalized herringbone workspace and the RiP workspace analytically across 84 convolutional layers drawn from 25 architectures spanning classification, detection and speech; Tab. 6 lists them by family. Layers were selected to prior-itize peak activation memory rather than to sample archi-tectures uniformly: for each network, we take the layers whose combined input and output footprint is largest, since it is those layers that determine whether the network fits a given device at all. Each traversal is first confirmed against the corruption simulator, which executes it in an allocation-tracked buffer; the generalized herringbone form matches on all 84. We also run the 48 layers that fit on the Pico 2 and show that the right-shift is close to free: every one costs within 1% 
+
+of the dual-buffer kernel, five run marginally faster, and the right-shift is a median 0.05% of layer conv runtime, worst 
+
+0.83% . Forty-three of the 84 layers fall outside the parame-ter range of [9] (strided, dilated, padded, or rectangular), so the generalization is not a formality but the condition under which the comparison exists at all. RiP matches the herringbone workspace exactly on 58 of the 84 layers and to within 5% on 81, at a mean reduc-tion of 24.8% against naive allocation (median 25.0%, best 50.0%). Sequential access therefore costs almost nothing in workspace terms, and where it does, the cost is structural rather than diffuse. On every layer whose output tensor is no larger than its padded input (25 of the 84) RiP and her-ringbone agree exactly, without exception. When the out-put is larger, the excess cannot be absorbed into the space the input vacates and must be carried in the gap, where a row-major frontier accumulates debt across a full row be-fore releasing any of it. All three layers exceeding 5% are of this kind: two channel-doubling layers of pruned VGG-16 on small grids, and the worst at 17.0%, an Inception-v3 
+
+7 × 1 branch whose kernel is maximally anisotropic. Since both the row and column bounds are computable in O(1) ,a practitioner meeting such a layer can evaluate them and transpose the input and kernels to process in column order instead, which in this case matches herringbone gap exactly. 
+
+5.4. Deployment 
+
+We deploy all eleven open-source MCUNet models [19] to two boards, a Raspberry Pi Pico 2 (RP2350, 520 KB SRAM) and a Raspberry Pi Pico 1 (RP2040, 256 KB SRAM), at each model’s native resolution with int8 weights and activations. The baseline is TinyEngine’s own deploy-ment with in-place depthwise convolution enabled, so the workspace reduction reported here is measured against the state of the art rather than against naive dual buffering. RiP changes where activation sits, not how it is computed, so our implementation transparently inherits all their engine-7Table 3. Eleven models from the MCUNet suite, baseline versus RiP. Buffer is the scratch and im2col allocation, which sits outside the arena and is unchanged by RiP. Peak activation memory is the arena alone, excluding that buffer, the SDK and TinyUSB .data /.bss ,and the stack; it is a property of the allocation, so it is reported once for both boards. Cost is cycles count on the Pico 2 and wall-clock time on the Pico 1, whose RP2040 exposes no cycle counter. A dash marks a model the board could not run, since the arena is not the only claim on memory. Acc. is int8 top-1 as reported by [19], identical under both strategies; † marks Visual Wake Words rather than ImageNet, and                                                                                                                                                      
+
+> ‡a single-class detector, for which no accuracy is reported. Bit-exact reports agreement of on-device output checksums against baseline. Peak activation memory (B) Pico 2 cycles (M) Pico 1 time (ms) Model Buffer (B) Base RiP Ratio Base RiP Ratio Base RiP Ratio Acc. Bit-exact MCUNet-in0 3,984 46,080 36,864 4/539.5 39.7 1.003 1,772.4 1,772.0 1.000 40 .4% ✓
+> MCUNet-in1 5,864 92,160 73,728 4/570.0 70.3 1.004 3,601.1 3,607.8 1.002 49 .9% ✓
+> MCUNet-in2 14,976 204,800 179,200 7/8307.0 307.2 1.001 15,978.1 15,999.5 1.001 60 .3% ✓
+> MCUNet-in3 18,536 247,808 185,856 3/4380.5 380.8 1.001 –19,388.2 –61 .8% ✓
+> MCUNet-in4 16,520 409,600 307,200 3/4708.2 708.7 1.001 –––68 .0% ✓
+> MbV2-w0.35 11,816 290,304 248,832 6/7120.4 120.4 1.000 –––49 .0% ✓
+> Proxyless-w0.3 17,792 247,808 185,856 3/4184.2 184.3 1.000 –9,801.9 –56 .2% ✓
+> MCUNet-VWW0 3,456 57,344 49,152 6/731.7 31.6 0.998 1,657.8 1,664.1 1.004 87 .3% †✓
+> MCUNet-VWW1 4,392 89,600 76,800 6/763.1 62.9 0.998 3,218.8 3,216.6 0.999 88 .9% †✓
+> MCUNet-VWW2 11,816 165,888 145,152 7/8269.8 269.5 0.999 14,222.7 14,245.1 1.002 91 .8% †✓
+> Person-Det 11,688 245,760 163,840 2/370.1 70.1 1.000 –5,215.4 ––‡✓
+
+level SIMD vectorization and loop unrolling without mod-ification. Therefore, the comparison is an ablation of the allocation strategy alone. We report the total arena rather than the per-layer gap, which excludes the input footprint, so it overstates the difference between them. RiP reduces peak activation memory on every model, by 12.5 to 33.3% (mean 19.7%, 444,672 B in total across the eleven). The reductions land on exact fractions (Tab. 3), and this is the bound showing through rather than a coinci-dence. Cost is unchanged: the mean cycle ratio on the Pico 2 is 1.0005, and four of the eleven models run marginally fewer cycles under RiP than under the baseline. The kernels are identical and RiP adds no work, so the residual spread is measurement noise. Flash is identical under both strate-gies, because RiP alters the placement of activations and not the weights. Energy is not reported separately: both strate-gies execute identical instructions against the same on-chip SRAM, so cycle count is a faithful proxy. Accuracy is un-changed because RiP is mathematically exact, and we verify this directly rather than by inference: the checksum of the output logits, computed on device, matches the baseline bit for bit on every model. The saving matters most where the budget binds. Fig. 1 traces activation memory across MCUNet-in3’s operators under all three strategies, with the fixed runtime overhead drawn as a band above the arena: 18,536 B of scratch, 7,964 B of SDK and TinyUSB .data and .bss , and 2,048 B of stack, 28,548 B in all. Depthwise-only in-place peaks at 247,808 B, which with the band overruns the Pico 1 by 14,212 B; RiP peaks at 185,856 B and clears it by 47,740 B. Proxyless-w0.3 clears by a similar margin, Person-Det by 76,604 B. None of the three fits without RiP, taking the board from six of the eleven models to nine. 
+
+## 6. Conclusion 
+
+We corrected two limitations in the published herringbone closed form: a silent under-allocation active on every con-volutional layer of the authors’ deployed network, and an unbounded overestimate outside the output grid. We also generalized the analysis to arbitrary stride, dilation, padding, and rectangular kernels. Right In-Place convolu-tion then recovers row-major order at a gap solved by break-point evaluation, removing 12.5 to 33.3% of peak activation memory across eleven deployed models at unchanged cycle count and bit identical output. Because the memory saving costs no time, the choice between the two is not a trade-off. Whether a memory-optimal traversal exists at all for anisotropic receptive fields stays open: the isoperimetric ar-gument for the isotropic case does not extend to them. 8References 
+
+[1] Mart´ ın Abadi, Paul Barham, Jianmin Chen, Zhifeng Chen, Andy Davis, Jeffrey Dean, Matthieu Devin, Sanjay Ghe-mawat, Geoffrey Irving, Michael Isard, et al. Tensorflow: A system for large-scale machine learning. In 12th USENIX symposium on operating systems design and implementation (OSDI 16) , pages 265–283, 2016. 7 [2] Manoj Alwani, Han Chen, Michael Ferdman, and Peter Milder. Fused-layer cnn accelerators. 2016 49th Annual IEEE/ACM International Symposium on Microarchitecture (MICRO) , pages 1–12, 2016. 2 [3] Opegbemi M. Busoye, Tolulope M. Busoye, and Eghonghon-aye Eigbe. Deep microcompression: Structured pruning and bit-packed quantization for microcontrollers. In 
+
+Proceedings of the Global South in AI Workshop at the 43rd International Conference on Machine Learning . PMLR, 2026. 1, 2 [4] Han Cai, Ligeng Zhu, and Song Han. Proxylessnas: Direct neural architecture search on target task and hardware, 2019. 2[5] Han Cai, Chuang Gan, Tianzhe Wang, Zhekai Zhang, and Song Han. Once-for-all: Train one network and specialize it for efficient deployment, 2020. 2 [6] Liang-Chieh Chen, Yukun Zhu, George Papandreou, Flo-rian Schroff, and Hartwig Adam. Encoder-decoder with atrous separable convolution for semantic image segmenta-tion, 2018. 2 [7] Renze Chen, Zijian Ding, Size Zheng, Meng Li, and Yun Liang. Motenn: Memory optimization via fine-grained scheduling for deep neural networks on tiny devices. In Pro-ceedings of the 61st ACM/IEEE Design Automation Confer-ence , New York, NY, USA, 2024. Association for Comput-ing Machinery. 2, 3 [8] Robert David, Jared Duke, Advait Jain, Vijay Janapa Reddi, Nat Jeffries, Jian Li, Nick Kreeger, Ian Nappier, Meghna Na-traj, Shlomi Regev, Rocky Rhodes, Tiezhen Wang, and Pete Warden. Tensorflow lite micro: Embedded machine learning on tinyml systems, 2021. 2 [9] Albert Gural and Boris Murmann. Memory-optimal direct convolutions for maximizing classification accuracy in em-bedded applications. In Proceedings of the 36th Interna-tional Conference on Machine Learning , pages 2515–2524. PMLR, 2019. 1, 2, 3, 4, 5, 6, 7, 10, 11, 15, 19 [10] Song Han, Jeff Pool, John Tran, and William J. Dally. Learn-ing both weights and connections for efficient neural net-works, 2015. 2 [11] Song Han, Huizi Mao, and William J. Dally. Deep com-pression: Compressing deep neural networks with pruning, trained quantization and huffman coding, 2016. 2 [12] Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image recognition. In 2016 IEEE Conference on Computer Vision and Pattern Recognition (CVPR) , pages 770–778, 2016. 2 [13] Yihui He, Xiangyu Zhang, and Jian Sun. Channel pruning for accelerating very deep neural networks, 2017. 2 [14] Mark Horowitz. 1.1 computing’s energy problem (and what we can do about it). 2014 IEEE International Solid-State Circuits Conference Digest of Technical Papers (ISSCC) ,pages 10–14, 2014. 1 [15] Andrew G. Howard, Menglong Zhu, Bo Chen, Dmitry Kalenichenko, Weijun Wang, Tobias Weyand, Marco An-dreetto, and Hartwig Adam. Mobilenets: Efficient convolu-tional neural networks for mobile vision applications, 2017. 2[16] Itay Hubara, Yury Nahshan, Yair Hanani, Ron Banner, and Daniel Soudry. Improving post training neural quantization: Layer-wise calibration and integer programming, 2020. 2 [17] Hyeong-Ju Kang. Aocstream: All-on-chip cnn accelerator with stream-based line-buffer architecture, 2022. 2 [18] Adithya Krishna, Srikanth Rohit Nudurupati, Chandana D G, Pritesh Dwivedi, Andr´ e van Schaik, Mahesh Mehendale, and Chetan Singh Thakur. Raman: A re-configurable and sparse tinyml accelerator for inference on edge, 2023. 2, 3 [19] Ji Lin, Wei-Ming Chen, Yujun Lin, John Cohn, Chuang Gan, and Song Han. Mcunet: Tiny deep learning on iot devices, 2020. 1, 2, 3, 6, 7, 8 [20] Ji Lin, Ligeng Zhu, Wei-Ming Chen, Wei-Chen Wang, and Song Han. Tiny machine learning: Progress and futures [feature]. IEEE Circuits and Systems Magazine , 23(3):8–34, 2023. 2 [21] Ji Lin, Wei-Ming Chen, Han Cai, Chuang Gan, and Song Han. Mcunetv2: Memory-efficient patch-based inference for tiny deep learning, 2024. 2, 3 [22] Zhuang Liu, Hanzi Mao, Chao-Yuan Wu, Christoph Feicht-enhofer, Trevor Darrell, and Saining Xie. A convnet for the 2020s, 2022. 2 [23] Jian-Hao Luo, Jianxin Wu, and Weiyao Lin. Thinet: A filter level pruning method for deep neural network compression, 2017. 2 [24] Markus Nagel, Rana Ali Amjad, Mart van Baalen, Christos Louizos, and Tijmen Blankevoort. Up or down? adaptive rounding for post-training quantization, 2020. 2 [25] Fouad Sakr, Francesco Bellotti, Riccardo Berta, Alessandro De Gloria, and Joseph Doyle. Memory-efficient CMSIS-NN with replacement strategy. In 2021 8th International Con-ference on Future Internet of Things and Cloud (FiCloud) ,pages 299–303. IEEE, 2021. 2, 3 [26] Rafael Stahl, Daniel Mueller-Gritschneder, and Ulf Schlicht-mann. Fused depthwise tiling for memory optimization in tinyml deep neural network inference, 2023. 2 [27] Yuting Sun, Tong Chen, Quoc Viet Hung Nguyen, and Hongzhi Yin. Tinyad: Memory-efficient anomaly detection for time-series data in industrial iot. IEEE Transactions on Industrial Informatics , 20(1):824–834, 2024. 2 [28] Christian Szegedy, Vincent Vanhoucke, Sergey Ioffe, Jonathon Shlens, and Zbigniew Wojna. Rethinking the in-ception architecture for computer vision, 2015. 2 [29] Mingxing Tan and Quoc V. Le. Efficientnet: Rethinking model scaling for convolutional neural networks, 2020. 2 [30] Jiyuan Zhang, Franz Franchetti, and Tze Meng Low. High performance zero-memory overhead direct convolutions, 2018. 2 [31] Shuzhang Zhong, Meng Li, Yun Liang, Runsheng Wang, and Ru Huang. Memory-aware scheduling for complex wired networks with iterative graph optimization, 2023. 2 
+
+9Right In-Place (RiP) Convolution: A Simple, General, and Near-Optimal Strategy for Memory-Efficient CNN Inference 
+
+# Supplementary Material 
+
+## A. Roadmap and Symbol Glossary 
+
+This appendix carries the material deferred from the main text, in the order the main text needs it. Sec. B states what will be released. Sec. C fixes the herringbone debt account-ing inherited from [9, §3.4]. Sec. D proves the four results behind Sec. 3.1: the leg structure of the traversal, where its peak actually falls, the closed form the paired sum collapses to, and the exact size of the shortfall in Eq. (1). Sec. D.1 proves Corollary 1 from them. Sec. E lifts the restrictions of [9] and derives Theorem 11, the baseline against which RiP is measured in Sec. 5.3. Sec. F re-derives the RiP bound when padding is not materialized. Sec. G describes the corruption simulator and the sweeps behind every count in Sec. 5.2, Sec. H and Tab. 6 give the per-family layer results, and Sec. I reports the graph-level allocation study across 33 
+
+keras.applications models (Tab. 7), including the in-place upsampling bound of Sec. I.1. Table 4 collects the notation. 
+
+## B. Reproduction 
+
+Three artifacts will be released: the closed forms of The-orems 4, 11 and 13 together with the corruption simulator and the sweep script behind Tab. 5; the layer set and com-parison script behind Tab. 6; and the modified TinyEngine, comprising the RiP kernels, the MILP allocator of Sec. 4.3, and the firmware used for Tab. 3. 4
+
+## C. Herringbone Preliminaries 
+
+We adopt the debt accounting of [9, §3.4], specialized to their restricted setting: valid padding, unit stride, unit dila-tion, and an odd square k × k kernel, so Hout = Hin − (k −
+
+1) and Wout = Win − (k − 1) . Throughout this appendix 
+
+W ≡ Wout = Hout , αhb ≡ Cout −Cin and ρ ≡ (k−1) Cin .The herringbone traversal processes output pixels in an alternating row–column order, reclaiming edge input pixels as they go stale (Fig. 2a). A leg of length x writes xC out 
+
+scalars and frees  x + ( k − 1) Cin per stale input pixel, less the k − 1 extra input pixels along the current row or column arising from the input–output size difference, giving net debt 
+
+D(x) = x α hb − ρ. (11) where αhb ≡ Cout − Cin , ρ ≡ (k − 1) Cin .
+
+> 4Repository withheld for double-blind review; the URL replaces this note in the camera-ready version.
+
+Writing ℓ1, ℓ 2, . . . for the successive leg lengths and 
+
+LD (x0) for the running debt once every leg of length at least x0 has been processed, the peak debt is 
+
+Dhb = max  
+
+> x0
+
+LD (x0), LD (x0) = X  
+
+> ℓj≥x0
+
+D(ℓj ) + kC in ,
+
+(12) the trailing kC in is the residual input footprint needed for the last output pixel. Since αhb > 0 makes D increasing in x, the running sum grows while leg debts are positive and shrinks once they turn negative, so the maximum falls where D(x∗) = 0 :
+
+x∗ = ραhb 
+
+= (k − 1) Cin 
+
+Cout − Cin 
+
+. (13) 
+
+## D. Herringbone Lemmas 
+
+We collect the four results invoked in Sec. 3.1 and Sec. 3.2. Lemma 5 establishes the traversal structure; Lemma 6 lo-cates the peak within it; Lemma 7 converts the resulting sum into closed form; Lemma 9 then measures exactly what the published debt of [9] includes. 
+
+Lemma 5 (Leg pairing under square output) . Under the re-strictions of Sec. C with square output Hout = Wout = W ,the herringbone leg sequence consists of paired legs of matching length 
+
+Drow (Wout ), Dcol (Wout −1) , D row (Wout −1) ,. . . , Dcol (1) , D row (1) , (14) 
+
+with the first row leg of length Wout unpaired (Fig. 2a). The running sum of D-values down to the leg with length 
+
+x0 is therefore 
+
+D(Wout ) + 2 
+
+> Wout −1
+
+X
+
+> x=x0
+
+D(x) + kC in . (15) 
+
+Proof. The traversal alternates (row-leg, column-leg, row-leg, column-leg . . . , row-leg) processing edges in decreas-ing length after the first sweep of the outer row. Under 
+
+Hout = Wout , each ith column-leg and the (i+1) th row leg have the same length for i ∈ [1 , W out −1] , so summing over legs of length at least x0 counts each length twice, except for the first row leg, which has a length of Wout .
+
+Lemma 6 (Where the peak debt occurs) . Let x∗ be as in Eq. (13) . Under αhb > 0 the running sum LD is a strictly 
+
+10 Table 4. Symbols used throughout the paper, grouped by the section that introduces them. D is overloaded by arity: D(r, c ) is the row-major RiP debt of Eq. (7), D(x) the herringbone leg debt of Eq. (11). 
+
+Convolution setup (Sec. 4.1) 
+
+X, Y Input, output activation tensors 
+
+Hin , W in , C in Input height, width, channel count 
+
+Hout , W out , C out Output height, width, channel count 
+
+Hp, W p Padded input height, width 
+
+Nout Output tensor size, Hout Wout Cout 
+
+kh, k w Kernel height, width 
+
+keff  
+
+> h
+
+, k eff  
+
+> w
+
+Dilated effective kernel extent 
+
+sh, s w Stride, vertical and horizontal 
+
+dh, d w Dilation, vertical and horizontal 
+
+ph, p w Padding, vertical and horizontal 
+
+(r, c ) Pixel index: r row, c column 
+
+γ Channel index 
+
+Right In-Place (Sec. 4) 
+
+∆ Gap size, in scalars 
+
+∆∗ Minimum safe gap (Theorem 4) 
+
+W∗ Minimum workspace, ∆∗ + HpWpCin 
+
+NLI( r, c ) Next live input address (Eq. (5)) 
+
+out end( r, c ) First address past the written pixel 
+
+D(r, c ) Row-major debt at (r, c ) (Eq. (7)) 
+
+α, β Column, row coefficients (Eq. (8)) 
+
+σ Production-order headroom (Eq. (6)) 
+
+Rs, Cs Row, column breakpoints (Eq. (9)) 
+
+Dense input layout (Sec. F) 
+
+(¯ r, ¯c) First live real input pixel (Lemma 12) 
+
+∆∗ 
+
+> d
+
+Minimum gap, dense (Theorem 13) 
+
+W∗ 
+
+> d
+
+∆∗ 
+
+> d
+
++ Hin Win Cin 
+
+L Dead leading run, in pixels (Sec. F.4) 
+
+Herringbone, restricted (Sec. C) 
+
+W Square output side, W ≡ Wout = Hout 
+
+D(x) Leg debt, length x (Eq. (11)) 
+
+Drow (x), D col (x) Row, column leg debt (Eq. (14)) 
+
+A(x), B (x) Output, input parts: D = A − BLD (x0) Running debt, legs ≥ x0 (Eq. (17)) 
+
+Dhb Peak debt of the traversal (Eq. (16)) 
+
+DG&M  
+
+> hb
+
+As-published peak debt (Eq. (1)) 
+
+αhb Leg-debt slope, Cout − Cin 
+
+ρ Per-leg residual input, (k − 1) Cin 
+
+x∗ Critical leg, D(x∗) = 0 (Eq. (13)) 
+
+ˆx min( ⌊x∗⌋, W out −1) (Eq. (2)) 
+
+Φ( ⌊x∗⌋) Paired-sum closed form (Eq. (19)) 
+
+Herringbone, generalized (Sec. E.1) 
+
+M, n max , min of Hout , W out 
+
+δ Axis-length difference, M − nwr , h r Residual footprint per axis (Eq. (23)) 
+
+αgen hb Cout − shsw Cin (Eq. (23)) 
+
+ρr , ρ c Per-leg residual, horizontal, vertical 
+
+Rr , R c Remainder at a leg tail (Eq. (24)) 
+
+ρmaj , ρ min ρr , ρ c by longer axis 
+
+Rmaj , R min Rr , R c by longer axis 
+
+βhb Last-leg slope, Cout − Rmin 
+
+Dmaj , D min , D last  
+
+> maj
+
+Three leg types (Eqs. (28) to (30)) 
+
+Lmaj D , L min D Across-leg running debt per axis 
+
+x∗ 
+
+> maj
+
+, x ∗ 
+
+> min
+
+Vertex per axis (Eqs. (33) and (36)) 
+
+Cmaj , Cmin Candidate leg lengths (Theorem 11) 
+
+Llast Last-leg candidate (Eq. (37)) 
+
+Dgen  
+
+> hb
+
+Generalized peak debt (Eq. (38)) 
+
+concave downward parabola with vertex x = 12 + ρ/α hb ,and the peak debt of the traversal is attained after both legs of length ⌊x∗⌋ + 1 have been processed: 
+
+Dhb = D(Wout ) + 2 
+
+> Wout −1
+
+X
+
+> x=⌊x∗⌋+1
+
+D(x) + kC in . (16) 
+
+Proof. Substituting Eq. (11) into LD (x0) = D(Wout ) + 2 PWout −1 
+
+> x=x0
+
+D(x)+ kC in , the debt if the traversal stops after both legs of length x0, collects to 5
+
+LD (x0) = − αhb (x0)2 + ( αhb + 2 ρ) x0
+
++  αhb W 2 
+
+> out
+
+− 2ρW out − ρ + kC in 
+
+. (17) The second derivative is −2αhb < 0, and L′ 
+
+> D
+
+(x0) = 0 at 
+
+x0 = 12 +ρ/α hb = x∗ + 12 : the running sum peaks half a leg past the length at which the leg debt changes sign. A con-cave parabola is maximized over the integers at the integer nearest its vertex, and that integer is ⌊x∗⌋ + 1 ; the clamp to 
+
+Wout covers the case x∗ ≥ Wout , in which no traversed leg has positive debt: the running sum never grows. Therefore, 
+
+> 5
+
+Under the generalized herringbone traversal, this is a special case of Eq. (34) with y = 1 , just about to process the first pixel of the next column; where ρmaj = ρmin = ρ
+
+the peak is reached after the first leg alone and the sum in Eq. (16) is empty, leaving Dhb = D(Wout ) + kC in .When x∗ is an integer the nearest integer is tied be-tween x∗ and x∗ + 1 , and either gives the same value since 
+
+D(x∗) = 0 . When x∗ is not an integer and with the clamp inactive, ⌊x∗⌋ + 1 is the shortest leg with positive debt and 
+
+⌊x∗⌋, the longest with negative debt: 
+
+D(⌊x∗⌋ + 1) > 0 > D (⌊x∗⌋). (18) By Lemma 5 each leg of length x is followed by its partner, so the peak includes both legs of length ⌊x∗⌋ + 1 and stops there. 
+
+Lemma 7 (Closed-form equivalence of peak debt) .
+
+G&M [9] evaluate the debt at the square of side ⌊x∗⌋, so their expression accounts for the legs from Wout down to the first leg of length ⌊x∗⌋. For the integer ⌊x∗⌋ ∈ [1 , W out ]
+
+that accounting is Φ( ⌊x∗⌋), where 
+
+Φ( ⌊x∗⌋) ≡ Cout 
+
+ W 2 
+
+> out
+
+− ⌊ x∗⌋2
+
+− Cin 
+
+
+
+W 2 
+
+> in
+
+− (⌊x∗⌋+k−1) 2 − k
+
+ (19) 11 Proof. Group the legs into adjacent pairs up to the first leg of length ⌊x∗⌋. We can write the accounting as 
+
+PWout −1
+
+> x=⌊x∗⌋
+
+D(x+1) + D(x) which counts each length in (⌊x∗⌋, W out ) twice and each endpoint, Wout and 
+
+⌊x∗⌋, once. Split D into its output and input parts, 
+
+D(x) = A(x) − B(x) with A(x) = Cout x and B(x) = 
+
+Cin (x+k−1) , and sum each. The output part contributes A(x+1) + A(x) =(2 x+1) Cout , so 
+
+> Wout −1
+
+X
+
+> x=⌊x∗⌋
+
+A(x+1) + A(x)
+
+= Cout 
+
+h
+
+2
+
+> Wout −1
+
+X
+
+> x=⌊x∗⌋
+
+x + ( Wout − ⌊ x∗⌋)
+
+i
+
+= Cout (Wout − ⌊ x∗⌋)(Wout − 1 + ⌊x∗⌋) + 1 
+
+= Cout 
+
+ W 2 
+
+> out
+
+− ⌊ x∗⌋2.
+
+(20) The input part contributes B(x+1)+ B(x) = (2 x+2 k−
+
+1) Cin , so 
+
+> Wout −1
+
+X
+
+> x=⌊x∗⌋
+
+B(x+1) + B(x)
+
+= Cin 
+
+h
+
+2
+
+> Wout −1
+
+X
+
+> x=⌊x∗⌋
+
+x + (2 k−1)( Wout − ⌊ x∗⌋)
+
+i
+
+= Cin (Wout − ⌊ x∗⌋)(Wout − 1 + ⌊x∗⌋) + (2 k−1) 
+
+= Cin 
+
+ (Wout +k−1) 2 − (⌊x∗⌋+k−1) 2.
+
+(21) the last step by difference of squares, since Wout −⌊x∗⌋ = ( Wout +k−1) −(⌊x∗⌋+k−1) and Wout −1+ ⌊x∗⌋+2k − 1 = ( Wout +k−1) + ( ⌊x∗⌋+k−1) .Subtracting Eq. (21) from Eq. (20), substituting Win =
+
+Wout +k − 1, and adding the trailing +kC in for the preced-ing output of Eq. (15) into the Cin bracket, which changes its sign, gives Eq. (19). 
+
+Remark 8. Expanding Eq. (15) shows both endpoints con-tribute once :
+
+> Wout −1
+
+X
+
+> x=⌊x∗⌋
+
+D(x+1)+ D(x) = D(Wout )+2 
+
+> Wout −1
+
+X
+
+> x=⌊x∗⌋+1
+
+D(x)+ D(⌊x∗⌋).
+
+The single count of D(Wout ) is genuine: that leg occurs once in the traversal. The single count of D(⌊x∗⌋) is not, and it places Φ exactly halfway between two consecutive at-tainable states, Φ( ⌊x∗⌋) = 12
+
+LD (⌊x∗⌋+1) + LD (⌊x∗⌋):the debt therefore includes an extra negative debt which re-duces the computed debt. No choice of x removes that term, which is what fixes the coefficient in Lemma 9. The pub-lished choice ⌊x∗⌋ is correct for its own parameterization; what it misses is the pairing, not the location of the peak. 
+
+Lemma 9 (Exact flooring underestimate) . When x∗ is non-integer and ⌊x∗⌋ ≤ Wout −1, the as-published herringbone formula (Eq. (1) ) underestimates the true peak debt by ex-actly 
+
+Dhb − DG&M  
+
+> hb
+
+= ( k − 1) Cin mod ( Cout − Cin ). (22) 
+
+Proof. Eq. (1) is Φ( ⌊x∗⌋) = DG&M  
+
+> hb
+
+. By Remark 8, 
+
+Φ( ⌊x∗⌋) = D(Wout ) + 2 
+
+> Wout −1
+
+X
+
+> x=⌊x∗⌋+1
+
+D(x) + D(⌊x∗⌋) + kC in ,
+
+which by Eq. (16) is Dhb + D(⌊x∗⌋), it contains one addi-tional term. Since D(⌊x∗⌋) < 0 by Eq. (18), the published form falls short: 
+
+Dhb − DG&M  
+
+> hb
+
+= −D(⌊x∗⌋) = ρ − αhb ⌊x∗⌋.
+
+With ⌊x∗⌋ = ⌊ρ/α hb ⌋, the definition of the modular re-mainder gives ρ − ⌊ ρ/α hb ⌋αhb = ρ mod αhb , which is Eq. (22). When ⌊x∗⌋ ≥ Wout no traversed leg has positive debt, the clamp sets ˆx = Wout − 1, and the sum in Eq. (16) is empty. When ρ < α hb , we have ⌊x∗⌋ = 0 and the sum runs from 1, which is a genuine leg; no special case arises. The arithmetic is unchanged, and this is the regime of the first convolutional layer in Tab. 2. 
+
+D.1. Proof of Corollary 1 
+
+Proof. If αhb ≤ 0 then D(x) ≤ 0 for all x ≥ 0, so the running sum never grows and the peak is the write-before-clear headroom Cout alone. For αhb > 0, Lemma 9 gives Dhb = Φ( ⌊x∗⌋) −
+
+D(⌊x∗⌋), which is Φ( ⌊x∗⌋) + ( ρ − αhb ⌊x∗⌋). By Lemma 6 the peak is attained after both legs of length min( ⌊x∗⌋ +1, W out ), so the evaluation point is one leg shorter: 
+
+ˆx ≡ min( ⌊x∗⌋ + 1 , W out ) − 1 = min( ⌊x∗⌋, W out − 1) .
+
+Writing Φ out in full from Eq. (19) at ˆx, with Hout = Wout 
+
+and Hin = Win , gives Eq. (3): 
+
+Dhb = Cout 
+
+ Hout Wout − ˆx2
+
+− Cin 
+
+ Hin Win − (ˆ x + k − 1) 2 − k
+
++ ( ρ − αhb ˆx).
+
+## E. Generalized Herringbone: Full Derivation 
+
+Sec. C assumed valid padding, unit stride, unit dilation, an odd square kernel, and square output. Lifting these breaks the row–column symmetry, changing both the per-leg debt and the leg sequence. We state the generalized debt equa-tion, then locate its peak. 12 E.1. Axis-Agnostic Setup 
+
+Let M = max( Hout , W out ), n = min( Hout , W out ), and 
+
+δ = M − n. Let wr = Wp − sw(Wout − 1) and hr = Hp −
+
+sh(Hout − 1) be the residual input footprints on each axis. Define the leg-debt slope and the per-leg residual inputs 
+
+αgen hb ≡ Cout − shswCin ,ρr = shCin (wr − sw), ρ c = swCin (hr − sh), (23) together with the remainder each leg releases at its tail, 
+
+Rr = wr shCin = ρr + shswCin ,Rc = hr swCin = ρc + shswCin , (24) where the r subscript names a horizontal leg and c a ver-tical one. Both pairs are then relabeled by which axis is longer: when Wout ≥ Hout the major axis is horizontal and (ρmaj , ρ min , R maj , R min ) = ( ρr , ρ c, R r , R c); other-wise the assignment is reversed. Write βhb ≡ Cout − Rmin 
+
+for the last-leg slope. Under the restrictions of Sec. C these collapse to αgen hb = Cout − Cin and ρmaj = ρmin = ρ,recovering Eq. (11). 
+
+Traversal for uneven output grids. When Hout ̸ = Wout 
+
+the traversal begins along the major axis and interleaves the two axes thereafter, alternating a major-axis leg with a shorter minor-axis leg and always ending on the major axis (Fig. 3): 
+
+maj( M ), min( n−1) 
+
+| {z }
+
+> pair 1
+
+, maj( M −1) , min( n−2) 
+
+| {z }
+
+> pair 2
+
+, . . . , 
+
+maj( M −n+2) , min(1) 
+
+| {z } 
+
+> pair n−1
+
+, maj( M −n+1) .
+
+(25) Here maj and min denote a leg along the major and mi-nor axis: maj = row , min = col when the major axis is horizontal ( Wout ≥ Hout , Fig. 3a), and the reverse when it is vertical ( Hout > W out , Fig. 3b). For the 5 × 3 out-put of Fig. 3b ( M = 5 , n = 3 , δ = 2 ) the sequence is 
+
+col(5) , row(2) , col(4) , row(1) , col(3) .The extended debt sequence LD concatenates the per-step debts in this order, and the peak debt is 
+
+Dgen  
+
+> hb
+
+= max 
+
+> ii
+
+X
+
+> j=1
+
+LD (j) + R, (26) where R is Rr or Rc according to the axis of the leg containing step j. Lemma 10 confirms that the sequence visits every output pixel exactly once, so the peak is taken over a genuine traversal of the full grid. 01256710 11 12 348913 14 D (2), 2 col  nd D (1), 4 col  th D (5), 1 row  st D (4), 3 row  rd D (3), 5 row  th 
+
+> (a) Row-major herringbone order
+
+## 012345678910 11 12 13 14 D (5), 1 col  st D (4), 3 col  rd D (3), 5 col  th D (2), 2 row  nd D (1), 4 row  th 
+
+> (b) Column-major herringbone order
+
+Figure 3. Herringbone traversal order on uneven output grids. 
+
+Lemma 10 (Traversal completeness) . The herringbone traversal of an M × n output grid visits every output pixel exactly once; equivalently, the leg lengths sum to M n .Proof. By Eq. (25) the traversal takes n major-axis legs of lengths M, M −1, . . . , M −n+1 and n − 1 minor-axis legs of lengths n−1, n −2, . . . , 1, so 
+
+X
+
+> legs
+
+length =
+
+> M
+
+X 
+
+> x=M−n+1
+
+x
+
+| {z }
+
+> major
+
++
+
+> n−1
+
+X
+
+> x=1
+
+x
+
+| {z } 
+
+> minor
+
+(27) 
+
+= n(2 M −n+1) 2 + (n−1) n 
+
+> 2
+
+= n 
+
+> 2
+
+(2 M ) = M n. 
+
+Each leg covers a fresh row or column edge, so no pixel 13 is revisited; a traversal of M n steps that never revisits a pixel visits every one of the M n pixels exactly once. 
+
+E.2. The Debt Equation Has Three Leg Types 
+
+Index a leg by the length the number of pixels x in its major-axis partner 6 and the position of the pixel within it y. The debt then takes one of three forms: major-axis leg: Dmaj (x, y ) = αgen hb y − ρmaj ,x ∈ [δ + 2 , M ], y ∈ [1 , x ] (28) minor-axis leg: Dmin (x, y ) = αgen hb y − ρmin ,x ∈ [δ + 2 , M ], y ∈ [1 , x − δ − 1] (29) last major leg ( x = δ + 1 ): Dlast  
+
+> maj
+
+(y) = Cout + βhb (y − 1) ,y ∈ [1 , δ + 1] 
+
+(30) The last leg does not follow the alternating pattern and is governed by Rmin rather than by shswCin : it releases the remainder left at the tail of the traversal, which is why its slope is βhb and not αgen hb .
+
+Locating the peak. The total debt after a prefix of legs is the running sum LD = P D. The three leg types con-tribute differently, so LD is piecewise quadratic and the global peak may fall in any one component; we evaluate a candidate maximum for each and take the overall maximum (Eq. (38)). Within a single leg the debt is linear in y with slope αgen hb 
+
+(Eqs. (28) and (29)), so the within-leg maximum is fixed by the sign of αgen hb alone: for αgen hb > 0 the debt increases along the leg and the maximum is at its end, y = x on the major axis or y = x − δ − 1 on the minor; for αgen hb ≤ 0 it is non-increasing and the maximum is at the start, y = 1 .
+
+Across-leg maximum, major axis. Summing Dmaj and 
+
+Dmin over all legs of length ≥ x, with the within-leg con-tribution resolved as above, 
+
+Lmaj D (x, y ) = 
+
+> M
+
+X
+
+> i=x+1
+
+ Dmaj (i) + Dmin (i)
+
++ αgen hb (y − 1) + Cout . (31) Collecting terms as in Sec. D.1,          
+
+> 6The minor axis is shorter by δ+ 1 , so a minor leg indexed xhas actual length x−δ−1.
+
+Lmaj D (x, y ) = − αgen hb x2 + ( ρmaj + ρmin + αgen hb δ)x
+
++ αgen hb M 2 − M (ρmaj + ρmin + αgen hb δ)+ αgen hb (y − 1) + Cout 
+
+, (32) a downward parabola in x when αgen hb > 0. Setting 
+
+∂L maj D /∂x = 0 ,
+
+x∗ 
+
+> maj
+
+= ρmaj + ρmin 
+
+2αgen hb 
+
++ δ
+
+2 . (33) By Lemma 6 the integer maximizer is ⌊x∗ 
+
+> maj
+
+⌋ or ⌈x∗ 
+
+> maj
+
+⌉,clipped to the leg-length domain [δ + 2 , M ]; these populate 
+
+Cmaj . When αgen hb ≤ 0 the parabola opens upward and the maximum is pushed to a domain endpoint, so Cmaj = {δ +2, M }.
+
+Across-leg maximum, minor axis. The minor-axis sum ends one leg later, after its paired major leg has just com-pleted: 
+
+Lmin D (x, y ) = 
+
+> M
+
+X
+
+> i=x+1
+
+ Dmaj (i) + Dmin (i)
+
++ Dmaj (x) + αgen hb (y − 1) + Cout , (34) which collects to Eq. (35), differing from Eq. (32) only in the linear coefficient, where δ becomes δ + 1 , and in an extra −ρmaj in the constant. 
+
+Lmin D (x, y ) = − αgen hb x2 +  ρmaj + ρmin + αgen hb (δ + 1) x
+
++ αgen hb M 2 − M (ρmaj + ρmin + αgen hb δ)
+
+− ρmaj + αgen hb (y − 1) + Cout 
+
+, (35) Differentiating gives 
+
+x∗ 
+
+> min
+
+= ρmaj + ρmin 
+
+2αgen hb 
+
++ δ + 1 2 = x∗ 
+
+> maj
+
++ 12 , (36) exactly half a leg to the right of the major-axis vertex — a structural consequence of the later summation start, independent of the convolution parameters. Cmin is formed from x∗ 
+
+> min
+
+as Cmaj was from x∗ 
+
+> maj
+
+.
+
+Last-leg candidate. The leg at x = δ+1 closes the traver-sal and is governed by βhb (Eq. (30)). Summing its contri-bution onto the completed minor sequence, 
+
+Llast = Lmin D (δ + 2 , 1) − Rmin + Cout + max(0 , β hb δ),
+
+(37) 14 where Lmin D (δ + 2 , 1) − Rmin is the debt accumulated just before the last leg starts, evaluated at the final minor leg with one pixel. The max(0 , β hb δ) term captures whether the accumulated last-leg debt exceeds the Rmin payback; when βhb ≤ 0 the payback dominates and the term van-ishes. 
+
+Theorem 11 (Generalized herringbone peak debt) . Un-der arbitrary stride (sh, s w), dilation (dh, d w), padding 
+
+(ph, p w), rectangular kernel kh × kw, and possibly non-square output, the peak debt of the herringbone traversal is 
+
+Dgen  
+
+> hb
+
+= max 
+
+
+
+Cout , Llast , max 
+
+> x∈C maj
+
+Lmaj D (x),
+
+max 
+
+> x∈C min
+
+Lmin D (x)
+
+
+
+,
+
+(38) 
+
+where Cmaj and Cmin are the candidate leg lengths of Sec. E.2: {⌊ x∗⌋, ⌈x∗⌉} clipped to [δ + 2 , M ] when αgen hb >
+
+0, and the boundary points {δ + 2 , M } when αgen hb ≤ 0. Ev-ery argument of the maximum is available in closed form, so the evaluation is O(1) .Proof. For each leg type, substitute the debt equation (Eqs. (28) to (30)) into Eq. (26) and collect, as carried out in Sec. E.2. The within-leg maximum is at y = x when 
+
+αgen hb > 0 and y = 1 when αgen hb ≤ 0 (Sec. E.2), and the across-leg vertex follows by differentiating the resulting parabola and applying Lemma 6. Since LD is piecewise quadratic with one component per leg type, its global maxi-mum is the largest of the three component maxima, together with the floor Cout that the write-before-clear headroom im-poses. The degenerate case is treated in Sec. E.3. 
+
+E.3. Degenerate Case and Scope 
+
+Single-row or single-column output. When n =min( Hout , W out ) = 1 the minor axis has one pixel across, so by the pairing offset, no minor axis leg exists: the minor leg length x − δ − 1 is non-positive for every x ≤ M . Since 
+
+M = δ + 1 , only the last leg survives on the major axis; the alternating sum collapses to the last leg contribution, and 
+
+Cmaj ∪ C min = ∅, so Eq. (38) returns max( Cout , L last ).Evaluating the major and minor candidates here would sum a leg sequence that does not exist and would overestimate the peak by up to 128 scalars on the configurations of Sec. G, which is how the corruption simulator isolated it. 
+
+Scope of the optimality claim. Theorem 11 establishes the exact peak debt of the generalized herringbone traver-sal . Whether herringbone remains memory-optimal among all traversals under arbitrary parameters is a separate ques-tion, and the answer is no. Gural & Murmann’s optimality argument [9, Lemma 3.1] rests on a Chebyshev-ball isoperi-metric bound that assumes an isotropic square kernel and does not extend to anisotropic receptive fields. More di-rectly, when sh > k eff  
+
+> h
+
+or the dilation is large enough, some input pixels are stale on arrival: no output ever depends on them. A traversal that discards those before storing the in-put and then runs herringbone uses strictly less memory, so herringbone without such a pruning step cannot be optimal in that regime. We do not pursue the pruned variant here. Theorem 11 is used only as a baseline against which RiP is compared, and the figures in Tab. 6 are herringbone peak debts rather than traversal-optimal minima. 
+
+## F. Dense Input Layout: Padding Not Material-ized 
+
+Eq. (4) stores the padded input in full. The (HpWp −
+
+Hin Win )Cin border cells all hold the same pad value and carry no information, yet on a fixed-workspace device, they occupy memory addresses that nothing else may use. This appendix re-derives the minimum gap when they are not stored at all, and settles the comparison between the two layouts, which is less obvious than it looks. 
+
+F.1. Layout and the Extended Next Live Input 
+
+Under the dense layout the workspace holds only the 
+
+Hin Win Cin real scalars, packed row-major: 
+
+[ 0 , . . . , 0 ] 
+
+| {z } 
+
+> ∆scalars
+
+X[0 , 0, 0] , . . . , X [Hin −1, W in −1, C in −1] 
+
+| {z }
+
+> real input, densely packed
+
+,
+
+(39) with real pixel (r, c ) at ∆+( rW in +c)Cin . A tap landing outside [0 , H in ) × [0 , W in ) reads an implicit pad value and touches no workspace address. Eq. (5) then no longer suffices. It located the first still-needed address by advancing one column, or wrapping one row, in the padded index space, where every position has an address. Under the dense layout the next tap position may itself fall in the unstored region, where there is nothing to report, so the dense next live input must skip forward to the first real pixel (¯ r, ¯c) still required by an unprocessed output: 
+
+NLI( r, c ) = 
+
+
+
+∆ + (¯ rW in + ¯ c) Cin 
+
+if (r, c )̸ = ( Hout −1, W out −1) ,
+
++ ∞ otherwise (last pixel). (40) The skip is what costs the closed form its O(1) evalua-tion. In the padded layout the next live input advances by a fixed stride at every step, so the debt is affine everywhere except at a row end. Here it advances by a fixed stride only while no tap changes side of the padding boundary, and the debt kinks wherever one does. 15 F.2. The Bound 
+
+Lemma 12 (Dense affine debt) . Under the dense layout the total debt is 
+
+D(r, c ) =  rW out + ( c+1) Cout − (¯ rW in + ¯ c)Cin + σ, 
+
+(41) 
+
+affine in (r, c ) between the indices at which a tap crosses the padding boundary. On the column axis tap i ∈ [0 , k w)
+
+enters the real region at c = ⌈(pw − id w)/s w⌉ and leaves it at c = ⌈(pw − id w + Win − 1) /s w⌉; the row axis is analogous with j ∈ [0 , k h), ph, dh, sh and Hin .Proof. Only the subtracted term of Eq. (7) changes, the in-put now being indexed densely. Between two consecutive crossings, no tap changes side of the boundary, so (¯ r, ¯c) ad-vances by sw columns per output column and sh rows per output row exactly as in Lemma 3, and Eq. (41) is affine there with the same coefficients. Tap i crosses only where 
+
+cs w + id w − pw reaches 0, entering the real region, or 
+
+Win , leaving it; solving each for c gives the two stated in-dices. 
+
+Theorem 13 (Minimum gap, dense layout) . Assume ph <keff  
+
+> h
+
+and pw < k eff  
+
+> w
+
+, so that no output pixel reads padding alone. Extend Rs and Cs of Theorem 4 with every cross-ing index of Lemma 12 and the index below it, clipped to the grid. Then Eq. (10) with HpWp replaced by Hin Win 
+
+gives a safe gap ∆∗
+
+> d
+
+, and the workspace is W∗ 
+
+> d
+
+= ∆ ∗ 
+
+> d
+
++
+
+Hin Win Cin . The extended sets have at most 4kh + 3 and 
+
+4kw + 3 members, so the evaluation is O(khkw).Proof. The crossings partition the output grid into cells on which D is affine by Lemma 12, so its maximum on each cell is attained at a breakpoint. Taking every crossing index together with its predecessor covers both sides of each par-tition boundary, and the three extremes Eq. (9) on each axis cover the outermost cells; each of the kw column taps con-tributes two crossings and each crossing two indices, giving the stated cardinality. Safety and the workspace identity then follow exactly as in Theorem 4, with HpWpCin re-placed by Hin Win Cin . The precondition ( ph < k eff  
+
+> h
+
+and 
+
+pw < k eff  
+
+> w
+
+) is what guarantees (¯ r, ¯c) exists for every unpro-cessed output; with padding at least as wide as the dilated kernel some output would read no real input at all, and the dense layout could not represent it. 
+
+F.3. Why the Comparison Must Be Made in Workspace 
+
+Dropping the padding raises the gap. This is the right way round: the padded layout pre-allocates HpWpCin scalars, of which the border is slack the output may consume for free, and the dense layout does not have that slack to spend. Reported as a gap, the dense layout therefore looks like a regression. What has to fit in SRAM is the workspace, and there the sign reverses: 
+
+W∗ − W ∗ 
+
+> d
+
+= ( HpWp − Hin Win )Cin 
+
+| {z }
+
+> border never allocated
+
+−  ∆∗ 
+
+> d
+
+− ∆∗| {z }
+
+> extra slack carried
+
+.
+
+(42) On every configuration in the sweep of Sec. G the first term exceeds the second, so the difference is non-negative, and strictly positive whenever the padding is non-zero. The saving is largest exactly where padding is largest relative to the feature map: Tab. 6 reports a mean of 2.1% across the 84 layers but 17 .4% on Inception-v3, whose 7×1 and 1×7
+
+branches pad one axis heavily while the other carries none. Two layouts that disagree in gap and agree in workspace is not a presentational detail. It is the reason every compari-son in this paper is stated in total scalars: a per-layer bound is only useful to the extent that it predicts what the allocator must reserve, and the gap alone does not. 
+
+F.4. Tightness When Input Is Stale From the Outset 
+
+Theorem 13 is safe unconditionally but not always tight. The gap opens when a real input scalar is never read by any output, so that it is dead before the layer begins. Input col-umn x is read only if x = cs w + jd w − pw for some output 
+
+c and tap j, and two mechanisms leave that unsatisfiable. If 
+
+sw > k eff  
+
+> w
+
+the columns between cs w + keff  
+
+> w
+
+and (c+1) sw
+
+fall past one receptive field and before the next. If instead 
+
+dw is large relative to sw, the columns strictly between con-secutive taps, cs w + jd w and cs w + ( j+1) dw, are skipped within every receptive field that could cover them; the row axis is analogous. Dead input is necessary for looseness but not sufficient, and two conditions must hold together. First, the dead ad-dresses must include the first one: because RiP writes to fixed physical addresses rather than reusing a free list, what matters is not how many are dead but which, and only a dead leading run lets the write frontier start earlier than the bound permits. Second, σ must be the binding term, ∆∗ 
+
+> d
+
+= σ. The headroom exists because output pixel (0 , 0) does not over-write its own taps before reading them, and those taps be-gin at the first live address; a dead leading run of L pixels covers L C in scalars of it in advance. But Eq. (6) is a max-imum, so when an interior breakpoint dominates, discount-ing the headroom leaves that maximum unchanged and the bound stays exact. Empirically, the overshoot is at most 
+
+min( σ, L C in ) and never exceeded σ on any configuration we test. The simplest configuration that is loose has Cin =
+
+Cout = 2 , k = 1 × 2, Hin = Win = 1 , unit stride, 
+
+(dh, d w) = (1 , 2) and (ph, p w) = (0 , 1) , so that keff  
+
+> w
+
+= 3 .The two taps land at −1, which is padding, and at +1 , which is past the end of the input, so the single real column is 16 never read. The true minimum gap is 0: the output may be written straight over an input that nothing will ever load. Theorem 13 returns 2, the full production-order headroom 
+
+σ = Cout , because it is unaware of this stale dependency of the first pixel. 
+
+## G. Validation Protocol 
+
+Every closed form in this paper is checked against a simula-tor that does not know the formula. This appendix describes the simulator, how the 10 ,000 configurations of Sec. 5.2 are composed, and what the check does and does not establish. 
+
+G.1. The Corruption Simulator 
+
+The simulator executes a traversal literally in an allocation-tracked workspace. It holds a scalar-level map of the buffer, marks each input scalar live until the last output pixel that depends on it has been computed, and flags a corruption the moment a write lands on an input tap still marked live. Given a layer configuration it binary-searches the gap: the smallest ∆ that completes the traversal with no flag is the ground truth reported as Truth in Tab. 2. Two properties make this a check rather than a restate-ment. The simulator never evaluates any closed form, so agreement is independent evidence. And it returns the mini-mum rather than a safe value, so it catches over-allocation as well as under-allocation: this is what exposed Limitation 2, where the published form exceeds truth by up to 2,432 ×,and the degenerate leg sequence of Sec. E.3. Each configuration therefore receives one of three ver-dicts per closed form: UNSAFE if the formula falls below truth, which is the only outcome that admits a corruption;  
+
+> TIGHT
+
+if it equals truth; and LOOSE if it exceeds truth by any number of scalars. No sweep in this paper has produced an UNSAFE verdict. 
+
+G.2. Sweep Composition 
+
+We draw 10 ,000 layer configurations from the twenty gen-erators of Tab. 5, with input spatial extent up to 128 and a fixed seed. The generator weights sum to 100 and so read directly as percentages of the sweep. They fall in three tiers. The first, 35% , is what real models are built from: plain and same-padded convolutions, strided downsampling, inverted bottlenecks, and projection layers. The second, 45% , is small-grid and near-degenerate geometry, where every de-fect we have found lives: the collapsed minor axis, grids of six pixels or fewer, thin axes, and the non-integer x∗ that drives Limitation 1. The third, 20% , covers correctness cor-ners that are rare in shipping models but must be covered because generality is the claim: rectangular kernels, dila-tion, and asymmetric stride, dilation and padding. Each layer configuration is run under all five execution configurations that the schemes admit: RiP padded and RiP dense, each with the receptive field gathered first or read                                                                
+
+> Table 5. The twenty generators, with their share of the sweep. Tier 1 is the geometry shipping models are built from, tier 2, the small-grid and degenerate regimes where every defect found so far has lived, and tier 3, the correctness corners that generality requires but real models rarely reach. Tier Generator Share 1plain convolution, k∈[1 ,7] 11%
+> 1same padding, p=⌊k/ 2⌋8%
+> 1strided downsampling 6%
+> 1inverted-bottleneck expansion 5%
+> 1projection, Cout ≤Cin 5%
+> 2collapsed minor axis, n∈ { 1,2,3}9%
+> 2small herringbone grid, n≤67%
+> 2small output grid 6%
+> 2thin axis, one output axis of 16%
+> 2restricted regime, integer x∗6%
+> 2random symmetric axes 6%
+> 2non-integer x∗5%
+> 3non-monotone tap order 4%
+> 3rectangular kernel 3%
+> 3dilation 3%
+> 3asymmetric stride 2%
+> 3asymmetric dilation 2%
+> 3asymmetric padding 2%
+> 3fully asymmetric 2%
+> 3maximal padding 2%
+
+from the workspace, and generalized herringbone reading from the workspace. Herringbone under gather-first is not implemented. 
+
+G.3. What the Sweep Does Not Establish 
+
+The sweep establishes that the gaps are safe and, where re-ported, tight. It does not establish that a layer executed in the RiP layout computes the same tensor as one executed conventionally, which is a separate claim and the one a prac-titioner cares about. Liveness bookkeeping and arithmetic are different questions: a gap can be safe while the kernel is wrong, and a kernel can be right while the gap is too small. The sweep only answers the former question, a correctly implemented kernel answers the latter. The end-to-end claim is discharged on device instead, and more strongly than a synthetic check would. Every de-ployed model in Tab. 3 carries an on-device checksum of its output logits, computed after the full network has run under RiP and compared against the same checksum under the baseline schedule. All eleven agree bit for bit. Since RiP changes only where activations are placed and not how they are computed (that is the kernel implementation’s busi-ness), the agreement over eleven networks is the observed and expected behavior. 17 H. Per-Layer Results 
+
+Sec. 5.3 reports the aggregate comparison across 84 convo-lutional layers. Tab. 6 breaks it down by architecture family, so that the aggregate can be checked against the families it is drawn from rather than taken on trust. Two structural facts are easier to see here than in the aggregate. First, the layers on which RiP costs anything against her-ringbone are concentrated, not spread. Eleven of the sev-enteen families contain no layer above a 1.01 workspace ratio, and the three layers exceeding 5% sit in two fami-lies: pruned VGG-16, whose channel-doubling layers run on 16 ×16 and 8×8 grids, and Inception-v3, whose 7×1
+
+branch is the single worst case at 1.170 . Where the row-major frontier loses, it loses for a reason visible in the layer’s shape. Second, the Dense column is zero on exactly the 46 lay-ers that use no padding, and non-zero on all 38 that do. The saving from not materializing padding is therefore not a property of the method but of the layer: it is bounded by the padding fraction of the input, which is why it reaches 
+
+17 .4% on Inception-v3, whose 7×1 and 1×7 branches pad one axis and not the other, and 25 .3% on the single worst layer. Across the whole set the dense gap is never smaller than the padded gap and the dense workspace never larger, strictly so on the 38 layers that pad; the sign inversion of Eq. (42) holds on real layers as well as on the sweep of Sec. G. The counts are properties of the layer set rather than fre-quencies across whole networks: Sec. 5.3 selects the layers of largest combined input and output footprint, which biases toward early high-resolution layers and toward the channel-expanding pointwise convolutions of inverted-bottleneck designs. 
+
+## I. Graph-Level Simulation and MILP Cost 
+
+The eleven deployed models of Tab. 3 are small enough that solver cost is not in question. To see how the MILP behaves on larger model graphs, we stripped TinyEngine’s kernel generators from its TFLite parser, keeping the graph API and layer construction, branch connections, and ten-sor liveness, and ran the allocator alone across 33 mod-els from keras.applications : DenseNet (121, 169, 201), EfficientNet (B0–B7), EfficientNetV2 (B0–B3, S, M, L), ResNet and ResNetV2 (50, 101, 152), MobileNet, Mo-bileNetV2, MobileNetV3 (Small, Large), VGG (16, 19), In-ceptionV3, InceptionResNetV2, and Xception. These are not deployed; the point is to study the cost of the allocator and not execution on the boards. Every layer runs under the dense layout of Sec. F with the receptive field gathered first, so padding is never materialized and σ = 0 . The allo-cator was run on an 8-core (16-thread) Intel processor at 1.80 GHz base (4.50 GHz turbo) with 64 GB of memory, using SCIP through the Pyomo interface. Each model is solved single-threaded, with four models measured concur-rently. We report the median of 10 runs per model and per formulation. 
+
+Scaling. The program size is quadratic in the graph by construction: the pairwise no-overlap constraints put three overlap binaries on each of the n(n−1) /2 tensor pairs, so the dual-buffer formulation has exactly 3n(n−1) /2 bina-ries on all 33 models, and RiP adds 2m for the m in-place candidates. Cost per binary, however, is flat. Regressing on the number of binaries over a 46 × range in graph size (n = 22 to 1,006 ) gives an exponent of 1.05 for model con-struction ( R2 = 0 .99 ) and 0.99 for the branch-and-bound search ( R2 = 0 .97 ): both stages are linear in the size of the program they are given. Against tensor count the exponents are 2.10 and 1.98 , which is that linearity composed with the quadratic encoding rather than a solver that degrades with scale. 
+
+Cost. The largest instance, EfficientNetV2-L, has 1,006 tensors, 1.52M binaries and 2.03M constraints, and takes 132 s. No model in the set exceeds 150 s and the me-dian is 13.0 s. The branch-and-bound search dominates model construction on 30 of the 33 (96.3 s against 34.8 s on EfficientNetV2-L), so the cost is the packing problem rather than the Python that builds it. The problem grows with the graph and not with the tensors: VGG-16 has the 
+
+9th largest activations in the set and the smallest program (729 binaries, 0.16 s), while EfficientNetV2-L, only 5th by activations, has the most nodes and the largest. Against the dual-buffer baseline the RiP formulation compiles between 
+
+0.99 × and 2.36 ×, median 1.53 ×, which is the price of the extra binaries di and ri. All of it is offline and paid once per model. 
+
+The baseline is not greedy. The comparison here is against the same MILP restricted to dual-buffer execution, so both sides solve an NP-hard packing problem and the baseline achieves the optimal packing of never-aliased ten-sors. All operations are dual buffered and a used memory space is made available only once the tensor’s lifetime ends. The reductions are therefore conservative: RiP cuts peak activation memory on all 33, by 20.0% to 49.8% (mean 32.6%), against an allocator that is already optimal within its execution model. 
+
+In-place is not forced. The objective minimizes peak memory plus the right-shift penalty of Sec. 4.3. Nothing rewards choosing an op as in-place for its own sake; it is chosen only where it reduces the model’s peak memory by more than the memmove costs. The share of tensors placed 18 Table 6. RiP against the generalized herringbone bound on 84 convolutional layers drawn from 25 architectures. n is layers sampled;               
+
+> Gen. counts those whose parameters fall outside the restrictions of [9] and so are reachable only through Theorem 11. Exact and ≤5%
+> count layers where RiP’s workspace equals, or is within 5% of, herringbone’s. Max is the worst RiP-to-herringbone workspace ratio in the family. Save is the mean workspace reduction against dual buffering, and Dense the mean further reduction from not materializing padding (Sec. F). Timed counts the layers executed on the Pico 2 and Cost is their median runtime ratio against the dual-buffer kernel, right-shift included; a dash marks a family with no timed layer. Every layer passes the corruption simulator under both layouts, so no correctness column is shown.
+
+Family n Gen. Exact ≤5% Max Save Dense Timed Cost ResNet-50 11 4 10 11 1.006 25 .5% 2.3% 6 1.000 
+
+ResNet-56 (pruned) 5 5 4 5 1.011 26 .9% 11 .4% 5 1.001 
+
+VGG-16 4 4 0 4 1.033 25 .0% 0.9% – –VGG-16 (pruned) 3 3 0 1 1.086 17 .9% 4.2% 3 1.000 
+
+MobileNetV1 6 1 5 6 1.005 32 .1% 0.0% 3 1.000 
+
+MobileNetV2 5 1 4 5 1.005 16 .8% 0.0% 2 1.000 
+
+MCUNet-in1–in4 16 4 12 16 1.022 24 .2% 0.1% 16 1.002 
+
+EfficientNet-B0 4 1 3 4 1.005 17 .4% 0.0% 1 1.000 
+
+ConvNeXt-T 2 2 1 2 1.007 33 .1% 0.0% 2 1.001 
+
+DenseNet-121 2 1 1 2 1.006 24 .3% 0.1% – –ShuffleNetV2 1 1 0 1 1.007 32 .9% 0.2% 1 0.997 
+
+SqueezeNet 2 2 0 2 1.009 15 .3% 0.3% 1 1.000 
+
+Xception 1 1 0 1 1.002 27 .2% 0.0% – –YOLO v5–v26 15 7 13 15 1.003 29 .4% 1.2% 5 1.000 
+
+RT-DETR-l 3 2 3 3 1.000 18 .1% 0.4% – –Inception-v3 2 2 1 1 1.170 29 .0% 17 .4% 2 1.000 
+
+DeepSpeech2 2 2 1 2 1.021 9.9% 10 .9% 1 1.008 
+
+All 84 43 58 81 1.170 24 .8% 2.1% 48 1.000 
+
+in-place therefore follows the topology, ranging from 4.5% on InceptionResNetV2 to 83.7% on Xception. The penalty is what keeps runtime moves out: across the 33, the solver schedules a right shift on four models only (VGG-16, VGG-19, Inception-v3, and InceptionRes-NetV2), one tensor each. These are also the only four whose peak ratio is not an exact fraction of the baseline, and in each case the shifted tensor is the peak-setting one: the move is what buys the aliasing at the peak, so both facts have the same cause. All four peak on a same-padded layer, where the write frontier must clear a full row before any in-put goes stale and the dense layout has no border slack to give it. Which term binds depends on the channel ratio. On VGG-16’s conv1 2 (64 → 64 , k = 3 , 224 × 224 , same padding) both coefficients vanish under the dense layout, 
+
+α = Cout − swCin = 0 and β = Cout Wout − shWin Cin =0: advancing a row frees exactly what it writes, the debt is flat across the interior, and the maximum sits at the early border kink, giving W ∗ = Nout + ( phWout + pw)Cout =3,211 ,264 + 14 ,400 = 3 ,225 ,664 B. The Inception pair peaks on the channel-doubling stem convolution ( 32 → 64 ,
+
+k = 3 , 147 × 147 , same padding), where α = 32 and 
+
+β = 4,704 are positive: the debt grows with each out-put row and the maximum sits at the last output, giving 
+
+W ∗ = Nout + β = 1 ,382 ,976 + 4 ,704 = 1 ,387 ,680 B. Theorem 13 accounts for both. The two Inception mod-els agree to the byte because they share the Inception-v3 stem and peak on the same layer, not by coincidence of ra-tios. The eleven deployed models of Tab. 3 peak instead on the pointwise convolutions of their MobileNetV2-style backbone, which carry no padding, so no move is sched-uled on any of them and every ratio is exact. 
+
+Operator classes. Every model layer falls in one of two classes. Concatenation, reduction and fully-connected lay-ers need disjoint input and output and are held apart by con-struction, so they are forced to dual buffering regardless of the allocator mode. Convolution, depthwise convolution, pooling, element-wise and scalar add and multiply, upsam-pling, and activations are candidates for in-place placement, and the MILP decides. Treating tensors as candidates for in-place placement rather than being forced to be aliased mat-ters on residual topologies, where an activation’s input may still be live for a downstream skip connection; the liveness constraints make the program fall back to disjoint place-ment in exactly those cases. 19 Upsampling. To gain the full advantage of in-place place-ment we extend the workspace formulation to the other local operators, pooling and sampling. Person-Det needs this specifically, since upsampling is the only operator here whose output is larger than its input on both spatial axes while its input is an in-place candidate. Sec. I.1 derives it, and shows the workspace is max( Nout , N in ).
+
+I.1. In-Place Upsampling 
+
+Nearest-neighbor upsampling by an integer factor S ≥ 1
+
+has Cout = Cin ≡ C, Hout = SH in and Wout =
+
+SW in , and output pixel (r, c ) reads the single input pixel 
+
+(⌊r/S ⌋, ⌊c/S ⌋). The forward traversal of Theorem 4 does not apply: it runs forward from (0 , 0) and output (0 , 0) lands on input (0 , 0) , which outputs (0 , 1) through (S−1, S −1) 
+
+still need. Reversing the traversal (running the operation in reverse) fixes it, with no gap at all. We allocate one workspace of 
+
+Nout = Hout Wout C scalars, pack the input row-major at 
+
+[0 , H in Win C) and write the output row-major from index 
+
+0: both tensors are left -aligned and ∆ = 0 . The traversal runs from (Hout −1, W out −1) down to (0 , 0) , so the write frontier descends from the top of the workspace while the read frontier descends S2 times more slowly from far below it. Indices (r, c ) range over the output grid as in Sec. 4.1, and in pixel units the pixel about to be written begins at 
+
+out( r, c ) = rW out + c = rSW in + c. (43) Because ⌊· /S ⌋ is non-decreasing, the highest input still re-quired is the one read by the next output in the traversal, so the next live input is 
+
+NLI( r, c ) = 
+
+ rS
+
+Win +  c−1
+
+> S
+
+, c > 0,
+
+ r−1
+
+> S
+
+Win + Win − 1, c = 0 , r > 0,
+
+−∞ , r = c = 0 (last pixel ).
+
+(44) 
+
+Theorem 14 (Zero-gap in-place upsampling) . Under the layout above and reverse row-major traversal, no output write reaches a live input for any S ≥ 1, and the minimum workspace is W∗ = Nout , the output tensor alone. Proof. A write at (r, c ) is safe in reverse traversal when 
+
+NLI( r, c ) < out( r, c ). Since ⌊r/S ⌋ ≤ r and S ≥ 1 give 
+
+⌊r/S ⌋Win ≤ rSW in , and ⌊(c−1) /S ⌋ ≤ c − 1, the two branches of Eq. (44) give for c > 0:
+
+NLI( r, c ) ≤ rSW in + c − 1 < rSW in + c = out( r, c ),
+
+and for c = 0 , r > 0, where the bound is tightest: 
+
+NLI( r, 0) ≤ rW in − 1 ≤ rSW in − 1 < out( r, 0) .
+
+At r = c = 0 nothing remains unprocessed. The separation is therefore strictly positive at every step with 
+
+∆ = 0 , so no geometric debt is carried and the workspace is Nout = max( Nout , N in ). One pixel needs care: (0 , 0) is the only index at which a write lands on the input it reads. It costs nothing, because the value written is the value already there (nearest-neighbor upsampling copies input(0 , 0) to 
+
+output(0 , 0) , channel for channel) so the write is an iden-tity and the tap-read order of Eq. (6) is immaterial. Hence 
+
+σ = 0 under either order. Pooling needs no such extension. Max and average pooling have Cout = Cin and stride s ≥ 1, so α =
+
+Cout − swCin ≤ 0 and β = Cout Wout − shWin Cin ≤ 0,which is the case α ≤ 0 and β ≤ 0 of Theorem 4: forward row-major traversal, W ∗ = Nin = max( Nout , N in ), and the output absorbed entirely into the space its input vacates. Upsampling is the mirror image, which is why it is the one case that has to run backwards. 20 Table 7. Graph-level allocation across 33 keras.applications models under the dense layout with the receptive field gathered first. Ops is graph nodes after folding and Res. the branch connections that keep two tensors alive at once. Vars and Constr. size the MILP; Compile is the full offline step (parse, model build, solve) under each formulation, median of 10 runs. Dual buffer is the same program restricted to disjoint placement, so it is the optimal packing of never-aliased tensors rather than a greedy baseline. In-place is the share of tensors the solver places in-place and Shift the number it separates by a physical right shift; a dash marks a model with no move scheduled. The memory ratio is an exact fraction on 29 of the 33, and the four exceptions are exactly the four models with a non-empty Shift column. 
+
+MILP size Compile (s) Peak activation (KB) Tensor placement Model Ops Res. Vars Constr. Dual buf. RiP Ratio Dual buf. RiP Ratio In-place (%) Shift (#) MobileNet 29 0 1,361 1,969 0.08 0.14 1.69 1,176.0 784.0 2/3 60.0 –MobileNetV2 64 10 6,364 8,813 0.26 0.52 2.01 1,470.0 1,176.0 4/5 49.2 –MobileNetV3-S 109 15 18,201 24,834 1.08 1.49 1.37 392.0 220.5 9/16 64.5 –MobileNetV3-L 122 18 22,751 30,967 1.27 1.42 1.12 980.0 784.0 4/5 82.1 –VGG-16 21 0 729 1,077 0.11 0.16 1.49 6,272.0 3,150.1 0.502 54.5 1VGG-19 24 0 942 1,377 0.12 0.18 1.55 6,272.0 3,150.1 0.502 56.0 1ResNet-50 72 16 8,024 11,063 0.59 0.67 1.15 2,352.0 1,568.0 2/3 47.9 –ResNet-50v2 109 16 18,199 24,827 1.13 1.77 1.56 2,352.0 1,568.0 2/3 54.5 –ResNet-101 140 33 29,886 40,558 1.84 2.28 1.24 2,352.0 1,568.0 2/3 28.4 –ResNet-101v2 211 33 67,516 91,110 4.00 6.16 1.54 2,352.0 1,568.0 2/3 67.0 –ResNet-152 208 50 65,620 88,549 3.95 5.21 1.32 2,352.0 1,568.0 2/3 55.5 –ResNet-152v2 313 50 148,045 199,009 9.02 10.97 1.22 2,352.0 1,568.0 2/3 63.1 –DenseNet-121 308 58 143,138 192,103 7.67 14.64 1.91 2,058.0 1,568.0 16/21 44.7 –DenseNet-169 428 82 275,942 369,655 14.49 29.50 2.04 2,058.0 1,568.0 16/21 47.6 –DenseNet-201 508 98 388,478 520,023 20.64 28.91 1.40 2,058.0 1,568.0 16/21 47.5 –Inception-v3 124 35 23,394 31,683 1.49 2.46 1.65 2,025.8 1,355.2 0.669 25.6 1InceptionResNetV2 334 98 168,297 225,797 9.43 15.13 1.60 2,025.8 1,355.2 0.669 4.5 1Xception 103 12 16,270 22,227 1.07 1.05 0.99 6,752.8 4,051.7 3/5 83.7 –EfficientNet-B0 242 74 88,689 119,465 5.16 6.39 1.24 3,528.0 2,352.0 2/3 32.1 –EfficientNet-B1 344 108 178,704 239,995 9.79 13.82 1.41 4,050.0 2,700.0 2/3 25.2 –EfficientNet-B2 344 108 178,704 239,995 10.11 12.95 1.28 4,753.1 3,168.8 2/3 11.0 –EfficientNet-B3 389 123 228,339 306,400 13.09 20.03 1.53 9,492.2 6,328.1 2/3 23.1 –EfficientNet-B4 479 153 345,834 463,510 18.24 43.12 2.36 15,229.7 10,153.1 2/3 15.4 –EfficientNet-B5 581 187 508,371 680,736 26.90 46.19 1.72 21,930.7 14,620.5 2/3 14.8 –EfficientNet-B6 671 217 677,706 906,966 36.11 67.09 1.86 39,204.0 26,136.0 2/3 9.8 –EfficientNet-B7 818 266 1,006,545 1,346,153 56.70 76.88 1.36 50,625.0 33,750.0 2/3 27.4 –EffNetV2-B0 269 86 109,479 147,317 6.63 7.73 1.17 1,274.0 882.0 9/13 8.9 –EffNetV2-B1 328 107 162,520 218,332 9.73 16.05 1.65 1,462.5 1,012.5 9/13 35.6 –EffNetV2-B2 343 112 177,670 238,607 10.99 16.93 1.54 1,716.4 1,188.3 9/13 29.7 –EffNetV2-B3 403 132 245,020 328,707 15.54 18.14 1.17 2,856.4 1,977.5 9/13 24.0 –EffNetV2-S 503 167 381,270 510,872 21.77 33.63 1.54 5,616.0 3,888.0 9/13 5.6 –EffNetV2-M 726 242 793,151 1,061,161 42.32 59.06 1.40 8,775.0 6,075.0 9/13 23.4 –EffNetV2-L 1,005 337 1,518,551 2,029,754 80.45 132.04 1.64 11,700.0 8,100.0 9/13 23.4 –
+
+21
