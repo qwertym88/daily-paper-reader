@@ -44,14 +44,14 @@
       <span class="dpr-home-dashboard-kicker">2026-10-06</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 18 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 30 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
-    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>4</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>14</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>2 次</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>10</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>20</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-06 01:12:34 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-06 23:27:51 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>2026-10-06 日报完成 18 篇筛选，精读 4 篇、速读 14 篇，聚焦人形机器人与安全控制。最值得看的是 9.0 分的《Filter-Aware Fine-Tuning for Safe Humanoid Whole-Body Tracking》和 8.0 分的《Brain-SAD》——前者关乎人形机器人全身跟踪的安全微调，后者提出带动态恐惧约束的双策略自动驾驶框架。普通读者可优先从这两篇入手，理解“安全约束”如何同时落地于机器人控制与自动驾驶。</p>
+<p>今日精读10篇、速读20篇共30篇论文，人形机器人与神经架构搜索成为双高分焦点。最值得看的是《Filter-Aware Fine-Tuning for Safe Humanoid Whole-Body Tracking》和《Bayesian Optimization in Sequence-to-Architecture Latent Space for Zero-Shot NAS》，两篇均获9.0分。普通读者可先从速读中的《CoDance》和《VAMPS》入手，感受人形交互与规划策略的直观应用。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">4 篇</strong>
+    <strong class="dpr-home-dashboard-count">10 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Filter-Aware Fine-Tuning for Safe Humanoid Whole-Body Tracking">Filter-Aware Fine-Tuning for Safe Humanoid Whole-Body Tracking</span></li><li><span class="dpr-home-dashboard-paper-title" title="Brain-SAD: A Brain-Inspired Safe Autonomous Driving Control Framework with Dynamic Fear-Oriented Constraint on Dual-Policy">Brain-SAD: A Brain-Inspired Safe Autonomous Driving Control Framework with Dynamic Fear-Oriented Constraint on Dual-Policy</span></li><li><span class="dpr-home-dashboard-paper-title" title="EgoAlign: Bridging the Human-Humanoid Gap for Long-Range Loco-Manipulation">EgoAlign: Bridging the Human-Humanoid Gap for Long-Range Loco-Manipulation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Filter-Aware Fine-Tuning for Safe Humanoid Whole-Body Tracking">Filter-Aware Fine-Tuning for Safe Humanoid Whole-Body Tracking</span></li><li><span class="dpr-home-dashboard-paper-title" title="Bayesian Optimization in Sequence-to-Architecture Latent Space for Zero-Shot NAS">Bayesian Optimization in Sequence-to-Architecture Latent Space for Zero-Shot NAS</span></li><li><span class="dpr-home-dashboard-paper-title" title="Brain-SAD: A Brain-Inspired Safe Autonomous Driving Control Framework with Dynamic Fear-Oriented Constraint on Dual-Policy">Brain-SAD: A Brain-Inspired Safe Autonomous Driving Control Framework with Dynamic Fear-Oriented Constraint on Dual-Policy</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>3</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>4</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">14 篇</strong>
+    <strong class="dpr-home-dashboard-count">20 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="GestAdapt: Workspace-Conditioned Co-Speech Gesture Generation for Humanoid Robots">GestAdapt: Workspace-Conditioned Co-Speech Gesture Generation for Humanoid Robots</span></li><li><span class="dpr-home-dashboard-paper-title" title="CEER2: Directional and Tunable End-Effector and Root Compliance for Humanoid Loco-Manipulation">CEER2: Directional and Tunable End-Effector and Root Compliance for Humanoid Loco-Manipulation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Switching Linear Attention">Switching Linear Attention</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SD-DPC: Sparse Dictionary Differentiable Predictive Control">SD-DPC: Sparse Dictionary Differentiable Predictive Control</span></li><li><span class="dpr-home-dashboard-paper-title" title="CoDance: Learning Reactive and Compliant Human-Humanoid Interaction from Video">CoDance: Learning Reactive and Compliant Human-Humanoid Interaction from Video</span></li><li><span class="dpr-home-dashboard-paper-title" title="VAMPS: Visual and Motor Policies from Sampling-Based Planning">VAMPS: Visual and Motor Policies from Sampling-Based Planning</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>8</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>13</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>5</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
 </div>
 
