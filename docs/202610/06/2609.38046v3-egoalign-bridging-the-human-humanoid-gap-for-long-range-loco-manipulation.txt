@@ -1,0 +1,1226 @@
+EgoAlign: Bridging the Human-Humanoid Gap for Long-Range
+Loco-Manipulation
+Yiming Jiang1,4,∗, Jin Chen2,4, Chongyang Xu3,4, Yilun Chen4,†,
+Aimin Hao1,‡, Yisheng He4,†,‡
+Abstract— Egocentric human demonstrations offer an acces-
+sible source of task experience, but differences in body scale
+and controller response, together with missing robot states,
+limit their value as humanoid training supervision. We present
+EgoAlign, a data-construction framework that converts these
+demonstrations into action and state supervision compatible
+with a general-purpose, continuous whole-body controller, with-
+out collecting physical-robot demonstrations. Using the target-
+robot model and simulator, EgoAlign guides demonstration
+collection through execution feedback. It preserves locomotion
+references for visually guided periodic stepping while adapt-
+ing upper-body interaction geometry through scale alignment
+and controller-in-the-loop refinement. A final causal replay
+reconstructs the corresponding robot states and motion-token
+labels for training with the human observations. We assess the
+resulting supervision by fine-tuning a vision–language–action
+model solely on adapted human demonstrations and deploying
+it zero-shot on a physical humanoid. The resulting policies
+perform long-range object relocation, navigation to unseen goal
+positions, and independently evaluated foot interaction. Refine-
+ment improves simulated hand alignment and physical pickup
+success over kinematic alignment alone, while human collec-
+tion reduces on-site acquisition time relative to teleoperation.
+https://lambdahumanoid.github.io/EgoAlign/
+I. INTRODUCTION
+Scaling vision-language-action (VLA) learning requires
+abundant, diverse, effective training data [1], [2]. Physical-
+robot teleoperation is costly and exposes robots to interaction
+failures. Egocentric human demonstrations provide naviga-
+tion and interaction experience without operating a physical
+robot [3], [4] and could complement robot demonstrations
+in large-scale mixed-data training [5]. Their value, however,
+depends on target-embodiment supervision quality: a suc-
+cessful human action does not directly provide a suitable
+robot training example.
+Here, quality means human-derived actions and corre-
+sponding robot states suitable for policy learning. Body-scale
+and controller-response differences can make realized hand
+trajectories deviate from human references, while recordings
+lack the associated robot state history. These gaps matter
+for long-range loco-manipulation, which combines distant
+navigation, sustained interaction during locomotion, and lo-
+cal contact [6]. How can we bridge these gaps to make
+1Beihang University. 2Shanghai Innovation Institute. 3Sichuan Univer-
+sity. 4Alibaba Group.
+†Co-project leaders. ‡Co-corresponding authors.
+Contact: Yiming Jiang (jiangyimingjym@buaa.edu.cn); Yisheng
+He (ethanheysh@gmail.com).
+∗Work done during an internship at Alibaba Token Hub (ATH), Alibaba
+Group.
+TABLE I
+ROBOT-FREE HUMANOID LEARNING SYSTEMS. EE. CAPTURE:
+END-EFFECTOR COLLECTION. NAVIGATION: REPORTED HELD-OUT
+SETTINGS. ✓/×: DEMONSTRATED/NOT DEMONSTRATED.
+Method
+EE.
+Capture
+Pub. & Conti.
+General WBC
+Nav.
+Generalization
+Foot
+Interact.
+HuMI [9]
+UMI
+×
+Not reported
+×
+BifrostUMI [10]
+UMI
+×
+Not reported
+×
+EgoHumanoid [4]
+Hands
+×
+Cross-scene
+×
+EgoAlign (ours)
+Hands
+✓
+Goal-position
+✓
+egocentric human demonstrations effective supervision for
+long-range humanoid loco-manipulation?
+We present EgoAlign, which improves the target-robot
+compatibility of human demonstrations through motion adap-
+tation and causal state reconstruction. It constructs VLA
+supervision for SONIC’s public, general-purpose, continuous
+whole-body interface [7], so learned policies can use leg
+motions for both locomotion and foot interaction without
+task-specific controller training (Table I). During locomotion,
+visual feedback guides periodic stepping toward goals with-
+out requiring frame-by-frame matching of human and robot
+displacement or speed. Hand–object interaction requires lo-
+cal geometric alignment, so we adapt upper-body motion
+while preserving global travel and lower-body references. Yet
+kinematic alignment alone cannot ensure controller-realized
+accuracy. During collection, SONIC–MuJoCo feedback [8]
+guides correction of suppressed motions. Offline, scale align-
+ment combines kinematic alignment with controller-in-the-
+loop refinement to correct residual errors in realized upper-
+body motion. Because motion corrections change the re-
+sulting robot states, final causal replay reconstructs corre-
+sponding states and motion-token labels for training with
+the original human observations. This uses the target robot’s
+model, controller, and simulation, but no physical-robot
+demonstrations.
+We use human-only task training followed by zero-shot
+physical deployment as a functional test of the adapted
+data’s training value. Using the π0.5 architecture [2] with
+a pretrained vision–language backbone, we train on these
+demonstrations and deploy in closed loop without task-
+specific physical-robot demonstrations or robot-side adap-
+tation. Evaluation covers roughly 10-m end-to-end object
+relocation and independently tested position-generalized nav-
+igation and foot interaction. Our alignment reduces simu-
+lated right-palm error from 14.27 to 1.65 cm and increases
+physical object-pickup success from 0% to 90%. Same-
+arXiv:2609.38046v3  [cs.RO]  1 Oct 2026
+
+
+stack ablations assess navigation data, level-view perception,
+and state reconstruction, while a teleoperation comparison
+measures on-site collection efficiency.
+Our contributions are threefold:
+• We introduce EgoAlign, a robot-free framework that
+constructs robot-compatible action and state supervision
+from egocentric human demonstrations for VLA learn-
+ing through a general-purpose, continuous whole-body
+control interface.
+• We develop motion adaptation through dynamics-
+guided collection and upper-body scale alignment, fol-
+lowed by causal state reconstruction to pair adapted
+actions with their corresponding robot states.
+• We validate the supervision through human-only train-
+ing and zero-shot physical deployment on long-range
+object relocation, position-generalized navigation, and
+independently evaluated foot interaction, complemented
+by ablations, alignment diagnostics, and collection-
+efficiency measurements.
+II. RELATED WORK
+A. Vision-Language-Action Models
+Open vision-language-action (VLA) models support robot
+pretraining and task adaptation. OpenVLA [1] trains a
+generalist policy on heterogeneous robot demonstrations.
+StarVLA [11] provides a modular framework for comparing
+VLA backbones, action heads, and training recipes. The π
+family progresses from the flow-matching π0 [12], through
+the open-world mobile-manipulation π0.5 [2], to the steerable
+generalist π0.7 [13]. JoyAI-RA 0.1 [14] instead integrates
+web, simulation, egocentric human, and robot data with an
+explicitly unified action space. Recent work further broadens
+the observation space to sound-centric manipulation [15].
+Most relevant to humanoids, Ψ0 [6] pretrains on egocentric
+human video and post-trains a whole-body action expert on
+humanoid trajectories for loco-manipulation. Complemen-
+tary work studies spatial representations for robotic percep-
+tion [16], [17], whereas we focus on constructing robot-
+compatible supervision from human demonstrations.
+B. Robot-Free Human Demonstrations
+Robot-free interfaces such as UMI [3] and FastUMI [18]
+reduce the hardware cost of collecting executable manipu-
+lation demonstrations. Complementary efforts scale natural
+egocentric experience: EgoLive [19] emphasizes annotated
+real-world routines, EgoVerse [20] standardizes diverse data
+and cross-laboratory evaluation, and EgoScale [21] studies
+predictable scaling of human data for dexterous transfer.
+EgoMimic [22] jointly aligns human and robot demon-
+strations, whereas HumanEgo [23] uses interaction-centric
+representations to transfer from minutes of human video
+without robot training data. These results motivate human
+demonstrations as scalable supervision while highlighting the
+remaining visual and kinematic embodiment gaps.
+C. Humanoid Loco-Manipulation and Whole-Body Control
+OmniH2O [24] and HOMIE [25] provide whole-body
+teleoperation and control. HuMI [9] and BifrostUMI [10]
+learn from handheld UMI demonstrations using task-space
+policies and learned motion trackers. HuMI’s controller is not
+general-purpose, while BifrostUMI’s tracker implementation
+is unreleased at the time of writing. EgoHumanoid [4] aligns
+egocentric views and evaluates both human-only training
+and robot-data co-training, but exposes discrete lower-body
+primitives to its VLA. TANGO [26] constructs whole-body
+navigation supervision from planned and edited motions
+verified by SONIC, while VLK [27] synthesizes whole-body
+interactions and paired egocentric views in reconstructed
+scenes. EgoAlign instead constructs controller-compatible
+action and state supervision from recorded human demon-
+strations through motion adaptation and causal state recon-
+struction. Using SONIC [7] as a shared continuous whole-
+body interface, the learned policies support navigation and
+foot interaction. Table I summarizes the collection, control,
+and demonstrated capability differences.
+III. METHOD
+A. Problem Formulation and System Overview
+For a language instruction ℓ, human demonstrations DH
+contain synchronized downward- and level-view images
+(Idown, Ilevel), body motion, and hand commands. We con-
+struct robot-compatible state–action supervision for fine-
+tuning a VLA policy πθ(at:t+49 | Idown
+t
+, Ilevel
+t
+, sG
+t , ℓ) solely
+on DH, where sG
+t is the current robot state, at one step of the
+predicted 50-step action chunk, and θ the trainable parame-
+ters. Labels H and G denote human and robot quantities; t
+indexes time.
+EgoAlign requires a target-robot model and a continuous
+WBC supporting motion encoding, state-history-conditioned
+decoding, and simulated replay. In our SONIC implemen-
+tation [7], the human reference rH
+t
+comprises SMPL joints,
+root orientation, and tracked wrist targets. The encoder maps
+a reference window to a motion token,
+mS
+t = ES(rH
+t−K+1:t, RG
+t ) ∈R64,
+(1)
+where K = 10 and RG
+t is the current robot-base orientation
+used to anchor the reference during rollout.
+The VLA predicts these tokens rather than joint targets.
+SONIC decodes each token using a causal state history
+HG
+t = {ωG, qG, ˙qG, gG}≤t ∪{uG}<t,
+(2)
+which contains measured base angular velocity, body joint
+position and velocity, projected gravity, and preceding ac-
+tions over the controller’s state-history window. The resulting
+normalized whole-body action is
+uG
+t = DS(mS
+t , HG
+t ) ∈R29.
+(3)
+SONIC decoder converts this action to joint-position com-
+mands; hands are controlled separately. State reconstruction
+follows motion adaptation (Fig. 1); we introduce it first to
+establish the training interface.
+
+
+Human Data Collection
+1
+Human Demonstration
+Acquisition
+Dual-View Camera
+Downward
+60°
+Level
+PICO + 5 Trackers
+2
+Dynamics-Guided
+Demonstration Collection
+3
+1.55 m
+Data Adaptation
+Scale Alignment
+1.25 m
+SONIC
+Real-Time Simulation
+Human Motion Correction
+4
+Reconstruction
+Causal State
+Replay Staging
+Placeholder State History
+SONIC–MuJoCo Rollout
+Causal Feedback Capture
+Feedback Injection
+State–Token Pairing
+Training Samples
+Views + 43-D State
+64-D Token + Hands
+VLA & Physical Deployment
+5
+Fine-Tuning & Execution
+Human-Only VLA
+Policy
+VLM → Action Expert
+64-D Motion Token
+State History
+SONIC Decoder
+29-D Commands
+Hands
+Physical Robot
+Fig. 1.
+EgoAlign pipeline. (1) A wearable setup captures synchronized dual-view images and human motion. (2) Real-time SONIC–MuJoCo feedback
+guides demonstrators to adjust their motions. (3) Scale alignment adapts upper-body motion to human-reference hand targets through optimization and
+replay. (4) State reconstruction pairs pre-action robot states and same-tick motion tokens. (5) Human-only task training produces a π0.5 policy for zero-
+shot robot deployment, predicting 64-D motion tokens and hand commands from live observations; SONIC decodes tokens with state history into body
+commands. Dashed arrows indicate collection-time and offline feedback.
+B. Causal State Reconstruction
+Equations (1)–(3) imply that a human episode provides the
+motion reference but not the state history required to decode
+it. We reconstruct robot proprioceptive states and paired
+motion tokens under the replay dynamics for VLA training,
+processing each finalized motion through three stages.
+In Replay Staging, the synchronized human episode is
+converted into a deterministic replay reference containing
+body motion and hand commands, with zeroed state history
+as an intermediate placeholder.
+In SONIC–MuJoCo Rollout, SONIC executes the episode
+on the simulated robot at 50 Hz. At control tick t, the
+controller first reads the simulated state and updates HG
+t ,
+and only then evaluates Eq. (3). Consequently,
+xG
+t = Φt(xG
+0 , a0:t−1),
+sG
+t = O(xG
+t ),
+(4)
+where Φt is the deterministic SONIC–MuJoCo rollout of
+the full simulation state xG driven by past tokens and hand
+commands, and O extracts the 43-D robot proprioceptive
+state sG
+t
+from xG
+t
+for input to the VLA. The pre-action
+state and the controller’s state history are constructed before
+executing the current action at.
+In Feedback Injection, we validate row correspondence
+and inject the measured pre-action feedback into the training
+episode. The 43-D state contains 29 body joint positions and
+two 7-D hand states. The learned VLA action is
+at = [ mS
+t , hL
+t , hR
+t ] ∈R76,
+(5)
+where mS
+t ∈R64 is captured from the SONIC encoder at
+the same control tick, and hL
+t , hR
+t ∈R6 are the left and right
+hand-command vectors.
+C. Human Demonstration Acquisition
+Our motion-capture pipeline follows EgoHumanoid [4]. A
+PICO 4 Ultra headset and five trackers on the wrists, ankles,
+and waist capture human motion. We use SONIC’s PICO-
+to-SMPL conversion pipeline to obtain motion references in
+GoPro Hero 13
+PICO Tracker
+PICO 4 Ultra
+~ 1.3m
+~ 1.7m
+Downward View
+Level View
+Dual-View Aligned 
+Egocentric Camera 
+Height Aligned
+Fig. 2. Human collection and robot hardware with matched camera heights.
+The downward view captures near-field interaction, while the level view
+provides distant navigation cues.
+the 24-joint SMPL representation [7], [28], retaining wrist
+orientations and hand commands. PICO’s vision-based hand
+recognition provides discrete grasp/non-grasp commands
+used in both collection and physical execution.
+Long-range loco-manipulation requires both near-field in-
+teraction and distant navigation context. Two GoPro Hero 13
+cameras provide a chest-mounted downward view Idown of
+the hands, objects, and nearby workspace, and a horizontal
+level view Ilevel of distant targets. Corresponding human and
+robot cameras have matched ground-relative heights (Fig. 2).
+Both streams are synchronized to the PICO trajectory before
+data construction and used directly for training.
+D. Human-to-Humanoid Motion Adaptation
+1) Dynamics-Guided Demonstration Collection: Accurate
+human tracking does not guarantee that the converted motion
+is expressed by the target humanoid. Scale differences,
+
+
+Robot-Scale Proxy
+Adjust Body Proportion
+Optimized SMPL
+Kinematic Alignment
+Endpoint Accuracy
+Match Robot Morphology
+Bounded Arm-Joint Updates
+Fixed Human Hand Targets
+Controller-in-the-Loop Refinement
+SONIC–MuJoCo Replay
+Robot Hand Positions
+(1 - 2 iters)
+Hand Error: Target − Actual
+Fig. 3.
+Scale alignment. Constructing a robot-scale SMPL proxy (left),
+matching fixed human hand targets (middle), and optimizing bounded arm-
+joint updates (right). The bottom loop uses SONIC–MuJoCo replay residuals
+for iterative refinement.
+SONIC’s tracking response, and robot dynamics may sup-
+press low-amplitude actions; for example, a small human step
+or slight leg lift can yield almost no visible robot motion. To
+expose this gap during collection, we stream the recovered
+SMPL motion through SONIC and replay the resulting robot
+behavior in MuJoCo in real time. This visual feedback guides
+the demonstrator to repeat or amplify suppressed motions
+until the intended robot movement is visible in simulation,
+without operating a physical robot. Unlike collection-time
+feedback, offline alignment corrects recorded motion before
+state reconstruction.
+2) Scale Alignment: Scale alignment adapts upper-body
+interaction geometry while preserving global root travel
+and lower-body motion in the SMPL reference, through
+kinematic alignment followed by refinement (Fig. 3).
+Kinematic Alignment. We distinguish the human-scale
+reference skeleton MH from an optimization-only robot-
+scale proxy MG. The human reference has canonical height
+ηH, measured from the lower foot joint to the head joint
+rather than crown to sole. Its recorded pose qt defines the
+desired hand geometry through
+PH
+t = FK(qt; MH).
+(6)
+For a posed skeleton Pt, we define interaction-frame coor-
+dinates as
+N(Pt)j = Pt,j −o(Pt),
+(7)
+where o(Pt) uses the pelvis’s horizontal coordinates and the
+lower of the two foot-joint heights as its vertical coordinate,
+computed separately for each input skeleton. The human-
+reference endpoint target is ˆpH
+t,e
+= N(PH
+t )e, where e
+indexes a selected hand endpoint. Human-reference hand tar-
+gets remain fixed in the shared interaction frame. Alignment
+adjusts the reference pose to bring the robot’s realized hand
+positions closer to these targets, while leaving the human
+images and depicted objects unchanged.
+Separately, MG retains SMPL topology but fits torso and
+limb lengths to the target robot’s morphology (reference
+height ηref). Changing this proxy’s proportions alone does
+not change the recorded pose or SONIC’s motion input. On
+this proxy, we optimize a bounded pose residual ∆qt =
+b ⊙tanh(zt), where b contains joint-wise angular bounds
+and zt is the unconstrained optimization variable. With
+PG
+t = FK(qt + ∆qt; MG), the endpoint loss is
+Lx =
+1
+3T|E|
+T
+X
+t=1
+X
+e∈E
+N(PG
+t )e −ˆpH
+t,e
+2
+2 .
+(8)
+Here, T is the episode length, E is the task-selected hand-
+endpoint set. We regularize the residual magnitude and
+temporal smoothness:
+L = λxLx + λposeLpose + λvelLvel + λaccLacc,
+(9)
+where Lpose, Lvel, and Lacc are the mean-squared zeroth-,
+first-, and second-order temporal differences of ∆qt, respec-
+tively. We solve Eq. (9) with Adam. Due to space limits,
+detailed loss weights, joint bounds, optimization steps, and
+gain-update rules will be provided in the open-source code
+and executed configurations. Each selected hand endpoint
+is represented by the mean of its four non-thumb MCP
+roots. Optimization is restricted to the task-selected collar,
+shoulder, and elbow joints; all other joints, including the
+spine and wrist-local rotations, retain their per-frame baseline
+trajectories, so the spine follows its original motion rather
+than remaining fixed over time.
+Controller-in-the-Loop Refinement. From the kinemati-
+cally aligned q(0), SONIC–MuJoCo replay RS yields round-
+k endpoints and residuals in the target interaction frame:
+y(k) = RS(q(k)),
+e(k)
+t,e = ˆpH
+t,e −y(k)
+t,e .
+(10)
+For evaluation and feedback, we compensate a per-episode,
+per-round constant lag estimated from endpoint velocities
+within ±20 frames, excluding unmatched boundaries, and
+smooth only the feedback residual ˜e(k)
+t,e with a 21-frame,
+third-order Savitzky–Golay filter, without shifting images,
+training labels, or source indices. For assessing geometric
+alignment, lag compensation provides a more appropriate
+comparison by separating spatial mismatch from positional
+differences caused by controller response delay. Starting with
+c(0)
+t,e = 0, we accumulate a bounded target correction:
+d(k)
+t,e = clipρs
+ β˜e(k)
+t,e ⊘κ(k)
+e
+
+,
+c(k+1)
+t,e
+= clipρc
+ c(k)
+t,e + d(k)
+t,e
+
+.
+(11)
+Here, clipping bounds each correction vector’s norm, β =
+0.65, ρs = 0.08 m, and ρc = 0.12 m. The per-axis response
+gain κ(k)
+e
+is shared across time for endpoint e, starts at
+one, and can be updated from successive replays using
+a bounded diagonal secant estimate; ⊘denotes element-
+wise division. We then re-solve Eq. (9) using compensated
+optimization targets ˆpH
+t,e + c(k+1)
+t,e
+and replay the resulting
+q(k+1). This input compensation leaves the desired human-
+reference targets ˆpH
+t,e unchanged. All rounds use the same
+baseline motion and joint mask. Starting from Round 0,
+we perform at most two refinements, yielding Rounds 1
+and 2; trajectories that still fail the closed-loop endpoint and
+rollout acceptance criteria after Round 2 are excluded from
+training, and accepted trajectories undergo separate causal-
+data integrity validation. Detailed thresholds and filtering
+
+
+rules are omitted for space and will accompany the code
+release.
+Finally, we regenerate the motion references from the opti-
+mized SMPL poses for causal state reconstruction. Given the
+endpoint and joint-mask configuration, offline optimization
+and replay run automatically with shared update rules and
+hyperparameters. Gradients pass only through the optimiza-
+tion skeleton, not SONIC or MuJoCo.
+E. Human-Only VLA Fine-Tuning and Humanoid Execution
+We fine-tune the VLA on original human images, instruc-
+tions, and pre-action states from final causal replay, with
+paired SONIC tokens and human hand commands as action
+targets. During deployment, the VLA predicts actions from
+live robot images and the current robot state. SONIC decodes
+the predicted tokens using live robot state history via Eq. (3),
+while hand commands execute separately.
+IV. EXPERIMENTS
+We evaluate the training value of the constructed su-
+pervision and the efficiency of human collection through
+four questions: (1) How well do policies fine-tuned solely
+on human task demonstrations perform on a physical hu-
+manoid? (2) How do navigation data, level-view perception,
+state reconstruction, and scale alignment affect performance?
+(3) How does refinement affect simulated endpoint error
+and physical pickup success? (4) How much does human
+collection reduce the on-site acquisition time relative to
+teleoperated collection?
+A. Experimental Setup
+1) Tasks and Data: We use Unitree G1 (reference height
+ηref = 1.25 m) with SONIC control and MuJoCo replay.
+Hand targets use the human-scale canonical SMPL (ηH =
+1.55 m), while the optimization proxy fits G1’s body propor-
+tions. With cameras at approximately 1.3 m, the downward
+view covers only the next 2 m, motivating the level view.
+Object relocation comprises basket pickup, approximately
+10 m of transport, and table placement. Navigation and foot-
+based interaction combines approximately 5 m of navigation
+and pedal-bin opening under one jointly trained policy. The
+demo shows the full sequence; quantitative tests separate its
+subtasks, with foot interaction starting from standing.
+Object relocation and navigation use Direct (a training-
+distribution endpoint directly ahead), Multi-seen (training po-
+sitions P1–P5), and Multi-unseen (U1–U5, offset 0.5 m along
+either ground-plane axis from corresponding seen positions).
+Methods share these positions; foot interaction uses only
+the multi-position protocols (Fig. 4). Three demonstrators
+collected 200 full-trajectory object relocation demonstrations
+and 200 demonstrations each for navigation and foot in-
+teraction. Object relocation additionally uses 100 basket-
+carrying navigation demonstrations, separate from pedal-bin
+navigation. These counts are before filtering; approximately
+90% are retained.
+Object relocation alignment optimizes the right collar,
+shoulder, and elbow toward the right-palm target throughout
+each demonstration, including transport with sustained hand–
+handle contact. Left-arm swing, synthesized from smoothed
+right-thigh sagittal motion with 20◦outward abduction, is
+preserved during alignment along with SMPL spine and
+wrist-local trajectories. Full-method physical policies and
+simulation share this configuration. Replay models ground
+contact but no task objects or hand/foot–object contacts.
+During object relocation replay, a grasp signal applies a
+downward hand-node force equivalent to the weight of a 200
+g empty basket.
+2) Training and Evaluation: Policies use the π0.5 ar-
+chitecture, initializing only the backbone from PaliGemma-
+3B-PT-224 [29]. Both backbone and action expert train on
+all available human task data for 50,000 steps on eight
+A800 GPUs (global batch 256). Variants share the sampling-
+weight scheme and SONIC configuration. Final checkpoints
+are evaluated without physical-feedback-based selection or
+tuning. Each 50-step chunk executes fully at 50 Hz be-
+fore reobserving and requesting inference. During inference,
+SONIC holds the last latent motion token and continues
+closed-loop decoding with live states.
+Each setting has 20 trials (five positions with four trials
+each for multi-position protocols). Trials end at completion,
+a two-minute timeout, or clear failure (e.g., basket drop, fall,
+or workspace-boundary collision); failures, interventions, and
+timeouts count as unsuccessful.
+3) Scoring Stages and Success Criteria: Object relocation
+uses S1 Approach, S2 Lift, S3 Carry, and S4 Place. Naviga-
+tion uses S1 Reach Target Region and S2 Final Alignment
+at a pedal-reachable pose. Foot interaction uses S1 Foot
+Approach, S2 Effective Pedal Press (lid opens), and S3 Stable
+Completion. Stages are judged manually; stages following
+the first failure are scored zero. All stage rates use all 20
+trials. Full success is the final-stage rate, requiring every
+stage to pass; stage score is 100 times the mean fraction
+of stages completed per trial.
+B. Zero-Shot Loco-Manipulation on the G1
+Table II reports main and ablation results. Fig. 5 sum-
+marizes the full-method navigation and foot interaction sub-
+tasks, while Fig. 6(a) compares object relocation with its
+navigation-data ablation.
+Object relocation attains 65% full success on Direct and
+40% on both Multi-seen and Multi-unseen. Despite 90%
+pickup success in both multi-position protocols, subsequent
+turning errors during transport caused the robot to leave the
+test area or fail to reach the table for placement. Navigation
+achieves 65–70% success across Direct, Multi-seen, and
+Multi-unseen settings. The foot interaction subtask attains
+60% full success for both Multi-seen and Multi-unseen
+endpoints. Overall, the observed performance is similar on
+seen and unseen endpoints. These results show that the
+constructed human supervision supports learning long-range
+loco-manipulation and navigation to held-out goal positions,
+as well as leg motions for independently evaluated foot
+interaction.
+
+
+Navigation
+Pickup
+Transport
+Placement
+Multi-Position
+Foot Interaction
+Object
+Relocation
+Navigation
+&
+Foot-Based
+Interaction
+Fig. 4.
+Physical-G1 tasks and endpoint protocols for object relocation and for navigation and foot-based interaction. Object relocation comprises pickup,
+transport, and placement. Navigation and foot interaction form a complete behavior but are evaluated independently to separate navigation and foot-operation
+performance.
+TABLE II
+MAIN AND ABLATION RESULTS ON G1 (20 TRIALS PER ROW). SCORE: MEAN STAGE COMPLETION; FULL SUC.: FINAL-STAGE SUCCESS. ROUND 0
+EVALUATES PICKUP ONLY; DASHES INDICATE UNREPORTED ENTRIES.
+Task / Subtask
+Endpoint
+Variant
+Trials
+Score
+Full Suc.
+S1
+S2
+S3
+S4
+Object Relocation
+Direct
+Aligned (ours)
+20
+82.5
+65
+100
+90
+75
+65
+w/o Nav. data
+20
+83.8
+65
+100
+95
+75
+65
+NoAlign
+20
+0.0
+0
+0
+0
+0
+0
+Kinematic (Round 0)
+20
+–
+–
+50
+0
+–
+–
+w/o State Recon.
+20
+0.0
+0
+0
+0
+0
+0
+Zero History
+20
+0.0
+0
+0
+0
+0
+0
+Multi-seen
+Aligned (ours)
+20
+71.3
+40
+100
+90
+55
+40
+w/o Nav. data
+20
+67.5
+20
+100
+90
+60
+20
+Multi-unseen
+Aligned (ours)
+20
+75.0
+40
+100
+90
+70
+40
+w/o Nav. data
+20
+68.8
+30
+100
+85
+60
+30
+Navigation
+Direct
+Dual-view (ours)
+20
+72.5
+65
+80
+65
+–
+–
+Downward-only
+20
+65.0
+60
+70
+60
+–
+–
+Multi-seen
+Dual-view (ours)
+20
+77.5
+70
+85
+70
+–
+–
+Downward-only
+20
+47.5
+45
+50
+45
+–
+–
+Multi-unseen
+Dual-view (ours)
+20
+75.0
+65
+85
+65
+–
+–
+Downward-only
+20
+45.0
+35
+55
+35
+–
+–
+Foot Interaction
+Multi-seen
+Ours
+20
+80.0
+60
+100
+80
+60
+–
+Multi-unseen
+Ours
+20
+78.3
+60
+100
+75
+60
+–
+Stage Score
+Full Success
+(a) Navigation
+0
+25
+50
+75
+100
+Score / Success (%)
+72.5
+65
+Direct
+77.5
+70
+Multi-Seen
+75
+65
+Multi-Unseen
+(b) Foot Interaction
+0
+25
+50
+75
+100
+80
+60
+Multi-Seen
+78.3
+60
+Multi-Unseen
+Fig. 5.
+Stage score and full success for independently tested (a) navigation
+and (b) foot interaction, with 20 trials per setting.
+C. Human Data-Collection Efficiency
+Table III compares the on-site time required to acquire one
+object relocation demonstration. Human collection reduces
+the recording-and-reset cycle from 130 s to 25 s, increasing
+throughput by 5.2×. Times average 10 demonstrations per
+collection mode, all valid without re-recording, and cover
+TABLE III
+ON-SITE OBJECT RELOCATION DATA-ACQUISITION TIME PER
+DEMONSTRATION.
+Data
+Demo
+Reset
+Total
+Rate
+Teleop
+70s
+60s
+130s
+1.0×
+Human ego
+15s
+10s
+25s
+5.2×
+recording and scene reset. One-time equipment setup takes
+30 minutes for teleoperation and 5 minutes for human
+collection, excluded from these per-demonstration times.
+D. Ablation Study
+We evaluate component contributions within the SONIC
+stack and compare complete data-construction pipelines us-
+ing GMR–SONIC. Fig. 6(a–c) compares policy ablations
+under the protocols in Table II. Compared variants are
+constructed from the same selected training source demon-
+strations, except that the navigation-data ablation removes the
+
+
+Stage Score
+Full Success
+(a) Object Relocation: Navigation-Data Ablation
+0
+25
+50
+75
+100
+Score / Success (%)
+82.5
+65
+Ours
+83.8
+65
+w/o Nav.
+71.3
+40
+Ours
+67.5
+20
+w/o Nav.
+75
+40
+Ours
+68.8
+30
+w/o Nav.
+(b) Object Relocation: Scale Align. / State Recon. (Direct)
+0
+25
+50
+75
+100
+82.5
+65
+Ours
+0
+0
+NoAlign
+0
+0
+w/o State Recon.
+(c) Navigation: Level-View Ablation
+0
+25
+50
+75
+100
+Score / Success (%)
+72.5
+65
+Ours
+65 60
+w/o Level
+77.5
+70
+Ours
+47.5 45
+w/o Level
+75
+65
+Ours
+45
+35
+w/o Level
+Direct
+Seen
+Unseen
+Direct
+Seen
+Unseen
+0
+0
+GMR + SONIC
+(d) Controller-in-the-Loop Refinement
+Simulation: Right-Palm Error (cm)
+0
+8
+16
+14.27
+6.48
+3.60
+1.65
+14.17
+Real G1: Pickup Stage Success (%)
+S1 Approach
+S2 Lift
+0
+50
+100
+50
+100
+0
+90
+0 / 0
+0 / 0
+GMR + SONIC
+NoAlign
+Round 0
+Round 1
+Round 2
+0
+0
+Zero History
+Fig. 6.
+Ablations of (a) navigation data, (b) alignment/state reconstruction, and (c) level view. (d) Refinement: simulated right-palm error (macro mean
+and 95% bootstrap CI) and physical S1/S2 success (20 Direct trials each for NoAlign and Rounds 0/2). GMR–SONIC fails at S1. Round 1 has
+simulation results only.
+additional navigation demonstrations. All four comparison
+methods in Fig. 6(b) fail at S1 in every Direct trial and are
+therefore not evaluated on the multi-position settings.
+1) Navigation Data: This ablation removes the 100 ad-
+ditional basket-carrying navigation demonstrations while re-
+taining all 200 full trajectories and the remaining pipeline.
+The full method and w/o Navigation Data perform com-
+parably on Direct, both achieving 65% full success. With
+navigation data, full success is 40% on both multi-position
+settings, compared with 20% and 30% without it on Multi-
+seen and Multi-unseen, respectively. Successful placement
+(S4) requires navigating accurately to the placement location;
+with added navigation demonstrations, we observe higher
+success rates on the multi-position settings and comparable
+performance on Direct.
+2) Downward-View and Level-View Perception: To mea-
+sure the value of distant context, Downward-only removes
+the level-view stream during both fine-tuning and deploy-
+ment, whereas Dual-view uses the paired streams. Both
+variants use identical motion and state data and achieve
+comparable full success on Direct. Removing the level view
+reduces full success by 25 and 30 percentage points on Multi-
+seen and Multi-unseen, respectively. The marked S1 decline
+in both multi-position protocols supports the role of distant
+visual context in reaching spatially varied targets (Fig. 6(c)).
+3) Causal State Reconstruction: The w/o State Recon.
+object relocation ablation retains the images and scale-
+aligned human references but zeros the SONIC decoder’s
+history HG
+t
+during training-data construction. The VLA
+receives the resulting 43-D robot states, not zeroed state
+inputs. Token labels are recomputed offline using reference-
+based orientation anchoring instead of the rollout robot-base
+orientation. Zero History uses the same history intervention
+but retains the full method’s rollout token labels. Both use
+live VLA states and SONIC state history at deployment, as
+in the full method, and pass S1 in 0/20 Direct trials versus
+20/20 for the full method (Fig. 6(b)). The first comparison
+supports the complete reconstruction pipeline over the tested
+alternative; the second supports history-conditioned state
+construction with fixed token supervision.
+4) Scale Alignment: NoAlign bypasses all alignment,
+including the left-arm prior and spine constraints. Operators
+observed a downward hand offset exceeding 10 cm, causing
+contact with the basket or table rather than entry into the
+handle gap. Round 0 uses kinematic alignment only: it retains
+the same arm prior and spine constraints as the full method
+but omits refinement. All endpoint simulation experiments
+start from the same complete set of pre-screened object
+relocation source trajectories, including those excluded from
+training by final alignment acceptance. A shared target-
+derived mask selects active frames based on right-palm
+motion or displacement from its initial position. For NoAlign
+and Rounds 0–2, we average framewise errors within each
+trajectory and then equally across trajectories; 95% percentile
+bootstrap intervals use 10,000 trajectory-level resamples.
+With lag compensation, simulated macro error across com-
+mon active right-palm frames falls from 14.27 cm (NoAlign)
+to 6.48, 3.60, and 1.65 cm (Rounds 0–2): a 74.5% reduction
+beyond kinematic alignment alone (Fig. 6(d)). All rounds are
+evaluated without early acceptance.
+In 20 Direct trials per setting, S1/S2 success is 0%/0%
+for NoAlign, 50%/0% for a policy trained on Round 0
+supervision, and 100%/90% for the full method (Round 2);
+Round 0 trials end after S2 (Table II). Refinement thus
+improves physical approach and pickup alongside simulated
+endpoint accuracy.
+
+
+We also compare a GMR [30]–SONIC pipeline: GMR
+uses matched palm targets and G1 geometry, then feeds joint
+references through SONIC without post-decoder overrides or
+refinement. Simulated rollouts complete; the paired compar-
+ison includes only trajectories with complete coverage of
+the fixed active-frame mask after temporal alignment for all
+compared methods. Right-palm macro error is 14.17 cm for
+GMR–SONIC, 6.49 cm for kinematic alignment only, and
+1.65 cm for EgoAlign. All physical GMR–SONIC object
+relocation trials fail at S1 (Fig. 6(b)).
+Without lag compensation, we additionally compare target
+and realized endpoints at the same control tick over the full
+shared source set, with the active-frame mask unchanged.
+Macro mean errors are 14.43, 7.14, 4.76, and 3.59 cm for
+NoAlign and Rounds 0–2, respectively, and 14.09 cm for
+GMR–SONIC. Thus, the refinement gains and EgoAlign’s
+lower error than GMR–SONIC also hold under same-time
+evaluation.
+V. DISCUSSION
+After two refinement rounds, the simulated right-palm
+endpoint error averages 1.65 cm with lag compensation.
+The residual error highlights the need for further endpoint
+refinement for precision-sensitive hand operations. The eval-
+uated foot operation is pedal pressing, whose comparatively
+large contact region accommodates greater positioning error.
+The physical results support simplified replay as a practical
+approximation for constructing training supervision in these
+light-load, contact-tolerant tasks, rather than an exact recon-
+struction of object-contact dynamics.
+VI. CONCLUSION
+EgoAlign bridges the human–humanoid gap through
+embodiment-aware training-data construction. Motion adap-
+tation accounts for differences in body scale and controller
+response, while causal state reconstruction pairs the adapted
+actions with their corresponding robot states. Human-only
+task training followed by zero-shot physical deployment
+demonstrates that the resulting supervision supports long-
+range loco-manipulation through a continuous whole-body
+interface. The significance lies in connecting the accessibility
+of egocentric human demonstrations with their training value
+for a target humanoid: human experience becomes usable
+supervision through adaptation to the robot’s motion and
+state interfaces.
+ACKNOWLEDGMENTS
+This work was supported by Alibaba Research Intern
+Program.
+REFERENCES
+[1] M. J. Kim, K. Pertsch, S. Karamcheti, T. Xiao, A. Balakrishna, S. Nair,
+et al., “OpenVLA: An open-source vision-language-action model,” in
+CoRL, vol. 270, pp. 2679–2713, 2025.
+[2] K. Black, N. Brown, J. Darpinian, K. Dhabalia, D. Driess, A. Es-
+mail, et al., “π0.5: A vision-language-action model with open-world
+generalization,” in CoRL, vol. 305, pp. 17–40, 2025.
+[3] C. Chi, Z. Xu, C. Pan, E. Cousineau, B. Burchfiel, S. Feng, et al.,
+“Universal manipulation interface: In-the-wild robot teaching without
+in-the-wild robots,” in RSS, 2024.
+[4] M. Shi, S. Peng, J. Chen, H. Jiang, T. Li, P. Luo, et al., “Unlocking in-
+the-wild loco-manipulation with robot-free egocentric demonstration,”
+in RSS, 2026.
+[5] Y. Wang, P. Lin, X.-H. Chen, H. Yuan, Z. Liang, Y. Huang, et al.,
+“Ego2Robot: Scalable robot data synthesis from egocentric human
+data,” arXiv preprint arXiv:2608.02580, 2026.
+[6] S. Wei, H. Jing, B. Li, Z. Zhao, J. Mao, Z. Ni, et al., “Ψ0: An open
+foundation model towards universal humanoid loco-manipulation,” in
+RSS, 2026.
+[7] Z. Luo, Y. Yuan, T. Wang, C. Li, F. Casta˜neda, S. Chen, et al.,
+“SONIC: Supersizing motion tracking for natural humanoid whole-
+body control,” Science Robotics, vol. 11, no. 117, 2026.
+Art. no.
+eaed4592.
+[8] E. Todorov, T. Erez, and Y. Tassa, “MuJoCo: A physics engine for
+model-based control,” in IROS, pp. 5026–5033, 2012.
+[9] R. Nai, B. Zheng, J. Zhao, H. Zhu, S. Dai, Z. Chen, et al., “Humanoid
+manipulation interface: Humanoid whole-body manipulation from
+robot-free demonstrations,” arXiv preprint arXiv:2602.06643, 2026.
+[10] H. Wang, C. Yu, Y. Hu, J. Zhang, Y. Li, and S. Luo, “BifrostUMI:
+Bridging robot-free demonstrations and humanoid whole-body manip-
+ulation,” arXiv preprint arXiv:2605.03452, 2026.
+[11] StarVLA Community, “StarVLA: A lego-like codebase for vision-
+language-action model developing,” arXiv preprint arXiv:2604.05014,
+2026.
+[12] K. Black, N. Brown, D. Driess, A. Esmail, M. R. Equi, C. Finn, et al.,
+“π0: A vision-language-action flow model for general robot control,”
+in RSS, 2025.
+[13] Physical Intelligence, B. Ai, A. Amin, R. Aniceto, A. Balakrishna,
+G. Balke, et al., “π0.7: A steerable generalist robotic foundation model
+with emergent capabilities,” arXiv preprint arXiv:2604.15483, 2026.
+[14] T. Zhang, Z. Yuan, D. Chi, P. Liu, D. Li, K. Hu, et al., “JoyAI-
+RA 0.1: A foundation model for robotic autonomy,” arXiv preprint
+arXiv:2604.20100, 2026.
+[15] C. Nie, T. Deng, G. Wang, Z. Liu, and H. Wang, “Towards the vision-
+sound-language-action paradigm: The HEAR framework for sound-
+centric manipulation,” arXiv preprint arXiv:2603.16086, 2026.
+[16] T. Deng, Y. Wang, Y. Liu, C. Su, J. Wang, H. Wang, et al.,
+“ProSGNeRF: Progressive dynamic neural scene graph with frequency
+modulated foundation model in urban scenes,” International Journal
+of Computer Vision, vol. 134, no. 8, 2026. Art. no. 365.
+[17] T. Deng, Y. Pan, S. Yuan, D. Li, C. Wang, M. Li, et al., “What
+is the best 3D scene representation for robotics? From geometric to
+foundation models,” arXiv preprint arXiv:2512.03422, 2025.
+[18] Zhaxizhuoma, K. Liu, C. Guan, Z. Jia, Z. Wu, X. Liu, et al., “FastUMI:
+A scalable and hardware-independent universal manipulation interface
+with dataset,” in CoRL, vol. 305, pp. 3069–3093, 2025.
+[19] Y. Li, X. Wei, J. Luo, Y. Xiao, Y. Bai, G. Zhou, et al., “EgoLive:
+A large-scale egocentric dataset from real-world human tasks,” arXiv
+preprint arXiv:2604.23570, 2026.
+[20] R. Punamiya, S. Kareer, Z. Liu, J. Citron, R.-Z. Qiu, X. Cai, et al.,
+“EgoVerse: An egocentric human dataset for robot learning from
+around the world,” in RSS, 2026.
+[21] R. Zheng, D. Niu, Y. Xie, J. Wang, M. Xu, Y. Jiang, et al., “EgoScale:
+Scaling dexterous manipulation with diverse egocentric human data,”
+arXiv preprint arXiv:2602.16710, 2026.
+[22] S. Kareer, D. Patel, R. Punamiya, P. Mathur, S. Cheng, C. Wang, et al.,
+“EgoMimic: Scaling imitation learning via egocentric video,” in ICRA,
+pp. 13226–13233, 2025.
+[23] Z. Wang, B. He, K. Yu, S. Lee, R. Gao, F. Huang, et al., “HumanEgo:
+Zero-shot robot learning from minutes of human egocentric videos,”
+arXiv preprint arXiv:2605.24934, 2026.
+[24] T. He, Z. Luo, X. He, W. Xiao, C. Zhang, W. Zhang, et al.,
+“OmniH2O: Universal and dexterous human-to-humanoid whole-body
+teleoperation and learning,” in CoRL, vol. 270, pp. 1516–1540, 2025.
+[25] Q. Ben, F. Jia, J. Zeng, J. Dong, D. Lin, and J. Pang, “HOMIE:
+Humanoid loco-manipulation with isomorphic exoskeleton cockpit,”
+in RSS, 2025.
+[26] A. Li, Y. Chen, Z. Li, Z. Cao, J. Ren, M. Tomizuka, et al., “TANGO:
+Humanoid navigation in cluttered environments with a whole-body
+vision-language-action model,” arXiv preprint arXiv:2609.09158,
+2026.
+[27] Y.-J. Wang, J. Li, S. Chen, T. E. Truong, P. Xu, P. Abbeel, et al., “VLK:
+Learning humanoid loco-manipulation from synthetic interactions in
+reconstructed scenes,” arXiv preprint arXiv:2606.30645, 2026.
+
+
+[28] M. Loper, N. Mahmood, J. Romero, G. Pons-Moll, and M. J. Black,
+“SMPL: A skinned multi-person linear model,” ACM Transactions on
+Graphics, vol. 34, no. 6, pp. 248:1–248:16, 2015.
+[29] L. Beyer, A. Steiner, A. S. Pinto, A. Kolesnikov, X. Wang, D. Salz,
+et al., “PaliGemma: A versatile 3B VLM for transfer,” arXiv preprint
+arXiv:2407.07726, 2024.
+[30] J. P. Ara´ujo, Y. Ze, P. Xu, J. Wu, and C. K. Liu, “Retargeting matters:
+General motion retargeting for humanoid motion tracking,” in ICRA,
+2026.

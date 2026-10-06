@@ -41,7 +41,7 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-04</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-06</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 18 篇</strong>
@@ -51,7 +51,7 @@
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>4</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>14</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-04 22:32:13 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-06 01:12:34 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读4篇、速读14篇，共筛选18篇论文，重点聚焦人形机器人与强化学习方向。最值得看的是9.0分的《Removing spurious minima for planar features by skip connections》和8.0分的《Track-and-Complete》，分别涉及跳连消除伪极小值与人形技能学习。普通读者可先读这两篇精读，再按兴趣浏览速读中的人形运动与自监督强化学习工作。</p>
+<p>2026-10-06 日报完成 18 篇筛选，精读 4 篇、速读 14 篇，聚焦人形机器人与安全控制。最值得看的是 9.0 分的《Filter-Aware Fine-Tuning for Safe Humanoid Whole-Body Tracking》和 8.0 分的《Brain-SAD》——前者关乎人形机器人全身跟踪的安全微调，后者提出带动态恐惧约束的双策略自动驾驶框架。普通读者可优先从这两篇入手，理解“安全约束”如何同时落地于机器人控制与自动驾驶。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -74,9 +74,9 @@
     <strong class="dpr-home-dashboard-count">4 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Removing spurious minima for planar features by skip connections">Removing spurious minima for planar features by skip connections</span></li><li><span class="dpr-home-dashboard-paper-title" title="Track-and-Complete: Learning Humanoid Skills from a Single Failed Human Video">Track-and-Complete: Learning Humanoid Skills from a Single Failed Human Video</span></li><li><span class="dpr-home-dashboard-paper-title" title="Neuro-Symbolic Predicate Learning for Semantic Safe Robot Control">Neuro-Symbolic Predicate Learning for Semantic Safe Robot Control</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Filter-Aware Fine-Tuning for Safe Humanoid Whole-Body Tracking">Filter-Aware Fine-Tuning for Safe Humanoid Whole-Body Tracking</span></li><li><span class="dpr-home-dashboard-paper-title" title="Brain-SAD: A Brain-Inspired Safe Autonomous Driving Control Framework with Dynamic Fear-Oriented Constraint on Dual-Policy">Brain-SAD: A Brain-Inspired Safe Autonomous Driving Control Framework with Dynamic Fear-Oriented Constraint on Dual-Policy</span></li><li><span class="dpr-home-dashboard-paper-title" title="EgoAlign: Bridging the Human-Humanoid Gap for Long-Range Loco-Manipulation">EgoAlign: Bridging the Human-Humanoid Gap for Long-Range Loco-Manipulation</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>2</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>3</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,9 +87,9 @@
     <strong class="dpr-home-dashboard-count">14 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Passive-Dynamic-Walking-Inspired Dynamics Guidance for Energy-Efficient Humanoid Locomotion">Passive-Dynamic-Walking-Inspired Dynamics Guidance for Energy-Efficient Humanoid Locomotion</span></li><li><span class="dpr-home-dashboard-paper-title" title="ChronoSRL: Temporal Geometry for Self-Supervised Reinforcement Learning">ChronoSRL: Temporal Geometry for Self-Supervised Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="EgoAlign: Bridging the Human-Humanoid Gap for Long-Range Loco-Manipulation">EgoAlign: Bridging the Human-Humanoid Gap for Long-Range Loco-Manipulation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="GestAdapt: Workspace-Conditioned Co-Speech Gesture Generation for Humanoid Robots">GestAdapt: Workspace-Conditioned Co-Speech Gesture Generation for Humanoid Robots</span></li><li><span class="dpr-home-dashboard-paper-title" title="CEER2: Directional and Tunable End-Effector and Root Compliance for Humanoid Loco-Manipulation">CEER2: Directional and Tunable End-Effector and Root Compliance for Humanoid Loco-Manipulation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Switching Linear Attention">Switching Linear Attention</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>7</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>5</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>8</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
 </div>
 
