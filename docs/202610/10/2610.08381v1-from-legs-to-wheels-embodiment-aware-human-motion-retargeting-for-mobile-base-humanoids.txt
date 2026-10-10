@@ -1,0 +1,880 @@
+From Legs to Wheels: Embodiment-Aware Human Motion Retargeting
+for Mobile-Base Humanoids
+Jiyeon Koo, Eunseom Pyo, Jeonghee Seo, Taehwa Kim, and Andrew Jaeyong Choi∗
+Abstract— Human video offers a scalable source of robot
+demonstrations,
+yet
+most
+human-to-humanoid
+retargeting
+methods assume a legged robot with human-like kinematics.
+This assumption does not hold for mobile-base humanoids
+equipped with a wheeled base, vertical lift, and two arms.
+Human walking must be expressed through base motion,
+while torso bending may require coordinated lift and arm
+motion. We address this mismatch with a task-conditioned
+framework that assigns reconstructed human motion to base,
+lift, and arm responsibilities before robot-specific realization.
+The allocator preserves the human-derived path, stabilizes
+heading, separates turn and translation when needed, retimes
+commands to satisfy base limits, and repairs lift and arm
+trajectories. A deployment adapter then converts the reference
+to 50 Hz commands using stationary-base detection, deadband
+and slew-rate filtering, time-consistent playback scaling, and
+separate linear and angular gains. We evaluate the resulting
+references with human-derived task-space comparisons, policy-
+free simulation replay, and a qualitative execution on a physical
+robot.
+I. INTRODUCTION
+Humanoid motion imitation has advanced through the
+combination of human motion capture, retargeting, and re-
+inforcement learning (RL). Recent systems retarget whole-
+body motion to legged humanoids and train policies to follow
+the resulting references in simulation or on hardware [1], [2],
+[3]. These pipelines generally assume that the target is also
+a biped. Human walking, torso orientation, and limb motion
+can therefore be mapped to robot legs, trunk, and arms with
+fairly direct correspondence.
+We consider a different embodiment: mobile-base hu-
+manoids. These robots retain a human-facing upper body and
+two arms, but replace the legs with a wheeled base and may
+use a vertical lift in place of a human-like spine. Simple joint
+correspondence is no longer sufficient. A person walking
+forward with still arms should induce base motion, whereas
+bending to reach a low object may require changes in base
+position, lift height, and arm configuration. Retargeting must
+therefore determine not only how to reproduce a motion, but
+also which robot subsystem should express each human cue.
+Fig. 1 illustrates the embodiment mismatch, and Fig. 2
+gives an overview of our approach. From a reconstructed
+motion sequence and a lightweight task condition, the frame-
+work extracts locomotion intent for the base, vertical reach
+and body-height intent for the lift, and manipulation intent
+for the arms. A robot-specific realization module converts
+The authors are with iRASC Lab., School of Computing, Gachon Univer-
+sity, Seongnam 13120, Republic of Korea. Emails: {halo1225, vydms123,
+sjh0621, tempteru, andrewjchoi}@gachon.ac.kr.
+∗Corresponding author: Andrew Jaeyong Choi.
+Fig. 1.
+Embodiment-aware allocation of reconstructed human motion into
+arm, lift, and mobile-base intents. A single whole-body motion may require
+coordinated actuation across several robot subsystems.
+these components into commands that preserve task-space
+behavior within kinematic and command limits.
+The allocation formulation does not depend on a par-
+ticular 3D human-motion reconstruction method. We use
+GMR for robot-specific upper-body realization and study
+retargeting quality, reference feasibility, simulation playback,
+and initial physical-robot execution. Learning-based tracking
+performance is outside the scope of this work.
+The contributions are:
+• A task-conditioned motion allocator with explicit base,
+lift, and arm variables. Phase-gated human-motion cues
+replace one-to-one joint matching.
+• A subsystem-specific temporal repair method that pre-
+serves base-path progress, stabilizes heading, decouples
+turn and translation, retimes motion to platform limits,
+and coordinates lift and arm trajectories.
+• A 50 Hz deployment adapter for time-consistent
+command conversion, together with evaluation using
+human-derived task-space costs, component ablations,
+policy-free simulation replay, and qualitative physical-
+robot execution.
+II. RELATED WORK
+A. Monocular Human Motion Reconstruction
+Human-video imitation typically begins by converting
+RGB observations into a body representation such as
+SMPL [4]. VIBE improves temporal consistency in pose
+and shape estimates [5], while HuMoR uses a motion prior
+to handle noisy or missing observations [6]. More recent
+monocular methods recover world-grounded root motion in
+arXiv:2610.08381v1  [cs.RO]  6 Oct 2026
+
+
+Fig. 2.
+Task-conditioned embodiment-aware retargeting pipeline. Human video is reconstructed as 3D motion and decomposed into base, lift, and arm
+targets. These targets are optimized under feasibility, task-space, and smoothness objectives, then realized and repaired by a GMR-based adapter for
+simulation playback or command export.
+addition to local body pose. GLAMR estimates globally
+consistent motion under dynamic cameras and long occlu-
+sions [7], and SLAHMR jointly models human and camera
+trajectories [8]. WHAM refines global motion using contact
+information [9]. TRAM combines camera trajectory recov-
+ery with in-the-wild body motion estimation [10], whereas
+GVHMR uses gravity-view coordinates to reduce ambiguity
+and drift [11]. We use this line of work for RGB-to-3D
+reconstruction, then allocate the recovered motion to the
+actuation space of a mobile-base humanoid.
+B. Human-to-Humanoid Motion Retargeting
+Classical whole-body retargeting transfers human link
+poses to analogous robot links through geometric task
+objectives and inverse kinematics [12]. GMR and related
+tracking pipelines show that reference quality directly affects
+downstream policy learning and tracking robustness [13].
+Infeasible poses and inconsistent contacts should therefore be
+corrected before control. Existing methods, however, mainly
+target legged humanoids and represent human locomotion
+through robot leg motion. Our setting instead has to express
+that locomotion with a mobile base.
+RL-based imitation has evolved from reference tracking
+in DeepMimic [14] to reusable motion priors and skill
+embeddings learned from large motion collections [15],
+[16]. PHC [17], H2O [18], ExBody [1], HumanPlus [2],
+OmniH2O [3], and BeyondMimic [19] demonstrate whole-
+body tracking of retargeted references. Recent Humanoids
+work also learns poses from internet video [20] and generates
+editable motion through postural synergies [21]. Our focus
+is earlier in the pipeline: generating feasible references when
+the robot’s lower body is not human-like.
+C. Mobile Manipulation from Human Demonstrations
+Mobile ALOHA learns bimanual mobile manipulation
+from whole-body teleoperation data [22]. Related Humanoids
+studies cover compact mobile humanoid hardware [23], non-
+holonomic whole-body impedance control [24], and cou-
+pled versus decoupled embodiment in whole-body teleop-
+eration [25]. Human demonstrations have also supported
+manipulation-speed adaptation [26] and assistive motion
+generation [27]. WARP retargets offline demonstrations to
+whole-body mobile manipulation while accounting for em-
+bodiment differences [28]. Our work asks a complementary
+question: how should reconstructed whole-body cues be
+divided among a mobile base, vertical lift, and two arms
+before GMR-based realization?
+D. Optimization-Based Retargeting and IK
+Retargeting is commonly formulated as constrained op-
+timization over robot configurations. The objective mini-
+mizes task-space error subject to joint, velocity, collision,
+and smoothness constraints. Differential inverse kinematics
+tools such as Mink solve weighted velocity-level tasks in a
+constrained MuJoCo model [29]. Recent Humanoids work
+learns differentiable reachability constraints for motion gen-
+eration [30] and uses continuous contact optimization for
+whole-body manipulation [31]. We add an allocation stage
+before GMR realization to decide whether each human cue
+should drive the base, lift, arms, or a combination of these
+subsystems.
+III. PROBLEM FORMULATION
+Let a human video be converted into a time-indexed
+motion representation
+H1:T = {ht}T
+t=1,
+(1)
+where ht contains the estimated pelvis/root pose, torso
+orientation, shoulder and wrist positions, available hand
+orientations, and optional object/contact cues. The source
+of H1:T is not fixed. It may be a monocular estimator, a
+motion-capture system, or an existing 3D motion file.
+The sequence is paired with a task condition
+c = {task mode, allowed phases, object cues},
+(2)
+
+
+where the task mode specifies locomotion, manipulation,
+carry, or a general mode. This condition does not perform
+semantic action recognition. It instead controls how the
+optimizer weights human cues. For example, arm swing dur-
+ing locomotion should not become a primary manipulation
+target, whereas hand motion should receive greater weight
+in a manipulation task.
+The target robot is modeled as
+R = {B, L, Al, Ar},
+(3)
+where B is the mobile base, L is the vertical lift or body-
+height mechanism, and Al, Ar are the left and right arms.
+The robot command at time t is
+ut = [vx
+t , vy
+t , ωt, ˙ℓt, ˙q l
+t , ˙q r
+t ],
+(4)
+or the corresponding position targets, depending on the low-
+level controller. The goal is to find a command sequence U1:T
+and allocation sequence Z1:T that make the robot imitate the
+function of the human motion:
+(U ∗
+1:T , Z∗
+1:T ) = arg
+min
+U1:T ,Z1:T J (U, Z; H, c, R),
+J = Etask(U, Z; H, c) + Ealloc(Z; H, c, R)
++ Efeas(U; R) + Esmooth(U, Z).
+(5)
+Here Etask penalizes deviations in hand trajectories, ap-
+proach direction, reach height, and temporal phase. Ealloc
+encourages a consistent assignment of human motion com-
+ponents to robot subsystems. Efeas penalizes joint-limit,
+workspace, velocity, acceleration, and collision violations.
+Esmooth regularizes base, lift, and arm commands over time.
+The key difference from conventional retargeting is the
+allocation variable
+zt = [zB
+t , zL
+t , zAl
+t , zAr
+t ],
+(6)
+which encodes the responsibility of each robot subsystem
+at time t. Human pelvis translation should mainly activate
+zB
+t , whereas vertical reach should activate both zL
+t and the
+relevant arm component. Forward bending may be distributed
+across base approach, lift adjustment, and arm extension.
+IV. METHOD
+Table I lists the scenarios used throughout the paper,
+the motion cue emphasized in each one, and the intended
+subsystem allocation.
+Fig. 3.
+Example processing sequence for a bend-and-reach motion:
+RGB human demonstration, GVHMR 3D reconstruction, and the retargeted
+mobile-base humanoid reference in simulation.
+A. Human Motion Representation
+Fig. 3 shows the motion representation used in our imple-
+mentation. Inputs may come from monocular reconstruction,
+RGB-D pose estimation, or an existing 3D motion file. At
+minimum, we require the root trajectory, torso orientation,
+and wrist trajectories. Object position and hand-object con-
+tact timing can further inform allocation in manipulation
+demonstrations. We normalize the input to a robot-centric
+frame by removing global camera drift, converting coordinate
+conventions, and estimating the initial facing direction. Our
+experiments use precomputed SMPL-style motion [4], [11],
+but the allocator only requires the normalized representation
+and is not tied to a specific estimator.
+B. Task-Conditioned Motion Allocator
+The allocator combines human motion cues with a
+lightweight task label, such as walking, reaching, bending, or
+picking. It is an interpretable optimization and repair module,
+not a learned semantic model. The task label resolves cases
+in which similar body motions imply different robot actions.
+Phase gating further prevents transient or irrelevant cues from
+activating the wrong subsystem. The resulting base, lift, and
+arm responsibilities form a robot-independent intermediate
+sequence.
+Locomotion cue: Horizontal root displacement and yaw
+change drive the base. Under a locomotion condition,
+walking-like root motion receives a high base prior, while
+human arm swing is down-weighted as a manipulation target.
+Reach-height cue: Hand height, torso pitch, and shoulder-
+to-hand displacement determine whether to move the vertical
+lift. A robot without a human-like waist cannot directly
+reproduce torso lowering. The allocator instead lowers the
+lift when available and replans the arm pose. It also stabilizes
+monocular root height so that camera or pose-estimation drift
+does not trigger unintended lift motion.
+Manipulation cue: Wrist trajectories and hand orienta-
+tions drive the arms. For manipulation tasks, the allocator
+increases hand-tracking gains and uses the base or lift when
+needed to keep the target reachable.
+The
+intermediate
+motion
+file
+stores
+phase
+labels,
+base/lift/arm allocation weights, the base target trajectory, the
+lift reference, and hand targets. We treat the allocated planar
+trajectory as geometry that must be preserved. Heading
+stabilization and temporal repair may change its timing,
+but not its net displacement or cumulative progress. This
+representation separates motion interpretation from robot-
+specific realization.
+C. GMR-Based Motion Realization
+Given allocation weights zt, the realization module solves
+for robot states and command trajectories. It first converts the
+intermediate states to GMR-compatible frames and applies
+GMR to the upper body. The allocated planar base pose and
+lift reference are then inserted into the mobile-base humanoid
+trajectory. We also propagate lift displacement to the arm-
+base target to maintain consistent end-effector motion.
+
+
+TABLE I
+TASK INDEX AND INTENDED EMBODIMENT-AWARE MOTION ALLOCATION.
+ID Task
+Description
+Primary Motion Cue
+Allocation Target
+01 Slow walk
+Forward walking at a moderate pace
+Smooth root translation
+Base
+02 Run
+Fast forward locomotion
+High root velocity
+Base (speed-adaptive)
+03 Side walk
+Lateral walking without a dominant turn
+Lateral root motion
+Lateral base motion
+04 Sideways-turn walk
+Lateral locomotion combined with reorien-
+tation
+Root translation + yaw
+Base translation + rotation
+05 Bend-and-reach I
+Forward reach with moderate torso lowering Torso pitch + low wrist
+Lift + arms
+06 Bend-and-reach II
+Deeper forward reach at a lower height
+Deep reach + arm extension
+Lift + arms + base assist
+07 Backward step with arms forward Base retreats while both hands remain di-
+rected forward
+Opposing root–wrist motion
+Base + coordinated arms
+08 Wide-arm lateral motion
+Broad lateral arm movement during body
+relocation
+Wide bilateral reach
+Base + arms
+09 Low-object pick
+Approach and close around a low target
+Low wrist + grasp approach
+Lowered lift + arms
+We formulate realization as a constrained task-space prob-
+lem. At each frame, the relevant subsystems receive task-
+space targets. A differential IK or quadratic programming
+(QP) solver then computes velocities that reduce task error
+while satisfying the constraints:
+min
+˙qt
+X
+i
+wi∥Ji(qt) ˙qt −˙x∗
+i,t∥2
+2 + λ∥˙qt∥2
+2
+(7)
+s.t.
+qmin ≤qt + ∆t ˙qt ≤qmax,
+(8)
+˙qmin ≤˙qt ≤˙qmax.
+(9)
+Here, Ji denotes the Jacobian for task i, such as hand
+position or orientation, and the allocation variables modulate
+the weights wi. The planar base and lift are not treated
+as human-like links for one-to-one matching. GMR han-
+dles model-based upper-body retargeting; the allocator and
+adapter account for mobile-base components absent from
+standard humanoid retargeters.
+D. Base-Preserving Temporal Repair
+Framewise realization alone does not enforce consistency
+between consecutive robot states. Abrupt changes may arise
+when a target falls outside the workspace or the IK solution
+switches branches. We apply subsystem-specific temporal
+repair after GMR to smooth these changes without discarding
+the allocated base path. A minimum-jerk blend reconstructs
+base heading and suppresses unintended translation during
+dominant turns. We redistribute the removed translation
+over valid non-turn intervals, preserving net displacement
+and cumulative path progress. Motion-timed soft decoupling
+follows the turn timing of the human-derived motion rather
+than imposing a fixed “turn first” schedule. Speed retiming
+then reduces the effective frame rate by
+s = max
+
+1, maxt ∥vref
+t ∥
+vmax
+, maxt |ωref
+t |
+ωmax
+
+,
+fout = fin
+s ,
+(10)
+which changes execution duration while retaining the re-
+paired spatial path.
+For the lift, we separate intentional bending and reach-
+ing cues from pose-estimation noise. Gating and velocity
+limits prevent monocular root-height drift from producing
+spurious lift motion. For the arms, stable-start minimum-jerk
+trajectories replace noisy joint-space transitions. Low-object
+pick-like motions use a two-stage open-to-close trajectory
+coordinated with lift lowering.
+E. Command and Deployment Adapter
+We resample the repaired position reference to 50 Hz for
+simulation and command export. The adapter differentiates
+the planar base pose into (vx, vy, ω). When net displacement
+and yaw are negligible but the path-to-net ratio is high,
+it treats the trajectory as pose-estimation jitter and holds
+the base stationary. Otherwise, it applies moving-average
+smoothing, linear/angular deadbands, and separate acceler-
+ation slew limits. The hold, deadband, and slew checks run
+again immediately before command publication.
+Playback speed and command magnitude are coupled to
+preserve path geometry. For playback factor α ∈(0, 1],
+t′
+k = tk/α,
+[v′
+x, v′
+y] = αglin[vx, vy],
+ω′ = αgangω.
+(11)
+This coupling prevents slower playback from increasing total
+displacement or yaw. Independent gains glin and gang support
+platform-specific calibration without tying lateral translation
+to rotation. The adapter remains separate from human-motion
+allocation and serves as the embodiment-specific interface to
+the robot command space.
+V. EXPERIMENTS
+Our experiments compare embodiment-aware allocation
+with subsystem-limited retargeting baselines. We evaluate the
+generated references through simulation replay and compo-
+nent ablations. These experiments assess whether the refer-
+ences can be loaded, replayed, and compared across decom-
+position baselines; they do not measure learned-controller
+performance.
+A. Target Platform
+The physical demonstration uses a ROBOTIS AI Worker
+(FFW-SG2). This mobile-base humanoid has an omnidirec-
+tional wheeled base, two 7-DoF arms, grippers, head joints,
+and a vertical lift. Its reference contains 31 joints: wheel
+drive and steering joints, both arms, grippers, head joints,
+and the lift joint. Realization and command export use the
+measured robot model, joint and velocity limits, lift range,
+and controller interface.
+
+
+Fig. 4.
+The same bend-and-reach reference executed in simulation and on the physical robot for Task 06. The sequence retains the intended lift and
+bilateral arm coordination in both environments.
+B. Motion Categories
+We selected nine representative scenarios from a larger
+collection:
+• Locomotion: slow walk, run, side walk, and sideways-
+turn walk, expressed mainly through the base while
+suppressing task-irrelevant arm swing.
+• Bend-and-reach: forward bending at different reach
+amplitudes, requiring coordinated lift and arm motion
+with little base drift.
+• Arm-and-base coordination: a backward step with
+arms forward and a wide-arm lateral motion, combining
+base relocation with smooth arm timing.
+• Low pick-like motion: a low-object pick pose, requir-
+ing lift lowering and a coordinated arm approach.
+C. Baselines
+We compare against the following baselines:
+• Arm-only IK: map human wrists to robot end-effectors
+without moving the base or lift.
+• Base-only root tracking: map human root motion to
+base motion and keep arms near a nominal pose.
+• No-lift allocation: preserve the generated base and arm
+trajectories while freezing the vertical lift. This isolates
+the role of lift assignment in bending and low-object
+motions.
+• Ours: the proposed base-preserving allocation, GMR-
+based realization, and temporal repair stack.
+D. Metrics
+Our metrics separate semantic imitation from reference
+executability. Semantic imitation uses human-derived task
+targets extracted from GVHMR-reconstructed SMPL motion
+rather than our generated robot trajectory. We compare only
+task-relevant components: root displacement and speed for
+locomotion, wrist displacement and height for reaching, and
+torso-lowering cues converted to desired lift-height com-
+pensation. Since monocular absolute scale is imperfect, we
+normalize component errors within each scenario before
+averaging. The resulting costs support relative comparisons:
+lower values indicate that the robot reference retains more
+of the intended human cue.
+We measure executability after converting each trajectory
+to a 50 Hz simulation reference. A replay is complete when
+it loads and runs without early termination. Body mean error
+is the average Cartesian discrepancy between the main robot
+body and its replay target. Anchor mean error measures
+consistency at the base and end-effector anchor frames.
+Tables II and III evaluate the allocation, while Table IV tests
+whether the same references are ready for simulation.
+The reported quantities are:
+• hand trajectory error in the robot/world frame;
+• approach-direction error between human and robot hand
+motion;
+• base trajectory error for locomotion-dominant segments;
+• lift-height proxy error for vertical reach segments;
+• joint-limit,
+velocity-limit,
+and
+workspace
+violation
+rates;
+• command smoothness measured by velocity and accel-
+eration variation;
+• policy-free direct-playback completion in simulation,
+including whether a sequence terminates early.
+
+
+TABLE II
+HUMAN-DERIVED CONTINUOUS TASK-SPACE EVALUATION ON
+SCENARIOS 01–09. TARGETS ARE EXTRACTED FROM
+GVHMR-RECONSTRUCTED SMPL MOTION RATHER THAN FROM OUR
+GENERATED REFERENCE. ENTRIES ARE NORMALIZED COSTS; LOWER IS
+BETTER.
+Method
+Locomotion
+Manip./reach
+All
+01–04
+05–09
+01–09
+Ours
+0.355
+0.295
+0.322
+Arm-only
+1.000
+0.566
+0.759
+Base-only
+0.355
+0.868
+0.640
+No-lift
+0.355
+0.440
+0.402
+VI. REFERENCE VALIDATION
+Our implementation reads reconstructed 3D human motion
+and produces task-conditioned base, lift, and arm alloca-
+tions. It realizes the upper body through GMR, repairs
+the trajectory while preserving the base path, and renders
+kinematic previews. The 50 Hz command adapter exports
+the same references for execution. In Fig. 4, Task 06 uses
+one reference in both simulation and the physical robot; the
+intended lift and bilateral arm coordination is retained in
+both. The remaining results cover the larger simulation set.
+The evaluation set comprises nine generated trajectories
+spanning locomotion, bending and reaching, base-arm coor-
+dination, and low-pick-like motion. We examine continuous
+error against human-derived task targets, component-wise
+ablations, and policy-free simulation playback.
+Table II reports normalized task-space costs against the
+human-derived target. These costs are not binary success
+labels, and the generated motion is not used as ground truth.
+Methods that retain base motion are expected to perform
+similarly on locomotion. Manipulation and reaching, by
+contrast, reveal whether the base, lift, and arms are coor-
+dinated. We report grouped means for readability and retain
+the full scenario-wise matrix with the experiment artifacts.
+The full method matches the base-preserving baselines on
+locomotion and achieves the lowest grouped mean across all
+nine scenarios.
+Table III breaks the same evaluation down by compo-
+nent. Arm-only loses locomotion and lift intent. Base-only
+preserves root motion but not wrist behavior, while no-
+lift retains much of the arm and base motion but misses
+bend-to-lift compensation. No restricted baseline covers ev-
+ery task group. The full method matches their locomotion
+performance while retaining both wrist behavior and lift
+compensation, supporting coordinated allocation across the
+base, lift, and arms.
+The repair stages address distinct reference-generation
+failures. Base repair preserves human-derived planar progress
+while correcting lateral-axis interpretation, heading, and
+speed. Its motion-timed turn/translation gate avoids simul-
+taneous high linear and angular commands without inserting
+a long pause before turning. Lift gating rejects monocular
+height drift while retaining intentional lowering. In the
+inspected wide-arm sample, replacing per-frame GMR arm
+TABLE III
+COMPONENT-WISE HUMAN-TARGET ABLATION. LOCOMOTION ROOT IS
+AVERAGED OVER SCENARIOS 01–04, WRIST METRICS OVER SCENARIOS
+05–09, AND LIFT SHORTFALL OVER SCENARIOS 05, 06, AND 09. LOWER
+IS BETTER.
+Method
+Loc. root
+Wrist
+Wrist-z
+Lift short.
+Primary gap
+(m)
+(m)
+(m)
+(m)
+Ours
+0.641
+0.346
+0.143
+0.012
+balanced
+Arm-only
+1.610
+0.352
+0.164
+0.125
+base/lift
+Base-only
+0.641
+1.726
+0.643
+0.125
+wrist/lift
+No-lift
+0.641
+0.346
+0.164
+0.125
+lift
+TABLE IV
+POLICY-FREE SIMULATION REPLAY VALIDATION. COMPLETION MEANS
+NO EARLY TERMINATION DURING REFERENCE PLAYBACK, NOT
+LEARNED-POLICY SUCCESS. LOWER ERRORS ARE BETTER.
+Group
+Sc.
+Completed
+Body mean (m)
+Anchor mean (m)
+Steps
+Locomotion
+4
+4/4
+0.012
+0.175
+1427
+Bend/reach
+2
+2/2
+0.024
+0.020
+551
+Base+arms
+2
+2/2
+0.028
+0.048
+654
+Low pick
+1
+1/1
+0.029
+0.032
+315
+All 01–09
+9
+9/9
+0.020
+0.097
+2947
+blending with a minimum-jerk trajectory reduced peak joint
+speed from 4.789 rad/s to 2.201 rad/s and peak acceleration
+from 28.128 rad/s2 to 3.755 rad/s2. For low-pick motion,
+the two-stage open-close trajectory reduced hand separation
+from approximately 0.89 m to 0.52 m as the lift lowered to
+-0.18 m.
+The command adapter handles a failure that is not visible
+in kinematic video. If playback is slowed by 1/α while base
+velocity remains unchanged, integrated translation and yaw
+increase by the same factor. We therefore apply α to both lin-
+ear and angular velocity and retain separate calibration gains.
+The adapter also freezes jitter-like, near-stationary base paths
+and limits command acceleration. These operations leave the
+task-space scores in Tables II and III unchanged, but preserve
+the reference geometry at the simulator/robot interface.
+Table IV reports policy-free replay of the generated ref-
+erences. We exported all nine trajectories at 50 Hz; each
+replay completed without early termination, for 2947 total
+steps. We omit raw joint-position error because wheel drive
+joints dominate this aggregate. Body and anchor consistency
+provide more informative diagnostics at this stage.
+VII. DISCUSSION AND LIMITATIONS
+Our formulation is less anthropomorphic than standard
+humanoid retargeting, which suits mobile-base robots but
+introduces ambiguity. The same human motion may corre-
+spond to several robot command sequences. A far reach, for
+example, can be expressed by extending the arm, driving the
+base, raising the lift, or combining all three. The allocator
+must choose among these alternatives while respecting both
+feasibility and natural robot behavior.
+The study has four main limitations. First, the experiments
+use precomputed 3D human motion; comparing alternative
+reconstruction methods remains future work. Second, the
+
+
+allocator is interpretable and partly scenario-conditioned.
+Broader baselines, including direct GMR without allocation,
+and held-out evaluation would better characterize general-
+ization without per-sequence tuning. Third, direct playback
+verifies reference consistency and simulator compatibility but
+not disturbance rejection. Finally, the physical-robot result is
+qualitative, and broader hardware evaluation should measure
+completion and tracking error systematically.
+Learning-based tracking is a downstream direction rather
+than a claim of this work. A supervised tracker or PPO policy
+could assess how well the references withstand dynamics
+and perturbations. Our results instead support explicit allo-
+cation before retargeting: GMR-based realization yields re-
+playable mobile-base references and exposes the limitations
+of subsystem-restricted mappings.
+VIII. CONCLUSION
+We introduced task-conditioned embodiment-aware mo-
+tion allocation for human video imitation on mobile-base
+humanoids. Rather than matching joints directly, the method
+assigns motion to the base, lift, and arms, then repairs
+heading, timing, and subsystem trajectories while preserving
+base-path geometry. GMR realizes the upper body, and a 50
+Hz adapter handles stationary-base suppression, slew lim-
+its, and time-consistent linear/angular scaling. Across nine
+scenarios, our references were compared with subsystem-
+restricted baselines and replayed without early termination.
+We also executed one reference on the physical robot as a
+qualitative demonstration. Future evaluation will add broader
+retargeting baselines, held-out scenarios, and quantitative
+physical-robot measurements.
+REFERENCES
+[1] X. Cheng, Y. Ji, J. Chen, R. Yang, G. Yang, and X. Wang, “Expressive
+whole-body control for humanoid robots,” in Robotics: Science and
+Systems, 2024.
+[2] Z. Fu, Q. Zhao, Q. Wu, G. Wetzstein, and C. Finn, “HumanPlus:
+Humanoid shadowing and imitation from humans,” arXiv preprint
+arXiv:2406.10454, 2024.
+[3] T. He, Z. Luo, X. He, W. Xiao, C. Zhang, W. Zhang, K. Kitani,
+C. Liu, and G. Shi, “OmniH2O: Universal and dexterous human-to-
+humanoid whole-body teleoperation and learning,” in Proceedings of
+the Conference on Robot Learning, 2024, pp. 1516–1540.
+[4] M. Loper, N. Mahmood, J. Romero, G. Pons-Moll, and M. J. Black,
+“SMPL: A skinned multi-person linear model,” ACM Transactions on
+Graphics, vol. 34, no. 6, pp. 248:1–248:16, 2015.
+[5] M. Kocabas, N. Athanasiou, and M. J. Black, “VIBE: Video inference
+for human body pose and shape estimation,” in Proceedings of the
+IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+2020, pp. 5253–5263.
+[6] D. Rempe, T. Birdal, A. Hertzmann, J. Yang, S. Sridhar, and L. J.
+Guibas, “HuMoR: 3d human motion model for robust pose estima-
+tion,” in Proceedings of the IEEE/CVF International Conference on
+Computer Vision, 2021.
+[7] Y. Yuan, U. Iqbal, P. Molchanov, K. Kitani, and J. Kautz, “GLAMR:
+Global occlusion-aware human mesh recovery with dynamic cameras,”
+in Proceedings of the IEEE/CVF Conference on Computer Vision and
+Pattern Recognition, 2022.
+[8] V. Ye, G. Pavlakos, J. Malik, and A. Kanazawa, “Decoupling human
+and camera motion from videos in the wild,” in Proceedings of the
+IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+2023, pp. 21 222–21 232.
+[9] S.
+Shin,
+J.
+Kim,
+E.
+Halilaj,
+and
+M.
+J.
+Black,
+“WHAM:
+Reconstructing world-grounded humans with accurate 3d motion,”
+arXiv preprint arXiv:2312.07531, 2024. [Online]. Available: https:
+//arxiv.org/abs/2312.07531
+[10] Y. Wang, Z. Wang, L. Liu, and K. Daniilidis, “TRAM: Global
+trajectory and motion of 3d humans from in-the-wild videos,”
+arXiv preprint arXiv:2403.17346, 2024. [Online]. Available: https:
+//arxiv.org/abs/2403.17346
+[11] Z. Shen, H. Pi, Y. Xia, Z. Cen, S. Peng, Z. Hu, H. Bao,
+R. Hu, and X. Zhou, “World-grounded human motion recovery via
+gravity-view coordinates,” arXiv preprint arXiv:2409.06662, 2024.
+[Online]. Available: https://arxiv.org/abs/2409.06662
+[12] K. Darvish, Y. Tirupachuri, G. Romualdi, L. Rapetti, D. Ferigo, F. J.
+Andrade Chavez, and D. Pucci, “Whole-body geometric retargeting for
+humanoid robots,” in 2019 IEEE-RAS 19th International Conference
+on Humanoid Robots (Humanoids), 2019, pp. 679–686.
+[13] J. P. Araujo, Y. Ze, P. Xu, J. Wu, and C. K. Liu, “Retargeting
+matters: General motion retargeting for humanoid motion tracking,”
+arXiv preprint arXiv:2510.02252, 2025. [Online]. Available: https:
+//arxiv.org/abs/2510.02252
+[14] X. B. Peng, P. Abbeel, S. Levine, and M. van de Panne, “DeepMimic:
+Example-guided deep reinforcement learning of physics-based char-
+acter skills,” ACM Transactions on Graphics, vol. 37, no. 4, 2018.
+[15] X. B. Peng, Z. Ma, P. Abbeel, S. Levine, and A. Kanazawa, “AMP:
+Adversarial motion priors for stylized physics-based character con-
+trol,” ACM Transactions on Graphics, vol. 40, no. 4, 2021.
+[16] X. B. Peng, Y. Guo, L. Halper, S. Levine, and S. Fidler, “ASE: Large-
+scale reusable adversarial skill embeddings for physically simulated
+characters,” ACM Transactions on Graphics, vol. 41, no. 4, 2022.
+[17] Z. Luo, J. Cao, J. Merel, A. Winkler, J. Huang, K. Kitani,
+and W. Xu, “Perpetual humanoid control for real-time simulated
+avatars,” arXiv preprint arXiv:2305.06456, 2023. [Online]. Available:
+https://arxiv.org/abs/2305.06456
+[18] T.
+He,
+Z.
+Luo,
+W.
+Xiao,
+C.
+Zhang,
+K.
+Kitani,
+C.
+Liu,
+and G. Shi, “Learning human-to-humanoid real-time whole-body
+teleoperation,” arXiv preprint arXiv:2403.04436, 2024. [Online].
+Available: https://arxiv.org/abs/2403.04436
+[19] T. E. Truong, Q. Liao, X. Huang, G. Tevet, C. K. Liu, and K. Sreenath,
+“BeyondMimic: From motion tracking to versatile humanoid control
+via
+guided
+diffusion,”
+arXiv
+preprint
+arXiv:2508.08241,
+2025.
+[Online]. Available: https://arxiv.org/abs/2508.08241
+[20] J. Mao, S. Zhao, S. Song, C. Hong, T. Shi, J. Ye, M. Zhang, H. Geng,
+J. Malik, V. Guizilini, and Y. Wang, “Universal humanoid robot
+pose learning from internet human videos,” in 2025 IEEE-RAS 24th
+International Conference on Humanoid Robots (Humanoids), 2025,
+pp. 973–980.
+[21] R. Malhotra, W. Chong, C. Cuan, and O. Khatib, “Humanoid motion
+scripting with postural synergies,” in 2025 IEEE-RAS 24th Interna-
+tional Conference on Humanoid Robots (Humanoids), 2025, pp. 1203–
+1210.
+[22] Z. Fu, T. Z. Zhao, and C. Finn, “Mobile ALOHA: Learning bimanual
+mobile
+manipulation
+with
+low-cost
+whole-body
+teleoperation,”
+arXiv preprint arXiv:2401.02117, 2024. [Online]. Available: https:
+//arxiv.org/abs/2401.02117
+[23] T. Kang, J. Kim, S. Nasrat, D. Song, G. Ahn, M. Jo, S. Lee, and S.-
+J. Yi, “ANUBIS: A compact, low-cost, compliant humanoid mobile
+manipulation robot,” in 2025 IEEE-RAS 24th International Conference
+on Humanoid Robots (Humanoids), 2025, pp. 837–842.
+[24] M. Forouhar, H. Sadeghian, A. Naceri, and S. Haddadin, “Whole-
+body impedance control of service robot GARMI with non-holonomic
+constraint,” in 2025 IEEE-RAS 24th International Conference on
+Humanoid Robots (Humanoids), 2025, pp. 1109–1114.
+[25] S. B. Moyen, R. Krohn, S. Lueth, K. Pompetzki, J. Peters, V. Prasad,
+and G. Chalvatzaki, “The role of embodiment in intuitive whole-
+body teleoperation for mobile manipulation,” in 2025 IEEE-RAS 24th
+International Conference on Humanoid Robots (Humanoids), 2025,
+pp. 585–592.
+[26] K. Tsunoda, S. Yagi, S. Yamamori, and J. Morimoto, “Generating
+velocity-adaptive manipulation through learning from human move-
+ment speed variations,” in 2025 IEEE-RAS 24th International Confer-
+ence on Humanoid Robots (Humanoids), 2025, pp. 712–719.
+[27] Y. Arai, T. Himeno, I. Yuda, T. Hiraoka, K. Kojima, and K. Okada,
+“Motion generation and burden evaluation of sitting-up assistance
+by humanoid robot based on human caregiver movements,” in 2025
+
+
+IEEE-RAS 24th International Conference on Humanoid Robots (Hu-
+manoids), 2025, pp. 698–703.
+[28] Z. Chen, C. Kong, C. Zhang, Y. Yang, L. Y. Zhu, S. Kousik,
+and D. Xu, “WARP: Whole-body retargeting for learning from
+offline human demonstrations,” arXiv preprint arXiv:2606.29940,
+2026. [Online]. Available: https://arxiv.org/abs/2606.29940
+[29] K. Zakka, “mink: Python inverse kinematics based on MuJoCo,” https:
+//github.com/kevinzakka/mink, 2025, accessed 2026-07-15.
+[30] M. Murooka, I. Kumagai, M. Morisawa, and F. Kanehiro, “Learning
+differentiable reachability maps for optimization-based humanoid mo-
+tion generation,” in 2025 IEEE-RAS 24th International Conference on
+Humanoid Robots (Humanoids), 2025, pp. 429–436.
+[31] V. Leve, J. Moura, S. Fujita, T. Miyake, S. Tonneau, and S. Vijayaku-
+mar, “Scaling whole-body multi-contact manipulation with contact
+optimization,” in 2025 IEEE-RAS 24th International Conference on
+Humanoid Robots (Humanoids), 2025, pp. 920–927.

@@ -1,0 +1,3644 @@
+A
+UNIFIED
+BELLMAN
+OPERATOR
+FOR
+SAFETY-
+CRITICAL REINFORCEMENT LEARNING
+Nishanth Arun Rao1,*
+Royina Karegoudra Jayanth2,*
+Benjamin Eysenbach2
+Jaime Fernández Fisac1
+1Department of Electrical and Computer Engineering
+2Department of Computer Science
+Princeton University
+{nr1053, rj5498, eysenbach, jfisac}@princeton.edu
+ABSTRACT
+Reinforcement learning in safety-critical domains requires maximizing task perfor-
+mance while strictly adhering to safety constraints. Existing safe reinforcement
+learning paradigms typically force a trade-off: they either require a priori knowl-
+edge to provide strict safety guarantees (e.g., safety filters), or they enable joint
+learning but only satisfy safety constraints on average. In this work, we propose a
+novel Bellman operator that unifies performance and safety objectives into a joint
+value function. We show that temporal difference learning with the joint Bellman
+operator converges under a two-timescale stochastic approximation framework.
+On the fast timescale, the safety value of the learning joint policy is estimated,
+while the joint value is estimated on the slow timescale. Convergence is ensured
+by formulating the limiting dynamics as an occupation-averaged differential in-
+clusion, and showing that it asymptotically converges to a set of limiting optimal
+safety-constrained task value functions. Theoretically, once converged, the result-
+ing optimal policy maximizes task return while maintaining safety at all times.
+Empirical evaluations on continuous control tasks with neural approximations
+demonstrate stable convergence with near-zero safety violations at test time.
+1
+INTRODUCTION
+Biological agents instinctively prioritize safety while mastering diverse tasks to ensure efficient,
+harm-free exploration. Safe Reinforcement Learning (Safe RL) captures this paradigm, aiming to
+learn near-optimal policies with strict safety assurances. Existing methods typically formalize this
+balance either by treating safety as a soft constraint during optimization or by theoretically enforcing
+hard safety guarantees.
+Some of the early works formalized safe RL as a Constrained Markov Decision Process (CMDP),
+solving safety-constrained optimization problems using Lagrangian relaxation with dual multiplier
+methods (Altman, 1999; García & Fernández, 2015; Ray et al., 2019), with subsequent extensions via
+trust-region projections (Achiam et al., 2017; Yang et al., 2020; Xu et al., 2021; Milosevic et al., 2025),
+state-augmentation (Sootla et al., 2022), and offline distribution shaping (Yao et al., 2024). While
+these model-free techniques jointly optimize task performance and safety, they inherently bound
+expected cumulative costs, yielding only probabilistic safety guarantees. Conversely, model-based
+methods achieve strict safety via predictive rollouts, epigraph formulation of the value function
+(for deterministic control problems), or by strictly avoiding unsafe future sets (Huang et al., 2024;
+Jayant & Bhatnagar, 2022; Pfrommer et al., 2022; Altarovici et al., 2013). However, they suffer from
+compounding model biases and computational overhead to infer safe actions in real-time, particularly
+in environments with complex or unmodeled dynamics. Motivated by these tradeoffs, we seek a
+model-free approach that strictly adheres to safety specifications while optimizing task performance.
+Some of the control-theoretic approaches that rigorously hard-guarantee safety are based on Hamilton-
+Jacobi (HJ) reachability analysis, casting safety and reach-avoid problems as zero-sum differential
+*Equal contribution
+1
+arXiv:2610.12420v1  [cs.LG]  8 Oct 2026
+
+
+games (Isaacs, 1965; Mitchell et al., 2005). While deep RL techniques have enabled tractable neural
+solutions for the time-discounted HJI avoid/reach-avoid Bellman operators for safety analysis (Fisac
+et al., 2019; Hsu et al., 2021; Bajcsy et al., 2019), it is not immediately obvious how these techniques
+can be extended to generic tasks specified by dense, continuous reward functions. Consequently, a
+dominant paradigm employs a decoupled approach, where an a priori learned task-oblivious safety
+filter preemptively intercepts and projects nominal unsafe task actions onto a plausible safe set (Bui
+et al., 2021; Hsu et al., 2024; Nguyen et al., 2024; Cai et al., 2025; Banerjee et al., 2024). However,
+these switch-type interventions only occur near the boundary, causing erratic, jittery interventions
+when a safety-oblivious task policy persistently tries to exit the boundary. This is seldom desirable,
+especially in human-in-the-loop scenarios (Oh et al., 2025).
+Recent offline feasibility-guided models instead utilize diffusion, flow-matching, or world-models to
+approximate the largest feasible region using HJ-reachability and steer task-driven actions to strictly
+lie within the safe envelope (Zheng et al., 2024; Tayal et al., 2026; Cao et al., 2025). However,
+they either introduce iterative online inference latency or rely on post-hoc distillation that weakens
+strict safety guarantees. Alternatively, using precomputed safety value functions as Control Barrier
+Functions (Q-CBF) (Hsu et al., 2024; Lu et al., 2025; Oh et al., 2025; 2026) avoids planning latency,
+but necessitates computing action projections online. Additionally, relying on external projections
+introduces action aliasing, which can be detrimental (Markgraf et al., 2026). If the safe action set
+is known a priori, neural-based methods such as (Suttle et al., 2024) can hard-guarantee safety; we
+instead assume no access to an oracle safe action set and learn from data. Thus, a growing subset
+of literature advocates for unified architectures that embed safety directly into the policy (Gu et al.,
+2024a;b; Cen et al., 2024). Yet, jointly optimizing rewards and costs frequently destabilizes learning
+due to gradient conflicts, necessitating algorithmic workarounds like gradient manipulation and
+explicit latent decoupling (Gu et al., 2024a;b; Kim et al., 2025; Cen et al., 2024; Yang et al., 2025).
+In this paper, we combine safety and task objectives directly at the value-function level, rather than at
+the policy level, and jointly optimize safety-constrained task performance using a single joint policy
+via a novel, joint Bellman operator under adversarial disturbances. Our contributions are:
+Unified Formulation: We propose a robust Bellman operator and derive the corresponding objective
+function from robust optimal stopping theory. We propose a two-timescale stochastic approximation
+framework that enables learning of its fixed point, the joint value function.
+Theoretical Safety and Optimality Guarantees: We prove forward invariance of the safe set under
+the joint policy, and show convergence to the optimal robust task performance within the safe set.
+Empirical Validation: We conduct experiments using neural approximations on a set of continuous
+control tasks from the Gymnasium and SafetyGymnasium suites under adversarial disturbances,
+demonstrating stable training convergence and near-zero safety violations during evaluation.
+2
+PRELIMINARIES
+This section introduces key definitions, followed by preliminaries on Constrained Markov Decision
+Processes and Hamilton-Jacobi safety analysis. Refer to Appendix A for more details.
+2.1
+DEFINITIONS AND NOTATIONS
+We consider a discounted MDP with finite state, action and disturbance spaces: S ⊂Rn, A ⊂Rm,
+and D ⊂Rl respectively, with the transition kernel P(·|s, a, d) ∈∆(S). A deterministic joint policy
+π = (µ, ν) pairs the mappings µ : S →A and ν : S × A →D, yielding π(s) = (µ(s), ν(s, µ(s))).
+The reward and the safety margin are given by r : S × A × D →[0, Rmax], Rmax > 0 w.l.o.g,
+and g : S →[−Gmin, Gmax], with Gmin, Gmax > 0 respectively. We subsume the extended class-
+Ke scaling function β(·) into g(s) to align with task return scales (unless stated otherwise). The
+constraint set is Fc := {s ∈S : g(s) ≥0}, complementing the failure set F. The viability kernel
+Ω⊆Fc is the subset of states from which a control policy exists that can keep the agent away
+from the failure set F for all times, regardless of the adversarial disturbance. Finally, the value
+and action-value function spaces are defined as V := R|S| and Q := R|S||A||D|, equipped with the
+supremum norm ∥· ∥∞.
+2
+
+
+2.2
+CONSTRAINED MARKOV DECISION PROCESSES
+A Constrained Markov Decision Process (CMDP) (Altman, 1999) extends an MDP by introducing
+auxiliary costs to encode safety constraints. It is defined by the tuple M = (S, A, P, r, c, γ, µ0),
+where r and c are the task reward and constraint cost functions, respectively, γ ∈[0, 1) is the
+discount factor, and µ0 : S →[0, 1] denotes the initial state distribution. For a stochastic policy
+π : S →∆(A), let Jr(π) and Jc(π) denote the expected discounted cumulative return and cost.
+The CMDP objective seeks an optimal policy that maximizes returns subject to a predefined safety
+threshold d ∈R, typically solved via Lagrangian relaxation, yielding an equivalent unconstrained
+min-max saddle-point problem: minλ≥0 maxπ∈Π (Jr(π) −λ(Jc(π) −d)), where λ ≥0 is the
+Lagrange multiplier and Π is the set of stationary stochastic policies. More details can be found in
+(Altman, 1999; Achiam et al., 2017; Tessler et al., 2019; Stooke et al., 2020).
+2.3
+HAMILTON-JACOBI SAFETY ANALYSIS
+Hamilton-Jacobi (HJ) reachability analysis seeks to find the safe set Ω⊆Fc (Mitchell et al.,
+2005). Formulated as a zero-sum differential game, the robust safety value function is V ϕ(s) =
+infN[d] supa inft≥0 g(ξa,N[d]
+s0
+(t)), where ξa,N [d]
+s0
+(·) denotes the trajectory starting at s0 and evolving
+according to the control and disturbance trajectories (a, N[d]), with N[d] the set of non-anticipative
+disturbance strategies (Evans & Souganidis, 1983; Fisac et al., 2018). By Dynamic Programming,
+V (s) is the unique viscosity solution to the Hamilton-Jacobi-Isaacs (HJI) variational inequality.
+As the corresponding infinite-horizon Bellman operator does not induce a contraction mapping,
+(Fisac et al., 2019) introduces a discount factor γ ∈(0, 1) to enable TD-learning, resulting in
+the time-discounted robust Bellman equation under stochastic dynamics V (s) = (1 −γ)g(s) +
+γ min
+
+g(s), maxa∈A mind∈D Es′∼p(·|s,a,d)[V (s′)]
+	
+More details can be found in (Mitchell et al.,
+2005; Fisac et al., 2019; 2018; Evans & Souganidis, 1983).
+3
+LEARNING SAFETY-CONSTRAINED TASK ACTION-VALUE FUNCTION
+This section presents our unified formulation to learn a joint safety-constrained task value function.
+We show that the corresponding joint Bellman operator induces a contraction mapping when the
+auxiliary safety value function is held fixed. We further see that the coupled system possesses a
+discontinuity due to changing joint greedy policies, and discuss its resolution.
+3.1
+THE JOINT FORMULATION
+For clarity, we first introduce the joint Bellman equation to intuit its formulation. In the presence of
+adversarial disturbances, the time-discounted task action-value function Qψ purely corresponding to
+task return maximization can be extended to the following robust stochastic equation:
+Qtask(s, a, d) = r(s, a, d) + γ
+E
+s′∼p(·|s,a,d)
+
+max
+a′∈A min
+d′∈D Qtask(s′, a′, d′)
+
+(1)
+Next, consider the time-discounted safety value function, as introduced in (Fisac et al., 2019). We’d
+like to use this value function to instead assess the safety values of some given policy π := (µ, ν),
+yielding the following safe action-value function evaluated π:
+Qϕ
+π(s, a, d) = (1 −γ)g(s) + γ min
+
+g(s),
+E
+s′∼p(·|s,a,d)
+
+max
+a′∈µ(s′)
+min
+d′∈ν(s′,a′) Qϕ
+π(s′, a′, d′)
+
+(2)
+We can use Qϕ
+π to cap the further accrual of task rewards, i.e., truncate task accrual for the policy
+π when the corresponding task action-value goes above Qϕ
+π, enabling the agent to instead optimize
+task performance subject to safety. Since γ serves as the probability of episode continuation, by the
+notion of principled time-discounting Fisac et al. (2019), we can combine Eq. 2 with Eq. 1, yielding
+the stochastic time-discounted joint action-value function as follows:
+Q(s, a, d) =(1 −γ) min{r(s, a, d), g(s)}
++ γ min
+
+r(s, a, d) +
+E
+s′∼p(·|s,a,d)
+
+max
+a′∈A min
+d′∈D Q(s′, a′, d′)
+
+, Qϕ
+π(s, a, d)
+
+(3)
+3
+
+
+where, with probability 1 −γ, the agent receives the reward min{r(s, a, d), g(s)}, or continues with
+probability γ. The corresponding maximin joint policy π := (µ, ν) is defined through a measurable
+selection as:
+µ(s) := arg max
+a∈A
+min
+d∈D Q(s, a, d),
+ν(s, µ(s)) := arg min
+d∈D
+Q(s, µ(s), d)
+(4)
+Here, the disturbance gets the advantage of observing the controller’s action, while the controller
+must optimize for the adversarial disturbance. Note that we do not assume Qϕ
+π to be given; instead,
+Qϕ
+π is learned alongside Q, estimating the safety values of the joint policy π. Note the coupling:
+the joint policy π is derived from the joint value Q, which is evaluated by Qϕ
+π, whose values in turn
+update Q. Next, we show that the safety and joint Bellman operators are contractions given a fixed
+policy and fixed safety value, respectively. The joint value function is conceptualized in Fig. 1.
+3.2
+SAFETY ACTION-VALUE OF THE JOINT POLICY
+Given a joint policy π, the safety Bellman operator T ϕ
+π : Q →Q corresponding to Eq. 2 is defined
+as:
+T ϕ
+π
+
+Qϕ
+(s, a, d) = (1 −γ)g(s) + γ min
+
+g(s),
+E
+s′∼p(·|s,a,d)
+
+max
+a′∈µ(s′)
+min
+d′∈ν(s′,a′) Qϕ(s′, a′, d′)
+
+(5)
+Note that ν(·, a′) refers to the specific sample a′ drawn from µ(·) by the maxa′∈µ operation.
+Proposition 1 (Contraction Mapping of T ϕ
+π ). For any arbitrary fixed joint policy π, the time-
+discounted Bellman operator defined in Eq. 5 induces a γ-contraction mapping under the supre-
+mum norm. That is, for a given discount factor γ ∈[0, 1), and any Qϕ
+π, eQϕ
+π ∈Q, we have
+T ϕ
+π
+
+Qϕ
+π
+
+−T ϕ
+π
+h
+eQϕ
+π
+i
+∞≤γ
+Qϕ
+π −eQϕ
+π
+
+∞. (Proof in Appendix B.1)
+Hence, there exists a unique fixed point, Qϕ
+π, which we call the safety action-value of the fixed joint pol-
+icy π. The corresponding safety value function is obtained as V ϕ
+π (s) = maxa∈µ mind∈ν Qϕ
+π(s, a, d).
+The set Ωπ = {s ∈S : V ϕ
+π (s) ≥0} is then the safe set of policy π (under γ →1 as discussed
+in Fisac et al. (2019) i.e., the set of all states from which the joint policy π keeps the agent safe.
+Note that, in general, Ωπ ⊆Ω, where the maximal robust safe set, Ω, (viability kernel) is given by
+Ω= {s ∈S : ∃µ such that ∀ν, V ϕ
+(µ,ν)(s) ≥0}.
+3.3
+JOINT ACTION-VALUE FUNCTION
+Next, for any fixed safety action-value function, Y ∈Q, the joint Bellman operator TY : Q →Q
+corresponding to Eq. 3 is given by:
+TY [Q](s, a, d) = (1 −γ)m(s, a, d) + γ min
+n
+r(s, a, d) +
+E
+s′∼p(·|s,a,d) [VQ(s′)] , Y (s, a, d)
+o
+(6)
+where m(s, a, d) = min{r(s, a, d), g(s)} and VQ(s) = maxa∈A mind∈D Q(s, a, d).
+Proposition 2 (Contraction Mapping of TY ). For any arbitrary, fixed Y ∈Q, the Bellman operator
+defined in Eq. 6 induces a γ-contraction mapping under the supremum norm. That is, for a given
+discount factor γ ∈[0, 1), and any Q, eQ ∈Q, we have
+TY [Q] −TY [ eQ]
+
+∞≤γ
+Q −eQ
+
+∞.
+(Proof in Appendix B.2)
+Thus, for a fixed safety action-value function Y , there exists a unique fixed point QY of the joint
+Bellman operator.
+3.4
+OBJECTIVE FUNCTION OF JOINT ACTION-VALUE FUNCTION
+Given the value functions (Q, Y ), we derive the joint objective function from robust optimal stop-
+ping theory to provide a principled interpretation of the joint value function. To this end, we
+first define the task-optimizing and safety-maximizing regions, as illustrated in Fig. 1. For a
+given joint action-value function q, safety critic y and the joint policy π = (µ, ν), let V ψ
+q (s) :=
+r(s, µ(s), ν(s, µ(s))) + E[Vq(s′)], where Vq(s) = maxa mind q(s, a, d). Define the safety value
+function V ϕ
+π (s) := Qϕ
+π(s, µ(s), ν(s, µ(s)).
+4
+
+
+V ψ
+π (s)
+g(s)
+V ϕ
+π (s)
+Vπ(s)
+Ωπ
+F
+F
+S
+V
+s0
+Ωψ
+F
+Ωϕ
+Figure 1: (Left) The Joint Value function is conceptualized as a 2D figure, with the state-space
+indicated on the x-axis, and joint values on the y-axis. (Right) The corresponding regions within the
+safe set Ωπ are depicted. The locus of points where V ϕ
+π = V ψ
+π indicates the boundary between Ωϕ
+and Ωψ as defined in Definition 1. Trajectories must stay within Ωψ to maximize episodic return.
+Definition 1 (Task and safety optimizing regions). The region where the task value function
+is strictly lower than the safe value function is defined as the task-optimizing region: Ωψ =
+
+s ∈S
+ V ψ
+q (s) < V ϕ
+π (s)
+	
+. The region where the task value function is greater than the safe value
+function is defined as the safety-optimizing region: Ωϕ =
+
+s ∈S
+ V ψ
+q (s) ≥V ϕ
+π (s)
+	
+.
+Theorem 1 (Objective Function). Given a Borel-measurable safety maximizing region, Ωϕ ∈B(S),
+define the first switching time τ : W →{0, · · · , T} as τ = inf{k ∈{0, · · · , T} : sk ∈Ωϕ}, where
+T is the time horizon and inf ∅= T (T →∞for infinite horizon setting). Let Λk be the set of
+stopping times τ bounded by time horizon k, i.e., 0 ≤τ ≤k. Let ω be trajectories sampled using
+the joint policy as at, dt ∼π(st), with the dynamics st+1 ∼p(·|st, at, dt). Then, the corresponding
+joint objective function that the joint policy maximizes is given by: (Proof in Appendix B.3)
+J(π) := infτ∈ΛT Eω∼π
+
+
+Pτ−1
+t=0 γtr(st, at, dt) + γτ
+
+
+(1 −γ) min{r(sτ, aτ, dτ), g(sτ)} + γV ϕ
+Y (sτ)
+|
+{z
+}
+:=Jτ
+
+
+
+
+s0 = s
+
+
+(7)
+Intuitively, the stopping time τ ∈ΛT serves as a safety inspector: once the trajectory leaves Ωψ, the
+further accrual of expected return is replaced by the terminal safety value Jτ (dominated by V ϕ
+Y as
+γ →1). Hence, task performance can be optimized as long as the trajectory remains inside Ωψ. We
+next analyze the coupled evolution of the safety and joint value functions.
+3.5
+COUPLED FIXED POINT
+Let πQ = (µQ, νQ) be the maximin policy derived from Q, as in Eq. 4. Since the map Q 7→πQ
+is generally discontinuous, small perturbations of Q can change the argmax/argmin completely.
+The optimal solution we seek is a pair (Q∗, Y ∗) satisfying Y ∗= Qϕ
+πQ∗,
+Q∗= TY ∗Q∗. This
+is a coupled system: the safety critic Y ∗equals the safety value of the greedy policy of Q∗, and
+Q∗is the fixed point of its own Bellman operator, “truncated” by Y ∗. Thus, in the iteration
+Qk+1 = TQϕ
+πQk (Qk), the composition Q 7→TQϕ
+πQ (Q) is not guaranteed to induce a contraction by
+our current analysis, as Qϕ
+πQ can change discontinuously due the discontinuous mapping Q 7→πQ.
+This motivates a two-timescale stochastic approximation learning framework in Section 4, where the
+joint and safety value functions are learned on separate timescales.
+4
+TWO-TIMESCALE STOCHASTIC APPROXIMATION
+In this section, we analyze the coupled learning dynamics in finite/tabular settings. For clarity, we
+present a synchronous update analysis here, under which every state-action-disturbance coordinate
+is updated at each iteration; extension to asynchronous settings is discussed in Appendix B.8. Let
+ˆT ϕ
+n+1,πQn and ˆTn+1,Y denote the stochastic estimators of the Bellman targets, with πQn ∈Π(Qn),
+Note that Assumption 1 concerns unbiased estimation of the Bellman target itself.
+5
+
+
+where for q ∈Q, Π(q) denotes the finite correspondence of the maximin policies:
+Π(q) :=
+(
+(µ, ν) : µ(s) ∈arg max
+a
+min
+d q(s, a, d), ν(s, µ(s)) ∈arg min
+d
+q(s, µ(s), d)
+)
+(8)
+Assumption 1 (Conditional unbiasedness and Martingale-difference noise (Tsitsiklis & Van Roy,
+1997)). Let {Hn}n≥0 denote the filtration generated by the learning history up to iteration n. Then,
+E
+h
+ˆT ϕ
+n+1,πQn[Yn]
+Hn
+i
+= T ϕ
+πQn[Yn],
+E
+h
+ˆTn+1,Yn[Qn]
+Hn
+i
+= TYn[Qn]
+(9)
+Assumption 2 (Step-size conditions (Robbins & Monro, 1951)). The step-sizes, αn, βn ∈(0, 1],
+satisfy Robbins-Monro conditions: P∞
+n=0 αn = P∞
+n=0 βn = ∞, P∞
+n=0(α2
+n + β2
+n) < ∞,
+limn→∞αn →0, limn→∞βn →0, and additionally, limn→∞αn/βn = 0.
+Additionally, the total martingale noise is assumed to have uniformly bounded conditional variance
+under bounded iterates. Next, under Temporal difference learning, the bootstrapped updates with
+step-size sequences {αn}, {βn} are given by:
+Yn+1 = Yn + βn
+h
+ˆT ϕ
+n+1,πQn[Yn] −Yn + ξϕ
+n+1
+i
+,
+Qn+1 = Qn + αn
+h
+ˆTn+1,Yn[Qn] −Qn + ξn+1
+i
+(10)
+where ξϕ
+n+1 and ξn+1 are martingale difference perturbations (Borkar, 2009), with E[ξϕ
+n+1|Hn] =
+E[ξn+1|Hn] = 0. As the map Q 7→YπQ need not be continuous or Lipschitz, the standard two-
+timescale stochastic approximation need not apply. Thus, we analyze the fast timescale recursion as a
+stochastic recursive inclusion in Section 4.1 using the set-valued two-timescale framework (Yaji &
+Bhatnagar, 2020; Borkar, 2023).
+4.1
+FAST TIMESCALE: SAFETY CRITIC TRACKING
+Under Assumption 2, even with a quasi-static Qn, at the switching time, two or more policies can
+have ties in Eq. 8, but can have different safety-critic evaluations. This motivates a set-valued
+fast tracking analysis. To characterize the asymptotic behavior of the discrete TD recursion, let
+hπ(y) := T ϕ
+π [y] −y denote the limiting dynamics induced by Assumption 2 for each π ∈Π(q).
+Thus, for a given q ∈Q, the limiting differential inclusion is given by:
+˙y(t) ∈Ψ(q, y(t)),
+with Ψ(q, y) := conv{hπ(y) : π ∈Π(q)}
+(11)
+where conv{·} denotes a closed convex hull of a set. Next, let Λ(q) := {y(0) : y : R →
+Y is a bounded complete solution of Eq. 11}
+Lemma 1 (Set-valued fast timescale tracking). Under Assumptions 1-2, suppose the iterates are
+almost surely bounded. Then,
+1. for every quasi-static q, Eq. 11 admits a nonempty compact global attracting set Λ(q);
+2. q 7→Λ(q) is upper semicontinuous; and
+3. the coupled iterates satisfy dist ((Yn, Qn) , Gr Λ) →0 almost surely, where Gr Λ :=
+{(y, q) : y ∈Λ(q)} is the graph of Λ. (Proof in Appendix B.4)
+Note that when there are no ties, Π(q) = {πq}, and Eq. 11 reduces to an ODE, and Λ(q) = {Yπq},
+recovering the usual single-policy fast timescale behavior locally.
+4.2
+SLOW TIMESCALE: AVERAGED DIFFERENTIAL INCLUSION
+Section 4.1 shows that the coupled iterates asymptotically approach the graph of the compact global
+attractor Λ(q) for some quasi-static q. In this section, we show that the slow recursion is governed
+by a differential inclusion obtained by averaging over admissible occupation measures associated
+with the equilibrated fast time-scale dynamics. For y ∈Y and q ∈Q, define the slow-timescale
+Bellman residual map to be G(y, q) := Ty[q] −q. Next, following (Yaji & Bhatnagar, 2020), let D(q)
+denote the set of admissible limiting occupation measures describing the equilibrated fast time-scale
+dynamics at some q; in particular, every P ∈D(q) is supported on Λ(q). The corresponding averaged
+slow-timescale residual is given by:
+G(q) :=
+(Z
+Λ(q)
+G(y, q)P(dy) : P ∈D(q)
+)
+(12)
+6
+
+
+Note that when Λ(q) = {yπq}, D(q) = {δyπq }, and thus, G(q) = {G(yπq, q)}. The integral in
+Eq. 12 captures the long-run average effect of the equilibrated fast timescale behavior in y on the
+slow-timescale variable q.
+Theorem 2 (Slow-timescale differential-inclusion limit). Let Q(·) denote the continuous affine
+interpolation of {Qn} on the slow-timescale. Under Assumptions 1-2, Lemma 1, and almost surely
+bounded iterates {(Yn, Qn)}, Q(·) is almost surely an asymptotic pseudotrajectory of the averaged
+differential inclusion ˙q(t) ∈G(q(t)). Consequently, its ω-limit set U := ω(Q) is a nonempty compact
+invariant internally chain-transitive set of the limiting differential-inclusion dynamics. (Proof in
+Appendix B.5)
+5
+SAFE CONFIGURATION SET AND FORWARD INVARIANCE
+Having established the limiting dynamics of the discrete TD learning iterates, we now show that
+these dynamics preserve the safety certificate: the set of joint action-value functions whose induced
+policy is everywhere safe is forward invariant, so a configuration that certifies safety cannot evolve
+into one that does not.
+Definition 2 (Kernel-preserving actions). An action is kernel-preserving at state s, if it keeps the next
+state inside the viability kernel against every disturbance AΩ(s) := {a ∈A : P(s′ ∈Ω|s, a, d) =
+1
+∀d ∈D}, where κ, ϵ0 > 0 without loss of generality.
+Definition 3 (Index Sets and Relaxed Constraint Sets). For each state s ∈Ωand each action
+a /∈AΩ(s), fix a disturbance ˆd(s, a) ∈D with P(s′ /∈Ω|s, a, ˆd(s, a)) > 0. Then the index sets are
+defined as follows: I := {(s, a, d) : s ∈Ω, a ∈AΩ(s), d ∈D} and J := {(s, a, ˆd(s, a)) : s ∈
+Ω, a /∈AΩ(s)}. Let Cϵ := {q ∈Q : q(x) ≥−ϵ ∀x ∈I, q(x) ≤−κ + ϵ ∀x ∈J } denote the
+relaxed constraint set, for ϵ ≥0 i.e., Cϵ relaxes each defining inequality of C0 by ϵ.
+Definition 4 (Safe Configuration Set). The safe configuration set is defined as the set of joint
+Q-functions whose induced policy is kernel-preserving:
+Qcfg := C0 = {q ∈Q : q(x) ≥0 ∀x ∈I, q(x) ≤−κ ∀x ∈J }
+(13)
+Next, let ρ(q) := dist(q, Qcfg) denote the distance to the set Qcfg. Details on the geometry of the
+set is provided in Appendix B.6.1. Throughout, we take ϵ0 ∈(0, κ/2), which ensures that the two
+families of constraints remain strictly separated on all of Cϵ0. As the coupled iterates approach the
+graph of Λ(·), safety certification (both positive and negative) must hold throughout Λ(q).
+Assumption 3 (Negative Certification of the fast attractor). ∃σΛ > 0, such that, at unit margin scale,
+y(x) ≤−σΛ ∀x ∈J , y ∈Λ1(q), q ∈Cϵ0.
+The corresponding condition on I is preserved in the fast inclusion, and hence, the certificate holds
+throughout Λ(q). Note that Π(q) is greedy with respect to q and is hence independent of margin scale,
+and the safety Bellman operator of Eq. 5 is positively homogeneous of degree one in the margin, i.e.,
+ΛK(q) = KΛ1(q). Let the Assumption 3 hold and let Θ := ((1 −γ)Rmax + κ)/γ. Then, for every
+K ≥K := (1−γ)Rmax+κ
+γσΛ
+, one has y(x) ≤−Θ for all x ∈J , all y ∈Λ(q), and all q ∈Cϵ0. If J = ∅,
+the bound on K and the conclusion hold trivially. (Proof in Appendix B.6)
+Theorem 3 (Forward invariance and exponential attraction). Let Assumption 3 hold and let K ≥K. If
+ρ(q(0)) < ϵ0, then every solution of ˙q(t) ∈G(q(t)) satisfies ρ(q(t)) ≤ρ(q(0)) e−(1−γ)t
+∀t ≥0.
+In particular, if q(0) ∈Qcfg then q(t) ∈Qcfg ∀t ≥0, and Qcfg is exponentially attracting with basin
+containing the open neighbourhood {q : ρ(q) < ϵ0}. (Proof in Appendix B.6)
+We next check that membership in Qcfg certifies safety of the induced policy.
+Corollary 1 (Safety of the induced policy). Let q(0) ∈Qcfg. Then at every t ≥0 the induced policy
+πq(t) satisfies infs∈ΩV ϕ
+πq(t)(s) ≥0 from any s0 ∈Ω, the state trajectory generated by µq(t) remains
+in Ωalmost surely, for all time and against every disturbance sequence. (Proof in Appendix B.6)
+7
+
+
+6
+CONVERGENCE TO OPTIMAL SAFETY-CONSTRAINED TASK PERFORMANCE
+Forward invariance ensures that the agent eventually learns a policy that is guaranteed to be safe. In
+this section, we show that the system not only remains safe but also maximizes task performance in
+the safe set.
+Definition 5 (Optimal safety-constrained task value function). Let QΩ:= RI = {q : I →R}
+denote the restricted action-value space on the index set I. Define the robust safety-constrained task
+Bellman operator TΩ: QΩ→QΩ:
+TΩ[q](s, a, d) = r(s, a, d) + γE
+
+max
+a′∈AΩ(s′) min
+d′∈D q(s′, a′, d′)
+
+,
+(s, a, d) ∈I
+(14)
+Note that since AΩ(s)̸
+=
+∅for s
+∈
+Ω, by contraction, TΩ[·] has a unique fixed point
+Q∗
+Ω= TΩQ∗
+Ω, and thus, the optimal safety-constrained task value function is given by V ∗
+Ω(s) =
+maxa∈AΩ(s) mind∈D Q∗
+Ω(s, a, d), which is the maximum expected return that a safe policy can accrue
+by keeping the agent in Ω. Moreover, let Q∗:= {q ∈Qcfg : q|I = Q∗
+Ω}. Thus, every q ∈Q∗⊆Q
+corresponds to a policy that is safe and attains the maximal possible return among all safe policies.
+Let Qϕ,1
+π
+denote the safety critic obtained by scaling the margin g(·) by K = 1. By homogeneity,
+Qϕ
+π := Qϕ,K
+π
+= KQϕ,1
+π . Next, let δΩ:= infq∈Qcfg minπ∈Π(q) mins∈ΩV ϕ,1
+π
+> 0 represent the
+margin of the safe policy that comes closest to ∂Ω.
+Theorem 4 (Convergence to optimal safety-constrained task performance). Let the sufficient margin
+scale K∗be defined as K∗:= Rmax+V
+δΩ
+= (2−γ)Rmax
+(1−γ)δΩ, with V := Rmax
+1−γ . Let U ⊂{q : ρ(q) < ϵ0}.
+Then, under Theorems 2-3, almost surely bounded iterates (Yn, Qn) and K ≥K∗≥K, δΩ> 0,
+every internally chain-transitive set of the averaged slow-timescale differential inclusion contained
+in Qcfg is a subset of Q∗: U ⊆Q∗:= {q ∈Qcfg : q|I = Q∗
+Ω}, and thus, dist (Qn, Q∗) →0 almost
+surely. Moreover, on U the averaged slow-timescale residual on kernel-preserving coordinates I
+is given by G(q)
+I = {TΩ[q|I] −q|I}. Thus, every corresponding limiting controller attains the
+optimal task value V ∗
+Ωon Ωwhile selecting only kernel-preserving actions. (Proof in Appendix B.7).
+The sufficient margin scale K∗ensures that the safety truncation is never active when δΩ> 0.
+Consequently, if δΩ→0, then K∗→∞; if δΩ= 0, Theorem 4 no longer guarantees con-
+vergence to the optimal safety-constrained task value for any finite K, motivating a finite-K
+characterization. Let ΓΩbe the set of kernel-preserving controller policies, and for ζ ≥0, de-
+fine V ∗
+Ω,ζ(s) := supµ∈ΓΩ,ζ infν V ψ
+µ,ν(s) and ΓΩ,ζ :=
+n
+µ ∈ΓΩ: infν infs∈ΩV ϕ,1
+(µ,ν)(s) ≥ζ
+o
+. Let
+∆marg(ζ) := ∥V ∗
+Ω−V ∗
+Ω,ζ∥∞, and let V ∗
+K denote the optimal joint value of Eq. 3 over kernel-
+preserving controllers, for some finite K ≥K.
+Theorem 5 (Finite-K characterization). Define ζK := Rmax+V
+K
+= (2−γ)Rmax
+(1−γ)K . Assume there exists
+ζ such that ΓΩ,ζK̸ = ∅for all 0 < ζK < ζ (sufficiently large K). Then, 0 ≤V ∗
+Ω(s) −V ∗
+K(s) ≤
+∆marg(ζK) for s ∈Ω. Hence, if ∆marg(ζ) →0 as ζ ↓0, then V ∗
+K →V ∗
+Ωas K →∞. (Proof in
+Appendix B.7).
+Thus, when δΩ> 0, with sufficiently large, finite-K, the tabular two-timescale recursion converges
+to the optimal safety-constrained task value; when δΩ= 0, the finite-K optimality gap vanishes as
+K →∞.
+7
+EXPERIMENTS
+In this section, we perform empirical evaluations on our proposed framework, where we choose to
+answer the following questions: (1) Does the two-timescale learning achieve stable convergence
+on continuous-control tasks via neural approximations? (2) How does our joint policy compare
+against CMDP baselines in maintaining near-zero violations during evaluation without sacrificing
+task performance? (3) How does the learned safe set dynamically expand during training?
+Appendix C.1 discusses the exact tabular DP solution of the joint Bellman equation on a discrete
+double integrator, with comparisons to projection and safety-filtering baselines. Here, we instead
+discuss the results of scaling the optimal joint policy to high-dimensional continuous spaces where
+8
+
+
+exact dynamic programming is intractable. To this end, we introduce JointSAC: a deep RL
+approximation that closely follows the ISAACS framework (Hsu et al., 2023) (built on SAC (Haarnoja
+et al., 2018)). Controller and disturbance policies are trained using gradient descent-ascent finite
+timescale separation (τ-GDA) (Fiez & Ratliff, 2021).
+7.1
+EXPERIMENTAL SETUP
+We benchmark our framework on high-dimensional continuous control tasks in MuJoCo (Todorov
+et al., 2012), utilizing three Gymnasium locomotion environments (Towers et al., 2026) and eight
+SafeVelocity environments from SafetyGymnasium (Ji et al., 2023). We augment the
+environment with an adversarial disturbance that actively attacks the agent to either violate safety
+constraints or to prevent liveness.
+−6000
+−3000
+0
+Episode Reward
+SafetyAntVel-v1
+0
+2000
+4000
+SafetyHalfCheetahVel-v1
+0
+500
+1000
+1500
+SafetyHopperVel-v1
+0
+1000
+2000
+3000
+SafetyWalker2dVel-v1
+0
+1
+2
+3
+4
+5
+Environment Steps
+×106
+0
+15
+30
+45
+Episode Cost
+0
+1
+2
+3
+4
+5
+Environment Steps
+×106
+0
+15
+30
+45
+0
+1
+2
+3
+4
+5
+Environment Steps
+×106
+0
+15
+30
+45
+0
+1
+2
+3
+4
+5
+Environment Steps
+×106
+0
+15
+30
+45
+JointSAC
+PPOLag
+PCPO
+SACLag
+Figure 2: Training performance across 5 seeds (mean ± standard deviation). The top row indicates
+episodic returns, while the bottom row indicates episodic costs as training progresses. JointSAC
+demonstrates stable convergence with near-zero episode costs.
+Baselines: We compare our method against least-restrictive safety filters (LRSF), and three well-
+established CMDP baselines. We specifically select these CMDP baselines, as they represent the two
+dominant paradigms of model-free Safe RL: Lagrangian dual-descent (PPOLag, SACLag) and
+trust-region projections PCPO from omnisafe (Ji et al., 2024). Additional experiments and details
+can be found in Appendix C (including the safe set expansion); an ablation of episode return/cost as
+K varies can be found in Appendix C.4.
+7.2
+MAIN RESULTS
+Fig. 2 illustrates training curves across four SafeVelocity (v1) environments (5 seeds).
+JointSAC demonstrates stable convergence to high task rewards with near-zero costs, whereas
+baselines exhibit higher variance, with only a subset that meets the permissible cost threshold (d = 0).
+Table 1 summarizes final rollout evaluations (300 evaluations per training seed, totaling 1, 500 distinct
+eval seeds). Across all 11 environments, JointSAC maintains near-zero violations (with maximum
+cost of 0.03 ± 0.08 on Hopper-v4), while baselines exhibit inconsistent, sometimes, major cost
+violations (PCPO walks backwards on SafetyAntVel). Overall, JointSAC yields stable, high
+task performance while enforcing near-zero safety violations.
+Table 1: Evaluation Metrics on Adversarial Environments with values indicating mean ± standard
+deviation across 5 training seeds and 300 rollouts each (totalling 1, 500 evals). Results indicate that
+JointSAC (Ours) has near-zero costs (maximum of 0.03 ± 0.08 on only Hopper-v4).
+Reward
+Cost
+Environment
+JointSAC (Ours)
+Safety Filter (LRSF)
+PCPO
+PPO-Lag
+SAC-Lag
+JointSAC (Ours)
+Safety Filter (LRSF)
+PCPO
+PPO-Lag
+SAC-Lag
+Hopper-v4
+3266.89 ± 103.80
+1169.92 ± 326.17
+1373.82 ± 303.63
+1074.26 ± 562.70
+754.89 ± 495.76
+0.03 ± 0.08
+0.00 ± 0.00
+0.00 ± 0.00
+0.97 ± 0.07
+0.40 ± 0.54
+InvertedPendulum-v4
+999.43 ± 1.28
+1000.00 ± 0.00
+34.77 ± 4.93
+506.30 ± 464.77
+1000.00 ± 0.00
+0.00 ± 0.00
+0.00 ± 0.00
+1.00 ± 0.00
+0.60 ± 0.55
+0.00 ± 0.00
+Walker2d-v4
+2869.59 ± 319.83
+973.26 ± 3.10
+849.93 ± 94.91
+3962.76 ± 1138.50
+700.85 ± 357.47
+0.00 ± 0.00
+0.00 ± 0.00
+0.01 ± 0.01
+0.25 ± 0.42
+0.27 ± 0.39
+SafetyAntVel-v0
+941.08 ± 8.26
+674.19 ± 127.31
+−1509.56 ± 1724.06
+112.66 ± 230.86
+1251.74 ± 562.78
+0.00 ± 0.00
+0.05 ± 0.04
+0.04 ± 0.07
+0.89 ± 0.38
+0.12 ± 0.12
+SafetyAntVel-v1
+940.70 ± 9.06
+632.65 ± 62.56
+−2915.70 ± 2404.71
+62.72 ± 103.62
+582.13 ± 963.46
+0.00 ± 0.00
+0.00 ± 0.00
+0.38 ± 0.47
+1.03 ± 0.15
+0.97 ± 1.18
+SafetyHalfCheetahVel-v0
+1783.42 ± 292.07
+986.44 ± 76.15
+453.22 ± 247.44
+2214.42 ± 656.13
+2255.89 ± 100.72
+0.00 ± 0.00
+0.01 ± 0.01
+0.01 ± 0.02
+152.87 ± 341.14
+0.15 ± 0.34
+SafetyHalfCheetahVel-v1
+2238.10 ± 107.59
+1152.01 ± 110.50
+422.09 ± 204.15
+2295.79 ± 725.03
+1686.74 ± 1505.66
+0.00 ± 0.00
+0.00 ± 0.00
+0.00 ± 0.00
+0.36 ± 0.59
+0.47 ± 0.68
+SafetyHopperVel-v0
+1056.06 ± 0.50
+974.38 ± 24.15
+936.84 ± 269.07
+1016.16 ± 375.81
+1045.57 ± 61.95
+0.00 ± 0.00
+0.00 ± 0.00
+0.90 ± 1.99
+1.38 ± 1.95
+17.06 ± 32.27
+SafetyHopperVel-v1
+1329.36 ± 89.75
+1001.40 ± 13.29
+1039.24 ± 8.99
+1274.01 ± 557.27
+1027.49 ± 18.75
+0.02 ± 0.03
+0.00 ± 0.00
+0.01 ± 0.02
+4.11 ± 8.84
+0.00 ± 0.00
+SafetyWalker2dVel-v0
+1842.44 ± 309.17
+547.07 ± 138.62
+640.29 ± 352.84
+1583.43 ± 1248.16
+462.38 ± 353.09
+0.01 ± 0.01
+0.35 ± 0.33
+0.22 ± 0.36
+1.56 ± 1.48
+0.76 ± 0.61
+SafetyWalker2dVel-v1
+2056.53 ± 332.37
+575.99 ± 131.44
+828.76 ± 141.58
+1178.47 ± 1061.40
+433.04 ± 366.89
+0.02 ± 0.04
+0.21 ± 0.19
+0.11 ± 0.14
+1.52 ± 1.52
+0.60 ± 0.46
+9
+
+
+8
+CONCLUSION AND LIMITATIONS
+In this paper, we present a novel robust Bellman operator that jointly enables safety-constrained task
+optimization. We propose a two-timescale stochastic approximation algorithm to compute its fixed
+point and prove theoretical convergence to a set of optimal safety-constrained task value functions.
+The optimal joint policy theoretically guarantees safety while maximizing task returns. To scale the
+computation of the optimal fixed point to continuous-control tasks with a high-dimensional state
+space, we propose JointSAC. Empirical evaluations demonstrate that the neural approximation
+yields stable, low-variance training, while achieving near-zero safety violations.
+Limitations. Firstly, while our theoretical analysis ensures strict safety, scaling to high-dimensional
+continuous spaces necessitates neural approximations, violating strict forward invariance. Secondly,
+theoretical convergence relies on a heavily scaled safety margin (K ≥K∗). This can introduce
+numerical instabilities; in practice, K needs to be heuristically tuned as high as practically possible.
+Finally, our approach assumes well-defined, continuous safety margins under full state observability,
+which are often difficult to perfectly specify in unstructured real-world environments.
+9
+ACKNOWLEDGMENT
+We thank members of the Safe Robotics Lab for their insightful discussion and comments on our
+work. This work was made possible through the use of computational resources and support provided
+by Princeton Research Computing. Generative AI tools were used for grammar and spelling checks,
+word choice, rephrasing, and assistance with editing code and launching experiments.
+REFERENCES
+Joshua Achiam, David Held, Aviv Tamar, and Pieter Abbeel. Constrained policy optimization. In
+Proceedings of the 34th International Conference on Machine Learning - Volume 70, ICML’17, pp.
+22–31. JMLR.org, 2017.
+Alekh Agarwal, Nan Jiang, Sham M Kakade, and Wen Sun. Reinforcement learning: Theory and
+algorithms. CS Dept., UW Seattle, Seattle, WA, USA, Tech. Rep, 32:96, 2019.
+Erick Trevino Aguilar. T-systems and the lower snell envelope, 2009. URL https://arxiv.
+org/abs/0902.4245.
+Albert Altarovici, Olivier Bokanowski, and Hasnaa Zidani. A general hamilton-jacobi framework
+for non-linear state-constrained control problems. ESAIM: Control, Optimisation and Calculus of
+Variations, 19(2):337–357, 2013.
+Eitan Altman. Constrained Markov Decision Processes. Chapman and Hall/CRC, 1999.
+Jean-Pierre Aubin and Arrigo Cellina. Differential Inclusions: Set-Valued Maps and Viability Theory.
+Grundlehren der mathematischen Wissenschaften. Springer Berlin Heidelberg, 2012.
+ISBN
+9783642695124. URL https://books.google.com/books?id=rVnsCAAAQBAJ.
+Andrea Bajcsy, Somil Bansal, Eli Bronstein, Varun Tolani, and Claire J. Tomlin. An efficient
+reachability-based framework for provably safe autonomous navigation in unknown environments.
+In 2019 IEEE 58th Conference on Decision and Control (CDC), pp. 1758–1765, 2019. doi:
+10.1109/CDC40024.2019.9030133.
+Stefan Banach. Sur les opérations dans les ensembles abstraits et leur application aux équations
+intégrales. Fundamenta mathematicae, 3(1):133–181, 1922.
+Arko Banerjee, Kia Rahmani, Joydeep Biswas, and Isil Dillig. Dynamic model predictive shielding
+for provably safe reinforcement learning. In The Thirty-eighth Annual Conference on Neural
+Information Processing Systems, 2024. URL https://openreview.net/forum?id=
+x2zY4hZcmg.
+Richard Bellman. Dynamic Programming. Princeton University Press, Princeton, NJ, 1957.
+10
+
+
+Michel Benaïm and Morris W Hirsch. Asymptotic pseudotrajectories and chain recurrent flows, with
+applications. Journal of Dynamics and Differential Equations, 8(1):141–176, 1996.
+Michel Benaïm, Josef Hofbauer, and Sylvain Sorin. Stochastic approximations and differential
+inclusions. SIAM Journal on Control and Optimization, 44(1):328–348, 2005. doi: 10.1137/
+S0363012904439301.
+Vivek S Borkar. Stochastic Approximation: A Dynamical Systems Viewpoint. Texts and Readings in
+Mathematics. Hindustan Book Agency, 2009. ISBN 9789386279385. URL https://books.
+google.com/books?id=t_JdDwAAQBAJ.
+Vivek S. Borkar.
+Stochastic Approximation: A Dynamical Systems Viewpoint, volume 48 of
+Texts and Readings in Mathematics. Springer Singapore, 2nd edition, 2023. doi: 10.1007/
+978-981-99-8277-6.
+Minh Bui, Michael Lu, Reza Hojabr, Mo Chen, and Arrvindh Shriraman. Real-time hamilton-
+jacobi reachability analysis of autonomous system with an fpga. In 2021 IEEE/RSJ International
+Conference on Intelligent Robots and Systems (IROS), pp. 1666–1673. IEEE, 2021.
+Kaitong Cai, Jusheng zhang, Jing Yang, and Keze Wang. Guardian: Decoupling exploration from
+safety in reinforcement learning, 2025. URL https://openreview.net/forum?id=
+e9T6ZZFRZl.
+Chenyang Cao, Yucheng Xin, Silang Wu, Longxiang He, Zichen Yan, Junbo Tan, and Xueqian Wang.
+FOSP: Fine-tuning offline safe policy through world models. In The Thirteenth International
+Conference on Learning Representations, 2025. URL https://openreview.net/forum?
+id=dbuFJg7eaw.
+Zhepeng Cen, Yihang Yao, Zuxin Liu, and Ding Zhao. Feasibility consistent representation learning
+for safe reinforcement learning. In Ruslan Salakhutdinov, Zico Kolter, Katherine Heller, Adrian
+Weller, Nuria Oliver, Jonathan Scarlett, and Felix Berkenkamp (eds.), Proceedings of the 41st
+International Conference on Machine Learning, volume 235 of Proceedings of Machine Learning
+Research, pp. 6002–6019. PMLR, 21–27 Jul 2024. URL https://proceedings.mlr.
+press/v235/cen24b.html.
+Lawrence C. Evans and Panagiotis E. Souganidis. Differential games and representation formulas
+for solutions of hamilton-jacobi-isaacs equations. Indiana University Mathematics Journal, 33:
+773–797, 1983. URL https://api.semanticscholar.org/CorpusID:118892068.
+Tanner Fiez and Lillian J Ratliff. Local convergence analysis of gradient descent ascent with finite
+timescale separation. In International Conference on Learning Representations, 2021.
+Jaime F Fisac, Anayo K Akametalu, Melanie N Zeilinger, Shahab Kaynama, Jeremy Gillula, and
+Claire J Tomlin. A general safety framework for learning-based control in uncertain robotic
+systems. IEEE Transactions on Automatic Control, 64(7):2737–2752, 2018.
+Jaime F Fisac, Neil F Lugovoy, Vicenç Rubies-Royo, Shromona Ghosh, and Claire J Tomlin. Bridging
+hamilton-jacobi safety analysis and reinforcement learning. In 2019 International Conference on
+Robotics and Automation (ICRA), pp. 8550–8556. IEEE, 2019.
+Fernando García and Fernando Fernández. A comprehensive survey on safe reinforcement learning.
+Journal of Machine Learning Research, 16(42):1437–1480, 2015.
+Shangding Gu, Bilgehan Sel, Yuhao Ding, Lu Wang, Qingwei Lin, Ming Jin, and Alois Knoll.
+Balance reward and safety optimization for safe reinforcement learning: A perspective of gradient
+manipulation. In Proceedings of the Thirty-Eighth AAAI Conference on Artificial Intelligence
+and Thirty-Sixth Conference on Innovative Applications of Artificial Intelligence and Fourteenth
+Symposium on Educational Advances in Artificial Intelligence, AAAI’24/IAAI’24/EAAI’24. AAAI
+Press, 2024a. ISBN 978-1-57735-887-9. doi: 10.1609/aaai.v38i19.30102. URL https://doi.
+org/10.1609/aaai.v38i19.30102.
+11
+
+
+Shangding Gu, Laixi Shi, Yuhao Ding, Alois Knoll, Costas Spanos, Adam Wierman, and Ming
+Jin. Enhancing efficiency of safe reinforcement learning via sample manipulation. In The Thirty-
+eighth Annual Conference on Neural Information Processing Systems, 2024b. URL https:
+//openreview.net/forum?id=oPFjhl6DpR.
+Tuomas Haarnoja, Aurick Zhou, Pieter Abbeel, and Sergey Levine. Soft actor-critic: Off-policy
+maximum entropy deep reinforcement learning with a stochastic actor. In International Conference
+on Machine Learning, volume 80 of Proceedings of Machine Learning Research, pp. 1861–1870.
+PMLR, 2018.
+Kai-Chieh Hsu, Vicenç Rubies-Royo, Claire J. Tomlin, and Jaime F. Fisac. Safety and liveness
+guarantees through reach-avoid reinforcement learning. In Proceedings of Robotics: Science and
+Systems, Held Virtually, July 2021. doi: 10.15607/RSS.2021.XVII.077.
+Kai-Chieh Hsu, Duy Phuong Nguyen, and Jaime Fernàndez Fisac. Isaacs: Iterative soft adversarial
+actor-critic for safety. In Nikolai Matni, Manfred Morari, and George J. Pappas (eds.), Proceedings
+of the 5th Annual Learning for Dynamics and Control Conference, volume 211 of Proceedings of
+Machine Learning Research. PMLR, 15–16 Jun 2023. URL https://proceedings.mlr.
+press/v211/hsu23a.html.
+Kai-Chieh Hsu, Haimin Hu, and Jaime F. Fisac. The safety filter: A unified view of safety-critical
+control in autonomous systems. Annual Review of Control, Robotics, and Autonomous Systems, 7:
+47–72, 2024.
+Weidong Huang, Jiaming Ji, Borong Zhang, Chunhe Xia, and Yaodong Yang. Safedreamer: Safe
+reinforcement learning with world models. In The Twelfth International Conference on Learning
+Representations, 2024. URL https://openreview.net/forum?id=tsE5HLYtYg.
+Rufus Isaacs. Differential Games: A Mathematical Theory with Applications to Warfare and Pursuit,
+Control and Optimization. John Wiley & Sons, 1965.
+Ashish Kumar Jayant and Shalabh Bhatnagar. Model-based safe deep reinforcement learning via
+a constrained proximal policy optimization algorithm. In Proceedings of the 36th International
+Conference on Neural Information Processing Systems, NIPS ’22, Red Hook, NY, USA, 2022.
+Curran Associates Inc. ISBN 9781713871088.
+Jiaming Ji, Borong Zhang, Jiayi Zhou, Xuehai Pan, Weidong Huang, Ruiyang Sun, Yiran Geng, Yifan
+Zhong, Josef Dai, and Yaodong Yang. Safety gymnasium: A unified safe reinforcement learning
+benchmark. In Thirty-seventh Conference on Neural Information Processing Systems Datasets and
+Benchmarks Track, 2023. URL https://openreview.net/forum?id=WZmlxIuIGR.
+Jiaming Ji, Jiayi Zhou, Borong Zhang, Juntao Dai, Xuehai Pan, Ruiyang Sun, Weidong Huang,
+Yiran Geng, Mickel Liu, and Yaodong Yang. Omnisafe: An infrastructure for accelerating safe
+reinforcement learning research. Journal of Machine Learning Research, 25(285):1–6, 2024.
+Dohyeong Kim, Mineui Hong, Jeongho Park, and Songhwai Oh. Conflict-averse gradient aggre-
+gation for constrained multi-objective reinforcement learning. In The Thirteenth International
+Conference on Learning Representations, 2025. URL https://openreview.net/forum?
+id=ogXkmugNZw.
+Michael Lu, Jashanraj Gosain, Luna Sang, and Mo Chen. Safe learning in the real world via adaptive
+shielding with hamilton-jacobi reachability. In Necmiye Ozay, Laura Balzano, Dimitra Panagou,
+and Alessandro Abate (eds.), Proceedings of the 7th Annual Learning for Dynamics &amp; Control
+Conference, volume 283 of Proceedings of Machine Learning Research, pp. 1257–1270. PMLR,
+04–06 Jun 2025. URL https://proceedings.mlr.press/v283/lu25a.html.
+Hannah Markgraf, Shambhuraj Sawant, Hanna Krasowski, Lukas Schäfer, Sebastien Gros, and
+Matthias Althoff. Safe reinforcement learning using action projection: Safeguard the policy or
+the environment? Transactions on Machine Learning Research, 2026. ISSN 2835-8856. URL
+https://openreview.net/forum?id=DDrGSEYxGU. Expert Certification.
+Nikola Milosevic, Johannes Müller, and Nico Scherf. Embedding safety into RL: A new take on
+trust region methods. In Forty-second International Conference on Machine Learning, 2025. URL
+https://openreview.net/forum?id=4zRb89SbzG.
+12
+
+
+Ian M. Mitchell, Alexandre M. Bayen, and Claire J. Tomlin. A time-dependent Hamilton–Jacobi
+formulation of reachable sets for continuous dynamic games. IEEE Transactions on Automatic
+Control, 50(7):947–957, 2005.
+Duy P. Nguyen, Kai-Chieh Hsu, Wenhao Yu, Jie Tan, and Jaime Fernández Fisac. Gameplay filters:
+Robust zero-shot safety through adversarial imagination. In 8th Annual Conference on Robot
+Learning, 2024. URL https://openreview.net/forum?id=Ke5xrnBFAR.
+Donggeon David Oh, Justin Lidard, Haimin Hu, Himani Sinhmar, Elle Lazarski, Deepak Gopinath,
+Emily S Sumner, Jonathan A DeCastro, Guy Rosman, Naomi Ehrich Leonard, and Jaime Fernández
+Fisac. Safety with agency: Human-centered safety filter with application to ai-assisted motorsports.
+In Robotics: Science and Systems, 2025.
+Donggeon David Oh, Duy P Nguyen, Haimin Hu, and Jaime Fernández Fisac. Synthesis and
+deployment of maximal robust control barrier functions through adversarial reinforcement learning.
+arXiv preprint arXiv:2604.13192, 2026.
+Steven Perkins and David S Leslie. Asynchronous stochastic approximation with differential inclu-
+sions. Stochastic Systems, 2(2):409–446, 2013.
+Samuel Pfrommer, Tanmay Gautam, Alec Zhou, and Somayeh Sojoudi. Safe reinforcement learn-
+ing with chance-constrained model predictive control. In Learning for Dynamics and Control
+Conference, pp. 291–303. PMLR, 2022.
+Lerrel Pinto, James Davidson, Rahul Sukthankar, and Abhinav Gupta. Robust adversarial rein-
+forcement learning. In International conference on machine learning, pp. 2817–2826. PMLR,
+2017.
+Arunselvan Ramaswamy and Shalabh Bhatnagar. Stochastic recursive inclusion in two timescales
+with an application to the lagrangian dual problem. Stochastics, 88(8):1173–1187, 2016. doi:
+10.1080/17442508.2016.1215450. URL https://doi.org/10.1080/17442508.2016.
+1215450.
+Alex Ray, Joshua Achiam, and Dario Amodei.
+Benchmarking safe exploration in deep rein-
+forcement learning. Technical report, OpenAI, 2019. URL https://cdn.openai.com/
+safexp-short.pdf.
+Herbert Robbins and Sutton Monro. A Stochastic Approximation Method. The Annals of Math-
+ematical Statistics, 22(3):400 – 407, 1951. doi: 10.1214/aoms/1177729586. URL https:
+//doi.org/10.1214/aoms/1177729586.
+Aivar Sootla, Alexander I Cowen-Rivers, Taher Jafferjee, Ziyan Wang, David H Mguni, Jun Wang,
+and Haitham Ammar. Sauté rl: Almost surely safe reinforcement learning using state augmentation.
+In International Conference on Machine Learning, pp. 20423–20443. PMLR, 2022.
+Adam Stooke, Joshua Achiam, and Pieter Abbeel. Responsive safety in reinforcement learning by pid
+lagrangian methods. In Proceedings of the 37th International Conference on Machine Learning,
+ICML’20. JMLR.org, 2020.
+Wesley Suttle, Vipul Kumar Sharma, Krishna Chaitanya Kosaraju, Sivaranjani Seetharaman, Ji Liu,
+Vijay Gupta, and Brian M Sadler. Sampling-based safe reinforcement learning for nonlinear
+dynamical systems. In International Conference on Artificial Intelligence and Statistics, pp.
+4420–4428. PMLR, 2024.
+Richard S. Sutton and Andrew G. Barto. Reinforcement Learning: An Introduction. The MIT Press,
+Cambridge, MA, 1998.
+Mumuksh Tayal, Manan Tayal, and Ravi Prakash. Safe flow q-learning: Offline safe reinforcement
+learning with reachability-based flow policies, 2026. URL https://arxiv.org/abs/2603.
+15136.
+Chen Tessler, Daniel J. Mankowitz, and Shie Mannor. Reward constrained policy optimization. In
+International Conference on Learning Representations, 2019. URL https://openreview.
+net/forum?id=SkfrvsA9FX.
+13
+
+
+Emanuel Todorov, Tom Erez, and Yuval Tassa. Mujoco: A physics engine for model-based control.
+In 2012 IEEE/RSJ international conference on intelligent robots and systems, pp. 5026–5033.
+IEEE, 2012.
+Mark Towers, Ariel Kwiatkowski, John U. Balis, Gianluca De Cola, Tristan Deleu, Manuel Goulão,
+Kallinteris Andreas, Markus Krimmel, Arjun KG, Rodrigo De Lazcano Perez-Vicente, J K Terry,
+Andrea Pierré, Sander V Schulhoff, Jun Jet Tai, Hannah Tan, and Omar G. Younis. Gymnasium: A
+standard interface for reinforcement learning environments. In The Thirty-ninth Annual Conference
+on Neural Information Processing Systems Datasets and Benchmarks Track, 2026. URL https:
+//openreview.net/forum?id=qPMLvJxtPK.
+J.N. Tsitsiklis and B. Van Roy. An analysis of temporal-difference learning with function approxima-
+tion. IEEE Transactions on Automatic Control, 42(5):674–690, 1997. doi: 10.1109/9.580874.
+Tengyu Xu, Yingbin Liang, and Guanghui Lan. Crpo: A new approach for safe reinforcement
+learning with convergence guarantee. In International Conference on Machine Learning, pp.
+11480–11491. PMLR, 2021.
+Vinayaka G. Yaji and Shalabh Bhatnagar. Stochastic recursive inclusions in two timescales with
+nonadditive iterate-dependent markov noise. Math. Oper. Res., 45(4):1405–1444, November 2020.
+ISSN 0364-765X. doi: 10.1287/moor.2019.1037. URL https://doi.org/10.1287/moor.
+2019.1037.
+Tsung-Yen Yang, Justinian Rosca, Karthik Narasimhan, and Peter J. Ramadge. Projection-based
+constrained policy optimization. In International Conference on Learning Representations, 2020.
+URL https://openreview.net/forum?id=rke3TJrtPS.
+Zhihe Yang, Yunjian Xu, and Yang Zhang.
+Q-supervised contrastive representation: A state
+decoupling framework for safe offline reinforcement learning. In Forty-second International
+Conference on Machine Learning, 2025. URL https://openreview.net/forum?id=
+hsoyRfvMGu.
+Yihang Yao, Zhepeng Cen, Wenhao Ding, Haohong Lin, Shiqi Liu, Tingnan Zhang, Wenhao Yu,
+and Ding Zhao. OASIS: Conditional distribution shaping for offline safe reinforcement learning.
+In The Thirty-eighth Annual Conference on Neural Information Processing Systems, 2024. URL
+https://openreview.net/forum?id=3uDEmsf3Jf.
+Yinan Zheng, Jianxiong Li, Dongjie Yu, Yujie Yang, Shengbo Eben Li, Xianyuan Zhan, and Jingjing
+Liu. Safe offline reinforcement learning with feasibility-guided diffusion model. In The Twelfth
+International Conference on Learning Representations, 2024. URL https://openreview.
+net/forum?id=j5JvZCaDM0.
+A
+PRELIMINARIES
+In this section, we extend Sec. 2 to provide definitions of some of the notations and concepts used
+in the paper, followed by brief preliminaries on Reinforcement Learning, Differential Inclusions,
+Asymptotic Pseudotrajectories, Internally Chain-Transitive Sets, Constrained Markov Decision
+Processes, and Hamilton-Jacobi Reachability analysis.
+A.1
+DEFINITIONS AND NOTATIONS
+Definition 6. (State, Action, and Disturbance Spaces) We consider a discounted MDP with finite state,
+action and disturbance spaces: S ⊂Rn, A ⊂Rm, and D ⊂Rl respectively, with the transition
+kernel P(·|s, a, d) ∈∆(S).
+Definition 7. (Reward, Safety Margin, and the Viability Kernel) The reward and the safety margin
+are given by r : S × A × D →[0, Rmax], Rmax > 0, and g : S →[−Gmin, Gmax], with Gmin, Gmax >
+0 respectively. We subsume the extended class-Ke scaling function β(·) into g(s) to align with
+task return scales (unless stated otherwise). The constraint set is Fc := {s ∈S : g(s) ≥0},
+complementing the failure set F. The viability kernel Ω⊆Fc is the subset of states from which a
+control policy exists that can keep the agent away from the failure set F for all times, regardless of
+the adversarial disturbance.
+14
+
+
+Definition 8. (Action and Disturbance Policies) A deterministic joint policy π = (µ, ν) pairs the
+mappings µ : S →A and ν : S × A →D, yielding π(s) = (µ(s), ν(s, µ(s))).
+Definition 9. (Value and Action-Value Functions) the value and action-value function spaces are
+defined as V := R|S| and Q := R|S||A||D|, equipped with the supremum norm ∥· ∥∞.
+A.2
+REINFORCEMENT LEARNING
+Reinforcement Learning (RL) (Sutton & Barto, 1998; Agarwal et al., 2019) consists of data-driven
+methods enabling agents to compute approximations of the optimal value function and/or optimal
+policy to an optimal control problem. In RL, the objective is to maximize the expected cumulative
+sum of rewards over a finite horizon T, or the expected discounted cumulative sum in the infinite
+horizon setting. Accordingly, the general form of the objective function without disturbances is
+written as
+J(π) := E
+ω∼π
+" ∞
+X
+t=0
+γtr(st, at)
+s0 ∼µ0
+#
+(15)
+where ω denotes a sampled trajectory ω = (s0, a0, s1, a1, . . . ) generated by the policy π and
+µ0 : S →[0, 1] denotes the initial state distribution. Considering stochastic dynamics, the dynamic
+programming principle associated with the action-value function Q : S × A →R representing
+the maximum expected cumulative discounted reward takes the form of a discrete-time Bellman
+equation (Bellman, 1957)
+Q(s, a) = r(s, a) + γEs′∼p(·|s,a)
+
+max
+a′∈A Q(s′, a′)
+
+(16)
+For any Q ∈Q, the Bellman operator TM : Q →Q associated with Eq. 16 is defined as:
+T [Q](s, a) := r(s, a) + γEs′∼p(·|s,a)
+
+max
+a′∈A Q(s′, a′)
+
+(17)
+The Bellman operator defined in Eq. 17 is a contraction mapping on Q (under the L∞norm). By
+the Banach Fixed-Point Theorem (Banach, 1922), this implies that iteratively applying TM to any
+initial action-value function Q converges to a unique fixed point Q∗, which is the solution to Eq. 16.
+This theoretical guarantee underpins modern Deep RL, justifying the use of neural networks to
+approximate this fixed point in high-dimensional state spaces.
+A.3
+DIFFERENTIAL INCLUSIONS, ASYMPTOTIC PSEUDOTRAJECTORIES, AND INTERNALLY
+CHAIN-TRANSITIVE SETS
+Let E = Rd be equipped with the supremum norm ∥· ∥∞. Consider a set-valued map Ψ : E ⇒E.
+Ψ is Marchaud if it is upper semicontinuous, has nonempty compact convex values, and has at most
+linear growth. Under these conditions, the differential inclusion
+˙x(t) ∈Ψ(x(t))
+(18)
+admits absolutely continuous solutions from every initial condition (Aubin & Cellina, 2012; Benaïm
+et al., 2005). Since solutions need not be unique, Eq. 18 induces a set-valued dynamical system
+Φt(x) := {z(t) : z(0) = x, ˙z(τ) ∈Ψ(z(τ)) a.e.}
+Definition 10. (Asymptotic Pseudotrajectory (Benaïm & Hirsch, 1996)) Let Φt denote the set-valued
+flow of Eq. 18. A continuous function y : [0, ∞) →E is an asymptotic pseudotrajectory (APT) of Φ,
+if for every T > 0,
+lim
+t→∞sup
+0≤h≤T
+dist (y(t + h), Φh (x(t))) = 0
+(19)
+Definition 11. (Internally Chain-Transitive Set (Benaïm et al., 2005)) A compact invariant set A ⊆E
+is internally chain-transitive (ICT), if for any a, b ∈A and any ϵ > 0, T > 0, there exist points
+a = x0, x1, . . . , xk = b in A and times t1, . . . , tk ≥T such that
+dist (Φti (xi−1) , xi) < ϵ
+i = 1, . . . , k
+(20)
+15
+
+
+Theorem 6. (Limit set of a bounded APT (Benaïm et al., 2005)) Let Ψ satisfy the preceding conditions,
+and let y : [0, ∞) →E be a bounded APT of ˙x(t) ∈Ψ(x(t)). Then, its ω-limit set:
+ω(y) =
+\
+t≥0
+{y(s) : s ≥t}
+(21)
+is a non-empty, compact, invariant and internally chain-transitive set-valued dynamics Φ.
+In the two-timescale setting considered in this work, the required APT property is obtained from the
+stochastic recursive inclusion framework of (Yaji & Bhatnagar, 2020): after the “equilibration” of the
+fast timescale, the slow-timescale Bellman residual is averaged w.r.t admissible limiting occupation
+measures of the quasi-static fast timescale dynamics, yielding the averaged differential inclusion in
+Theorem 2.
+A.4
+CONSTRAINED MARKOV DECISION PROCESSES
+A Constrained Markov Decision Process (CMDP) (Altman, 1999) extends the standard Markov
+Decision Process (MDP) framework by introducing auxiliary cost functions that encode safety
+constraints and perhaps, resource limitations. Formally, a CMDP is defined by the tuple M =
+(S, A, P, r, c, γ, µ0), where S denotes the state space, A denotes the action space, P : S×A →∆(S)
+defines the transition dynamics, r : S × A →R denotes the task reward function, c : S × A →R
+denotes the constraint cost function, γ ∈[0, 1) denotes the discount factor and µ0 : S →[0, 1]
+denotes the initial state distribution.
+Let π : S →∆(A) denote a stochastic policy, with the corresponding expected discounted cumulative
+return Jr(π) and expected discounted cumulative cost Jc(π) being defined as:
+Jr(π) := Eω∼π
+" ∞
+X
+t=0
+γtr(st, at)
+s0 ∼µ0
+#
+,
+Jc(π) := Eω∼π
+" ∞
+X
+t=0
+γtc(st, at)
+s0 ∼µ0
+#
+(22)
+where ω = (s0, a0, s1, a1, . . . ) denotes a trajectory generated by the policy π, with s0 ∈µ0,
+at ∼π(·|st), and st+1 ∼P(·|st, at). Then, the objective in a CMDP is to find an optimal policy π∗
+that maximizes the expected return, while ensuring that the cost remains below a predefined safety
+threshold d ∈R:
+max
+π∈Π Jr(π)
+s.t.
+Jc(π) ≤d
+(23)
+where Π is the set of all stationary stochastic policies. To solve this constrained optimization problem,
+a standard approach is to employ the Lagrangian relaxation by introducing a dual variable λ ≥0
+(Lagrange multiplier). One can then obtain the unconstrained Lagrangian function, and the resulting
+min-max saddle-point problem:
+min
+λ≥0 max
+π∈Π L(π, λ),
+where
+L(π, λ) := Jr(π) −λ(Jc(π) −d)
+(24)
+Under Slater’s condition (assuming that at least one strictly safe policy exists, where Jc(π) ≤d),
+strong duality holds, and optimizing this unconstrained minimax objective is equivalent to solving
+the primal CMDP. More details can be found in seminal works on CMDPs(Altman, 1999; Achiam
+et al., 2017; Tessler et al., 2019; Stooke et al., 2020).
+A.5
+HAMILTON-JACOBI SAFETY ANALYSIS
+Consider a continuous-time dynamical system ˙s(t) = f(s(t), a(t), d(t)), where s ∈S, a ∈A and
+d ∈D as in Definition 2.1. We assume that the specification of a failure set is given by a margin
+function l : S →R such that Fc := {s : g(s) ≥0}. The goal of safety analysis is then to determine
+the safe set Ω⊆Fc ⊆S which is the set of all initial states from which there exists a control
+policy that can keep the system away from the failure set F, at all times, regardless of the adversarial
+disturbance (Mitchell et al., 2005). This is formalized as a zero-sum differential game, yielding the
+robust safety value function V (s):
+V (s) =
+inf
+N [d](·) sup
+a(.)
+inf
+t≥0 g
+
+ξa,N [d]
+s0
+(t)
+
+(25)
+16
+
+
+where ξa,N[d]
+s0
+(·) denotes the trajectory starting at the state s0, and evolving according to the control
+and disturbance trajectories (a, N[d]), with N[d](·) is defined to be the set of non-anticipative
+strategies for the disturbance, as defined in Evans & Souganidis (1983) and Fisac et al. (2018). By
+the principle of Dynamic Programming, V (s) is the unique viscosity solution to the Hamilton-Jacobi-
+Isaacs (HJI) variational inequality:
+0 = min
+
+g(s) −V (s, t), ∂V
+∂t (s, t) + max
+a∈A min
+d∈D ∇sV ⊤(s, t)f(s, a, d)
+
+(26)
+where V (s, T) = g(s), ∀s ∈S, t ∈[0, T]. In the infinite-horizon T →∞case, V (s, t) becomes
+independent of t as long as there exists a nonempty safe set. Under stochastic dynamics, one can
+obtain the infinite-horizon Bellman equation as:
+V (s) = min
+
+g(s), max
+a∈A min
+d∈D Es′∼p(·|s,a,d) [V (s′)]
+
+(26)
+where s′ ∼p(·|s, a, d)
+⇐⇒
+s′ = s + f(s, a, d)∆t + εt. However, the Bellman operator that
+governs Eq. 26 doesn’t induce a contraction mapping in the space of safe value functions. To leverage
+techniques from TD-learning and deep RL, Fisac et al. (2019) introduces a discount factor γ ∈(0, 1)
+that ensures contraction on the space of value functions. This results in the following time-discounted
+Bellman equation:
+V (s) = (1 −γ)g(s) + γ min
+
+g(s), max
+a∈A min
+d∈D Es′∼p(·|s,a,d) [V (s′)]
+
+(27)
+For more details, please refer to prior work(Evans & Souganidis, 1983; Mitchell et al., 2005; Fisac
+et al., 2018; 2019).
+B
+PROOFS OF THEORETICAL RESULTS
+In this section, we provide detailed proofs and remarks on the theoretical results in Sec. 3, Sec. 3.4,
+Sec. 4, Sec. 5, and Sec. 6.
+B.1
+SAFETY ACTION-VALUE OF THE JOINT POLICY (SEC. 3.2)
+Given a joint policy π, the safety Bellman equation is defined as:
+Qϕ
+π(s, a, d) = (1 −γ)g(s) + γ min
+
+g(s),
+E
+s′∼p(·|s,a,d)
+
+max
+a′∈µ(s′)
+min
+d′∈ν(s′,a′) Qϕ
+π(s′, a′, d′)
+
+(2)
+Note that ν(·, a′) refers to the specific sample a′ drawn from µ(·) by the maxa′∈µ operation. The
+corresponding safety Bellman operator T ϕ
+π : Q →Q is defined as:
+T ϕ
+π [Qϕ
+π](s, a, d) = (1−γ)g(s)+γ min
+
+g(s),
+E
+s′∼p(·|s,a,d)
+
+max
+a′∈µ(s′)
+min
+d′∈ν(s′,a′) Qϕ
+π(s′, a′, d′)
+
+(5)
+Proposition 1 (Contraction Mapping of T ϕ
+π ). For any arbitrary fixed joint policy π, the time-
+discounted Bellman operator defined in Eq. 5 induces a γ-contraction mapping under the supre-
+mum norm. That is, for a given discount factor γ ∈[0, 1), and any Qϕ
+π, eQϕ
+π ∈Q, we have
+T ϕ
+π
+
+Qϕ
+π
+
+−T ϕ
+π
+h
+eQϕ
+π
+i
+∞≤γ
+Qϕ
+π −eQϕ
+π
+
+∞. (Proof in Appendix B.1)
+Proof. It will suffice to show for all tuples (s, a, d) ∈S × A × D,
+17
+
+
+T ϕ
+π
+
+Qϕ
+π
+
+(s, a, d) −T ϕ
+π [ eQϕ
+π](s, a, d)
+≤γ
+Qϕ
+π −eQϕ
+π
+
+∞. We have:
+T ϕ
+π
+
+Qϕ
+π
+
+(s, a, d)−T ϕ
+π [ eQϕ
+π](s, a, d)
+ =
+(1 −γ)g(s)
++γmin
+
+g(s),
+E
+s′∼p(·|s,a,d)
+
+max
+a′∈µ(s′)
+min
+d′∈ν(s′,a′)Qϕ
+π(s′, a′, d′)
+
+−(1 −γ)g(s)
+−γ min
+
+g(s),
+E
+s′∼p(·|s,a,d)
+
+max
+a′∈µ(s′)
+min
+d′∈ν(s′,a′)
+eQϕ
+π(s′, a′, d′)
+ 
+=
+γ min
+
+g(s),
+E
+s′∼p(·|s,a,d)
+
+max
+a′∈µ(s′)
+min
+d′∈ν(s′,a′) Qϕ
+π(s′, a′, d′)
+
+−γ min
+
+g(s),
+E
+s′∼p(·|s,a,d)
+
+max
+a′∈µ(s′)
+min
+d′∈ν(s′,a′)
+eQϕ
+π(s′, a′, d′)
+ 
+Observing that|min {b, a} −min {c, a}| ≤|b −c| ∀a, b, c ∈R,
+T ϕ
+π
+
+Qϕ
+π
+
+(s, a, d) −T ϕ
+π [ eQϕ
+π](s, a, d)
+
+≤γ
+
+E
+s′∼p(·|s,a,d)
+
+max
+a′∈µ(s′)
+min
+d′∈ν(s′,a′) Qϕ
+π(s′, a′, d′)−max
+a′∈µ(s′)
+min
+d′∈ν(s′,a′)
+eQϕ
+π(s′, a′, d′)
+
+(Applying Jensen’s inequality)
+≤γ
+E
+s′∼p(·|s,a,d)
+ max
+a′∈µ(s′)
+min
+d′∈ν(s′,a′) Qϕ
+π(s′, a′, d′) −max
+a′∈µ(s′)
+min
+d′∈ν(s′,a′)
+eQϕ
+π(s′, a′, d′)
+
+
+Without loss of generality, let the first min-max term on the right-hand side be the larger one, and
+denote by a∗a maximizer of this term. Then, we have:
+T ϕ
+π
+
+Qϕ
+π
+
+(s, a, d)−T ϕ
+π [ eQϕ
+π](s, a, d)
+≤γ
+E
+s′∼p(·|s,a,d)
+
+min
+d′∈ν(s′,a′)Qϕ
+π(s′, a∗, d′) −
+min
+d′∈ν(s′,a′)
+eQϕ
+π(s′, a∗, d′)
+
+
+Similarly, let d∗be a minimizer of the second, smaller term.
+T ϕ
+π
+
+Qϕ
+π
+
+(s, a, d) −T ϕ
+π [ eQϕ
+π](s, a, d)
+ ≤γ
+E
+s′∼p(·|s,a,d)
+Qϕ
+π(s′, a∗, d∗) −eQϕ
+π(s′, a∗, d∗)
+
+
+≤γ sup
+s′ max
+a′∈A max
+d′∈D
+Qϕ
+π(s′, a′, d′) −eQϕ
+π(s′, a′, d′)
+
+= γ
+Qϕ
+π −eQϕ
+π
+
+∞
+B.2
+JOINT ACTION-VALUE FUNCTION (SEC. 3.3)
+For any fixed safety action-value function, Y ∈Q, the joint Bellman operator TY : Q →Q is given
+by:
+TY [Q](s, a, d) = (1 −γ)m(s, a, d) + γ min
+n
+r(s, a, d) +
+E
+s′∼p(·|s,a,d) [VQ(s′)] , Y (s, a, d)
+o
+(6)
+where m(s, a, d) = min{r(s, a, d), g(s)} and VQ(s) = maxa∈A mind∈D Q(s, a, d).
+Proposition 2 (Contraction Mapping of TY ). For any arbitrary, fixed Y ∈Q, the Bellman operator
+defined in Eq. 6 induces a γ-contraction mapping under the supremum norm. That is, for a given
+discount factor γ ∈[0, 1), and any Q, eQ ∈Q, we have
+TY [Q] −TY [ eQ]
+
+∞≤γ
+Q −eQ
+
+∞.
+(Proof in Appendix B.2)
+18
+
+
+Proof. It will suffice to show for all tuples (s, a, d) ∈S × A × D,
+TY [Q] (s, a, d) −TY [ eQ](s, a, d)
+
+≤γ
+Q −eQ
+
+∞. We have:
+TY [Q] (s, a, d) −TY [ eQ](s, a, d)
+ =
+(1 −γ)m(s, a, d)
++γ min
+n
+r(s, a, d)+
+E
+s′∼p(·|s,a,d)
+
+max
+a′∈A min
+d′∈D Q(s′, a′, d′)
+
+, Y (s, a, d)
+o
+−(1 −γ)m(s, a, d)
+−γ min
+n
+r(s, a, d) +
+E
+s′∼p(·|s,a,d)
+
+max
+a′∈A min
+d′∈D
+eQ(s′, a′, d′)
+
+, Y (s, a, d)
+o
+=
+γ min
+n
+r(s, a, d) +
+E
+s′∼p(·|s,a,d)
+
+max
+a′∈A min
+d′∈D Q(s′, a′, d′)
+
+, Y (s, a, d)
+o
+−γ min
+n
+r(s, a, d) +
+E
+s′∼p(·|s,a,d)
+
+max
+a′∈A min
+d′∈D
+eQ(s′, a′, d′)
+
+, Y (s, a, d)
+o
+Observing that |min {b, a} −min {c, a}| ≤|b −c| ∀a, b, c ∈R,
+TY [Q](s, a, d) −TY [ eQ](s, a, d)
+ ≤γ
+r(s, a, d) +
+E
+s′∼p(·|s,a,d)
+
+max
+a′∈A min
+d′∈D Q(s′, a′, d′)
+
+−r(s, a, d) −
+E
+s′∼p(·|s,a,d)
+
+max
+a′∈A min
+d′∈D
+eQ(s′, a′, d′)
+ 
+= γ
+
+E
+s′∼p(·|s,a,d)
+
+max
+a′∈A min
+d′∈D Q(s′, a′, d′)
+
+−
+E
+s′∼p(·|s,a,d)
+
+max
+a′∈A min
+d′∈D
+eQ(s′, a′, d′)
+ 
+= γ
+
+E
+s′∼p(·|s,a,d)
+
+max
+a′∈A min
+d′∈D Q(s′, a′, d′) −max
+a′∈A min
+d′∈D
+eQ(s′, a′, d′)
+ 
+(Applying Jensen’s inequality)
+≤γ
+E
+s′∼p(·|s,a,d)
+ max
+a′∈A min
+d′∈D Q(s′, a′, d′) −max
+a′∈A min
+d′∈D
+eQ(s′, a′, d′)
+
+
+Without loss of generality, let the first min-max term on the right-hand side be the larger one, and
+denote by a∗a maximizer of this term. Then, we have:
+TY [Q] (s, a, d) −TY [ eQ](s, a, d)
+ ≤γ
+E
+s′∼p(·|s,a,d)
+ min
+d′∈D Q(s′, a∗, d′) −min
+d′∈D
+eQ(s′, a∗, d′)
+
+
+Similarly, let d∗be a minimizer of the second, smaller term.
+TY [Q] (s, a, d) −TY [ eQ](s, a, d)
+ ≤γ
+E
+s′∼p(·|s,a,d)
+Q(s′, a∗, d∗) −eQ(s′, a∗, d∗)
+
+
+≤γ sup
+s′ max
+a′∈A max
+d′∈D
+Q(s′, a′, d′) −eQ(s′, a′, d′)
+ = γ
+Q −eQ
+
+∞
+B.3
+OBJECTIVE FUNCTION OF JOINT ACTION-VALUE FUNCTION (SEC. 3.4)
+In this section, we derive the objective function from robust optimal stopping theory to provide a
+principled theoretical interpretation of the joint value function. To this end, we first prove supporting
+Lemmas.
+Lemma 2. (Global upper bound and non-negativity of Qϕ
+π under Joint Trajectory Evaluation) For all
+(s, a, d) ∈S × A × D and all greedy joint policies π, Qϕ
+π(s, a, d) ≤g(s) independent of the policy
+evaluated. Consequently, for all states within the failure set, s ∈F, Qsafe
+πa,πd(s, a, d) < 0, where the
+failure set is defined as the set F = {s ∈S : g(s) < 0}.
+19
+
+
+Proof. By definition,
+Qϕ
+π(s, a, d) = (1 −γ)g(s) + γ min
+
+g(s),
+E
+s′∼p(·|s,a,d)
+
+max
+a′∈µ(s′)
+min
+d′∈ν(s′,a′) Qϕ
+π(s′, a′, d′)
+
+Noting that min{x, y} ≤x, Qϕ
+π(s, a, d) ≤(1 −γ)g(s) + γg(s) = g(s). For all states s ∈F, by
+definition, g(s) < 0. Furthermore, applying our previous result gives us Qϕ
+π(s, a, d) < 0. Finally,
+noting that g(s) is independent of π, completes the proof.
+Remark 1. As seen in Lemma 2, the upper bound of Qϕ
+π relies solely on the minimum operator in the
+safety Bellman equation. Therefore, it holds universally for any arbitrary policy and does not require
+that the policy be greedy with respect to safety Q-function.
+Remark 2. A positive immediate margin (g(s) > 0) does not guarantee viability. In inevitable
+failure states (unsafe states) where no safe policy exists, the long-term safety value correctly captures
+this future inevitable failure by evaluating to Qϕ
+π(s, a, d) < 0. Note that Lemma 2 only provides a
+global upper bound and does not impose a lower bound, allowing Qϕ
+π(s, a, d) to reflect the unsafe
+states.
+Definition 1 (Task and safety optimizing regions). The region where the task value function
+is strictly lower than the safe value function is defined as the task-optimizing region: Ωψ =
+
+s ∈S
+ V ψ
+q (s) < V ϕ
+π (s)
+	
+. The region where the task value function is greater than the safe value
+function is defined as the safety-optimizing region: Ωϕ =
+
+s ∈S
+ V ψ
+q (s) ≥V ϕ
+π (s)
+	
+.
+Lemma 3. (First Switching time as valid stopping time) Let (W, G, P) be a probability space
+and let (sk)T
+k=0 be a stochastic process taking values in a measurable state space (S, B(S)). Let
+F = (Gk)T
+k=0 be the natural filtration where Gk = σ(s0, . . . , sk). Given a Borel-measurable safety
+maximizing region, Ωϕ ∈B(S), define the first switching time τ : W →{0, · · · , T} as:
+τ = inf{k ∈{0, · · · , T} : sk ∈Ωϕ}
+where T is the time horizon (T →∞for infinite horizon setting) and inf ∅= T. Then the first
+switching time, τ, is a stopping time with respect to F.
+Proof. τ is a stopping time if and only if for every k ∈{0, · · · , T}, the set of {τ ≤k} ∈Gk. We start
+by observing that the event {τ ≤k} is equivalent to union of all events where the trajectory switched
+the first time from task optimizing region to safety maximizing region, {τ ≤k} = Sk
+j=0{sj ∈Ωϕ}.
+Noting that the state sj is Gj-measurable by definition of natural filtration, {sj ∈Ωϕ} ∈Gj because
+Ωϕ is a Borel set in S. Moreover, we have {sj ∈Ωϕ} ∈Gk due to monotonicity of filtration (i.e.,
+Gj ⊆Gk ∀j ≤k). Finally, because σ-algebras are closed under finite union, we get {τ ≤k} ∈Gk.
+This concludes the proof that τ is a valid stopping time.
+Remark 3. (Reduction of the Joint Action-Value Function to Only Task Action-Value Function Prior
+to Switching)
+Prior to the first switching time τ, the trajectory remains entirely within the task optimizing region
+Ωψ. In this region, by definition, V ψ
+q (s) = rπ(s) + E[Vq(s′)] < V ϕ
+π (s). Furthermore, recalling
+from Lemma 2 that the safety value is globally bounded by the immediate margin, and the fact
+that, since the successor state remains in the domain Vq(s′) ≥0, we have the strict ordering
+rπ(s) ≤V ψ
+π (s) < V ϕ
+π (s) ≤g(s). This implies, r(s, a) < g(s). Consequently, Vq(s) = (1 −
+γ)rπ(s) + γV ψ
+q (s) = rπ(s) + γE[Vq(s′)].This ensures that before entering the safety-maximizing
+region, the joint formulation evaluates only the task objective while remaining implicitly upper-
+bounded by g(s).
+Let the cumulative return from time t
+=
+0, evaluated at a stopping time τ be given
+by Rτ
+:=
+Pτ−1
+t=0 γtr(st) + γτ 
+(1 −γ) min{r(sτ), g(sτ)} + γV ϕ
+Y (sτ)
+
+, where V ϕ
+Y (sτ)
+=
+Y (sτ, µ(s), ν(s, µ(s))).
+For a process observed from the next state s1 (which we will alias
+as s′
+0), let τ ′ denote a stopping time. Then the cumulative return from t = 1 is defined as :
+R′
+τ := Pτ ′−1
+t=0 γtr(s′
+t) + γτ ′ 
+(1 −γ) min{r(s′
+τ ′), g(s′
+τ ′)} + γV ϕ
+Y (s′
+τ ′)
+
+. Then, consider the fol-
+lowing lemma:
+20
+
+
+Lemma 4. Let Λk be the set of stopping times τ bounded by time horizon k, i.e., 0 ≤τ ≤k.
+Let Rτ = (Rt)t≤τ be the stochastic process representing the cumulative discounted reward. Let
+VQk(s1) be the value function evaluated at the next state s1, defined as the optimal stopping problem
+VQk(s1) := infτ ′∈Λk Eω [R′
+τ ′|s′
+0 = s1]. Then the following equality holds, evaluated from s0 = s:
+r(s) + γ
+E
+ω(s1) [VQk(s1)|s0 = s] =
+inf
+τ∈Λk+1, τ≥1 E
+ω [Rτ|s0 = s]
+where ω(s1) denotes the s1 element of the trajectory ω.
+Proof. We will prove this by showing inequality in both directions. We first prove:
+r(s) + γ
+E
+ω(s1) [VQk(s1)|s0 = s] ≥
+inf
+τ∈Λk+1, τ≥1 E
+ω [Rτ|s0 = s]
+To prove the above inequality, we will construct a global stopping time by pasting together ϵ-optimal
+local stopping times.
+1. Fix an arbitrarily small ϵ > 0. For every realization z of the state s1, there exists a valid
+stopping time τ ′
+z ∈Λk such that its expected value is ϵ-close to the optimal value VQk(z),
+i.e., Eω[R′
+τ ′z|s′
+0 = z] ≤VQk(z) + ϵ.
+2. Define a global candidate stopping time τ ∗∈Λk+1 by waiting one step and then executing
+τ ′
+z, i.e., τ ∗:= 1 + τ ′
+z. By the recursive definition of cumulative return, Rτ ∗= r(s) + γR′
+τ ′z.
+3. We now invoke Lemma 2.8 in Aguilar (2009) (Stability under Pasting, from optimal robust
+stopping time theory), which states that the set of stopping times is closed under such
+concatenation. Since τ ′
+z depends on the history after t = 1, the constructed variable τ ∗is
+non-anticipative and is a valid stopping time in Λk+1 with τ ∗≥1.
+4. The global infimum over Λk+1 must be less than or equal to the expectation of the specific
+candidate:
+inf
+τ∈Λk+1, τ≥1 E
+ω [Rτ|s0 = s] ≤E
+ω [Rτ ∗|s0 = s]
+5. Finally, applying the Law of Iterated Expectations and our ϵ-bound yields:
+inf
+τ∈Λk+1, τ≥1 E
+ω [Rτ|s0 = s] ≤
+E
+ω(s1)
+h
+r(s) + γEω[R′
+τ ′s1|s′
+0 = s1]
+i
+≤
+E
+ω(s1) [r(s) + γ (VQk(s1) + ϵ)]
+= r(s) + γ
+E
+ω(s1) [VQk(s1)] + γϵ
+Since this inequality holds for any arbitrary small ϵ > 0, letting ϵ →0 yields the first direction.
+Next, we prove the opposite direction:
+r(s) + γ
+E
+ω(s1) [VQk(s1)|s0 = s] ≤
+inf
+τ∈Λk+1, τ≥1 E
+ω [Rτ|s0 = s]
+1. Let τ ∈Λk+1 be any arbitrary global stopping time with τ ≥1.
+2. Conditioning on the first transition s1 = z, the remainder of the trajectory induces a local
+stopping time τ ′
+z = τ −1. The induced stopping time satisfies 0 ≤τ ′
+z ≤k, and thus,
+τ ′
+z ∈Λk.
+21
+
+
+3. By the definition of value function as an infimum over Λk, we have Eω[R′
+τ ′z|s′
+0 = z] ≥
+VQk(z).
+4. . Using Law of Iterated Expectations,
+E
+ω [Rτ|s0 = s] = r(s) + γ
+E
+ω(s1)
+h
+Eω
+h
+R′
+τ ′s1
+s′
+0 = s1
+ii
+≥r(s) + γ
+E
+ω(s1) [VQk(s1)]
+5. Finally, since this inequality holds for any arbitrary τ ∈Λk+1, (τ ≥1), it must hold for
+the infimum over all such τ, completing the proof.
+Remark 4. (On Non-Anticipativity) The invocation of Lemma 2.8 in Aguilar (2009) guarantees that
+our constructed variable τ ∗uses only current information, since the specific local stopping time
+τ ′
+z is solely determined by the realization of state s1 observed at time t = 1. Lemma 4 justifies the
+interchange of the infimum and expectation operators. Intuitively, it proves that the optimal value of
+the global stopping time is equivalent to the expectation of local optimal values of the local stopping
+times.
+Theorem 7. (Objective Function for a fixed trajectory) Let ω = (s0, s1, · · · , sT ) be a trajectory
+generated by action policy, µ(s), and disturbance policy ν(s, µ(s)), with associated rewards r(st).
+Here, T denotes the time horizon. Then the objective function that the joint action-value function
+optimizes is given by:
+J(s) := inf
+τ∈ΛT E
+ω
+"τ−1
+X
+t=0
+γtr(st) + γτ 
+(1 −γ) min{r(sτ), g(sτ)} + γV ϕ
+Y (sτ)
+ s0 = s
+#
+Proof. We begin by observing that the first switching time τ from target optimizing region to safety
+maximizing region is a valid stopping time (Refer to Lemma 3). We prove the theorem by induction
+on the time horizon T.
+1. Base Case (T = 1): Consider a time horizon T = 1. The set of valid stopping times is
+given by Λ1 = {0, 1}. When τ = 0, the initial state s0 ∈Ωϕ and the trajectory is terminated
+immediately, yielding the return R0 = (1−γ) min{r(s0), g(s0)}+γV ϕ
+Y (s0). When τ = 1,
+the agent takes one step and is stopped and thus, the next state s1 ∈Ωϕ, with s0 ∈Ωψ.
+This yields the expected return E[R1] = r(s0) + γEω(s1)[(1 −γ) min{r(s1), g(s1)} +
+γV ϕ
+Y (s1)|s0 = s]. As the value function is the infimum over Λ1, it evaluates to the minimum
+of these two choices:
+VQ1(s) = min
+(
+(1 −γ) min{r(s0), g(s0)} + γV ϕ
+Y (s0),
+r(s0) + γEω(s1)[(1 −γ) min{r(s1), g(s1)} + γV ϕ
+Y (s1)|s0 = s]
+)
+Since the minimum is equivalent to the infimum over the set of valid stopping times τ ∈Λ1,
+we have VQ1(s) = infτ∈Λ1 Eω[Rτ|s0 = s].
+2. Induction Hypothesis (T = k): Assume for a time horizon T = k, the value function is
+given by:
+VQk(s) = inf
+τ∈Λk E
+ω[Rτ|s0 = s]
+3. Inductive Step (T = k + 1): Consider the time horizon T = k + 1. According to the
+Bellman equation, the value at the current state is the minimum of stopping immediately
+22
+
+
+(τ = 0) or continuing for one step and behaving optimally thereafter (which is horizon k
+starting at t = 1):
+VQk+1(s) = min
+(
+(1 −γ) min{r(s0), g(s0)} + γV ϕ
+Y (s0),
+r(s0) + γEω(s1)[VQk(s1)|s0 = s]
+)
+Applying Lemma 4 to the above yields:
+VQk+1(s) = min
+(
+(1 −γ) min{r(s0), g(s0)} + γV ϕ
+Y (s0),
+inf
+τ∈Λk+1, τ≥1 E
+ω [Rτ|s0 = s]
+)
+Finally, observing that the first term is exactly the return R0 corresponding to the case where τ = 0,
+the outer minimum operator simplifies into the infimum over the strict subset τ ≥1, yielding an
+infimum over the entire domain 0 ≤τ ≤k + 1:
+VQk+1(s) =
+inf
+τ∈Λk+1 Eω [Rτ|s0 = s]
+= inf
+τ∈ΛT E
+ω
+"τ−1
+X
+t=0
+γtr(st) + γτ 
+(1 −γ) min{r(sτ), g(sτ)} + γV ϕ
+Y (sτ)
+ s0 = s
+#
+Theorem 1 (Objective Function). Given a Borel-measurable safety maximizing region, Ωϕ ∈B(S),
+define the first switching time τ : W →{0, · · · , T} as τ = inf{k ∈{0, · · · , T} : sk ∈Ωϕ}, where
+T is the time horizon and inf ∅= T (T →∞for infinite horizon setting). Let Λk be the set of
+stopping times τ bounded by time horizon k, i.e., 0 ≤τ ≤k. Let ω be trajectories sampled using
+the joint policy as at, dt ∼π(st), with the dynamics st+1 ∼p(·|st, at, dt). Then, the corresponding
+joint objective function that the joint policy maximizes is given by: (Proof in Appendix B.3)
+J(π) := infτ∈ΛT Eω∼π
+
+
+Pτ−1
+t=0 γtr(st, at, dt) + γτ
+
+
+(1 −γ) min{r(sτ, aτ, dτ), g(sτ)} + γV ϕ
+Y (sτ)
+|
+{z
+}
+:=Jτ
+
+
+
+
+s0 = s
+
+
+(7)
+Proof. This follows directly from Theorem 7. Without loss of generality, the Theorem used state-
+based rewards r(st) in the main proof for notational simplicity. The extension to state-action-based
+rewards r(st, at, dt) holds because the expectation is taken over the distribution of trajectories.
+Remark 5 (Boundary Condition Without Joint Actions). When the stopping time τ occurs such
+that no subsequent action is executed at the terminal state sτ, the state-action-disturbance reward
+r(sτ, aτ, dτ) is not accrued. Consequently, the terminal condition collapses entirely to the safety
+value function, evaluating to (1 −γ)g(sτ) + γV ϕ
+Y (sτ), with no contribution from the task reward.
+B.4
+FAST TIMESCALE: SAFETY CRITIC TRACKING (SEC. 4.1)
+Assumption 1 (Conditional unbiasedness and Martingale-difference noise (Tsitsiklis & Van Roy,
+1997)). Let {Hn}n≥0 denote the filtration generated by the learning history up to iteration n. Then,
+E
+h
+ˆT ϕ
+n+1,πQn[Yn]
+Hn
+i
+= T ϕ
+πQn[Yn],
+E
+h
+ˆTn+1,Yn[Qn]
+Hn
+i
+= TYn[Qn]
+(9)
+Assumption 2 (Step-size conditions (Robbins & Monro, 1951)). The step-sizes, αn, βn ∈(0, 1],
+satisfy Robbins-Monro conditions: P∞
+n=0 αn = P∞
+n=0 βn = ∞, P∞
+n=0(α2
+n + β2
+n) < ∞,
+limn→∞αn →0, limn→∞βn →0, and additionally, limn→∞αn/βn = 0.
+23
+
+
+The updates with step-size sequences {αn}, {βn} are given by:
+Yn+1 = Yn + βn
+h
+ˆT ϕ
+n+1,πQn[Yn] −Yn + ξϕ
+n+1
+i
+(28)
+Qn+1 = Qn + αn
+h
+ˆTn+1,Yn[Qn] −Qn + ξn+1
+i
+(29)
+where ξϕ
+n+1 and ξn+1 are martingale difference perturbations (Borkar, 2009), with E[ξϕ
+n+1|Hn] =
+E[ξn+1|Hn] = 0. As the map Q 7→YπQ need not be continuous or Lipschitz, the standard two-
+timescale stochastic approximation need not apply. Thus, we analyze the fast timescale recursion as a
+stochastic recursive inclusion in Section 4.1 using the set-valued two-timescale framework (Yaji &
+Bhatnagar, 2020; Borkar, 2023).
+Lemma 1 (Set-valued fast timescale tracking). Under Assumptions 1-2, suppose the iterates are
+almost surely bounded. Then,
+1. for every quasi-static q, Eq. 11 admits a nonempty compact global attracting set Λ(q);
+2. q 7→Λ(q) is upper semicontinuous; and
+3. the coupled iterates satisfy dist ((Yn, Qn) , Gr Λ) →0 almost surely, where Gr Λ :=
+{(y, q) : y ∈Λ(q)} is the graph of Λ. (Proof in Appendix B.4)
+Proof. We first establish some properties of the fast timescale differential inclusion.
+- Let y ∈Y ⊆R|S||A||D| denote the fast timescale safety critic with the limiting dynamics
+hπ(y) := T ϕ
+π [y]−y. Here, π is quasi-static, as induced by the quasi-static joint critic q ∈Q.
+Thus, note that for any y ∈Y, the operator T ϕ
+π [y] induces a γ-contraction, as discussed in
+Section 3.2, and thus possesses a unique fixed point.
+- Next, note that, since S, A, D are finite, Π(q) is finite and nonempty for every q. For a given
+q, any action that is not maximin-greedy at q has a strictly positive gap from the maximum,
+and any disturbance that is not minimizing on some greedy action has a strictly positive gap
+from the minimum. Consequently, there exists ϑ(q) > 0 such that ∥q′ −q∥∞< ϑ(q), which
+implies that Π(q′) ⊆Π(q). Hence, Π(·) is upper semicontinuous. Moreover, by continuity
+of hπ(·), the map Ψ(·, ·) (as defined in Eq. 11) is Marchaud, since it has nonempty compact
+convex values, and is upper semicontinuous with at most linear growth.
+- Let gK := K maxs∈S |g(s)| with B := [−gK, gK]|S||A||D|. Note that if y ∈B, then
+−gK ≤E [y(s, π(s)] ≤gK. Hence, T ϕ
+π [B] ⊆B, ∀π. By convexity, B is forward invariant
+for the differential inclusion ˙y ∈Ψ(q, y). Moreover, any solution to the differential inclusion
+can be represented almost everywhere as:
+˙y(t) =
+X
+π∈Π(q)
+λπ(t)
+ T ϕ
+π [y(t)] −y(t)
+
+,
+with λπ(t) ≥0,
+X
+π
+λπ(t) = 1
+(30)
+Next, let y(·), z(·) be two trajectories with the same weight λπ(·), and let e(t) := y(t)−z(t).
+Let I(t) := {i : |ei(t)| = ∥e(t)∥∞} be the coordinate set on which |e(t)| achieves the
+supremum norm. For the supremum norm, the upper Dini derivative satisfies:
+D+∥e(t)∥∞≤max
+i∈I(t) sgn(ei(t))˙e(t)
+(31a)
+=⇒D+∥y(t) −z(t)∥∞≤−(1 −γ)∥y(t) −z(t)∥∞(by γ-contraction of T ϕ
+π )
+(31b)
+∴∥y(t) −z(t)∥∞≤e−(1−γ)(t−s)∥y(s) −z(s)∥∞(by Grönwall)
+(31c)
+Thus, choosing z(·) ∈B and the fact that T ϕ
+π [B] ⊆B shows that every fast timescale
+trajectory y(·) (driven by the same weights λπ) for a quasi-static q is attracted to the bounded
+set B.
+1. Since Ψ(q, ·) is a Marchaud map, the differential inclusion for a quasi-static q admits
+solutions from every initial condition. As the compact set B is forward invariant, and
+globally attracting, the limiting dynamics y(·) admit a nonempty compact global attracting
+set Λ(q) ⊆B (Benaïm et al., 2005).
+24
+
+
+2. Let qm →q and let ym ∈Λ(qm) with ym →y. Note that for sufficiently large m, Π(qm) ⊆
+Π(q), and thus, Ψ(qm, ·) ⊆Ψ(q, ·). Next, for any given y, {hπ(y) : π ∈Π(qm)} ⊆
+{hπ(y) : π ∈Π(q)}. Since the convex hull preserves set inclusions, Ψ(qm, y) ⊆Ψ(q, y)
+for every y, and thus, every complete solution of qm-differential inclusion is also a complete
+solution of the q-differential inclusion. Consequently, Λ(qm) ⊆Λ(q) for sufficiently large
+m. Moreover, since Λ(q) is closed, y ∈Λ(q), and thus GrΛ is closed. This implies that the
+map q 7→Λ(q) is upper semicontinuous.
+3. Finally, under Assumptions 1-2 and by the two-timescale stochastic recursive inclusion
+framework (Yaji & Bhatnagar, 2020; Ramaswamy & Bhatnagar, 2016), the limit set of the
+coupled iterates satisfies ω(Y, Q) ⊆GrΛ a.s. Since the iterates are bounded and GrΛ is
+closed,
+dist ((Yn, Qn), GrΛ) →0
+a.s.,
+(32)
+Remark 6. (The Quasi-Static Joint Critic) Intuitively, Lemma 1 guarantees that the safety critic
+learns much faster than the joint critic. This implies that the joint critic is provided with an accurate
+estimate of its corresponding policy’s safety evaluation before it updates its estimate and changes the
+policy.
+B.5
+SLOW TIMESCALE: AVERAGED DIFFERENTIAL INCLUSION (SEC. 4.2)
+Section 4.1 shows that the coupled iterates asymptotically approach the graph of the compact, globally
+attracting set Λ(q) for some quasi-static q. By Assumption 2, the slow-timescale iterate Qn remains
+quasi-static while the fast timescale dynamics evolve. Thus, the increments of Qn depend on the
+long-run average of G(Yn, Qn). These averages are encoded by the occupation measures in D(q),
+leading to the set-valued G(q) in Eq. 12.
+Theorem 2 (Slow-timescale differential-inclusion limit). Let Q(·) denote the continuous affine
+interpolation of {Qn} on the slow-timescale. Under Assumptions 1-2, Lemma 1, and almost surely
+bounded iterates {(Yn, Qn)}, Q(·) is almost surely an asymptotic pseudotrajectory of the averaged
+differential inclusion ˙q(t) ∈G(q(t)). Consequently, its ω-limit set U := ω(Q) is a nonempty compact
+invariant internally chain-transitive set of the limiting differential-inclusion dynamics. (Proof in
+Appendix B.5)
+Proof. Let Mn+1 := ˆTn+1,Yn[Qn] −TYn[Qn] + ξn+1 be the total martingale-difference error (error
+due to the stochastic Bellman target and additional perturbation noise). Then, Eq. 29 can be written
+as:
+Qn+1 := Qn + αn [G(Yn, Qn) + Mn+1] ,
+where G(y, q) := Ty[q] −q
+(33)
+1. In the finite tabular setting,
+G is continuous in both arguments;
+Vq(s)
+=
+maxa mind q(s, a, d) is a 1-Lipschitz map in q, and x 7→min ·, x is 1-Lipschitz map.
+Consequently,
+∥G(y, q) −G(y′, q′)∥∞≤γ∥y −y′∥∞+ (1 + γ)∥q −q′∥∞
+(34)
+Thus, G(·, ·) is continuous and has at most linear growth.
+2. Next, let D(q) denote the admissible limiting occupation measure set, appearing in the two-
+timescale stochastic recursive inclusion theorem of (Yaji & Bhatnagar, 2020); these measures
+account for the long-run fast timescale behavior at a given q; the slow-timescale differential
+inclusion is then formed through probability-measure averaging (Yaji & Bhatnagar, 2020):
+G(q) =
+(Z
+Λ(q)
+G(y, q)P(dy) : P ∈D(q)
+)
+(35)
+25
+
+
+3. Next, by Assumptions 1-2, the accumulated noise on the slow-timescale vanishes on every
+finite time-window:
+lim
+n→∞
+sup
+m≥n:Pm
+k=n αk≤T
+
+m
+X
+k=n
+αkMk+1
+
+∞
+= 0
+a.s.
+(36)
+for every T > 0. Hence, by the slow-timescale APT result of (Yaji & Bhatnagar, 2020),
+the continuous affine interpolation Q(·) is almost surely an asymptotic pseudotrajectory
+of ˙q(t) ∈G(q(t)). Finally, by assumption, the iterates are almost surely bounded, and
+thus, by the limit-set theorem for bounded asymptotic pseudotrajectories (Benaïm et al.,
+2005), U := ω(Q) is nonempty, compact, invariant and internally chain transitive for the
+differential inclusion ˙q ∈G(q).
+B.6
+SAFE CONFIGURATION SET AND FORWARD INVARIANCE (SEC. 5)
+The state, action and disturbance spaces are finite, so the action-value space Q = B(S × A × D)
+is identified with RN, N = |S × A × D|, and the limiting dynamics are an inclusion in finite
+dimension. The extended class-Ke function is written explicitly as Kg(s), since the margin scale
+affects the bounds. We write ∥·∥∞for the supremum-norm. Recalling also that the reward function is
+r : S × A × D →[0, Rmax] and Ω⊆Fc = {s : g(s) > 0}.
+For a fixed critic y ∈Q, let Ty[q] denote the joint Bellman operator of Eq. 6, and for policy π let
+T ϕ
+π [y] denote the safety Bellman operator of Eq. 5.
+Definition 2 (Kernel-preserving actions). An action is kernel-preserving at state s, if it keeps the next
+state inside the viability kernel against every disturbance AΩ(s) := {a ∈A : P(s′ ∈Ω|s, a, d) =
+1
+∀d ∈D}, where κ, ϵ0 > 0 without loss of generality.
+Since Ωis the set of states from which a control policy exists keeping the agent safe at all times
+regardless of the adversarial disturbances, taking a = µ(s) for such a policy shows AΩ(s)̸ = ∅∀s ∈
+Ω. This is a property of the viability kernel. Since the transition kernel is stochastic, the kernel
+preservation is almost sure, and the safety conclusions are almost surely with respect to the transition
+randomness.
+Definition 3 (Index Sets and Relaxed Constraint Sets). For each state s ∈Ωand each action
+a /∈AΩ(s), fix a disturbance ˆd(s, a) ∈D with P(s′ /∈Ω|s, a, ˆd(s, a)) > 0. Then the index sets are
+defined as follows: I := {(s, a, d) : s ∈Ω, a ∈AΩ(s), d ∈D} and J := {(s, a, ˆd(s, a)) : s ∈
+Ω, a /∈AΩ(s)}. Let Cϵ := {q ∈Q : q(x) ≥−ϵ ∀x ∈I, q(x) ≤−κ + ϵ ∀x ∈J } denote the
+relaxed constraint set, for ϵ ≥0 i.e., Cϵ relaxes each defining inequality of C0 by ϵ.
+The index sets are determined by the transition kernel and by Ω; they depend on neither q nor any
+policy. Throughout we take κ > 0 and ϵ0 ∈(0, κ/2). The upper bound on ϵ0 ensures the two families
+of constraints remain strictly separated on all of Cϵ0.
+We fix a deterministic Borel-measurable selection in Eq. 4: we choose a single action µq(s) from
+the maximizers of mind q(s, ·, d), and a single disturbance νq(s, µq(s)) from the minimizers of
+q(s, µq(s), ·). Existence of such selections is guaranteed by the Kuratowski-Ryll-Nardzewski theorem.
+Fixing the selection makes q 7→πq single-valued but not continuous; this is why fast timescale is
+analyzed through Π(q) and Λ(q) rather than through a single equilibrium map, and why the slow
+limit is the inclusion Eq. 37.
+˙q(t) ∈G(q(t))
+(37)
+One might expect a condition of the form mind q(s, a, d) ≤−κ for kernel-exiting a; but the
+disturbance attaining the inner minimum of q need not be the one under which the action leaves the
+kernel (the truncation bound in Lemma 10 is available only for the latter). Fixing ˆd removes the
+mismatch while still yielding mind q(s, a, d) ≤q(s, a, ˆd(s, a)) ≤−κ.
+Definition 4 (Safe Configuration Set). The safe configuration set is defined as the set of joint
+Q-functions whose induced policy is kernel-preserving:
+Qcfg := C0 = {q ∈Q : q(x) ≥0 ∀x ∈I, q(x) ≤−κ ∀x ∈J }
+(13)
+26
+
+
+The intuition is as follows: the lower bound states that the joint action value has not underestimated
+kernel-preserving actions, and the upper bound states that it has not overestimated actions that leave
+the kernel. We now define the distance to the safe configuration set as ρ(q) := dist(q, Qcfg), the
+supremum-norm distance.
+B.6.1
+GEOMETRY OF THE SAFE CONFIGURATION SET
+Lemma 5 (Structure of Cϵ). (i) I ∩J = ∅and Qcfg̸ = ∅(ii) Every Cϵ is a closed convex polyhedron.
+(iii) For every q,
+ρ(q) = max
+n
+max
+x∈I (−q(x))+ , max
+x∈J (q(x) + κ)+
+o
+and consequently Cϵ = {q : ρ(q) ≤ϵ}.
+Proof. (i) A triple of I has a ∈AΩ(s) and a triple of J has a /∈AΩ(s), so the index sets are disjoint.
+Next, set q(x) = 0 on x ∈I, q(x) = −κ on x ∈J and arbitrary values elsewhere, therefore this
+point lies in Qcfg.
+(ii) Each condition is a closed half-space of the form {q : ±q(x) ≤β}, and a finite intersection of
+half-spaces is a closed convex polyhedron.
+(iii) Let p ∈Qcfg. We first check if the distance ∥q −p∥∞is at least the asserted quantity. For
+x ∈I with q(x) < 0 we have p(x) ≥0, hence ∥q(x) −p(x)∥∞≥−q(x); for x ∈J with
+q(x) > −κ we have p(x) ≤−κ, hence ∥q(x) −p(x)∥∞≥q(x) + κ. Thus ∥q −p∥∞is at least the
+asserted quantity. Conversely, the coordinatewise clip defined by p(x) = max(q(x), 0) on x ∈I,
+p(x) = min(q(x), −κ) on x ∈J and p(x) = q(x) on the remaining coordinates belongs to Qcfg
+and attains it. Comparison with the defining inequalities of Cϵ gives the last claim.
+The intuition is that Qcfg is a box: its constraints are coordinate-separated, so its metric projection is
+a clip and its distance function has a closed form. By Lemma 5(iii), the family Cϵ is precisely the
+family of enlargements of Qcfg.
+Lemma 6 (Regularity of the distance). Under the supremum norm, for any convex C ⊆RN, the
+function dist(·, C) is convex and 1-Lipschitz.
+Proof. For convexity: Given q, q′ ∈Q, λ ∈[0, 1] and η > 0, choose p, p′ ∈C with
+∥q −p∥∞≤dist(q, C) + η and similarly for p′. By convexity of C, λp + (1 −λ)p′ ∈C. Then, ap-
+plying to distance function, dist(λq + (1 −λ)q′, C) ≤∥(λq + (1 −λ)q′) −(λp + (1 −λ)p′)∥∞=
+∥λ(q −p) + (1 −λ)(q′ −p′)∥∞≤λdist(q, C) + (1 −λ)dist(q′, C) + η. Then taking η →0, gives
+us the claim of convexity.
+For 1-Lipschitz: As dist(q, C) ≤∥q −p∥∞≤∥q −q′∥∞+ ∥q′ −p∥∞∀p ∈C, taking the infimum
+over p and exchanging q and q′ yields |dist(q, C) −dist(q′, C)| ≤∥q −q′∥∞.
+Lemma 7 (Convex distance decay). Let C ⊆RN be closed, convex and nonempty, ρC := dist(·, C)
+be the supremum-norm, θ ∈[0, 1), R ∈(0, ∞], and Φ : RN →RN be a set-valued map. Suppose
+that for every x with ρC(x) < R, every v ∈Φ(x) has the form v = z −x with ρC(z) ≤θρC(x).
+Then every absolutely continuous x(·) with x(t) ∈Φ(x(t)) almost everywhere and ρC(x(0)) < R
+satisfies
+ρC(x(t)) ≤ρC(x(0))e−(1−θ)t
+∀t ≥0
+Proof. Let u(t) := ρC(x(t)). Since ρC is 1-Lipschitz (Lemma 6), u is absolutely continuous and
+hence differentiable almost everywhere. Let t∗:= sup{τ ≥0 : u(t) < R ∀t ≤τ}. Notice that
+as u(0) < R and u is continuous, t∗> 0. Consider t < t∗at which u is differentiable and fix
+v := ˙x(t) such that v = z −x(t) with ρC(z) ≤θu(t). For h ∈(0, 1), absolute continuity gives
+x(t + h) = x(t) + hv + o(h). By the Lipschitz property, we get,
+u(t + h) ≤ρC(x(t) + hv) + o(h) = ρC((1 −h)x(t) + hz) + o(h)
+Convexity of ρC gives us,
+u(t + h) ≤(1 −h)u(t) + hρC(z) + o(h) ≤(1 −h)u(t) + hθu(t) + o(h)
+Dividing by h and letting h →0 yields us ˙u(t) ≤−(1 −θ)u(t) almost everywhere on [0, t∗),
+so Grönwall’s inequality gives us u(t) ≤u(0)e−(1−θ)t. In particular u is non-increasing, so
+27
+
+
+u(t) ≤u(0) < R. If t∗< ∞, continuity gives us u(t∗) ≤u(0) < R and hence u < R on
+neighbourhood of t∗, contradicting the definition of t∗as a supremum. Therefore t∗= ∞.
+Lemma 8 (Selection gap). Let 0 ≤ϵ ≤ϵ0 and q ∈Cϵ. Then,
+max
+a∈AΩ(s) min
+d q(s, a, d) −
+max
+a/∈AΩ(s) min
+d q(s, a, d) ≥κ −2ϵ > 0 ∀s ∈Ω
+and consequently every maximin greedy policy π = (µ, ν) ∈Πq satisfies µ(s) ∈AΩ(s). For
+q ∈Qcfg, the gap is atleast κ.
+Proof. Noting that AΩ(s)̸ = ∅∀s ∈Ω, so the first maximin is not over an empty set. For a ∈AΩ(s),
+we have (s, a, d) ∈I ∀d ∈D, by definitions of kernel-preserving action set and index set. Therefore,
+mind q(s, a, d) ≥−ϵ. We now consider two cases for the second maximin
+• If AΩ(s)
+=
+A,
+then the second maximin is over an empty set and so
+maxa/∈AΩ(s) mind q(s, a, d) = −∞by convention. Hence, the claims of the lemma imme-
+diately follow.
+• If AΩ(s)̸ = A, for a /∈AΩ(s), the triple (s, a, ˆd(s, a)) ∈J by definition of J . Hence,
+mind q(s, a, d) ≤q(s, a, ˆd(s, a)) ≤−κ + ϵ and the gap is therefore at least κ −2ϵ. Noting
+that this selection gap of κ −2ϵ is strictly positive since ϵ < ϵ0 < κ/2 completes the proof.
+Lemma 8 depends only on the coordinate inequalities definition Cϵ, and does not depend on any
+property of the critic. This is what allows us to use this in the proof of forward invariance without
+creating circular dependency. Note that this is stated for the whole family Cϵ and ∀π ∈Πq because
+the lemma applies to arbitrary greedy branch and at configurations in Cϵ0 rather than only in C0. A
+further consequence is that on Qcfg no tie between kernel-preserving and kernel-exiting action can
+arise, so choice of tie-breaking rule in the selection convention does not affect the following safety
+conclusions.
+B.6.2
+SAFETY CERTIFICATION OF THE FAST ATTRACTOR
+As the coupled iterated approach the graph of Λ(·), Gr Λ, rather than a single critic, safety certification
+(both positive and negative) must hold throughout Λ(q), uniformly over q ∈Cϵ0. For σ > 0, we
+define the certificate as,
+Yσ = {y ∈Q : y(x) ≥0 ∀x ∈I , y(x) ≤−σ ∀x ∈J },
+a closed convex polyhedron by Lemma 5(ii).
+Only the negative half of the certificate that constrains the safety critic on kernel-exiting triples is
+assumed as follows.
+Assumption 3 (Negative Certification of the fast attractor). ∃σΛ > 0, such that, at unit margin scale,
+y(x) ≤−σΛ ∀x ∈J , y ∈Λ1(q), q ∈Cϵ0.
+The corresponding condition on I is not assumed because it is preserved by every branch of the fast
+inclusion (proved in the following lemma and corollary) and therefore the certificate holds throughout
+Λ(q).
+Lemma 9 (Branchwise absorption of the positive constraints). Let q ∈Cϵ0 and π = (µ, ν) ∈Π(q).
+If y(x) ≥0 ∀x ∈I, then T ϕ
+π [y](x) ≥0 ∀x ∈I.
+Proof. Let x = (s, a, d) ∈I. Since s ∈Ω⊆Fc, we have Kg(s) > 0 by definition of the scaled
+safety margin function. As a ∈AΩ(s), every successor state s′ ∈Ω∀d ∈D. By Lemma 8,
+µ(s′) ∈AΩ(s′)
+=⇒
+(s′, µ(s′), ν(s′, µ(s′))) ∈I
+=⇒
+y(s′, µ(s′), ν(s′, µ(s′))) ≥0. Hence,
+Es′[y(·)] ≥0. Now, substituting these inequalities in the safety Bellman equation, Eq. 5, we get
+T ϕ
+π [y](x) = (1 −γ)Kg(s) + γ min{Kg(s), Es′[y(·)]} ≥0
+28
+
+
+Corollary 2 (Positive certification). For every q ∈Cϵ0 and every y ∈Λ1(q), y(x) ≥0 ∀x ∈I.
+Together with Assumption 3 this gives Λ1(q) ⊆YσΛ.
+Proof. Let P := {y : y(x) ≥0 ∀x ∈I}, a closed convex polyhedron, and let ρP denote the
+supremum-norm distance to P.
+1. As in Lemma 5, ρP(y) = maxx∈I(−y(x))+. If y violates the constraints of P by at most
+ϵ ≥0, then T ϕ
+π [y](x) ≥γ min{Kg(s), −ϵ} ≥−γϵ ∀x ∈I, π ∈Π(q) as in Lemma 9.
+This implies ρP(T ϕ
+π [y]) ≤γρP(y).
+2. Next, every element of Ψ(q, y) has the form w −y with ρP(w) ≤γρP(y), because of
+convexity of the relaxation of P. Lemma 7 therefore applies, with C = P, θ = γ, and
+R = ∞, at every y.
+3. For y ∈Λ1(q), by Eq. 11 there is a bounded complete solution y(·) of ˙y ∈Ψ(q, y) with
+y(0) = y, and by shift invariance y(s) ∈Λ1(q) ∀s ∈R.
+4. Noting that Λ1(q) is compact and ρP is continuous, we get M := maxw∈Λ1(q) ρP(w) is
+finite and ρP(y(−t)) ≤M ∀t > 0.
+5. Applying Lemma 7 on interval [−t, 0] with initial point of y(−t), we get,
+ρP(y(0)) ≤ρP(y(−t)) e−(1−γ)t ∀t > 0
+6. Taking the limit of t →∞, we get, ρP(y(0)) = 0 and P is closed. Hence, y ∈P.
+Remark 7 (On the selection of ˆd and index sets). The selection ˆd is unconstrained, and can be
+made to satisfy Assumption 3; this assumption is a condition on the existence of a suitable selection;
+however, it is not a condition on every kernel-exiting disturbance. Enlarging J to contain every
+kernel-exiting triple would shrink Qcfg and strengthen Assumption 3 without improving any conclusion,
+since Lemma 8 requires only mind q(s, a, d) ≤−κ, which a single coordinate already delivers.
+Remark 8 (Only the condition on J is assumed). We now want to reason whether the Corollary 2
+extends to J . Towards this end, let us first consider x = (s, a, ˆd(s, a)) ∈J , where s ∈Ωby definition
+of index set. This means Kg(s) > 0 and hence substituting in Eq. 5, we get (1 −γ)Kg(s) > 0.
+If T ϕ
+π [y](x) ≤−σ, then Es′[y(·)] ≤Kg(s) and Es′[y(·)] ≤−σ+(1−γ)Kg(s)
+γ
+. This second term
+of minimum in Eq. 5 is controlled by the values of y(x′), where x′ = (s′, ·, ·) and s′ /∈Ω, at
+successor states outside of Ω. Note that the index sets, I and J do not provide any information on
+the value of y at such successor states outside of Ω. Hence, we get a structural asymmetry: positive
+certification propagates since kernel-preserving action keeps every successor in Ωwhere we have
+the constraints, whereas negative certification must propagate into a region where nothing has been
+assumed. Certifying the condition on J therefore requires the Assumption 3 and Corollary 2 cannot
+extend to J .
+Proposition 3 (Margin Separation). Let Assumption 3 hold and set Θ := ((1−γ)Rmax +κ)/γ. Then,
+for every
+K ≥K := (1 −γ)Rmax + κ
+γσΛ
+(38)
+one has y(x) ≤−Θ for all x ∈J , all y ∈Λ(q), and all q ∈Cϵ0. If J = ∅the bound on K and the
+conclusion holds trivially.
+Proof.
+1. The safety Bellman operator is positively homogeneous of degree one in the margin-
+replacing g by Kg(s) and Qϕ by KQϕ leaves the Eq. 5 invariant for all K > 0.
+2. Π(q) is greedy with respect to q and is therefore independent of the positive margin scale.
+3. Noting that positive scaling commutes with the closed convex hull and graph completion,
+ΨK(q, Ky) = KΨ1(q, y).
+29
+
+
+4. y(·) is a bounded complete solution at unit scale if and only if Ky(·) is a complete solution
+at positive scale K.
+5. Taking time zero values in Eq. 11, gives us ΛK(q) = KΛ1(q).
+6. By Assumption 3, every y1 ∈Λ1(q) satisfies y1(x) ≤−σΛ∀x ∈J .
+7. Similarly, for every y = Ky1 ∈ΛK(q) satisfies y(x) ≤−Kσ ≤−Θ whenever Kσ ≥Θ,
+which is the stated bound.
+Note only the Assumption 3 interacts with K. The condition on I obtained in Corollary 2 is positive
+scale-invariant, that is, multiplying by K > 0 does not change the sign.
+B.6.3
+UNIFORM VIOLATION CONTRACTION
+Lemma 10 (Target Bounds). Let 0 ≤ϵ ≤ϵ0, q ∈Cϵ, and y ∈Λ(q). Then (i) Ty[q](x) ≤−κ for
+every x ∈J , and (ii) Ty[q](x) ≥−γϵ for every x ∈I.
+Proof. (i) Let x = (s, a, d) ∈J . Bounding each min in Eq. 6 by one of its arguments and using
+m(s, a, d) = min{r, Kg(s)} ≤r ≤Rmax,
+Ty[q](x) = (1 −γ)m(s, a, d) + γ min{r + E[Vq(s′)], y(x)} ≤(1 −γ)Rmax + γy(x).
+Since q ∈Cϵ0 and y ∈Λ(q), Proposition 3 gives y(x) ≤−Θ, so Ty[q](x) ≤(1−γ)Rmax−γΘ = −κ
+(again using definition of Θ as defined in Proposition 3). The bound depends only on Rmax, γ and Θ,
+and is therefore uniform in q and in y ∈Λ(q).
+(ii) Let x = (s, a, d) ∈I. Since s ∈Ω⊆F c we have g(s) > 0, and r ≥0, so m(s, a, d) ≥0 and
+the first term of Eq. 6 is non-negative. For the continuation term, a ∈AΩ(s), so every successor s′
+lies in Ω- against every disturbance, not only the one appearing in x. As s′ ∈Ω, the set AΩ(s′)̸ = ∅;
+fix a+ ∈AΩ(s′). Since I contains every disturbance coordinate, (s′, a+, d′) ∈I for all d′ ∈D, and
+q ∈Cϵ gives q(s′, a+, d′) ≥−ϵ for each such d′. Hence
+Vq(s′) = max
+a′ min
+d′ q(s′, a′, d′) ≥min
+d′ q(s′, a+, d′) ≥−ϵ
+the first inequality because a maximum over a′ is at least the value at the particular action a+.
+Therefore r+E[Vq(s′)] ≥−ϵ, while y(x) ≥0 by Corollary 2 on I. Since min{X, Y } ≥min{x, y}
+whenever X ≥x and Y ≥y,
+Ty[q](x) ≥(1 −γ) · 0 + γ · min{−ϵ, 0} = −γϵ
+Part (ii) of the above proof never identifies which action the greedy policy of Eq. 4 selects at s′, nor
+which disturbance is applied there: it requires only that some kernel-preserving action exist at s′ and
+carry value at least −ϵ. This is why the lower constraints propagate without any hypothesis on the
+disturbance policy, whereas the upper constraints require Assumption 3 on J .
+Corollary 3 (The joint operator contracts the violation). For 0 ≤ϵ ≤ϵ0 and every y ∈Λ(q),
+Ty[Cϵ] ⊆Cγϵ.
+Proof. Let q ∈Cϵ and y ∈Λ(q). Lemma 10(ii) gives Ty[q](x) ≥−γϵ for x ∈I, and Lemma 10(i)
+gives Ty[q](x) ≤−κ ≤−κ+γϵ for x ∈J . These are precisely the defining inequalities of Cγϵ.
+This is the property on which the invariance argument depends on: the joint Bellman operator maps
+each relaxed constraint set into a smaller one, uniformly over the critics in the fast attractor. It is not
+a consequence of Proposition 2, which holds the safety action-value fixed. Here, the critic ranges
+over Λ(q) while q itself moves and the composed map q 7→TYq[q] need not induce a contraction.
+Corollary 3 asserts the weaker but sufficient property that the operator contracts the distance to Qcfg.
+We now proceed to transfer the property from the individual operators to their occupation-measure
+average in the next section of the proof.
+30
+
+
+B.6.4
+AVERAGING OVER THE FAST ATTRACTOR PRESERVES THE VIOLATION CONTRACTION
+Lemma 11 (Averaging preserves the violation contraction). Let ρ(q) = ϵ < ϵ0. Then every v ∈G(q)
+has the form v = z −q with z ∈Cγϵ.
+Proof.
+1. By Eq. 12, there is a probability measure, P ∈D(q) supported on Λ(q) with
+v =
+Z
+Λ(q)
+(Ty[q]−q)P(dy) =
+Z
+Λ(q)
+Ty[q]P(dy)−
+Z
+Λ(q)
+qP(dy) =
+ Z
+Λ(q)
+Ty[q]P(dy)
+!
+−q
+2. Comparing this to v = z−q, gives us that z =
+R
+Λ(q) Ty[q]P(dy). In words, z is the averaged
+target.
+3. From Corollary 3, we know Ty[q] ∈Cγϵ for every y ∈Λ(q).
+4. From Lemma 5(ii), we know that Cγϵ is closed and convex. By extension, the averaged
+target z ∈Cγϵ.
+Averaging over occupation measures still preserves the violation contraction because of the convexity
+of Cϵ, since conv(Cϵ) = Cϵ.
+B.6.5
+FORWARD INVARIANCE
+Theorem 3 (Forward invariance and exponential attraction). Let Assumption 3 hold and let K ≥K. If
+ρ(q(0)) < ϵ0, then every solution of ˙q(t) ∈G(q(t)) satisfies ρ(q(t)) ≤ρ(q(0)) e−(1−γ)t
+∀t ≥0.
+In particular, if q(0) ∈Qcfg then q(t) ∈Qcfg ∀t ≥0, and Qcfg is exponentially attracting with basin
+containing the open neighbourhood {q : ρ(q) < ϵ0}. (Proof in Appendix B.6)
+Proof.
+1. Solutions of Eq. 37 are by definition absolutely continuous functions of time satisfy-
+ing ˙q(t) ∈G(q(t)) for almost every t.
+2. Such solutions exist because G is upper semicontinuous with nonempty compact convex
+values, Λ is nonempty, compact and upper semicontinuous by Lemma 1 and the barycentre
+map preserves these properties.
+3. By Lemma 11, for every q with ρ(q) < ϵ0 each v ∈G(q) has the form v = z −q with
+z ∈Cγρ(q).
+4. By Lemma 5(iii), ρ(z) ≤γρ(q).
+5. The hypothesis of Lemma 7 therefore holds with C = Qcfg, θ = γ and R = ϵ0. Since
+ρ(q(0)) < ϵ0, applying Lemma 7, yielding:
+ρ(q(t)) ≤ρ(q(0)) e−(1−γ)t
+∀t ≥0.
+(39)
+6. If q(0) ∈Qcfg then ρ(q(0)) = 0, so ρ ≡0 and q(t) ∈Qcfg ∀t by Lemma 5(iii). The
+exponential attractivity statement is the bound in Eq. 39.
+B.6.6
+THE SAFE CONFIGURATION SET CERTIFIES SAFETY
+Lemma 12 (Robust invariance of Ω). Let q ∈Qcfg. Then (i) infs∈ΩV ϕ
+πq(s) ≥0; and (ii) for
+every s0 ∈Ωand every disturbance sequence in D, the state trajectory generated by µq satisfies
+P(st ∈Ω∀t ≥0) = 1.
+Proof. We will first prove Part(i) below.
+31
+
+
+1. The fixed point Qϕ
+πq of the safety Bellman operator T ϕ
+πq satisfies T ϕ
+πq[Qϕ
+πq] −Qϕ
+πq = 0 ∈
+Ψ(q, Qϕ
+πq) by Eq. 11.
+2. So Qϕ
+πq is an equilibrium of the frozen inclusion. Therefore, by the second consequence of
+Eq. 11, Qϕ
+πq ∈Λ(q).
+3. Now, applying Corollary 2, gives us Qϕ
+πq(x) ≥0 ∀x ∈I.
+4. By Lemma 8, µq(s) ∈AΩ(s) and therefore (s, µq(s), νq(s, µq(s))) ∈I ∀νq(s, µq(s)) ∈
+D.
+5. Noting that µq and νq are deterministic, the maximum and minimum in the definition of the
+safety value function is over singletons, giving us
+V ϕ
+πq = max
+a∈µq(s)
+min
+d∈νq(s,µq(s)) Qϕ
+πq(s, a, d) = Qϕ
+πq(s, µq(s), νq(s, µq(s))) ≥0
+6. As the above reasoning holds ∀s ∈Ω, taking infimum over Ω, yields, infs∈ΩV ϕ
+πq ≥0.
+We will next prove Part(ii). Let Et := {st ∈Ω}. We show P(Et) = 1 for every t by induction.
+1. P(E0) = 1 by hypothesis.
+2. Suppose P(Et) = 1. On Et, Lemma 8 gives µq(st) ∈AΩ(st), so by the definition of AΩ,
+P(st+1 ∈Ω| st, µq(st), d) = 1 ∀d ∈D; taking expectations over Et yields P(Et+1) = 1,
+whichever disturbance is applied.
+3. Since the time index is discrete, {st ∈Ω∀t ≥0} = T
+t≥0 Et is a countable intersection of
+probability-one events and therefore has probability one.
+Corollary 1 (Safety of the induced policy). Let q(0) ∈Qcfg. Then at every t ≥0 the induced policy
+πq(t) satisfies infs∈ΩV ϕ
+πq(t)(s) ≥0 from any s0 ∈Ω, the state trajectory generated by µq(t) remains
+in Ωalmost surely, for all time and against every disturbance sequence. (Proof in Appendix B.6)
+Proof. From Theorem 3, we get q(t) ∈Qcfg ∀t ≥0 because q(0) ∈Qcfg. Finally, applying
+Lemma 12 at q = q(t), both assertions follow.
+Remark 9 (Scope). Corollary 1 concerns the trajectory generated by the policy induced at a given
+configuration. Safety throughout training would additionally require safe initialization together with
+a safe exploration mechanism, neither of which is assumed here.
+Remark 10 (Intuition for the Geometric Argument). The drift points from the current configuration
+toward an average of its Bellman images under the critics in Λ(q), each of which lies closer to Qcfg
+by the factor γ. A step along the drift is therefore a chord from q into Cγρ(q), and convexity of the
+distance function converts this into decay of ρ. Forward invariance is thus a statement about convex
+geometry.
+B.7
+CONVERGENCE TO OPTIMAL SAFETY-CONSTRAINED TASK PERFORMANCE (SEC. 6)
+Definition 5 (Optimal safety-constrained task value function). Let QΩ:= RI = {q : I →R}
+denote the restricted action-value space on the index set I. Define the robust safety-constrained task
+Bellman operator TΩ: QΩ→QΩ:
+TΩ[q](s, a, d) = r(s, a, d) + γE
+
+max
+a′∈AΩ(s′) min
+d′∈D q(s′, a′, d′)
+
+,
+(s, a, d) ∈I
+(14)
+Note that since AΩ(s)̸
+=
+∅for s
+∈
+Ω, by contraction, TΩ[·] has a unique fixed point
+Q∗
+Ω= TΩQ∗
+Ω, and thus, the optimal safety-constrained task value function is given by V ∗
+Ω(s) =
+32
+
+
+maxa∈AΩ(s) mind∈D Q∗
+Ω(s, a, d), which is the maximum expected return that a safe policy can accrue
+by keeping the agent in Ω. Moreover, let Q∗:= {q ∈Qcfg : q|I = Q∗
+Ω}. Thus, every q ∈Q∗⊆Q
+corresponds to a policy that is safe and attains the maximal possible return among all safe policies.
+Let Qϕ,1
+π
+denote the safety critic obtained by scaling the margin g(·) by K = 1. By homogeneity,
+Qϕ
+π := Qϕ,K
+π
+= KQϕ,1
+π . Next, let δΩ:= infq∈Qcfg minπ∈Π(q) mins∈ΩV ϕ,1
+π
+> 0 represent the
+lowest safety value (represents the closest a safe policy ever comes to ∂Ω).
+Theorem 4 (Convergence to optimal safety-constrained task performance). Let the sufficient margin
+scale K∗be defined as K∗:= Rmax+V
+δΩ
+= (2−γ)Rmax
+(1−γ)δΩ, with V := Rmax
+1−γ . Let U ⊂{q : ρ(q) < ϵ0}.
+Then, under Theorems 2-3, almost surely bounded iterates (Yn, Qn) and K ≥K∗≥K, δΩ> 0,
+every internally chain-transitive set of the averaged slow-timescale differential inclusion contained
+in Qcfg is a subset of Q∗: U ⊆Q∗:= {q ∈Qcfg : q|I = Q∗
+Ω}, and thus, dist (Qn, Q∗) →0 almost
+surely. Moreover, on U the averaged slow-timescale residual on kernel-preserving coordinates I
+is given by G(q)
+I = {TΩ[q|I] −q|I}. Thus, every corresponding limiting controller attains the
+optimal task value V ∗
+Ωon Ωwhile selecting only kernel-preserving actions. (Proof in Appendix B.7).
+Proof. For any q0 ∈U, since U is compact and U ⊆{q : ρ(q) < ϵ0}, applying Theorem 3 yields
+U ⊆Qcfg. Then, U ⊆Qcfg is a compact invariant set of the averaged slow-timescale differential
+inclusion ˙q(t) ∈G(q(t)). We will first prove that U ⊆Q∗.
+1. By definition of δΩ, for every q ∈Qcfg, every π ∈Π(q), and every s ∈Ω, we have
+V ϕ,1
+π
+(s) ≥δΩ, and thus, g(s) ≥δΩfor s ∈Ω. We will now show that every y ∈Λ(q)
+satisfies y(xi) ≥KδΩfor xi ∈I.
+Define ζ(y) := maxxi∈I (KδΩ−y(xi))+ which, by definition gives y(xi) ≥KδΩ−ζ(y).
+Next, note that, since xi = (s, a, d) ∈I, by definition, s ∈Ω, and a ∈AΩ(s), which
+implies that P(s′ ∈Ω| s, a, d) = 1. Thus, almost surely, E[y(s′, π(s′))] ≥KδΩ−ζ(y).
+Applying the above facts to the safety Bellman operator yields:
+T ϕ
+π [y](xi) = (1 −γ)Kg(s) + γ min {Kg(s), E[y(s′, π(s′))]}
+(40a)
+≥(1 −γ)Kg(s) + γ (KδΩ−ζ(y))
+(40b)
+= KδΩ−γζ(y)
+(40c)
+Since this holds for all policies π ∈Π(q), every convex combination has the same lower
+bound. Next, under Assumption 2, the induced limiting fast timescale dynamics is given by
+˙y(xi) = T ϕ
+π [y](xi) −y(xi). Plugging the above result yields ˙y(xi) ≥(1 −γ)ζ(y). Next,
+let E(t) := {xi ∈I : xi = arg maxxi∈I KδΩ−y(xi)(t)}. On these coordinates, the
+upper Dini derivative satisfies:
+D+ζ(y(t)) ≤max
+i∈E(t) D+ (KδΩ−y(xi)(t))+
+(41a)
+≤−(1 −γ)ζ(y(t))
+(41b)
+∴ζ(y(t)) ≤e−(1−γ)(t−s)ζ(y(s)), t ≥s
+(By Grönwall)
+(41c)
+For contradiction, assume ζ(y(0)) > 0, which yields ζ(y(s)) ≥e(1−γ)(0−s)ζ(y(0)). As
+s →−∞(since s < t), ζ(y(s)) →∞which is a contradiction, since y(·) is bounded, and
+thus, ζ(y(·)) must also be bounded. Thus, ζ(y(0)) = 0, and since y(0) is an arbitrary point
+of Λ(q), we must have y(xi) ≥KδΩ, for all xi ∈I and for all y ∈Λ(q).
+2. Next, let V := Rmax
+1−γ be the maximum task return possible. For a quasi-static q ∈U, y ∈Λ(q)
+and xi = (s, a, d) ∈I, since K∗≥K, we have:
+Kg(s) ≥KδΩ≥Rmax + V ≥Rmax ≥r(xi)
+(42)
+which implies that the safety truncation is inactive. Moreover, we showed above that
+y(xi) ≥KδΩ, and thus, the joint Bellman operator of Eq. 6 reduces to:
+Ty[q](xi) = r(xi) + γE [Vq(s′)]
+(43)
+33
+
+
+Since a ∈AΩ(s), s′ ∈Ωalmost surely; moreover, since q ∈Qcfg implies that every
+maximin greedy controller action at s′ ∈Ωis kernel preserving, we have:
+Vq(s′) =
+max
+a∈AΩ(s) min
+d′∈D q(s′, a′, d′)
+(44)
+thus, yielding Eq. 14. Consequently, with q = q|I, we have:
+G(y, q)|I = TΩ[q] −q
+∀y ∈Λ(q)
+(45)
+Averaging over any P ∈D(q)yields:
+(46)
+G(q)|I = {TΩ[q|I] −q|I} ,
+q ∈U
+(47)
+3. Next, note that the operator TΩis a γ-contraction in the supremum norm:
+∥TΩ[q] −TΩ[q′]∥∞≤γ ∥q −q′∥∞
+(48)
+and thus, possesses a unique fixed point Q∗
+Ω. Moreover, let q(·) be any complete solution
+contained in U. Let q(t) := q(t)|I. Then, by Eq. 47, ˙q(t) = TΩ[q(t)] −q(t). Now, since
+TΩ[Q∗
+Ω] = Q∗
+Ω, its contraction yields:
+D+ ∥q(t) −Q∗
+Ω∥∞≤−(1 −γ) ∥q(t) −Q∗
+Ω∥∞
+(49)
+If q(0)̸ = Q∗
+Ω, then by Grönwall:
+∥q(0) −Q∗
+Ω∥∞≤e−(1−γ)(0−s) ∥q(s) −Q∗
+Ω∥∞,
+s < t = 0
+(50)
+which contradicts the compactness of U. Thus, q|I = Q∗
+Ωfor all q ∈U. Moreover, since
+U ⊆Qcfg, we have
+U ⊆{q ∈Qcfg : q|I = Q∗
+Ω} = Q∗
+(51)
+4. Finally, by Theorem 2, the slow-timescale continuous affine interpolation Q(·) has a
+nonempty compact invariant internally chain-transitive ω-limit set. Moreover, by The-
+orem 3, this limit set lies in Qcfg. Hence, by the previous argument, we have almost surely
+ω(Q) ⊆Q∗. Since the iterates {Qn} are almost surely bounded, and Q∗is closed, every
+subsequential limit of {Qn} belongs to Q∗. Hence,
+dist (Qn, Q∗) →0
+a.s.
+(52)
+Thus, every corresponding limiting controller attains the optimal task value V ∗
+Ωon Ωwhile selecting
+only kernel-preserving actions.
+Intuitively, the sufficient margin scale K∗scales the safety critic just enough (i.e., based on δΩ) to
+ensure that the safety truncation is never active (as illustrated in Fig. 1). Consequently, if δΩ→0,
+i.e., if the safe policy approaches ∂Ωarbitrarily closely, then K∗→∞. If δΩ= 0, Theorem 4 no
+longer guarantees convergence to the optimal safety-constrained task value for any finite K; we can
+characterize the resulting finite-K conservatism as follows. Let ΓΩbe the set of kernel-preserving
+controller policies, and for ζ ≥0, define:
+ΓΩ,ζ :=
+
+µ ∈ΓΩ: inf
+ν inf
+s∈ΩV ϕ,1
+(µ,ν)(s) ≥ζ
+
+V ∗
+Ω,ζ(s) :=
+sup
+µ∈ΓΩ,ζ
+inf
+ν V ψ
+µ,ν(s)
+(53)
+Let ∆marg(ζ) := ∥V ∗
+Ω−V ∗
+Ω,ζ∥∞, and let V ∗
+K denote the optimal joint value of Eq. 3 over kernel-
+preserving controllers, for some finite K ≥K.
+Theorem 5 (Finite-K characterization). Define ζK := Rmax+V
+K
+= (2−γ)Rmax
+(1−γ)K . Assume there exists
+ζ such that ΓΩ,ζK̸ = ∅for all 0 < ζK < ζ (sufficiently large K). Then, 0 ≤V ∗
+Ω(s) −V ∗
+K(s) ≤
+∆marg(ζK) for s ∈Ω. Hence, if ∆marg(ζ) →0 as ζ ↓0, then V ∗
+K →V ∗
+Ωas K →∞. (Proof in
+Appendix B.7).
+Proof. For a given policy π = (µ, ν), let V K
+µ,ν denote the unique fixed point of the finite-K joint
+Bellman equation of Eq. 6, written as:
+TV ϕ,1
+µ,ν [v](s) = (1 −γ) min{rµ,ν(s), Kg(s)} + γ min
+
+rµ,ν(s) + E[v(s′)], KV ϕ,1
+µ,ν (s)
+	
+(54)
+Define V ∗
+K(s) := supµ∈ΓΩinfν V K
+µ,ν(s). Then, we have the following:
+34
+
+
+1. Let T ψ
+µ,ν[v](s) := rµ,ν(s) + γE[v(s′)] be the task Bellman operator of Eq. 1. Note that by
+definition of min{·}, we have TV ϕ,1
+µ,ν [v] ≤T ψ
+µ,ν[v]; taking infν and supµ∈ΓΩon both sides
+yield:
+V ∗
+K(s) ≤sup
+µ∈ΓΩ
+inf
+ν V ψ
+µ,ν(s) = V ∗
+Ω(s).
+(55)
+Thus, finite-K truncation can only decrease the task return obtained by the agent.
+2. Next, define:
+K∗:= Rmax + V
+δΩ
+= (2 −γ)Rmax
+(1 −γ)δΩ
+,
+V := Rmax
+1 −γ
+(56)
+Next, note that, for µζK ∈ΓΩ,ζK, V K
+µζK ,ν = V ψ
+µζK ,ν i.e., if the controller µ is uniformly "ζK
+units" away from ∂Ω, scaling by K prevents safety truncation to be active. This argument
+follows analogously from Eq. 56 and Eq. 42. Then, the following holds:
+V ∗
+K(s) = sup
+µ∈ΓΩ
+inf
+ν V K
+µ,ν(s)
+(57a)
+≥
+sup
+µ∈ΓΩ,ζK
+inf
+ν V K
+µ,ν(s)
+(finite-K suboptimality)
+(57b)
+=
+sup
+µ∈ΓΩ,ζK
+inf
+ν V ψ
+µζK ,ν(s)
+(57c)
+= V ∗
+Ω,ζK(s)
+(57d)
+Combining the above inequalities, we have:
+V ∗
+Ω,ζK(s) ≤V ∗
+K(s) ≤V ∗
+Ω(s)
+(58a)
+=⇒0 ≤V ∗
+Ω(s) −V ∗
+K(s) ≤V ∗
+Ω−V ∗
+Ω,ζK(s)
+(58b)
+≤∆marg(ζK)
+(58c)
+3. Finally, as K →∞, ζK = Rmax+V
+K
+→0, and thus, if ∆marg(ζ) →0 as ζ ↓0, then:
+∥V ∗
+Ω−V ∗
+K∥∞≤∆marg(ζK) →0 =⇒V ∗
+K →V ∗
+Ω
+uniformly on Ω
+(59)
+4. To characterize G(·) in this regime, consider the following analysis. For some q ∈Qcfg, let
+q = q|I with xi = (s, a, d) ∈I. Since q ∈Qcfg, we have TΩ[q](xi) = r(xi)+γE[Vq(s′)].
+Then, using the property min{a, b} = a −[a −b]+, we have:
+Ty[q](xi) = (1 −γ) min{r(xi), Kg(s)} + γ min{r(xi) + E[Vq(s′)], y(xi)}
+(60a)
+= TΩ[q](xi) −(1 −γ) [r(xi) −Kg(s)]+ −γ [r(xi) + E[Vq(s′)] −y(xi)]+
+(60b)
+Hence, the slow-timescale Bellman residual is given by:
+GK(y, q)|I = TΩ[q] −q −eK(y, q)
+(61a)
+where,
+eK(y, q) := (1 −γ) [r(xi) −Kg(s)]+ + γ [r(xi) + E[Vq(s′)] −y(xi)]+
+(61b)
+Averaging over an admissible occupation measure yields:
+GK(q)|I =
+
+TΩ[q] −q −eP
+K(q) : P ∈DK(q)
+	
+(62a)
+with eP
+K(q) := (1 −γ) [r(xi) −Kg(s)]+ + γ
+Z
+ΛK(q)
+[r(xi) + E[Vq(s′)] −y(xi)]+ P(dy)
+(62b)
+Note that when δΩ> 0 i.e., when K ≥K∗, we have y(xi) ≥r(xi) + E[Vq(s′)] with
+Kg(s) ≥r(xi), yielding eK(y, q) = eP
+K(q) = 0, resulting in G(q)
+I = {TΩ[q|I] −q|I}.
+35
+
+
+B.8
+EXTENSION TO ASYNCHRONOUS SETTINGS
+In this section, we discuss how our proposed framework extends to asynchronous coordinate updates
+using the asynchronous stochastic-approximation construction of (Perkins & Leslie, 2013). Let
+EQ and EY denote the finite coordinate sets of joint and safety critics; at iteration n, only subsets
+EQ
+n ⊆EQ and EY
+n ⊆EY need to be updated. For each coordinate x ∈S × A × D, let:
+N Q
+n (x) :=
+n
+X
+k=1
+1{x∈EQ
+k },
+N Y
+n (x) :=
+n
+X
+k=1
+1{x∈EY
+k }
+(63)
+be its local update counters, with corresponding local step sizes αN Q
+n (x) and βNY
+n (x) respectively. We
+assume the standard asynchronous regularity conditions of (Perkins & Leslie, 2013):
+- update process is recurrent so that every coordinate gets a uniformly asymptotic fraction of
+updates,
+- the local step-size sequences satisfy the required regularity and noise conditions,
+- the effective two-timescale separation is preserved.
+Then, there exists ϵQ, ϵY > 0 such that the effective relative update rates belong to:
+Mm
+ϵQ := {M = diag(λ1, . . . , λm) : λi ∈[ϵQ, 1]}
+with ϵ = ϵQ or ϵY
+(64)
+Consequently, the limiting mean fields get premultiplied by positive diagonal rescaling matrices. In
+particular, for a quasi-static q, the fast-timescale differential inclusion becomes:
+˙y(t) ∈M|EY |
+ϵY
+Ψ(q, y(t)) :=
+n
+Mhπ : M ∈M|EY |
+ϵY
+, hπ(y(t)) ∈Ψ(q, y(t))
+o
+(65)
+and its globally attracting set replaces Λ(q) in the two-timescale analysis. The corresponding slow-
+timescale limiting field is obtained analogously by averaging the diagonally rescaled Bellman residual
+over the admissible occupation measures.
+Note that this rescaling (due to asynchronity) does not alter any qualitative conclusions made in the
+synchronous setting. As every diagonal entry is positive, the coordinatewise inequalities retain their
+sign, with only their contraction rates being reduced at most by the corresponding ϵQ, ϵY factors. For
+instance, Eq. 41b and Eq. 49 become:
+D+ζ(y(t)) ≤−ϵY (1 −γ) ζ(y(t)),
+D+∥q(t) −Q∗
+Ω∥∞≤−ϵQ(1 −γ)∥q(t) −Q∗
+Ω∥∞
+(66)
+Hence, the asynchronous extension preserves the limiting safety and optimality results; only the
+effective convergence rates alter.
+C
+ADDITIONAL EXPERIMENTAL DETAILS AND RESULTS
+In this section, we provide more details of Sec. 7, where we choose to answer the following questions:
+(1) Does the proposed two-timescale learning framework achieve stable convergence on continuous-
+control tasks with TD bootstrapping via deep neural approximations? (2) How does our joint policy
+perform against well-established CMDP-based Safe RL benchmarks, particularly concerning its
+ability to achieve near-zero violations during evaluation without sacrificing task performance? (3)
+How does the set of safe states under the joint policy dynamically expand during the learning process?
+While our theoretical analysis establishes that the joint policy corresponding to the exact fixed
+point of Y ∗= Qϕ
+πQ∗,
+Q∗= TY ∗Q∗hard-guarantees safety and optimal safety-constrained task
+performance within the safe set, computing it using exact Dynamic Programming solutions is seldom
+feasible for high-dimensional continuous state spaces; hence, to scale our framework, we adopt
+techniques from deep RL to obtain neural approximations to our joint value function and policy. In
+particular, we closely follow the ISAACS framework (Hsu et al., 2023) with gradient descent-ascent
+finite timescale separation (τ-GDA) Fiez & Ratliff (2021) (between the adversarial disturbance and
+controller), built on the Soft Actor-Critic algorithm (Haarnoja et al., 2018), and call it JointSAC.
+36
+
+
+C.1
+LOW-DIMENSIONAL TABULAR EXPERIMENT
+In this subsection, we consider a low-dimensional dynamical system, namely the double integrator,
+and provide exact computation of the Joint Value function using tabular Dynamic Programming.
+Double-integrator System: We consider a deterministic double integrator with state z = (x, v) and
+control a:
+v+ = v + ∆t a
+x+ = x + ∆t v+
+|a| ≤1.
+(67)
+The safety margin is defined as g(x, v) = 1 −|x|, so the system must remain in |x| < 1. The state
+domain is given by the box x ∈[−2.5, 2.5], v ∈[−3, 3]. The system is rewarded for moving to
+xg = 1.2, with the reward signal:
+r(x, v, a) = exp
+
+−|x −xg|2
+σ2x
+−v2
+σ2v
+−λa|a|2
+
+∈(0, 1],
+(68)
+where σx = 0.8, σv = 1.0 indicate the bump width of the reward signal over xg = 1.2, vg = 0
+respectively, and λa = 1.0 denotes the cost on control effort. Thus, the task encourages exiting the
+right boundary, while safety requires braking early enough to remain inside |x| < 1.
+Discretization: We use ∆x = 0.01, ∆v = 0.05, ∆a = 0.25, and ∆t = 0.2, yielding 60,379 states
+and 9 actions. All value functions and policies are computed by full tabular dynamic programming to
+numerical convergence, with no neural network approximations.
+Safe set Ωand admissible actions: AΩ(z): For reference, the continuous-time safe set of the
+disturbance-free double integrator is
+Ωct =
+
+(x, v) : |x| ≤1,
+x + v|v|
+2
+ ≤1
+
+.
+(69)
+The experiment itself uses the exact kernel Ωh of the discretized dynamics. It is computed by finite
+backward reachability:
+S0 = z : g(z) > 0,
+Sk+1 = Sk ∩{z : ∃a ∈A, fh(z, a) ∈Sk} .
+(70)
+Because the state space is finite, this sequence terminates at its greatest fixed point Ωh. The admissible
+action set is then
+AΩh(z) = {a ∈A : fh(z, a) ∈Ωh} ,
+(71)
+which is nonempty for every z ∈Ωh by construction.
+Decoupled baselines: We independently compute an unconstrained task critic Qtask and a task-
+oblivious optimal safety critic Q∗
+safe. We compare against three runtime compositions:
+1. A “hard mask”:
+µmask(z) ∈
+arg max
+a:Q∗
+safe(z,a)≥0
+Qtask(z, a).
+(72)
+We verify exhaustively that
+{a : Q∗
+safe(z, a) ≥0} = AΩh(z)
+(73)
+for every viable state-action pair. Hence, any performance difference is caused by the
+ranking of admissible actions, not by an inaccurate safety critic or a mismatched feasible set.
+2. A least-restrictive filter, which executes the unconstrained greedy action when it is admissible
+and otherwise switches to arg maxa Q∗
+safe(z, a).
+3. A nearest-safe-action, Q-CBF-style projection, which selects the admissible action closest
+to the unconstrained greedy action.
+The oracle value Q∗is obtained by directly running value iteration, restricted to AΩh(z) (unlike the
+hard mask, where Qtask is first obtained).
+37
+
+
+Computation of the joint value: On the fast timescale (inner loop), we compute Eq. (5) in the paper
+for a given joint value function (and its joint policy πQk) until convergence, and on the slow timescale
+(outer loop), we compute Eq. (6) in the paper, given the previously converged safety critic Yk. This
+implements the two-timescale separation corresponding to αn/βn →0.
+The following table provides optimality gap characterization (mean, median, max, and violations) for
+each method, where the optimality gap is defined as
+∆= V ∗
+Ωh −V method(z) :
+(74)
+Policy
+Mean
+Median
+Max
+Violations
+Oracle
+0
+0
+0
+0
+Hard mask
+0.301
+0.304
+0.507
+0
+Q-CBF
+0.301
+0.304
+0.507
+0
+Least-restrictive
+0.452
+0.442
+0.820
+0
+Joint (K = 2 × 104)
+0
+0
+0
+0
+Joint (K = 1 × 104)
+0.541
+0.5366
+3.0394
+0
+Joint (K = 5 × 103)
+1.1076
+1.1
+3.5627
+0
+Joint (K = 1 × 103)
+5.6149
+5.6476
+11.2038
+0
+We see that an exact runtime composition of independently computed reward and safety critics
+is already near-optimal. Our joint framework recovers the viability-restricted optimum at a large
+margin scale (K). The improvement over the hard mask and the least-restrictive filter is likely due
+to propagating the policy-conditioned safety truncation backward through the Bellman updates;
+earlier actions are ranked according to their safety-constrained evaluation (conditional on overcoming
+finite-K conservatism).
+C.2
+SAFE SET EXPANSION
+Since the safety value function V ϕ
+π evaluates the reward-maximizing joint policy π, in theory, the safe
+set
+
+s : V ϕ
+π (s) > 0
+	
+expands in the direction of maximum task return, before asymptotically reaching
+the maximal safe set. We demonstrate this on InvertedPendulum-v4, rewarding positive cart
+velocity within ±0.8m limits. Thus, the agent slides towards the positive x-limit, after which it stays
+there, balancing the pole. The safe set expansion towards 0.8m during training is illustrated in Fig. 3.
+Figure 3:
+Safe set expands initially in the direction of high rewards during training
+(InvertedPendulum-v4 rewarded for positive cart velocity), before converging to the max-
+imal safe set. Constraint boundary (red dotted line) and 0-level set of safety critic (black line) are
+visualized.
+C.3
+CONTINUOUS CONTROL EXPERIMENTAL SETUP
+We evaluate our proposed framework across a suite of high-dimensional continuous control tasks
+implemented in the MuJoCo simulator (Todorov et al., 2012), utilizing environments from both
+Gymnasium (Towers et al., 2026) and SafetyGymnasium (Ji et al., 2023). The primary objective
+in all tasks is to maximize returns while strictly satisfying safety constraints at all times.
+Simulation Tasks We consider three locomotion environments from Gymnasium MuJoCo suite
+(Towers et al., 2026) and eight single agent environments from the SafeVelocity suite from
+Safety-Gymnasium(Ji et al., 2023).
+1. Gymnasium (Liveness constraints): Here, safety is implicitly defined by the environment’s
+liveness bounds, which mandate postural stability to avoid premature episode termination
+38
+
+
+while moving forward. To rigorously test the safety guarantees of our formulation, we
+augment the environment with a physical adversary. The adversary applies continuous
+bounded disturbances directly to the agent’s torso. Thus, while the controller attempts to
+safely maximize forward locomotion, the adversary actively seeks to destabilize the agent
+and prematurely terminate the episode.
+2. SafeVelocity (Conflicting Objectives): To evaluate our framework under explicitly con-
+flicting reward-cost signals, we utilize the SafeVelocity suite of SafetyGymnasium.
+Here, agents receive monotonically increasing rewards for forward velocity, but incur safety
+violations if they exceed a predefined safety limit. As with standard Gymnasium tasks, we
+subject these agents to adversarial torso disturbances, causing the agent to either prematurely
+terminate (violating liveness bounds) or push the agent over the speed limits.
+Baselines We compare our method against a safety filter baseline (least-restrictive safety filter)
+and three well-established CMDP baselines. We specifically select these CMDP baselines, as
+they represent the two dominant paradigms of model-free Safe RL: Lagrangian dual-descent and
+trust-region projections:
+1. Safety Filters (LRSF): Safety filters (Hsu et al., 2024; Fisac et al., 2019) serve as the
+standard Hamilton-Jacobi-reachability-based baseline, where a task-oblivious safety value
+function (often termed a “safety critic”) is learned for an entire operational design domain
+(ODD), where the constraint set (and hence its complement, the failure set) is often encoded
+by a margin function. Given any safety-oblivious task policy, one can query for the safety of
+its actions (by querying the safety-action value function). If the action is deemed unsafe,
+only then does the filter intervene by choosing a greedy action w.r.t. the safety-action value
+function. Hence, this style of intervention is called least-restrictive (LR-safety filters).
+2. Projection-based Constrained Policy Optimization (PCPO): PCPO (Yang et al., 2020)
+serves as the standard projection-based baseline, employing a two-step trust region frame-
+work. It first optimizes the reward advantage function subject to a Kullback-Leibler (KL)
+divergence constraint, ignoring safety entirely. In the second step, it explicitly projects this
+intermediate policy onto a feasible safe set. To preserve task performance, this projection
+minimizes either an L2 norm or a KL-divergence distance penalty with a second-order
+Taylor expansion.
+3. PPO-Lagrangian (PPOLag): Ray et al. (2019); Ji et al. (2024) combine the Lagrangian
+multiplier approach with Proximal Policy Optimization (PPO) to obtain PPOLag. It en-
+forces safety bounds using dynamic penalty coefficients, solving the equivalent min-max
+optimization problem via alternating gradient ascent on the reward objective and dual
+gradient descent on the constraint violation costs.
+4. SAC-Lagrangian (SACLag): This baseline (SACLag) (Ray et al., 2019; Ji et al., 2024) is
+conceptually identical to PPOLag, but replaces the underlying architecture with Soft-Actor
+Critic (Haarnoja et al., 2018).
+Robust Adversarial Integration: To incorporate adversarial disturbances, we modify all baselines
+into adversarial zero-sum formulations using the principles of Robust Adversarial RL (Pinto et al.,
+2017). We introduce a secondary adversarial disturbance ν(s′, a′) that can observe the controller’s
+actions a′ ∈µ(s′) and injects adversarial bounded perturbations into the environment dynamics.
+This yields robust versions of all three baselines, where the controller seeks to maximize the dynamic
+Lagrangian objective (maximize rewards, minimize violation costs), while the adversarial disturbance
+actively attacks and minimizes it.
+Metrics We use cumulative Episodic Return and Episodic Cost tracked across training to evaluate
+stable convergence. We also use cumulative reward and episode cost as the evaluation metrics. For
+Lagrangian-based methods, a permissive cost violation threshold of d = 0 is allowed. We take safety
+as the primary criterion for evaluations, and pursue higher rewards on the basis of meeting safety
+requirements.
+Compute We train our algorithms on a slurm cluster with a single Nvidia L40, 48GB of VRAM.
+Each run takes 4 CPU cores. We implement the code in PyTorch, and all experiments take up to 4
+days to fully train for 5M timesteps.
+Hyperparameters
+39
+
+
+• We
+choose
+seeds
+5
+training
+seeds:
+[0, 5, 10, 15, 20]
+as
+the
+algorithms
+in
+SafetyGymnasium have been reported to be stable on these seeds.
+• We tune the scaling of the margin function β(g(s)) = K · g(s) based on the maximum task
+return possible for each environment. Additionally, we pick the maximum value of K such
+that there are no safety violations / algorithmic instabilities. Specifically, we choose the
+following:
+1. Hopper-v4: 800.0
+2. Walker2d-v4: 1200.0
+3. InvertedPendulum-v4: 200.0
+4. SafetyWalker2dVelocity: 1200.0
+5. SafetyHopperVelocity: 800.0
+6. SafetyHalfCheetahVelocity: 1200.0
+7. SafetyAntVelocity: 1200.0
+We pick the disturbance magnitude (applied to the torso) that is meaningfully challenging to
+the agent. Any higher value resulted in high safety violations for all algorithms:
+1. InvertedPendulum-v4: 5.0
+2. Walker2d-v4: 30.0
+3. Hopper2d-v4: 7.5
+4. SafetyWalker2dVelocity: 25.0
+5. SafetyHopperVelocity: 5.0
+6. SafetyHalfCheetahVelocity: 20.0
+7. SafetyAntVelocity: 2.5
+• For For JointSAC, we use a safety-critic learning rate of 1.0×10−3, a joint-critic learning
+rate of 5 × 10−4, a controller actor learning rate of 1 × 10−4, a disturbance learning rate
+of 5 × 10−4, and autotune alpha (entropy term) with a learning rate of 5 × 10−4. We
+implement timescale separation through the critic learning rates: the joint critic is updated
+at half the learning rate of the safety critic, with both critics updated at every step (this led to
+stable training while completing in reasonable amount of time, requiring around 5M training
+steps; polyak averaging (τ = 5 × 10−3) is used only for the target networks of both critics.
+Finally, we use different discount factors γ for the joint Bellman equation and eγ for the
+safety Bellman equation; we anneal eγ from 0.85 to γ = 0.99 while training progresses, as
+discussed in (Fisac et al., 2019).
+C.4
+MARGIN SCALE K VARIATION
+We perform an ablation experiment on the variation of episode rewards and cost as K increases
+progressively (in steps of 200, from K = 200 to K = 2000). Results are illustrated in Fig. 4 for
+4 environments - Hopper, Walker2d (from Gymnasium suite), and SafetyHalfCheetah,
+SafetyWalker2d (from SafetyGymnasium suite). Training was conducted on 5 seeds, and
+each training seed was evaluated for 300 unique episodes, totaling 1, 500 unique evaluation episodes.
+The general trend agrees with our previous discussion in Sections 4-6: scaling K generally improves
+episode reward (as the region Ωψ increases), while safety is generally preserved, with small variations.
+However, one can also observe that increasing K too much may lead to training instabilities (as seen
+in Walker2d environment).
+C.5
+ADDITIONAL RESULTS
+The training curves for 5 seeds on:
+• three locomotion tasks from Gymnasium suite incorporating adversarial disturbance is
+presented in Fig. 5
+• eight
+single
+agent
+environments
+from
+SafeVelocity
+(v0)
+suite
+from
+Safety-Gymnasium incorporating adversarial disturbance is presented in Fig. 6
+40
+
+
+2000
+2500
+3000
+Episode Reward
+Hopper
+400
+800
+1200
+1600
+2000
+K
+0.00
+0.25
+0.50
+Episode Cost
+0
+1000
+2000
+Episode Reward
+SafetyHalfCheetahVel-v0
+400
+800
+1200
+1600
+2000
+K
+0.00
+0.25
+0.50
+Episode Cost
+0
+1000
+2000
+3000
+Episode Reward
+SafetyWalker2dVel-v1
+400
+800
+1200
+1600
+2000
+K
+0.00
+0.25
+0.50
+Episode Cost
+0
+1000
+2000
+3000
+4000
+Episode Reward
+Walker2d
+400
+800
+1200
+1600
+2000
+K
+0.00
+0.25
+0.50
+Episode Cost
+Figure 4: Figure shows variation of episode reward and episode cost as K increases from 200 to 2000.
+While episode reward generally tends to increase with an increase in K, scaling beyond a point can
+introduce training instabilities with neural approximations, as seen with Walker2d environment.
+These results align with the results presented in Sec. 7.2. Throughout training, JointSAC demon-
+strates stable convergence to high task rewards, while consistently incurring near-zero episode costs.
+A single cost violation incurs +1 penalty each timestep. The baseline methods exhibit higher variance,
+with only a subset of them reliably converging below the permissible cost threshold (d = 0).
+For evaluations, we perform 300 rollout evaluations for each of the 5 training seeds (totaling 1, 500
+distinct episodes per environment), with results summarized in Table 1. Results indicate that
+JointSAC maintains near-zero costs across all 11 environments (maximum of 0.03 ± 0.08 on the
+Hopper-v4 adversarial environment), while the baseline exhibits varied cost violations, occasionally
+achieving high episode costs for some environments and staying below the permissible cost violation
+for others. Overall, it is seen that JointSAC yields stable performance while maintaining near-zero
+violations.
+0
+300
+600
+900
+Episode Reward
+InvertedPendulum
+0
+1000
+2000
+3000
+Hopper
+0
+1500
+3000
+4500
+Walker2d
+0
+1
+2
+3
+4
+5
+Environment Steps
+×106
+0
+15
+30
+45
+Episode Cost
+0
+1
+2
+3
+4
+5
+Environment Steps
+×106
+0
+15
+30
+45
+0
+1
+2
+3
+4
+5
+Environment Steps
+×106
+0
+15
+30
+45
+JointSAC
+PPOLag
+PCPO
+SACLag
+Figure 5: Training performance across 5 seeds (mean ± standard deviation) on three locomotion
+tasks from Gymnasium suite with adversarial disturbances. The top row indicates episodic returns,
+while the bottom row indicates episodic costs as training progresses. JointSAC demonstrates stable
+convergence with near-zero episode costs on two out of three tasks. A single cost violation incurs +1
+penalty each timestep.
+41
+
+
+−7500
+−5000
+−2500
+0
+Episode Reward
+SafetyAntVel-v0
+0
+2000
+4000
+SafetyHalfCheetahVel-v0
+0
+600
+1200
+1800
+SafetyHopperVel-v0
+0
+800
+1600
+2400
+SafetyWalker2dVel-v0
+0
+1
+2
+3
+4
+5
+Environment Steps
+×106
+0
+15
+30
+45
+Episode Cost
+0
+1
+2
+3
+4
+5
+Environment Steps
+×106
+0
+15
+30
+45
+0
+1
+2
+3
+4
+5
+Environment Steps
+×106
+0
+15
+30
+45
+0
+1
+2
+3
+4
+5
+Environment Steps
+×106
+0
+15
+30
+45
+JointSAC
+PPOLag
+PCPO
+SACLag
+Figure 6: Training performance across 5 seeds (mean ± standard deviation) on eight single agent
+environments from SafeVelocity (v0) suite from SafetyGymnasium with adversarial distur-
+bances. The top two rows indicate episodic returns, while the bottom two rows indicate episodic costs
+as training progresses. JointSAC demonstrates stable convergence with near-zero episode costs.
+42

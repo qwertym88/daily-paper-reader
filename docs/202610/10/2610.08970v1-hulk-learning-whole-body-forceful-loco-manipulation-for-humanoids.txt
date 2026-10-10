@@ -1,0 +1,2018 @@
+HULK: Learning Whole-Body Forceful Loco-Manipulation for
+Humanoids
+An Dang∗1,2, Arturo Flores Alvarez∗1,3, Yu-Ming Chen1, Conor Mc Gartoll1, Helen Sun1,
+Aaron Ames1,4, Nima Fazeli1,2, Manikantan Nambi1
+Farmer's walk – 6 kg each
+Grasp and Transport
+Balanced Strength
+Deadlift – 14 kg
+Fig. 1: HULK enables loco-manipulation of heavy loads, anywhere on the upper body. HULK first trains two specialists:
+one that tracks arm motions under forces applied at the wrists, and one that locomotes while holding large objects against
+the body. Next, it distills them into a single policy that drives one whole-body command interface. A predictive model of
+the loaded robot guides both specialists during training, so the policy anticipates how a payload alters the robot’s centroidal
+dynamics rather than discovering this relationship from reward alone. This pipeline enables the robot to perform on unseen
+tasks such as farmer’s carry and deadlift. Project website: www.hulk-forceful-wbc.com.
+Abstract— Humanoid loco-manipulation of large, heavy ob-
+jects demands forceful interaction across the entire body.
+However, such payloads shift a humanoid’s center of mass
+and impose sustained loads across the upper body, challeng-
+ing balance and tracking. We present HULK, a whole-body
+control framework for forceful loco-manipulation. Using model
+predictive control (MPC) to guide reinforcement learning with
+predictions of the loaded dynamics, we train two teachers:
+one tracks arm motions under wrist forces, and the other
+locomotes while holding large objects against the body. A
+capture-point control barrier function augments the wrist-force
+teacher during training to improve balance under load. We
+distill both teachers into a single policy. We evaluate our method
+on a Unitree G1 in both simulation and the real-world. In
+simulation, the teacher with the barrier function achieves the
+lowest forward and lateral velocity tracking errors at 10 kg
+per arm among evaluated controllers and reduces aggregate
+balance metric by 35.7% relative to MPC-guided reinforcement
+learning alone. Our wrist-force teacher withstands torso push
+disturbances of up to 130 N.
+∗Equal contribution. This work was done during an internship at Amazon.
+1Amazon,
+<andangt,amfloalv,yumingch,cmcgtoll,
+sunhele,aames,nfz,mnambi>@amazon.com
+2University of Michigan, <andang,nfz>@umich.edu
+3University of California, Los Angeles, afloresa@ucla.edu
+4California Institute of Technology, ames@caltech.edu
+I. INTRODUCTION
+Humanoid robots are a compelling form factor for a
+world built around the human body. The promise is a single
+platform that can perform the same physical labor as people,
+in the same unmodified spaces. Realizing this promise,
+however, requires forceful whole-body work: lifting a loaded
+tote, leaning into a cart, or carrying a heavy object against the
+chest while walking. These tasks recur throughout logistics,
+manufacturing, and assistive applications. What these tasks
+share is a load the robot must sustain rather than reject:
+it persists for the task’s duration, shifts where the robot’s
+weight sits, and competes for actuation that keeps it balanced.
+Current approaches to humanoid loco-manipulation have
+converged on a layered control strategy. At the bottom sits a
+learned whole-body controller (WBC): a policy that turns a
+compact set of task-space commands, such as base velocity,
+torso pose, and arm targets, into joint actions that keep the
+robot balanced. Above it, planners, teleoperation interfaces,
+and agentic pipelines issue those commands without reason-
+ing about balance themselves, treating the WBC as a low-
+level “System 0” [1], [2]. Massively parallel reinforcement
+learning (RL) in simulation has made this bottom layer
+arXiv:2610.08970v1  [cs.RO]  6 Oct 2026
+
+
+Stage 1: Wrist-Force Teacher
+Stage 3: Student Training
+Stage 2: Whole-body Grasp Teacher
+DAgger
+a
+a
+warmstart
+warmstart
+Fig. 2: Training overview. We decompose training into 3 stages. In stage 1, we train a teacher πwf
+θ that follows high-level
+commands ct while undergoing force perturbations at the wrists. High-level commands include upper body joint targets
+qupper,c
+t
+, commanded linear velocity vc
+t, commanded angular velocity in z direction ωc
+t, and height command hc
+t. In stage
+2, the teacher πwbg
+ψ
+follows these commands while maintaining whole-body grasps across multiple object geometries. In
+stage 3, the student policy πdistill
+ϕ
+is trained using DAgger with teacher mode conditioning mt ∈{0, 1}. The student takes
+in sensor observations ot only present on a humanoid such as high-level commands, joint position qt, joint velocity ˙qt,
+angular velocity ωt, previous action at−1, and projected gravity ˆgt.
+reliable enough to serve as that substrate [3], [4], [5], [6], [7],
+[8], and progress above it has been rapid along two fronts:
+agility, pushing the dynamism of whole-body skills [9],
+[10], [11], and perception, closing the loop on terrain and
+obstacles [12], [13].
+Forceful interaction, however, remains comparatively un-
+derexplored. Unlike agility and perception, it requires the
+WBC to adapt its balance strategy to large and sustained
+external wrenches. A heavy payload changes the forces and
+moments that must be supported by the robot, with their
+effect varying continuously with the arm configuration and
+the object’s pose relative to the body. Existing approaches
+address parts of this problem. Compliance-based methods
+lower the effective stiffness of the robot so that it yields
+under unexpected contact [14]; while effective for incidental
+interaction, this behavior is poorly suited to supporting a
+heavy payload against gravity. The strongest forceful con-
+trollers instead learn to resist applied forces, but only at the
+wrists [15], or only for horizontal push–pull moments [16],
+[17]. Carrying a load further requires this adaptation to
+persist: the disturbance is not a transient to be rejected,
+but a condition that remains throughout the task. The robot
+must therefore maintain balance under a continuously applied
+wrench while simultaneously producing the forces required
+for manipulation.
+We address the displaced center of mass and sustained
+balance under load in a single learned policy. Model predic-
+tive control (MPC) supplies reward guidance during RL [18],
+giving the policy a model-based signal for how a load moves
+the centroidal state rather than requiring it to discover that
+relationship from reward alone. We then augment the wrist-
+force teacher with a capture-point control barrier function
+(CBF) [19], [20]. Following CBF-RL [21], the barrier acts
+during training to improve learned balance recovery under
+load while retaining network-only inference. Our contribu-
+tions are:
+1) We extend learned whole-body control to forceful in-
+teractions between external objects and contacts across
+the humanoid upper body.
+2) We use MPC reward guidance to train robust locomo-
+tion and loco-manipulation under sustained payloads.
+3) We augment the wrist-force teacher with training-time
+capture-point constraints, improving loaded tracking
+and balance recovery while retaining network-only in-
+ference.
+II. RELATED WORKS
+Whole-body Control. Whole-body controllers have lately
+been trained using reinforcement learning to follow high-
+level commands while actively stabilizing the humanoid.
+Several works [3], [4], [5], [6], [8] demonstrate the capabili-
+ties of sim-to-real reinforcement learning for motion tracking
+or teleoperation of the humanoid for human-like behavior
+on hardware. Large-scale models now expose whole-body
+control as a general-purpose interface: SONIC [7] supersizes
+motion tracking toward natural whole-body control using a
+large human motion tracking dataset. These methods address
+kinematic tracking rather than forces and persistent loading.
+Forceful Whole-body Control. Two efforts define the force-
+ful direction. FALCON [15] rejects force perturbations at
+the wrists with a wrist-force curriculum and a dual-network
+architecture, but struggles to hold commands while doing
+so. Thor [16] leans the torso to recruit the robot’s own
+weight, using ZMP analysis of sagittal-plane wrist forces,
+and so addresses horizontal push–pull rather than downward
+payload forces. Neither models whole-body object interac-
+tion during training, so the payload-augmented center of
+mass degrades locomotion under heavy load. HAFO [17] and
+
+
+(b)
+(c)
+(a)
+Fig. 3: Centroidal MPC Force Reasoning. In (a), we show the G1 about to fall over with forward angular momentum. The
+MPC generates a plan of the CoM trajectory and ground reaction forces to re-stabilize the angular momentum of the robot
+and keep an upright posture. The green annotations correspond to left foot while the blue ones correspond to right foot. The
+light blue ghosts illustrate the G1 following the MPC plan. (b) and (c) showcase the G1 stabilizing from an external pushes
+in a hands-free and minifridge grasp scenario.
+load-aware adaptation [22] target force-adaptive control, but
+heavy payloads remain open, while Hold My Beer [23] and
+FACET [24] stabilize a payload under gentle motion rather
+than sustaining large loads.
+Outside the learned-WBC setting, payload carrying has
+been addressed by hierarchical optimization [25] and by
+distilling trajectory optimization into skills [26], both in-
+dicating that a model of the loaded dynamics is valuable;
+Dao et al. [27] show sim-to-real box loco-manipulation with-
+out a whole-body command interface. AMO [28] provides
+such an interface but assumes both feet remain in contact.
+Closest to our approach, Li et al. [18] use model predictive
+control for reward guidance and demonstrates cart-pushing
+and payload carrying. However, this method treats interac-
+tions as forces applied at the wrists rather than incorporating
+a payload wrench into reference generation, and it does
+not address contact against the torso. We extend it to a
+whole-body controller accepting height, torso-tilt and arm
+commands, with payloads entering the model through force
+perturbations and whole-body grasp force profiles.
+Balance Constraints in Learned Control. Control barrier
+functions are ordinarily enforced by a runtime quadratic pro-
+gram that minimally corrects a nominal controller [19], [20],
+[29], which for a learned policy means shipping a reduced-
+order model, gradient and solver alongside the network.
+CBF-RL [21] instead applies the correction during training
+and penalizes the residual in the reward, so the requirement is
+internalized and deployment carries no extra machinery. We
+adopt that formulation. Because a sustained external wrench
+displaces the center of mass for a whole episode, the quantity
+to constrain is a balance state under load, for which the
+capture point model [30], is the natural choice.
+III. METHODOLOGY
+Our goal is to learn a single whole-body controller for
+payload-driven loco-manipulation: a policy that follows pla-
+nar velocity, base height, torso orientation and arm joint
+commands while a load acts anywhere on the upper body,
+and that transfers to hardware from proprioception alone. We
+train two specialist teachers separately, one that tracks arm
+poses under forces applied at the wrists and one that loco-
+motes while maintaining whole-body grasps across multiple
+objects. We distill the two into the single student we deploy
+(Sec. III-G, Fig. 2). The teachers both share a reward whose
+force-aware terms are supplied by a predictive model of the
+loaded robot rather than hand-designed (Sec. III-B), using a
+centroidal model as the predictor (Sec. III-C) together with
+the references that inform it of the load (Sec. III-D), and
+balance imposed by a barrier function during training instead
+of a runtime filter (Sec. III-F). The two differ only in the
+interaction each is exposed to and how it enters the model,
+which we make concrete once per teacher in Sec. III-E.
+A. Problem Formulation
+We formulate forceful whole-body control as an infinite-
+horizon discrete-time partially observable Markov deci-
+sion process (POMDP) defined by the tuple M
+:=
+(S, O, A, R, P, ρ0, γ) with state space S, observation space
+O, action space A, reward R(s, a), transition probability
+P(s′ | s, a), initial state distribution ρ0, and discount factor
+γ ∈[0, 1). The robot seeks a policy πθ(a | o), parameterized
+by θ, that maximizes the expected discounted return J =
+Eπθ
+ P∞
+t=0 γtrt
+
+over control steps t, where s ∈S, o ∈O,
+a ∈A, and rt = R(st, at).
+B. MPC Reward Guidance
+We use MPC to generate outputs that will be tracked
+in the reward formulation of both teachers. These outputs
+include contact/interaction forces between the robot and
+its environment, the robot center of mass (CoM), and the
+rotation of the robot pelvis. We use MPC to solve the
+
+
+following optimization problem over a horizon of N steps
+of duration ∆t, given a dynamics model and constraints:
+min
+Z
+N−1
+X
+k=0
+Lk(xk, uk) + L∆,k(uk, uk−1) + LN(xN) (1a)
+s.t.
+xk+1 = f∆t(xk, uk),
+k = 0, . . . , N −1,
+(1b)
+uk ∈Uk,
+k = 0, . . . , N −1,
+(1c)
+x0 = Φ(qt, ˙qt),
+(1d)
+where Z = {x1, . . . , xN, u0, . . . , uN−1}, xk and uk are the
+state and control input at horizon step k (both made concrete
+in Sec. III-C), f∆t is the dynamics model discretized at ∆t,
+Φ maps the measured full-order configuration and velocity
+(qt, ˙qt) to the reduced-order state, and Uk represents the
+control input set that each uk is an element of. We define
+our stage and terminal costs as quadratic costs defined as:
+Lk = ∥xk −xref
+k ∥2
+Q + ∥uk −uref
+k ∥2
+W,
+(2)
+L∆,k = ∥uk −uk−1∥2
+W∆
+(3)
+LN = ∥xN −xref
+N ∥2
+QN ,
+(4)
+where ∥v∥2
+A = v⊤Av for any vector v and weight matrix
+A, xref
+k
+is the reference trajectory generated from the high-
+level commands, uref
+k
+is an input reference that is zero unless
+a known external load is being planned for (Sec. III-E), so
+that the second term is plain input regularization by default,
+u−1 is the input applied at the previous solve, and Q, W,
+and QN represent tunable diagonal positive semi-definite
+matrices for the MPC optimization problem.
+Solving (1) yields an optimal state trajectory {˜xk}N
+k=0 and
+input trajectory {˜uk}N−1
+k=0 . Rather than executing the plan, we
+use it as reward guidance for RL [18]: the policy is rewarded
+for keeping the measured robot state close to the plan,
+rmpc
+t
+=
+X
+i∈T
+exp
+ −αi ∥Λi(˜xk(t), ˜uk(t))−Λi(xt, ut)∥2
+, (5)
+where T indexes the tracked quantities, each Λi extracts one
+of them from the plan at the horizon step k(t) corresponding
+to time t and from the measured reduced-order state xt
+and measured interaction forces ut, and αi > 0 sets the
+sensitivity of the i-th term; the tracked quantities themselves
+follow from the choice of model (Sec. III-C). This gives the
+policy a signal for how the payload displaces the reduced-
+order state, rather than requiring it to discover the loaded
+dynamics from task rewards alone.
+C. Centroidal Dynamics
+For reward guidance the plan need only be dynamically
+consistent rather than full-order, so we adopt the reduced-
+order model of [18] and extend its interaction set to the
+upper body. The state of (1) is the centroidal state xk =
+(ck, Θk, lk, κk) ∈R12, collecting the CoM position, the
+base roll, pitch and yaw, and the centroidal linear and angular
+momenta, respectively. The input uk = (fi,k, τ i,k)i∈C stacks
+the wrenches at the interaction points C, the two feet and,
+when they carry load, the two wrists; a flat foot contributes
+a six-dimensional wrench and a wrist a three-dimensional
+force, so uk ∈R6|C|. With m the total mass, g gravity, I the
+composite rigid-body inertia held constant over the horizon,
+σi,k ∈{0, 1} gating interaction i into the active set Ck, and
+¯ck a reference CoM, an Euler discretization of the centroidal
+dynamics [31] gives
+ck+1 = ck + ∆t
+m lk + ∆t2
+2
+
+g + 1
+m
+P
+i∈C σi,kfi,k
+
+,
+Θk+1 = Θk + ∆t I−1κk,
+lk+1 = lk + ∆t
+
+mg + P
+i∈C σi,kfi,k
+
+,
+κk+1 = κk + ∆t P
+i∈C σi,k
+
+(pi,k −¯ck) × fi,k + τ i,k
+
+,
+(6)
+which is affine in (xk, uk), hence a linear time-varying
+model xk+1 = Akxk + Bkuk + ek. A carried payload is
+not a decision variable: the force and moment it exerts about
+the CoM enter ek in the same rows as an interaction wrench,
+so the plan leans into the load rather than rejecting it as a
+disturbance.
+The input set Uk of (1c) collects the wrenches an active
+interaction can source. A contact force obeys Coulomb
+friction, ∥f t
+i ∥2 ≤µif n
+i
+with f n
+i
+∈[0, f n,max
+i
+] for tangen-
+tial and normal components f t
+i , f n
+i
+and friction coefficient
+µi; bounding the two tangential components individually
+replaces the second-order cone by halfspaces, keeping the
+problem a quadratic program. Every row scales with f n
+i , so
+a gated swing foot can source no force.
+D. Force-Aware References
+The centroidal MPC prescribes footstep locations and gait
+timings to preserve convexity. Prior work, however, does not
+account for sustained external forces when generating these
+footstep references. The footstep planner used in Li et al. [18]
+uses a feedforward Raibert heuristic [32] that places the
+swing foot at the neutral point of the commanded stride,
+ptd
+i = ctd
+xy + Tst
+2 vcmd
+xy
++ Rz(ψ) di,
+(7)
+where ptd
+i
+∈R2 is the touchdown location of foot i, the
+subscript xy denotes planar components, Tst is the stance
+duration, vcmd
+xy
+the commanded planar velocity, Rz(ψ) the
+rotation by the base yaw ψ, di the lateral offset of foot i
+from the CoM in the base frame, and ctd
+xy the CoM position
+predicted at touchdown by integrating the commanded twist
+forward from the measured cxy. Equation (7) is purely
+feedforward. Under a sustained external force the realized
+velocity deviates from vcmd
+xy .
+We make the Raibert heuristic force-aware by adding an
+offset for external force perturbations. Let H be the set
+of contacts on the robot’s body, where contact j applies
+a force f e
+j,xy at height zj above the ground. Balancing
+moments about the CoM, a foot displacement d contributes
+mg d while a force f e
+j,xy applied at height zj contributes
+zjf e
+j,xy. Equating the two, the foot must land further out
+by P
+j∈H zjf e
+j,xy/(mg). Adding this offset to Eq. (7) and
+scaling it by a gain kf gives
+ptdf
+i
+= ptd
+i + kf
+mg
+X
+j∈H
+zj f e
+j,xy,
+(8)
+
+
+We also add the Raibert feedback term [32] where kc is the
+gain controlling feedback law which results in ptdf−fb
+i
+=
+ptdf
+i
++ kc
+ω0
+ ˙cxy −vcmd
+xy
+
+.
+E. Teacher Training
+Wrist-force teacher. We train a controller that braces and
+resists against forces applied at the wrists while tracking an
+upper-body pose command, using a force curriculum akin
+to [15]. The arm command is drawn from the BONES-RP1
+dataset [33] retargeted to the 29-DoF robot: we keep the 14
+arm joint angles of every retargeted frame, roughly 4.8×104
+frames over 252 motions, and sample individual frames as
+static pose targets rather than replaying a trajectory, so the
+teacher has to hold arbitrary arm configurations under load
+instead of one scripted motion. Independent 3D forces are
+applied at the two wrists, up to ±40 N horizontally and −50
+to +5 N vertically, each axis zeroed with probability 0.25,
+held for 3 to 5 s, and ramped by a per-environment magnitude
+curriculum. The wrists enter the model (6) as two point
+interactions alongside the feet, placed by forward kinematics
+along the arm chain evaluated at the commanded arm target
+and gated on only while a force is live, so uk ∈R18 collects
+two foot wrenches and two wrist forces.
+Whole-body-grasp teacher. The teacher learns to loco-
+mote and stay stable while maintaining whole-body grasps
+across multiple objects. The interactions are the ground
+reaction forces and the contact forces of each environment’s
+assigned grasp. We generate 130,000 grasps offline across
+multiple object geometries using energy-based optimization
+from [34] (examples in Fig. 6). Each environment is initial-
+ized with an object and a compatible grasp to maintain, so the
+contact locations of (6) are read from that grasp and gated on
+for as long as the assigned object is held. The grasp contact
+forces are decision variables subject to the same friction
+constraints as the ground-reaction forces. The forces exerted
+by the object in the sampled whole-body grasp provide
+uref
+k , while the MPC optimizes the corresponding interaction
+forces. These forces also contribute to the centroidal angular-
+momentum dynamics in Eq. (6). All else in Secs. III-B to III-
+D is shared between the two teachers. During training, we
+warm-start from the wrist-force teacher so that locomotion
+and upper-body command tracking are not relearned from
+scratch.
+F. Capture-Point Balance Guidance via CBF-RL
+Forceful loco-manipulation demands sustained balance
+while the robot keeps tracking motion and force commands.
+We introduce a capture-point control barrier function (CP-
+CBF) and incorporate it into the wrist-force teacher through
+CBF-RL [21]. This corrects the wrist-force teacher’s com-
+mands with a control barrier function during training and
+penalizes the residual in the reward, so the exported policy
+runs unfiltered (Fig. 4). We defer to [21] for the training
+mechanics.
+The barrier uses the instantaneous capture point [30],
+equivalently the planar divergent component of motion
+(DCM) under the constant-height LIPM, defined as ξ =
+fe
+j,xy
+c
+cxy
+ξf
+tol
+dmax
+hcp =0
+TRAINING
+CBF correction
++ auxiliary reward
+DEPLOYMENT
+Learned policy
+No CBF filter
+CBF-RL
+TRAINING ONLY
+hcp
+Policy
+CBF correction
+Simulation
+Learning
+Nominal
+command
+Corrected
+command
+Observations
+Auxiliary reward
+update
+Fig. 4: CP-CBF guidance. The ghost illustrates a recovery
+step into a separate admissible footprint; the dashed boundary
+marks hcp = 0. The inset shows command correction and
+reward feedback during training only.
+cxy + ˙cxy/ω0, the support location that would arrest hor-
+izontal motion under a linear inverted pendulum. Here cxy
+and ˙cxy are the horizontal CoM position and velocity, and
+ω0 =
+p
+g/zcmd is the natural frequency with zcmd the CoM
+height from the commanded base height. We make the barrier
+force-aware as ξf = ξ+∆pCoP, where ∆pCoP is the center-
+of-pressure shift that balances the external wrench. We then
+measure ξf against a support region Stol, a yaw-aligned
+union of tolerance-expanded boxes over the contacting soles
+and predicted touchdown footprints that admits recovery
+steps without covering the intervening region, and define
+hcp = 1 −dist(ξf, Stol)/dmax,
+(9)
+where dist is the minimum distance to the region, zero inside
+it, and dmax > 0 is the admissible excursion, so that hcp > 0
+is remaining margin, hcp = 0 its limit, and negative values
+an exceeded allowance. The admissible excursion we denote
+as the divergent component of motion (DCM) excursion.
+This will also be the balance metric that we use in our
+experiments. The CBF-QP and reward guidance are detailed
+in Sec. B.
+G. Student Distillation
+The teachers specialize in different interaction regimes.
+We freeze both and train a mode-conditioned student with
+DAgger [35]. At each student-visited state, the teacher se-
+lected by mt ∈{0, 1} supplies the target action. The student
+regresses these actions using the same observation space O
+as the teacher actors, keeping supervision on its own rollout
+distribution.
+IV. EXPERIMENTS
+We evaluate whether HULK can maintain commanded
+motion under sustained load, recover from disturbances, and
+transfer these capabilities to forceful loco-manipulation tasks.
+
+
+A. Experimental Setup
+Controllers and comparisons. We compare against FAL-
+CON, Thor, and AMO [15], [16], [28]. The simulation rows
+Ours and Ours + CP-CBF evaluate the wrist-force teachers;
+hardware trials evaluate the distilled student deployed zero-
+shot on the Unitree G1.
+In simulation, all controllers receive identical commands
+and perturbation schedules on the same platform. Com-
+mands use their shared interface: vx, vy ∈[−0.5, 0.5] m/s,
+ωz ∈[−0.5, 0.5] rad/s, base height 0.5–0.8 m, torso roll
+±0.2 rad, torso pitch ±0.25 rad, and eight common arm
+joints. We report mean ± sample standard deviation across
+five evaluation-seed aggregates for each fixed policy. These
+seeds vary evaluation inputs, not policy training. Bold marks
+the best displayed value in each simulation-table column.
+Carrying and push recovery. We apply 10 kg per arm at
+mid-forearm, ramp the load over 2 s, and allow another 2 s
+to settle before issuing commands. Each trial commands one
+velocity axis, measuring tracking under sustained load after
+the loading transient. Separately, standing push tests apply a
+one-second torso force at six magnitudes from 50 to 130 N,
+from behind, in front, and laterally. Each HULK teacher
+is evaluated on 90 push episodes. We measure the signed
+margin of the DCM defined in Section III-F relative to the
+benchmark’s two-foot support envelope. Negative margins
+indicate that the DCM lies outside this envelope; we call
+these departures DCM excursions. We report the average
+of each episode’s minimum post-push margin, with less
+negative values indicating smaller worst departures outside
+the envelope. Peak torso inclination is averaged over the three
+directions at 50 N, the largest push all controllers survive.
+Maximum push denotes the largest tested magnitude survived
+in every direction.
+Wrist-force rejection. While the robot follows arm and
+velocity commands, we apply randomized 3D wrist forces
+with scales αg ∈{0, 0.5, 1.0}, corresponding to 0, 20, and
+40 N per wrist. The planar component opposes travel in the
+base frame. Upper-body error Eupper is the RMS tracking
+error over the common arm joints. Composite root error
+Eroot is the time average of the numerical sum of horizontal
+velocity-error magnitude (m/s) and absolute yaw-rate error
+(rad/s); it is not a single-unit physical quantity.
+Hardware tasks. Cart push/pull and payload carry load
+the wrists, while fridge and canister carry additionally in-
+troduce contact against the torso (Fig. 5). All tasks in-
+volve walking. For each task, controllers receive identical
+commands and object placement at a common load. A
+trial succeeds if the robot completes the commanded task
+without falling, triggering a joint-torque protective stop, or
+dropping the object. For payload carry, where all controllers
+can complete the carrying task, we additionally require the
+robot to remain within a prescribed path-deviation threshold,
+measured using an OptiTrack motion capture system. Trial
+counts vary by task and appear as the denominators in
+Tab. III.
+For each controller and task, we additionally sweep the
+Canister Carry
+Fridge Carry
+Payload Carry
+Push and Pull
+Fig. 5: Real-world tasks. Cart push/pull, payload carry,
+fridge carry, and canister carry on the Unitree G1. Together
+they span the upper body: force acts at the wrists in the first
+two and against the torso in the last two, and every task is
+performed while walking.
+payload magnitude to determine the maximum load com-
+pleted successfully. Carrying tasks use forward locomotion,
+whereas cart push/pull uses backward locomotion. Success
+rates are evaluated separately at a common fixed load for
+each task: 150 kg for cart push/pull, 11 kg for payload carry,
+6 kg for fridge carry, and 5 kg for canister carry.
+B. Simulation Results
+Sustained load and recovery quality. The CP-CBF
+teacher combines lower loaded translational errors with
+smaller DCM excursions (Tab. I). Relative to Ours, the
+largest tracking improvement is lateral, suggesting that the
+benefit depends on the commanded direction. Because the
+load acts at the forearms rather than the training wrists, these
+results also show transfer across force application points.
+AMO retains the lowest mean turn-rate error, so the advan-
+tage does not extend uniformly across commands. The two
+HULK teachers achieve similar push-survival performance,
+but differ substantially in DCM excursion. The smaller DCM
+excursions of the CP-CBF teacher suggest improved recovery
+quality that push survival alone may hide. The smaller DCM
+excursions from our CP-CBF teacher suggest a difference in
+recovery quality that push survival may hide. This is consis-
+tent with the balance state targeted during training, although
+negative margins show that recovery involves leaving the
+support envelope.
+Arm accuracy and locomotion under wrist forces. Both
+HULK teachers perform competitively against FALCON in
+arm and composite root tracking at the strongest tested wrist
+force (Tab. II) with only a mean difference of 0.02 rad.
+Their arm errors remain nearly constant as force increases,
+although FALCON retains the lowest means. CP-CBF has
+
+
+Tracking at 10 kg/arm ↓
+Disturbance rejection
+Method
+Evx (m/s)
+Evy (m/s)
+Eωz (rad/s)
+Worst DCM
+margin (m) ↑
+Peak tilt
+(deg) ↓
+Max push
+(N) ↑
+Thor [16]
+0.263 ± 0.002
+0.265 ± 0.003
+0.450 ± 0.006
+−0.275 ± 0.016
+23.17 ± 0.13
+80
+AMO [28]
+0.276 ± 0.002
+0.350 ± 0.004
+0.196 ± 0.003
+−0.705 ± 0.030
+9.94 ± 0.74
+50
+FALCON [15]
+0.367 ± 0.012
+0.369 ± 0.013
+0.392 ± 0.005
+−0.329 ± 0.034
+7.91 ± 0.23
+80
+Ours
+0.242 ± 0.009
+0.257 ± 0.004
+0.234 ± 0.008
+−0.251 ± 0.011
+5.90 ± 0.18
+110
+Ours + CP-CBF
+0.210 ± 0.007
+0.142 ± 0.003
+0.197 ± 0.009
+−0.162 ± 0.012
+5.59 ± 0.24
+130
+TABLE I: Carrying and disturbance rejection. Tracking under 10 kg/arm at mid-forearm and, separately, standing torso
+pushes. Both Ours rows evaluate wrist-force teachers. DCM margin entries average episode-wise minimum signed margins;
+negative values indicate excursions outside the benchmark support envelope. Tilt is measured at 50 N. Protocols, aggregation,
+and boldface are defined in Sec. IV-A.
+Eupper (rad) ↓
+Eroot (composite) ↓
+Method
+αg =0
+0.5
+1.0
+αg =0
+0.5
+1.0
+Thor [16]
+0.337 ± 0.282
+0.329 ± 0.282
+0.337 ± 0.275
+0.762 ± 0.264
+0.849 ± 0.250
+0.913 ± 0.185
+AMO [28]
+0.402 ± 0.207
+0.416 ± 0.212
+0.445 ± 0.222
+0.680 ± 0.016
+1.228 ± 0.064
+2.111 ± 0.104
+FALCON [15]
+0.144 ± 0.072
+0.148 ± 0.074
+0.159 ± 0.079
+0.444 ± 0.041
+0.525 ± 0.050
+0.868 ± 0.134
+Ours
+0.161 ± 0.052
+0.160 ± 0.056
+0.162 ± 0.059
+0.620 ± 0.062
+0.543 ± 0.044
+0.839 ± 0.030
+Ours + CP-CBF
+0.172 ± 0.055
+0.172 ± 0.059
+0.176 ± 0.061
+0.620 ± 0.012
+0.752 ± 0.019
+0.948 ± 0.033
+TABLE II: Force rejection while walking. Arm and composite root tracking errors; both Ours rows evaluate wrist-force
+teachers. Force scales αg ∈{0, 0.5, 1.0} correspond to 0, 20, and 40 N per wrist. Metrics and reporting follow Sec. IV-A.
+higher root error than our baselines at both nonzero force
+levels. Our teachers train on sampled poses held under
+load, with MPC and CP-CBF guidance emphasizing balance,
+while FALCON uses a torque-aware force curriculum [15].
+C. Real-world Results
+HULK achieves the highest observed completion rate and
+maximum completed load on three of the four hardware
+tasks, and ties AMO on payload carry (Tab. III). In cart
+push/pull, HULK completes 5/6 trials at the common load
+versus 3/6 for the best baseline, FALCON, and pulls up to
+300 kg compared with 200 kg in the separate load sweep.
+In payload carry, all controllers can physically carry the
+load, but only HULK and AMO consistently remain within
+the prescribed path-deviation threshold, both achieving 4/4
+successful trials at the common load. HULK and AMO also
+both reach 12.25 kg in the separate load sweep.
+The largest completion-rate gains arise when objects are
+supported against the torso. HULK completes 4/4 trials with
+both the fridge in front of the torso and the canister at
+its side. AMO completes 2/4 fridge trials, whereas Thor
+and FALCON complete none; all baselines complete 0/4
+canister trials. HULK’s maximum completed loads are 7.0 kg
+for the fridge and 6.1 kg for the canister, compared with
+baseline maxima of 6.0 and 2.6 kg, respectively. Together,
+these results show that the distilled policy combines cart
+and payload capabilities with successful whole-body carrying
+across the two tested load geometries.
+V. DISCUSSION AND LIMITATIONS
+Load
+geometry
+helps
+explain
+why
+forceful
+loco-
+manipulation requires whole-body coordination. A force’s
+point of application determines its moment about the CoM,
+coupling arm configuration to the support needed to sustain
+the load (Eq. (6)). Force-aware MPC exposes this coupling
+in the training objective. Transfer from wrist forces to fore-
+arm loading suggests that learned compensation can extend
+beyond the trained contact location, although it does not
+establish generalization to arbitrary contact arrangements.
+MPC and CP-CBF provide complementary guidance:
+MPC supplies references consistent with loaded dynamics,
+while the barrier shapes how the policy approaches a balance
+boundary. The observed tradeoff between root tracking and
+recovery (Tabs. I and II) suggests that carrying may benefit
+from allowing motion errors to preserve balance. The ex-
+ported policy is unfiltered, so the barrier provides no runtime
+safety guarantee.
+The model and training regime limit the behaviors this
+guidance can support. The centroidal predictor approximates
+articulated dynamics without explicitly resolving joint-level
+actuation feasibility, so a balanced centroidal plan need not
+be executable by every joint. The wrist-force teacher samples
+static arm poses, and the grasp teacher starts from established
+grasps generated across multiple objects. Coverage of stable
+configurations does not establish competence during transi-
+tions between them. Grasp acquisition, regrasping, and rapid
+contact changes therefore remain outside the demonstrated
+scope. Richer dynamics models and training on contact tran-
+sitions are directions for extending to dynamic manipulation.
+ACKNOWLEDGMENT
+We acknowledge the use of AI-generated content (includ-
+ing but not limited to text, figures, images, and code) in this
+paper.
+
+
+Cart push/pull
+Payload carry
+Fridge carry
+Canister carry
+Method
+SR. ↑
+Max ↑
+SR. ↑
+Max ↑
+SR. ↑
+Max ↑
+SR. ↑
+Max ↑
+Thor [16]
+2/6
+130
+2/4
+7.25
+0/4
+2.0
+0/4
+0.6
+AMO [28]
+0/6
+75
+4/4
+12.25
+2/4
+6.0
+0/4
+2.6
+FALCON [15]
+3/6
+200
+0/4
+3.62
+0/4
+2.5
+0/4
+0.0
+HULK
+5/6
+300
+4/4
+12.25
+4/4
+7.0
+4/4
+6.1
+TABLE III: Real-world evaluation on the Unitree G1. SR. reports successful trials/total trials at a common load per
+task. Max reports the largest load completed in a separate sweep in kg. The HULK row evaluates the distilled student; see
+Sec. IV-A for the protocol.
+REFERENCES
+[1] L. Yang, J. Li, N. Poddar, Y. Hou, G. Huh, R. Griffin, G. Gkioxari,
+and A. Ames, “HANDOFF: Humanoid agentic task-space whole-
+body control via distilled complementary teachers,” arXiv preprint
+arXiv:2606.06493, 2026.
+[2] S. Wei, H. Jing, B. Li, Z. Zhao, J. Mao, Z. Ni, S. He, J. Liu, X. Liu,
+K. Kang, S. Zang, W. Yuan, M. Pavone, D. Huang, and Y. Wang,
+“Ψ0: An open foundation model towards universal humanoid loco-
+manipulation,” in Robotics: Science and Systems (RSS), 2026.
+[3] T. He, Z. Luo, X. He, W. Xiao, C. Zhang, W. Zhang, K. Kitani,
+C. Liu, and G. Shi, “OmniH2O: Universal and dexterous human-to-
+humanoid whole-body teleoperation and learning,” in Conference on
+Robot Learning (CoRL), 2024.
+[4] T. He, W. Xiao, T. Lin, Z. Luo, Z. Xu, Z. Jiang, J. Kautz, C. Liu,
+G. Shi, X. Wang, L. Fan, and Y. Zhu, “HOVER: Versatile neural
+whole-body controller for humanoid robots,” in IEEE International
+Conference on Robotics and Automation (ICRA), 2025.
+[5] X. Cheng, Y. Ji, J. Chen, R. Yang, G. Yang, and X. Wang, “Expressive
+whole-body control for humanoid robots,” in Robotics: Science and
+Systems (RSS), 2024.
+[6] Z. Fu, Q. Zhao, Q. Wu, G. Wetzstein, and C. Finn, “HumanPlus:
+Humanoid shadowing and imitation from humans,” in Conference on
+Robot Learning (CoRL), 2024.
+[7] Z. Luo, Y. Yuan, T. Wang, C. Li, F. Casta˜neda, S. Chen, Z.-A. Cao,
+J. Li, D. Minor, Q. Ben, J. Park, D. Sami, Z. Wang, X. Da, R. Ding,
+C. Hogg, L. Song, E. Lim, E. Jeong, T. He, H. Xue, W. Xiao, S. Yuen,
+J. Kautz, Y. Chang, U. Iqbal, L. Fan, and Y. Zhu, “SONIC: Supersizing
+motion tracking for natural humanoid whole-body control,” arXiv
+preprint arXiv:2511.07820, 2025.
+[8] Q. Liao, T. E. Truong, X. Huang, Y. Gao, G. Tevet, K. Sreenath,
+and C. K. Liu, “BeyondMimic: From motion tracking to ver-
+satile
+humanoid
+control
+via
+guided
+diffusion,”
+arXiv
+preprint
+arXiv:2508.08241, 2025.
+[9] T. He, J. Gao, W. Xiao, Y. Zhang, Z. Wang, J. Wang, Z. Luo, G. He,
+N. Sobanbab, C. Pan, Z. Yi, G. Qu, K. Kitani, J. Hodgins, L. Fan,
+Y. Zhu, C. Liu, and G. Shi, “ASAP: Aligning simulation and real-
+world physics for learning agile humanoid whole-body skills,” in
+Robotics: Science and Systems (RSS), 2025.
+[10] D. Wang, X. Wang, C. Zhang, J. Shi, Y. Zhao, C. Bai, and X. Li, “X-
+Loco: Towards generalist humanoid locomotion control via synergetic
+policy distillation,” in Robotics: Science and Systems (RSS), 2026.
+[11] Y. Wang, S. Zhu, P. Zhi, Y. Li, J. Li, Y.-L. Li, Y. Xiao, X. Wang,
+B. Jia, and S. Huang, “OmniXtreme: Breaking the generality barrier
+in high-dynamic humanoid control,” in Robotics: Science and Systems
+(RSS), 2026.
+[12] Y. Zhang, Y. Seo, J. Chen, Y. Yuan, K. Sreenath, P. Abbeel, C. Sfer-
+razza, K. Liu, R. Duan, and G. Shi, “RPL: Learning robust hu-
+manoid perceptive locomotion on challenging terrains,” arXiv preprint
+arXiv:2602.03002, 2026.
+[13] Z. Wu, X. Huang, L. Yang, Y. Zhang, X. Chen, P. Abbeel, R. Duan,
+A. Kanazawa, C. Sferrazza, G. Shi, and C. K. Liu, “Perceptive
+humanoid parkour: Chaining dynamic human skills via motion match-
+ing,” arXiv preprint arXiv:2602.15827, 2026.
+[14] G. B. Margolis, M. Wang, N. Fey, and P. Agrawal, “SoftMimic: Learn-
+ing compliant whole-body control from examples,” arXiv preprint
+arXiv:2510.17792, 2025.
+[15] Y. Zhang, Y. Yuan, P. Gurunath, I. Gupta, S. Omidshafiei, A. ak-
+bar Agha-mohammadi, M. Vazquez-Chanlatte, L. Pedersen, T. He,
+and G. Shi, “FALCON: Learning force-adaptive humanoid loco-
+manipulation,” in Proceedings of the 8th Annual Learning for Dy-
+namics and Control Conference (L4DC), 2026.
+[16] G. Li, Q. Shi, Y. Hu, Z. Wang, X. Wang, and S. Luo, “Thor:
+Towards human-level whole-body reactions for intense contact-rich
+environments,” arXiv preprint arXiv:2510.26280, 2025.
+[17] C. Dong, H. Xu, W. Feng, Z. Wang, Y. Zhou, Y. Zhao, and B. He,
+“HAFO: A force-adaptive control framework for humanoid robots in
+intense interaction environments,” arXiv preprint arXiv:2511.20275,
+2025.
+[18] J. Li, L. Wu, S. A. Esteban, L. Yang, J. Drgoˇna, and A. D.
+Ames, “Accelerating and scaling MPC-guided reinforcement learn-
+ing for humanoid locomotion and manipulation,” arXiv preprint
+arXiv:2606.05687, 2026.
+[19] A. D. Ames, X. Xu, J. W. Grizzle, and P. Tabuada, “Control barrier
+function based quadratic programs for safety critical systems,” IEEE
+Transactions on Automatic Control, vol. 62, no. 8, pp. 3861–3876,
+2017.
+[20] A. D. Ames, S. Coogan, M. Egerstedt, G. Notomista, K. Sreenath,
+and P. Tabuada, “Control barrier functions: Theory and applications,”
+in 18th European Control Conference (ECC), 2019, pp. 3420–3431.
+[21] L. Yang, B. Werner, M. de Sa, and A. D. Ames, “CBF-RL: Safety
+filtering reinforcement learning in training with control barrier func-
+tions,” in IEEE International Conference on Robotics and Automation
+(ICRA), 2026, arXiv preprint arXiv:2510.14959.
+[22] J. Kang, H. Cho, S. Kang, and D. Koo, “Splitadapter: Load-
+aware humanoid loco-manipulation via factorized adaptation,” 2026.
+[Online]. Available: https://arxiv.org/abs/2606.03297
+[23] Y. Li, Y. Zhang, W. Xiao, C. Pan, H. Weng, G. He, T. He, and
+G. Shi, “Hold my beer: Learning gentle humanoid locomotion and
+end-effector stabilization control,” in Conference on Robot Learning
+(CoRL), 2025. [Online]. Available: https://arxiv.org/abs/2505.24198
+[24] B. Xu, H. Weng, Q. Lu, Y. Gao, and H. Xu, “FACET: Force-adaptive
+control via impedance reference tracking for legged robots,” 2025.
+[Online]. Available: https://arxiv.org/abs/2505.06883
+[25] A. Rigo, M. Hu, S. K. Gupta, and Q. Nguyen, “Hierarchical
+optimization-based control for whole-body loco-manipulation of heavy
+objects,” in 2024 IEEE International Conference on Robotics and
+Automation (ICRA).
+IEEE, 2024, pp. 15 322–15 328.
+[26] F. Liu, Z. Gu, Y. Cai, Z. Zhou, H. Jung, J. Jang, S. Zhao,
+S. Ha, Y. Chen, D. Xu, and Y. Zhao, “Opt2Skill: Imitating
+dynamically-feasible whole-body trajectories for versatile humanoid
+loco-manipulation,” IEEE Robotics and Automation Letters, 2025.
+[Online]. Available: https://arxiv.org/abs/2409.20514
+[27] J. Dao, H. Duan, and A. Fern, “Sim-to-real learning for humanoid
+box loco-manipulation,” in 2024 IEEE International Conference on
+Robotics and Automation (ICRA).
+IEEE, 2024, pp. 16 930–16 936.
+[28] J. Li, X. Cheng, T. Huang, S. Yang, R.-Z. Qiu, and X. Wang, “AMO:
+Adaptive motion optimization for hyper-dexterous humanoid whole-
+body control,” in Proceedings of Robotics: Science and Systems (RSS),
+Los Angeles, CA, USA, June 2025.
+[29] A. Taylor, A. Singletary, Y. Yue, and A. Ames, “Learning for safety-
+critical control with control barrier functions,” in Proceedings of the
+2nd Conference on Learning for Dynamics and Control (L4DC), ser.
+Proceedings of Machine Learning Research, vol. 120.
+PMLR, 2020,
+pp. 708–717.
+[30] J. Pratt, J. Carff, S. Drakunov, and A. Goswami, “Capture point:
+A step toward humanoid push recovery,” in IEEE-RAS International
+Conference on Humanoid Robots, 2006, pp. 200–207.
+[31] D. E. Orin, A. Goswami, and S.-H. Lee, “Centroidal dynamics of a
+
+
+humanoid robot,” Autonomous Robots, vol. 35, no. 2, pp. 161–176,
+2013.
+[32] M. H. Raibert, Legged Robots That Balance.
+Cambridge, MA: MIT
+Press, 1986.
+[33] Bones Studio, “Bones rp01,” https://bones.studio/datasets, 2026.
+[34] J. Ye, K. Wang, C. Yuan, R. Yang, Y. Li, J. Zhu, Y. Qin, X. Zou, and
+X. Wang, “Dex1B: Learning with 1B demonstrations for dexterous
+manipulation,” in Robotics: Science and Systems (RSS), 2025.
+[35] S. Ross, G. Gordon, and D. Bagnell, “A reduction of imitation learning
+and structured prediction to no-regret online learning,” in Proceedings
+of the 14th International Conference on Artificial Intelligence and
+Statistics (AISTATS), ser. Proceedings of Machine Learning Research,
+vol. 15.
+PMLR, 2011, pp. 627–635.
+
+
+APPENDIX
+A. Capture Point Derivation
+Starting from the linear inverted pendulum model (LIPM),
+we assume cxy is the xy position of the robot CoM and its z-
+coordinate is held constant. We denote p ∈R2 as the center
+of pressure (CoP) of the foot contacts with the ground plane.
+This gives the following dynamics:
+¨cxy = g
+z (cxy −p),
+where g is the gravitational acceleration and z is the constant
+height of the robot CoM. In our teacher training, we set z
+to the commanded CoM height. If we define ω0 =
+p
+g/z as
+the natural frequency of the LIPM, then we get
+¨cxy = ω2
+0(cxy −p).
+If we assume a fixed p = p0 and set y = cxy −p0, then
+we get
+¨y = ω2
+0y,
+which is a linear system with solution
+y(t) = 1
+2
+
+c0 −p0 + ˙c0
+ω0
+
+eω0t
++ 1
+2
+
+c0 −p0 −˙c0
+ω0
+
+e−ω0t.
+Here, c0 = cxy(0), p0 = p(0), and ˙c0 = ˙cxy(0). As t →∞,
+the second term approaches zero while the first term diverges.
+Setting the coefficient of the divergent term to zero,
+c0 −p0 + ˙c0
+ω0
+= 0,
+gives
+p0 = c0 + ˙c0
+ω0
+,
+which is the capture point solution at t = 0. We therefore
+define
+ξ = cxy + ˙cxy
+ω0
+as the instantaneous capture point, where ξ is the CoP that
+would capture the current state. Under the constant-height
+LIPM, this quantity is also the planar divergent component of
+motion (DCM), whose margins and excursions are reported
+in Sec. IV-B. Differentiating with respect to time gives
+˙ξ = ˙cxy + ¨cxy
+ω0
+.
+Substituting the LIPM dynamics gives
+˙ξ = ˙cxy + ω0(cxy −p)
+= ω0(ξ −p),
+showing that the capture point follows the divergent dynam-
+ics of the LIPM relative to p.
+Driving ξ −p to zero eliminates the divergent component
+of motion, leaving the convergent LIPM dynamics under
+which cxy →p. The robot can regulate p by redistribut-
+ing ground reaction forces (GRFs) across its foot contacts,
+including through ankle torques that shift pressure within a
+supporting foot (the ankle strategy) and load transfer between
+supporting feet. However, the set of achievable CoP locations
+is constrained by the support polygon Ssupport. Thus, when
+ξ ∈Ssupport, there exists an admissible CoP that can be
+driven toward the capture point to arrest the divergent motion.
+Conversely, when ξ lies outside Ssupport, no CoP achievable
+under the current support configuration can coincide with the
+capture point.
+This capture-point criterion describes stopping without
+stepping under the LIPM assumptions. Because the capture
+point includes CoM velocity, it also applies to dynamic walk-
+ing, where subsequent foot placements change the support
+region. A capture point outside the current support polygon
+therefore does not by itself imply a fall.
+This motivates using the distance between the capture
+point and the feasible support region in Eq. 9. Keeping this
+distance bounded maintains the robot near states in which
+its GRFs retain the ability to modulate the CoP toward the
+capture point and arrest divergent CoM motion. We next
+describe how CBF-RL uses this safety function to guide the
+wrist-force teacher during training.
+B. CBF-RL Training and Reward Guidance
+Safety filtering. The safe set is Ssafe
+=
+{s
+∈
+S
+:
+hcp(s) ≥0}. For a valid CBF, continuously enforcing
+˙hcp + κCBFhcp ≥0, with κCBF > 0, gives hcp(t) ≥
+e−κCBFthcp(0): a trajectory starting in the safe set stays
+there, provided the constraint remains feasible under the
+modeled dynamics [19], [20].
+Our training filter uses a local approximation of this
+condition. Let qℓbe the measured lower-body joint positions
+and qπ
+ℓthe joint targets generated by the policy action at.
+With local barrier sensitivity gcp and per-step gain αCBF =
+∆t κCBF, the CBF-QP finds the closest target satisfying the
+constraint:
+qQP
+ℓ
+= arg min
+qtgt
+ℓ
+1
+2∥qtgt
+ℓ
+−qπ
+ℓ∥2
+2
+s.t.
+g⊤
+cp(qtgt
+ℓ
+−qℓ) + αCBFhcp ≥0.
+(10)
+An admissible proposal passes through unchanged. For
+nonzero sensitivity, a violating proposal is projected onto
+the constraint boundary in closed form, avoiding an iterative
+optimization solver in the training loop.
+Reward guidance. During training, the simulator executes
+the filtered target eqℓ, while the policy is optimized using its
+original sampled action. Following CBF-RL [21], we add
+rCBF = ∆t wCBF
+
+min(¯ρcp, 0)
++ exp
+
+−∥eqℓ−qπ
+ℓ∥2
+2
+σ2
+CBF
+
+−1
+
+,
+(11)
+where the proposed barrier residual used for the reward is
+¯ρcp = g⊤
+cp(qπ
+ℓ−qℓ)
++ αCBF max(hcp, hmin).
+(12)
+
+
+The first term penalizes the proposed violation; the second
+penalizes the correction. This encourages the policy to need
+less intervention. The filter and auxiliary reward are removed
+at deployment.
+Implementation. We approximate gcp by J⊤
+CoM,xy∇ξf hcp,
+using the horizontal CoM Jacobian restricted to lower-body
+joints and differentiating only the CoM-position contribution
+to the capture point. We cap the correction norm from the
+closed-form QP solution at 0.30 max(∥qπ
+ℓ−qℓ∥2, 10−3 rad)
+to obtain eqℓand regularize the sensitivity norm near zero.
+The reward uses wCBF = 150, σCBF = 0.5 rad, and
+hmin
+= −1; the QP uses the unclipped barrier value.
+The approximate, capped training filter and the unfiltered
+deployed policy do not inherit the ideal invariance guarantee.
+Section IV-B empirically evaluates the learned wrist-force
+teachers’ tracking performance and disturbance recovery.
+C. Wrist-Force Teacher MPC Optimization
+We specialize Eqs. (1) and (6) to two foot wrenches and
+two wrist forces, with state x = (c, Θ, l, κ) and the input
+uk = (fL,k, τ L,k, fR,k, τ R,k, f h
+L,k, f h
+R,k) ∈R18.
+(13)
+All forces act on the robot in the world frame; dh(t)
+is the prescribed force applied at wrist h, and f h
+h,k is
+the corresponding MPC decision variable. These prescribed
+forces represent external loading without explicitly modeling
+a payload’s mass distribution or inertial dynamics.
+For wrist sites H = {L, R} at time-varying positions
+ph(t), the perturbed linear and angular momenta ˆl and ˆκ
+satisfy
+˙ˆl(t) = ˙l(t) +
+X
+h∈H
+dh(t),
+(14)
+˙ˆκ(t) = ˙κ(t) +
+X
+h∈H
+ ph(t) −c(t)
+
+× dh(t).
+(15)
+where the unhatted rates use the same robot state and foot
+wrenches without wrist perturbations.
+The prediction uses application points from forward kine-
+matics (FK) of the retargeted arm command:
+pcmd
+h
+(t) = pT (t) + RT (t) FKh
+ qcmd
+arm(t)
+
+,
+(16)
+where (pT , RT ) is the measured torso pose and FKh returns
+torso-frame positions. Motion-frame sampling and blending
+follow Sec. E.
+At solve time ts, Eq. (1) uses the costs in Eqs. (2) and (4)
+and input reference
+uref
+k
+= (012, dL(ts), dR(ts)).
+(17)
+The guidance reward in Eq. (5) tracks
+ΛCoM(x, u) = c,
+ΛCoMvel(x, u) = l/m,
+ΛGRF,i(x, u) = fi,
+Λresist,h(x, u) = f h
+h .
+(18)
+D. Grasp Teacher MPC Optimization
+Across the training object set, the grasp teacher allocates
+contact wrenches at each established torso-and-arm grasp to
+balance the assigned object, then supplies their reaction to
+the locomotion MPC.
+Object equilibrium. For the object assigned to each environ-
+ment, let G be the active grasp contacts, pj their world-frame
+positions, and (mo, co) its mass and CoM. Define gj and
+νj as the force and contact moment exerted by the robot on
+the object at contact j. Under the quasi-static object model,
+equilibrium requires
+X
+j∈G
+gj + mog = 0,
+(19)
+X
+j∈G
+
+(pj −co) × gj + νj
+
+= 0.
+(20)
+The coupled friction constraint is
+∥ηj∥2 ≤gn
+j ,
+0 ≤gn
+j ≤gn,max
+j
+,
+(21)
+where gn
+j is the inward normal force, gn,max
+j
+its cap, and
+ηj stacks the two tangential-force and three contact-moment
+components in the contact frame, divided by their respective
+sliding, torsional, and rolling friction coefficients. Zero-
+friction components are fixed to zero and omitted. We then
+apply these forces to the centroidal dynamics and integrate
+the equilibrium constraints into the MPC for the contact force
+decision variables to solve.
+Grasp-force guidance through Λ. Let zg collect grasp
+wrenches and uf foot wrenches. The scale ℓτ > 0 converts
+moments to force units. The CoM and GRF maps in Eq. (18)
+are retained, while the grasp output for each torso or arm
+body b is
+Λgrasp,b(x, uf, zg) = (Gb, Nb/ℓτ),
+(22)
+where Gb = P
+j∈Gb gj and Nb = P
+j∈Gb[(pj −pb) × gj +
+νj], with Gb the contacts on body b and pb the common
+reference point for planned and measured wrenches. Their
+tracking error and reward are
+Eg =
+X
+b
+∥˜Λgrasp,b −Λmeas
+grasp,b∥2
+2,
+rgrasp =
+(
+(1 + Eg/σ2
+g)−1,
+valid allocation,
+0,
+otherwise,
+(23)
+with σg = 25 N and tilde denoting the plan. Validity requires
+active contact, finite wrenches, and solver convergence with
+Eqs. (19) to (21) satisfied within numerical tolerances. Oth-
+erwise, measured contact reactions supply the locomotion
+MPC load.
+E. Wrist-Force Teacher Training
+Upper-body command curriculum. We uniformly sample
+individual frames, not sequences, from 48,233 retargeted
+frames across 252 motions, retaining 14 arm joint angles. For
+environment e, coverage ce ∈[0.3, 1] contracts the sampled
+pose toward the nominal pose:
+qref
+e
+= q0 + ce(qsample
+e
+−q0).
+(24)
+
+
+Joint-limited targets resample every 3–8 s, with a 1 s linear
+blend from the measured pose followed by a hold.
+Starting at ce = 0.3, coverage updates at reset using the
+completed episode length Le in policy steps:
+c+
+e = clip[0.3,1] (ce + 0.01 1[Le > 200] −0.01 1[Le < 40]) .
+(25)
+At 50 Hz the thresholds are 4 s and 0.8 s.
+Force curriculum. Each force-active environment indepen-
+dently updates a magnitude factor fe ∈[0, 1], initialized to
+zero, at reset:
+f +
+e = clip[0,1] (fe + 0.02 1[Le > 200] −0.02 1[Le < 200]) .
+(26)
+A fixed 20% subset remains force-free with no curriculum
+advancement, preserving exposure to unloaded conditions
+throughout training and discouraging reliance on external
+forces for balance and command tracking.
+For each side, heading-frame components are sampled
+independently from [−40, 40], [−40, 40], and [−50, 5] N,
+scaled by fe, independently zeroed with probability 0.25, and
+held for 3–5 s. During walking, horizontal forces oppose the
+planar velocity command:
+u = −
+vcmd
+xy
+∥vcmd
+xy ∥2
+,
+Fxy ←|F⊤
+xyu| u.
+(27)
+Standing retains the sampled direction; vertical forces are
+unchanged. Current base yaw rotates the forces into the world
+frame.
+F. Grasp Teacher Training
+Initialization and commanded grasp. We initialize from
+a locomotion and static-arm checkpoint, not a grasp-force-
+trained policy. In the initialization study, only actor and
+critic network weights transfer; optimizer and curriculum
+state start afresh. The grasp bank spans multiple object
+geometries, with each environment assigned an object and
+a compatible grasp. Reset restores the authored arm posture
+and the assigned object’s transform together, clears velocity,
+and resets the relative object reference for slip and drop
+measurement (Fig. 6). Upper-body residuals about the grasp
+use a 0.05 rad scale; lower-body offsets use 0.5 rad. Motion-
+bank coverage is disabled to preserve the grasp geometry.
+Per-environment payload curriculum. With an assigned
+object–grasp pair per environment, each environment main-
+tains an independent upper mass bound be, initially 0.5 kg.
+At reset,
+me ∼U(0.5, be),
+0.5 ≤be ≤5 kg.
+(28)
+A full 20 s episode without terminal failure increases the
+bound; a terminal failure decreases it:
+b+
+e =
+
+
+
+
+
+min(5, 1.1be),
+full-episode success,
+max(0.5, be/1.1),
+terminal failure,
+be,
+otherwise.
+(29)
+Masses are in kilograms. Administrative resets and shortened
+timeouts do not increase be. Mass stays fixed within each
+Fig. 6: Example whole-body grasp configurations. Au-
+thored torso-and-arm postures and object transforms are
+restored together at reset. These illustrate initialization ge-
+ometry, not cross-object policy evaluation.
+episode, with inertia scaled proportionally at reset. For
+resampled grasps, the bound follows the identity of the grasp
+and its object across resets. Duplicate grasps in a reset batch
+update at most once, with terminal failure taking precedence.
+G. Teacher Training Curves
+Fig. 7 reports rank-zero rolling returns over 100 completed
+episodes for one run of each teacher, both using seed 42.
+The wrist-force run spans 15,000 updates with 8 synchro-
+nized ranks; the grasp run spans 501 new updates with 32
+synchronized ranks. Both use 4096 environments per rank
+and 24 steps per update. The grasp curve measures early
+adaptation, not convergence.
+H. Teacher MDPs
+The wrist-force and grasp teachers use separate Markov
+decision processes (MDPs), with shared actor observations
+listed in Tab. IV. Their rewards combine command tracking,
+MPC guidance, and action and joint regularization; the grasp
+teacher additionally rewards object retention (Sec. I). Critic
+networks receive privileged simulation observations (Tab. V).
+Domain randomization varies foot friction over 0.3–1.2,
+proportional/derivative gains by ×0.8–1.2, rotor inertia by
+×0.5–1.5, and base mass by −1 to +3 kg. Base CoM
+offsets span ±0.025 m horizontally and ±0.030 m vertically;
+pseudo-inertia parameter α ∈[−0.112, 0.091] and encoder
+bias spans ±0.015 rad. Action delay ramps to 20 ms over
+2500 updates after a 1500-update warmup.
+
+
+0.0
+2.5
+5.0
+7.5
+10.0
+12.5
+15.0
+Training updates (thousands)
+−50
+0
+50
+100
+150
+200
+Logged episodic return
+(a) Wrist-force teacher
+0
+100
+200
+300
+400
+500
+New grasp-training updates
+−30
+−20
+−10
+0
+10
+20
+30
+Logged episodic return
+(b) Warm-started grasp teacher
+Fig. 7: Recorded teacher training returns. Both panels show the reward training curve during training for both teachers.
+The plots use a moving average filter on the actual training curve to produce a cleaner plot, but the original curve is shown
+in a lighter color. For the grasp teacher, we do not include the pre-training steps.
+Observation
+Values per sample
+Base angular velocity
+3
+Projected gravity
+3
+Joint position / velocity
+29 / 29
+Previous action
+29
+Commanded planar velocity / yaw rate
+3
+Gait phase (sine and cosine)
+2
+Base-height command
+1
+Torso roll/pitch error
+2
+Arm joint target
+14
+Actor total, one sample
+115
+Actor total, five samples
+575
+TABLE IV: Shared observations for wrist-force and grasp
+teacher actors. Observation noise is uniform: angular ve-
+locity ±0.2 rad/s, gravity components ±0.05, joint position
+±0.01 rad, and joint velocity ±1.5 rad/s. Privileged critic
+observations are listed in Tab. V.
+Wrist-force training uses the applied-force curriculum in
+Sec. E, with base-velocity perturbations every 4–6 s: vx, vy ∈
+[−2, 2] m/s, vz ∈[−0.4, 0.4] m/s, roll/pitch rates within
+±0.52 rad/s, and yaw rate within ±0.78 rad/s. Sustained
+pushes are attempted at the same interval with probability 0.5
+and last 0.5–1.2 s; their magnitude ramps to 150 N over 4000
+updates after a 300-update warmup. Grasp training disables
+these perturbations and uses loads from multiple objects,
+with initialization and payload sampling as in Sec. F. Its
+height and torso commands resample every 5 s, and action
+delay is sampled uniformly in simulation steps. Both teachers
+terminate on base tilt beyond 70◦or non-foot ground contact.
+Grasp episodes also terminate on invalid simulation states
+or object drop: relative object drift above 0.15 m or height
+below 0.30 m, monitored from reset.
+I. Reward Formulation
+For body partition g ∈{lower, upper}, the reward is
+rg = ∆t P
+i∈Ig wifi, where Ig contains its reward terms, fi
+Critic-only observation
+Values
+Base linear velocity
+3
+Foot height / air time / contact flag
+2 + 2 + 2
+Foot contact-force vectors
+6
+MPC CoM reference
+3
+MPC angular-momentum reference
+3
+MPC tilt reference
+3
+Filtered yaw rate
+1
+Additional privileged values
+25
+Actor channels, one current sample
+115
+Total per critic
+140
+TABLE V: Privileged observations for teacher critics.
+Each critic receives 140 current-state values without added
+noise. Actors instead stack five samples of 115 values,
+spanning 80 ms at 50 Hz, without direct object-pose or
+contact-force observations.
+is the term value, wi its weight, and ∆t = 0.02 s. Tabs. VII
+and VIII summarize the term formulations and weights for
+both teachers; the barrier reward is defined in Sec. B. We
+write [x]+ = max(x, 0) and 1[A] for the indicator of
+condition A. Motion gates use s = ∥vcmd
+xy ∥2 +|ωcmd
+z
+|; gated
+terms are zero when inactive unless stated otherwise. The
+vector ˆg B is unit gravity in frame B, and wrap maps angles
+to [−π, π).
+MPC errors ex,ℓ= x −xMPC
+ℓ
+use lookahead index ℓ; ˙κ
+is estimated by finite differences. For foot i, ci, cgait
+i
+, and
+di indicate measured contact, scheduled contact, and first
+touchdown; hi, hpeak
+i
+are sole and peak swing heights, and
+vi, Fi are velocity and contact force. Lengths and times are
+in meters and seconds.
+J. Teacher Dual-Policy Training
+Following [15], each teacher uses separate lower-body and
+upper-body actor-critic pairs. Both actors receive the same
+full-body history and commands, while both critics receive
+
+
+Hyperparameter
+Value
+Rollout length per environment
+24 steps (0.48 s)
+Samples per GPU (4096 environments)
+98304
+Learning epochs / minibatches
+5 / 4
+Samples per minibatch per GPU
+24576
+Optimizer steps/partition/update
+20
+Discount γ / GAE λ
+0.99 / 0.95
+PPO clipping ratio
+0.2
+Entropy / value-loss coefficient
+0.01 / 1.0
+Clipped value loss
+Enabled
+Per-minibatch advantage normalization
+Disabled
+Initial learning rate
+10−3
+Learning-rate schedule
+Adaptive, per partition
+Target KL divergence
+0.01
+Maximum gradient norm
+1.0
+Optimizers per teacher
+Two Adam optimizers
+Action standard deviation bounds
+[0.01, 5]
+Action clipping
+None
+Intrinsic reward
+None
+TABLE VI: Shared PPO settings. Generalized advantage
+estimation (GAE) uses λ = 0.95; the adaptive learning-
+rate schedule targets Kullback–Leibler (KL) divergence 0.01
+separately for each body partition. Batch counts are per
+graphics processing unit (GPU), each simulating 4096 envi-
+ronments, with synchronized training across GPUs. The two
+body partitions share transitions but use separate rewards and
+updates.
+the same privileged observations. Their Gaussian actions
+concatenate into 15 lower-body and 14 upper-body joint
+offsets. The pairs train on shared trajectories using separate
+reward streams (Tabs. VII and VIII) and Adam optimizers
+under Proximal Policy Optimization (PPO; Tab. VI).
+
+
+Term
+Formulation
+Wrist-force
+Grasp
+MPC guidance
+CoM position
+exp[−P5
+ℓ=1 αc
+ℓ∥ec,ℓ∥2
+2].
+2
+2
+CoM velocity
+exp[−8 P3
+ℓ=1 αv
+ℓ∥ev,ℓ∥2
+2].
+4
+4
+Angular momentum
+−P5
+ℓ=1 αc
+ℓ(∥eκ,ℓ∥2
+2 + 0.01 e⊤
+˙κ,ℓQ ˙κe ˙κ,ℓ).
+0.01
+0.01
+Ground reaction forces
+exp[−1
+|V|
+P
+i∈V ∥eF,i∥2
+2/(150 N)2]; V: valid loaded stance feet; 0 if empty.
+0.002
+0.002
+Swing foothold
+1
+|S|
+P
+i∈S exp[−∥ep,i,xy∥2
+2/(0.08 m)2]; S: valid swing feet; 1 if empty or s ≤0.1.
+2
+2
+Base tilt
+exp[−4 P3
+ℓ=1 αθ
+ℓ∥eθ,ℓ∥2
+2].
+2
+2
+External-force resistance†
+1
+2
+P2
+i=1 exp[−∥Fe,applied
+i
+−Fe,MPC
+i
+∥2
+2/(30 N)2]; inactive sides contribute 1.
+1
+—
+Command tracking
+Linear velocity
+exp[−(∥vb
+xy −vcmd
+xy ∥2
+2 + (vb
+z)2)/0.52]; base frame.
+0.5
+0.5
+Yaw rate
+exp[−(¯ωz −ωcmd
+z
+)2/0.22]; 0.4 s yaw-rate filter.
+3
+3
+Base height
+exp(−|z −zcmd|/0.1).
+3
+3
+Torso roll/pitch
+exp(−∥θ −θcmd∥2/0.15); θ: torso roll/pitch.
+3
+3
+Arm joint targets†
+exp[−P
+j∈arms(qj −qcmd
+j
+)2/0.52].
+4
+4
+Gait and swing shaping
+Gait-phase contact match
+1
+2
+P2
+i=1 1[ci = cgait
+i
+], for s > 0.2.
+4
+4
+Air time
+P2
+i=1 1[0.02 < tair
+i
+< 0.45], for s > 0.5.
+4
+4
+Flat sole orientation
+1
+2
+P2
+i=1 exp[−2(Q2
+i,x + Q2
+i,y)/0.15]; Qi: sole quaternion.
+1
+1
+Center of pressure
+1
+2
+P2
+i=1 exp[−˜e2
+i /0.252], where ˜ei = (ρi −0.5)(1 + 1[ρi < 0.5]) and ρi is toe-load
+fraction; unloaded feet contribute one.
+1
+1
+Foot clearance
+P2
+i=1[|hi −0.12| −0.02]+, for s > 0.2.
+−5
+−5
+Sole swing height
+P2
+i=1 di(hpeak
+i
+/0.12 −1)2, for s > 0.2.
+−20
+−20
+Foot slip
+P2
+i=1 ci∥vi,xy∥2
+2, for s > 0.05.
+−0.1
+−0.1
+Soft landing
+P2
+i=1 di∥Fi∥2, for s > 0.05.
+−10−5
+−10−5
+Support-mode mismatch
+1[nc̸ = 1] for s > 0.2, otherwise 1[nc < 2], with nc = c1 + c2.
+−2
+−2
+Feet separation
+max(0.12 −∥pL,xy −pR,xy∥2, 0).
+−0.5
+−0.5
+Sole orientation
+P2
+i=1 ∥ˆg solei
+xy
+∥2.
+−2
+−2
+Ankle roll
+P
+j∈ankle roll |qj|.
+−2
+−2
+Feet heading
+P2
+i=1 | wrap(ψi −ψbase −0.4 ωcmd
+z
+)|, where ψ denotes heading.
+−1
+−1
+TABLE VII: Teacher tracking and gait rewards. † marks upper-body terms; others enter the lower-body reward. A dash
+denotes an absent term.
+
+
+Term
+Formulation
+Wrist-force
+Grasp
+Posture and standstill
+Pelvis upright
+exp[−5∥ˆg pelvis
+xy
+∥2
+2].
+1
+1
+Torso upright
+exp[−5∥ˆg torso
+xy
+∥2
+2].
+0
+1
+Nominal posture
+exp[−meanj((qj −q0
+j )2/σ2
+j )] over legs and waist, with speed-dependent joint
+tolerances.
+1
+1
+Base-height error
+(1 + 4 1[s ≤0.2])(z −zcmd)2.
+−10
+−10
+Leg splay
+P
+j∈hip roll/yaw q2
+j .
+−4
+−4
+Waist anchor
+(qwaist,roll −θcmd
+roll )2 + (qwaist,pitch −θcmd
+pitch)2.
+−1
+−1
+Waist yaw
+q2
+waist,yaw.
+−6
+−2
+Chest heading
+| wrap(ψtorso −ψbase)|, where ψ denotes heading.
+−6
+−2
+Waist effort
+P
+j∈waist[max(|τj|/τ max
+j
+−0.7, 0)]2.
+−10
+−10
+Body angular velocity
+ω2
+x + ω2
+y for the pelvis angular velocity in the world frame; yaw is excluded.
+−0.05
+−0.05
+Standing joint deviation
+P
+j∈L∪U(qj −q0
+j )2, when all task commands request rest.
+−1
+−1
+Standing base drift
+∥vbase,xy∥2
+2, when all task commands request rest.
+−6
+−6
+Joint regularization
+All-action rate
+∥at −at−1∥2
+2 over all raw joint actions.
+−0.25
+−0.25
+Upper action rate†
+∥aU
+t −aU
+t−1∥2
+2 over raw arm actions.
+−0.1
+−0.1
+All-joint limits
+P
+j∈L∪U([qmin
+j
+−qj]+ + [qj −qmax
+j
+]+).
+−1
+−1
+Upper joint limits†
+P
+j∈U([qmin
+j
+−qj]+ + [qj −qmax
+j
+]+).
+−1
+−1
+Lower joint velocity
+P
+j∈L ˙q2
+j .
+−2.5×10−3
+−2.5×10−3
+Upper joint velocity†
+P
+j∈U ˙q2
+j .
+−10−3
+−10−3
+Lower joint acceleration
+P
+j∈L ¨q2
+j .
+−7.5×10−7
+−7.5×10−7
+Upper joint acceleration†
+P
+j∈U ¨q2
+j .
+−1.2×10−8
+−1.2×10−8
+Lower joint torque
+P
+j∈L τ 2
+j .
+−8.75×10−5
+−8.75×10−5
+Upper joint torque†
+P
+j∈U τ 2
+j .
+−3.5×10−5
+−3.5×10−5
+Object support and retention
+Grasp-wrench tracking†
+[1 + Eg/(25 N)2]−1 for a valid allocation, otherwise zero; Eg is the squared wrench
+error in Eq. (23).
+—
+8
+Grasp-force regularization†
+e/(e + 50 N), where e = max(F −30 N, 0) and F sums measured contact-region force
+magnitudes.
+—
+−0.5
+Object drop, lower
+1[object-drop termination]
+—
+−250
+Object drop, upper†
+1[object-drop termination]
+—
+−250
+Object slip, lower
+∥vobj/T ∥2, relative to a torso
+—
+−2
+Object slip, upper†
+∥vobj/T ∥2, relative to a torso
+—
+−2
+Lower torque-limit excess
+P
+j∈L max(|τj| −0.9 τ max
+j
+, 0).
+—
+−0.1
+Upper torque-limit excess†
+P
+j∈U max(|τj| −0.9 τ max
+j
+, 0).
+—
+−0.1
+TABLE VIII: Teacher posture, regularization, and grasp rewards. L: leg/waist joints; U: arm joints; q0
+j : default joint
+position; qmin
+j
+, qmax
+j
+: soft limits. Markers follow Tab. VII.
