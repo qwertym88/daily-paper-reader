@@ -44,14 +44,14 @@
       <span class="dpr-home-dashboard-kicker">2026-10-09</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 23 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 34 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
-    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>9</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>14</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>2 次</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>13</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>21</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-09 00:37:41 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-10 00:02:13 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日扫过23篇论文，精读9篇、速读14篇，人形机器人全身移动操作成为绝对主线。</p>
-<p>最值得看的是两篇9分工作：InterMimicGen用自进化运动模仿扩展人形loco-manipulation，HULK学全身有力移动操作；速读中BiGym 2.0的人形家庭操作基准也值得关注。</p>
-<p>普通读者可先读这两篇精读摘要，再借BiGym 2.0理解评测差距，后续重点关注全身力控与模仿学习的结合。</p>
+<p>2026-10-09 日报精选 34 篇，精读 13 篇、速读 21 篇，人形机器人全身运动与操作成为今日高分焦点。最值得看的是两篇 9.0 分工作：InterMimicGen 用自演化动作模仿扩展人形 loco-manipulation，Workhorse 则从人类数据学习稳健全身控制，另可顺带关注不对称 Actor-Critic 的记忆状态评论家与凸凹强化学习。普通读者可先读这两篇高分精读，把握“人类数据+自演化模仿”这一人形机器人学习主线。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">9 篇</strong>
+    <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="InterMimicGen: Scaling Humanoid Loco-Manipulation through Self-Evolving Motion Imitation">InterMimicGen: Scaling Humanoid Loco-Manipulation through Self-Evolving Motion Imitation</span></li><li><span class="dpr-home-dashboard-paper-title" title="HULK: Learning Whole-Body Forceful Loco-Manipulation for Humanoids">HULK: Learning Whole-Body Forceful Loco-Manipulation for Humanoids</span></li><li><span class="dpr-home-dashboard-paper-title" title="Adaptive Spectral-Koopman Dynamics Modeling for Temporal Domain Generalization">Adaptive Spectral-Koopman Dynamics Modeling for Temporal Domain Generalization</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="InterMimicGen: Scaling Humanoid Loco-Manipulation through Self-Evolving Motion Imitation">InterMimicGen: Scaling Humanoid Loco-Manipulation through Self-Evolving Motion Imitation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Workhorse: Learning Robust Whole-Body Humanoid Loco-Manipulation from Human Data">Workhorse: Learning Robust Whole-Body Humanoid Loco-Manipulation from Human Data</span></li><li><span class="dpr-home-dashboard-paper-title" title="DAMP: Humanoid Locomotion via Denoised Belief Learning and Adversarial Motion Priors">DAMP: Humanoid Locomotion via Denoised Belief Learning and Adversarial Motion Priors</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>6</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>2</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>8</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>3</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -86,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">14 篇</strong>
+    <strong class="dpr-home-dashboard-count">21 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Near-Optimal Sample Complexity for Recursive Entropic Risk Reinforcement Learning with a Generative Model">Near-Optimal Sample Complexity for Recursive Entropic Risk Reinforcement Learning with a Generative Model</span></li><li><span class="dpr-home-dashboard-paper-title" title="Adapting to Changes in Agent Behavior via Finite-Depth Policy Sensitivity">Adapting to Changes in Agent Behavior via Finite-Depth Policy Sensitivity</span></li><li><span class="dpr-home-dashboard-paper-title" title="BiGym 2.0: Benchmarking Learned and Agent-Developed Policies for Humanoid Household Manipulation">BiGym 2.0: Benchmarking Learned and Agent-Developed Policies for Humanoid Household Manipulation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Memory-State Critic for Asymmetric Actor-Critic with Application to Vision-Based Pursuit-Evasion">Memory-State Critic for Asymmetric Actor-Critic with Application to Vision-Based Pursuit-Evasion</span></li><li><span class="dpr-home-dashboard-paper-title" title="Convex-Concave Reinforcement Learning">Convex-Concave Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning Unknown Constraints without Unsafe Data via Optimality and Counterfactual Regularization">Learning Unknown Constraints without Unsafe Data via Optimality and Counterfactual Regularization</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>6</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>3</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>12</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>4</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span></div>
 </section>
 </div>
 
