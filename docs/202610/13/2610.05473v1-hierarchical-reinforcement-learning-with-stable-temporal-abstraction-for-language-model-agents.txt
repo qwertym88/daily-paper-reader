@@ -1,0 +1,752 @@
+Title: Hierarchical Reinforcement Learning with Stable Temporal Abstraction for Language Model Agents
+
+URL Source: https://arxiv.org/pdf/2610.05473v1
+
+Published Time: Tue, 06 Oct 2026 02:21:23 GMT
+
+Number of Pages: 20
+
+Markdown Content:
+# Hierarchical Reinforcement Learning with Stable Temporal Abstraction for Language Model Agents 
+
+Shayan Mohajer Hamidi ∗
+
+LinkedIn Corporation smohajer@linkedin.com 
+
+Yize Cheng †
+
+University of Maryland yzcheng@umd.edu 
+
+Yuanda Xu 
+
+LinkedIn Corporation ericxu@linkedin.com 
+
+Zhengze Zhou 
+
+LinkedIn Corporation zzhou1@linkedin.com 
+
+Alborz Geramifard 
+
+LinkedIn Corporation agf@linkedin.com 
+
+## Abstract 
+
+Hierarchical reinforcement learning improves long-horizon control by organiz-ing primitive actions around persistent subgoals and assigning credit at multiple temporal scales. Recent hierarchical language agents bring these benefits to in-teractive tasks by explicitly separating subgoal planning from action execution. We observe, however, that an explicit hierarchy does not by itself determine how stable the resulting temporal abstraction is: the learned boundary policy may re-place the subgoal almost every turn, making it effectively transient, or retain a subgoal after it has stopped being appropriate. We call this temporal abstraction instability . We propose Stable Temporal Abstraction via Constrained Optimiza-tion (STAC), a constrained boundary-policy optimization method that represents premature replanning and stale persistence as constraint costs. STAC applies the resulting Lagrangian costs only to the sampled boundary decision, leaving the underlying algorithm’s rewards, critic targets, subgoal advantages, and primitive-action advantages unchanged. Across two backbones and two benchmarks, STAC improves success over a strong hierarchical baseline by 8.1 and 7.9 points on ALFWorld and WebShop with Qwen3-0.6B, and by 23 .5 and 15 .8 points with Llama-3.2-1B-Instruct. 
+
+## 1 Introduction 
+
+Hierarchical reinforcement learning (HRL) has long provided a principled approach to long-horizon decision making [22, 4, 14, 12, 25, 7, 11, 2]. Rather than selecting every primitive action at a single temporal scale, HRL introduces temporally extended subgoals or options and decomposes their realization into lower-level actions [1]. This decomposition can shorten effective planning horizons, reuse behavior across states, preserve intermediate intent, and separate credit for high-level planning from credit for low-level execution. Recent work has begun transferring these benefits to language-model agents [27, 9, 26, 10, 3, 16, 17]. For example, HiPER [17] represents each interaction turn through an explicit Plan–Execute hierarchy: a high-level component produces a textual subgoal, a boundary decision determines whether that subgoal should persist or be replaced, and a low-level component selects an environment action. Its hierarchical advantage estimator further assigns distinct learning signals to subgoal, boundary, and 
+
+> ∗Corresponding author.
+> †Work done while an intern at LinkedIn Corporation. 40th Conference on Neural Information Processing Systems (NeurIPS 2026). Workshop: SLMs for Agentic Systems, Paris, France, 2026. arXiv:2610.05473v1 [cs.AI] 4 Oct 2026
+
+action tokens. Such methods demonstrate that explicit hierarchical structure and multi-timescale credit assignment can improve long-horizon language-agent performance. We observe, however, that the architecture alone does not determine how stable the learned temporal abstraction will be. Useful temporal abstraction requires a subgoal to persist long enough to coordinate multiple actions, but also to terminate once it is completed or no longer appropriate. The learned boundary policy can drift away from either requirement. It may replace the subgoal almost every turn, reducing the subgoal toward a transient one-step label and moving the hierarchy toward a flat policy. Alternatively, it may retain the same subgoal too long, delaying state-dependent replanning after that subgoal stops being appropriate. We call this tendency temporal abstraction instability . It matters most in multi-phase tasks, where success requires both persistence within a phase and a well-timed transition between phases. To address this, we propose Stable Temporal Abstraction via Constrained Optimization (STAC), a constrained boundary-policy optimization method. STAC represents premature replanning and stale-subgoal persistence as constraint costs and optimizes their Lagrangian relaxation. It consumes the normalized boundary advantage supplied by the hierarchical optimizer it is applied to, which we call the host , and modifies only the coefficient of the sampled boundary decision. Environment rewards, critic targets, subgoal advantages, and primitive-action advantages remain unchanged. This decision locality distinguishes STAC from reward shaping and makes it independent of the host’s particular actor architecture or return estimator. We evaluate STAC using the publicly released HiPER Plan–Execute architecture [17] as a strong hierarchical host, whose boundary policy replans early on more than half of all turns. STAC instead maintains multi-turn subgoals and nearly perfect structured-control validity. The improved hierarchy is accompanied by an 8.1-point ALFWorld gain over the released host recipe on Qwen3-0.6B, rising to 23 .5 points on Llama-3.2-1B-Instruct. Our contributions are: 
+
+• We identify and characterize temporal abstraction instability : a hierarchy can be architecturally explicit yet still learn subgoals that are too transient or too persistent for useful temporal structure. 
+
+• We formulate stable temporal abstraction as a constrained boundary-policy problem and derive a decision-local Lagrangian optimization rule with separate costs for premature replanning and stale-subgoal persistence; our reported experiments optimize its fixed-multiplier relaxation, and we report the violation rates it induces. 
+
+• We show that constraining the boundary yields longer, valid multi-turn subgoals relative to a released hierarchical host, and that this accompanies improved ALFWorld and WebShop performance on two model backbones. 
+
+## 2 Hierarchical Setup and Temporal Abstraction Instability 
+
+We follow the hierarchical formulation of HiPER [17], whose Plan–Execute agent and hierarchical advantage estimator we adopt unchanged and use as the host optimizer throughout; this section restates that setup in the notation used later. 
+
+Task, action, and reward. Let x ∼ p(X ) be an interactive task and let t ∈ { 0, . . . , T − 1} index the environment turns in an episode. At turn t, st contains the current observation and interaction history available to the policy. The policy selects a primitive action at, meaning one environment interaction such as a tool call together with its arguments, and the environment transitions to the next observation. The environment returns a task reward after the action, and the host optimizer may add fixed shaping terms; rt denotes the resulting training reward. The return is Gt = PT −1 
+
+> u=t
+
+γu−tru. The task objective is 
+
+Jtask (θ) = Ex∼p(X ), τ ∼πθ (·| x)
+
+"T −1X
+
+> t=0
+
+γtrt
+
+#
+
+, (1) where τ is the complete interaction trajectory and γ ∈ (0 , 1] is the discount factor. 
+
+Subgoals and temporal segments. A subgoal zt is a textual intermediate objective whose comple-tion normally requires several primitive actions. For a tool-using language agent, this means several tool calls with concrete arguments. For example, completing “heat the object” may require navigating 2to an appliance, opening it, placing the object, and activating it. Consecutive turns governed by the same subgoal form a temporal segment. The subgoal should persist while its actions are executed, then be replaced when the intermediate objective is complete or no longer appropriate. 
+
+Boundary-explicit policy. Let zt−1 be the subgoal active before turn t. The policy first samples a boundary decision qt ∈ { KEEP , SWITCH }. If qt = KEEP , it deterministically retains zt = zt−1;if qt = SWITCH , it generates a new subgoal zt. Let θ denote the trainable actor parameters and let 
+
+πθ denote the joint hierarchical policy. Its factors are the boundary policy πbθ , the subgoal policy πzθ ,and the primitive-action policy πaθ :
+
+πθ (qt, z t, a t | st, z t−1) = πbθ (qt | st, z t−1) · πzθ (zt | st)I[qt=SWITCH] · πaθ (at | st, z t). (2) The indicator exponent removes the subgoal-generation factor on K EEP turns, when zt is copied deterministically from zt−1. The factorization may be implemented by separate modules or by one autoregressive model with structured boundary, subgoal, and action spans. 
+
+HiPER host objective and advantages. Our experiments instantiate Eq. (2) with HiPER, whose single autoregressive actor emits the boundary, subgoal, and action spans and is trained with PPO. The policy-gradient form underlying its clipped actor objective separates the three decisions: 
+
+∇θ Jtask (θ) ≈ E
+
+"T −1X
+
+> t=0
+
+∇θ log πbθ (qt | st, z t−1) bAbt
+
++ I[qt = SWITCH] ∇θ log πzθ (zt | st) bAzt + ∇θ log πaθ (at | st, z t) bAat
+
+!# 
+
+.
+
+(3) Here bAbt , bAzt , and bAat assign credit to the sampled boundary decision, newly generated subgoal, and primitive action, respectively. HiPER estimates all three using one shared critic backbone with only two output heads: with critic parameters ϕ, V Hϕ (st) ≈ E[Gt | st, q t = SWITCH] for planning at a segment boundary and V Lϕ (st, z t) ≈ E[Gt | st, z t] for execution under the active subgoal. The subgoal advantage uses segment-level GAE with V Hϕ ; the action advantage uses within-segment GAE with V Lϕ and bootstraps into V Hϕ at the next segment boundary. There is no third boundary-value head. Instead, with yt = I[qt = SWITCH] and βt = πbθ (SWITCH | st, z t−1), HiPER estimates 
+
+bAbt = ( yt − βt)  V Hϕ (st) − V Lϕ (st, z t−1) . (4) Thus the boundary signal compares the estimated return from replanning with that from continuing the previous subgoal, then centers this gain for the sampled binary decision. Before the PPO update, HiPER standardizes each advantage stream independently. For the boundary stream this yields 
+
+Abt = bAbt − mean u∈B bAbu
+
+std u∈B bAbu + ε , (5) where B is the set of turns in the update batch whose boundary-token mask is valid, and ε > 0
+
+prevents division by zero. We refer to Abt as the normalized boundary advantage . It is a single scalar per turn, attached to the boundary tokens that realize the KEEP /SWITCH decision, and it is positive when the sampled decision looked better than the boundary policy’s own average for that batch. Two properties matter for what follows. First, Abt is the only host quantity STAC reads or modifies: the subgoal advantage bAzt , the action advantage bAat , and both critic targets are left untouched, which is what makes the method decision-local. Second, because standardization is applied per batch, 
+
+Abt carries no information about how long the current subgoal has already been active; it scores the decision only by estimated return. That omission is precisely the gap STAC fills, by adding duration-dependent costs to this term. Appendix B gives the complete estimator and critic targets. 
+
+Behavioral criterion and instability. Let dt ≥ 1 count the subgoal-creating turn and all subsequent turns since the most recent valid switch. Useful temporal abstraction requires state-dependent, non-degenerate duration: the subgoal should span multiple actions when coordination is needed and terminate when it becomes stale. As πb moves toward always switching, dt approaches 1, segment-level returns approach per-turn returns, and the subgoal approaches a transient scratchpad. As it moves toward always keeping, the agent replans less often than the task requires. Both directions reduce the temporal structure the hierarchy is meant to provide. 33 STAC: Stable Temporal Abstraction via Constrained Optimization 
+
+3.1 Constrained temporal abstraction 
+
+Let gshort (st, z t−1, d t) and gstale (st, z t−1, d t) be bounded cost functions in [0 , 1] that measure, respectively, whether replanning at turn t would be premature and whether retaining the current subgoal would be stale. These costs may be fixed, state-dependent, or learned; the general method does not require a universal duration interval. For a parsed boundary decision, define 
+
+cshort  
+
+> t
+
+= I[qt = SWITCH] gshort (st, z t−1, d t),cstale  
+
+> t
+
+= I[qt = KEEP] gstale (st, z t−1, d t). (6) At policy update k, let πk = πθk be the behavior policy and let Dk be its on-policy batch. The boundary likelihood ratio is rbt (θ) = πbθ (qt | st, z t−1)/π bk(qt | st, z t−1). Define the decision-local task and constraint surrogates 
+
+J task  
+
+> k
+
+(θ) = Et∼D k
+
+h
+
+rbt (θ)Abt
+
+i
+
+,
+
+Cki (θ) = Et∼D k
+
+rbt (θ)cit
+
+ , i ∈ { short , stale }. (7) Here Abt is the normalized boundary advantage of Eq. (5), so J task  
+
+> k
+
+is the host’s own boundary objective and STAC adds no new return signal; for a different host, Abt may be produced by any boundary-level estimator. At θ = θk, these constraint surrogates equal the observed violation rates in the current batch. We formulate each policy update as 
+
+max  
+
+> θ
+
+J task  
+
+> k
+
+(θ)
+
+s.t. Ck
+
+> short
+
+(θ) ≤ ρshort ,
+
+Ck
+
+> stale
+
+(θ) ≤ ρstale , (8) where the ρi specify tolerated violation rates. Because these surrogates are measurable, the violation rates realized by the learned policy can be read off during training; Fig. 1 reports them for our runs. Its Lagrangian is 
+
+Lk(θ, μ) = J task  
+
+> k
+
+(θ) − X
+
+> i∈{ short ,stale }
+
+μi
+
+ Cki (θ) − ρi
+
+, μi ≥ 0. (9) The multipliers in Eq. (9) can be updated by projected dual steps, 
+
+μi ←
+
+h
+
+μi + ημ
+
+  bCki − ρi
+
+i
+
+> +
+
+, (10) where bCki is the batch estimate of the corresponding constraint surrogate. In the experiments reported here we use a fixed-multiplier instantiation of this Lagrangian relaxation, holding μshort = μstale =0.1 throughout training rather than applying Eq. (10). For fixed μ the terms P 
+
+> i
+
+μiρi are constant in 
+
+θ, so arg max θ Lk(θ, μ) = arg max θ [J task  
+
+> k
+
+(θ) − P 
+
+> i
+
+μiCki (θ)] and the budgets ρi do not enter the update. We therefore optimize the primal policy under fixed temporal-abstraction prices; Eq. (10) gives the corresponding adaptive primal–dual extension, which we leave to future work. For valid boundary decisions, collecting the task and constraint terms yields the sampled advantage 
+
+bAb, STAC  
+
+> t
+
+= Abt − μshort cshort  
+
+> t
+
+− μstale cstale  
+
+> t
+
+. (11) An on-policy host then uses this combined advantage in its ordinary actor objective; for PPO, it is inserted into the standard clipped surrogate. Only tokens in the boundary-decision span receive the short- and stale-subgoal terms. Subgoal and action advantages, task rewards, and critic targets are unchanged. Appendix C gives the locality analysis, training algorithm, and diagnostics. Note that STAC does not add its temporal-abstraction costs to rt; the exact reward choices in our experiments are given in Appendix A. The reported instantiation is therefore a fixed two-sided boundary penalty, not adaptive dual optimization with user-specified budgets. We prespecify dmin = 2 
+
+and dmax = 8 as duration heuristics: the former discourages a uniform one-turn collapse, while the latter is horizon-informed but not a per-segment upper bound (Appendix A.1). 4Table 1: Main results across environments and model families. Values are mean success (%) ±
+
+SD across three seeds. “Best” selects each trained method’s highest-validation checkpoint following the released HiPER convention; “Final” uses update 150.                                                                                                                             
+
+> ALFWorld WebShop Type Method Best Final Best Final
+> Qwen3-0.6B
+> —Base model 0.3±0.51.2±1.7
+> Flat GRPO 37 .5±2.835 .9±4.744 .7±3.244 .7±3.2
+> Flat GiGPO 59 .1±7.159 .1±7.151 .3±5.551 .3±5.4
+> Hier. HiPER 83 .3±3.381 .5±3.661 .4±3.556 .5±3.0
+> Hier. STAC (ours) 91 .4±3.689 .3±3.569 .3±2.467 .5±4.2
+> Llama-3.2-1B-Instruct
+> —Base model 1.8±1.30.3±0.4
+> Flat GRPO 7.8±3.51.6±1.51.6±0.50.0±0.0
+> Flat GiGPO 12 .5±5.57.0±2.51.6±0.30.0±0.0
+> Hier. HiPER 28 .6±5.517 .2±4.41.8±0.40.0±0.0
+> Hier. STAC (ours) 52 .1±6.040 .4±5.017 .60 ±3.915 .25 ±4.6
+
+## 4 Experiments 
+
+Environments and model. We evaluate on two text-based interactive benchmarks with sparse success rewards. ALFWorld [21] contains long-horizon household tasks whose multi-phase cate-gories require several coordinated actions per objective, and WebShop [24] requires navigating a simulated e-commerce site to satisfy a natural-language shopping instruction. Both reward persistent subgoals while still requiring well-timed replanning. The actor and critic use Qwen3-0.6B [23] unless stated otherwise; to test whether the effect depends on a single pretraining lineage, we repeat both benchmarks with Llama-3.2-1B-Instruct [6] under identical hyperparameters and seeds. We instantiate STAC on the public HiPER Plan–Execute implementation [17], whose structured actor emits a boundary decision, textual subgoal, and admissible action, and whose estimator supplies Ab;STAC leaves the subgoal/action streams and all critic targets unchanged (Appendix B). 
+
+Training. Each run uses 128 independent environments per update, 150 updates, at most 50 environment turns, training temperature 1.0, and validation temperature 0.4; actor and critic learning rates are 10 −6 and 10 −5 and the KL coefficient is 0.01 . We evaluate 128 held-out episodes every five updates, and the base checkpoint before training. Appendix A gives the full configuration and checkpoint protocols. 
+
+Benchmarks. We compare against two flat baselines that optimize a single-timescale policy: GRPO [20], which normalizes trajectory-level rewards within a sampled group, and GiGPO [5], which adds step-level relative advantages for denser credit. Our hierarchical host is HiPER [17], whose Plan–Execute actor and hierarchical advantage estimator provide the boundary advantage that STAC modifies. 
+
+## 5 Results 
+
+Over released HiPER, STAC gains +8 .1 points on ALFWorld at the best checkpoint (95% CI 
+
+[+0 .2, +16 .0] , pW = 0 .046 ) and +7 .8 at the final checkpoint (CI [−0.3, +15 .9] , pW = 0 .055 ); on WebShop it gains +7 .9 (CI [+0 .7, +15 .1] , pW = 0 .038 ) and +11 .0 (CI [+2 .4, +19 .6] , pW = 0 .025 ). Three of these four comparisons reach the conventional 0.05 threshold, the ALFWorld final checkpoint falling just short. All p-values are two-sided unpaired Welch tests with Welch–Satterthwaite degrees of freedom; Table 4 collects every comparison, including the flat baselines. Three-seed inferences are low-powered; intervals, trajectories, and segment-duration analysis are in Appendix F. 
+
+A second model family. Repeating both benchmarks with Llama-3.2-1B-Instruct reproduces the effect at larger magnitude. On ALFWorld, STAC reaches 52 .1 ± 6.0 best-checkpoint success versus 
+
+28 .6 ± 5.5 for HiPER ( +23 .5, pW = 0 .0076 ) and 40 .4 ± 5.0 versus 17 .2 ± 4.4 at update 150 50% 20% 40% 60% 80%               
+
+> HiPER Constraint violation rate
+> ALFWorld WebShop
+> 025 50 75 100 125 150
+> Training step
+> 0% 20% 40% 60% 80%
+> STAC Constraint violation rate
+> 025 50 75 100 125 150
+> Training step Premature replanning Stale persistence
+
+Figure 1: Constraint violation rates during training. Per-step violation rates for the two temporal-abstraction constraint surrogates. Each curve averages three seeds. HiPER’s premature-replanning rate stays high throughout training, whereas STAC reduces it and holds both rates low. Because the reported runs use fixed multipliers, these are diagnostics of the learned temporal abstraction rather than enforced target levels. (+23 .2, pW = 0 .0040 ). On WebShop the separation is starker still: STAC reaches 17 .6 ± 3.9 and 
+
+15 .3 ± 4.6 while HiPER reaches 1.8 ± 0.4 and exactly zero, giving +15 .8 (pW = 0 .0188 ) and +15 .2
+
+(pW = 0 .0290 ). Every STAC seed exceeds every HiPER seed on ALFWorld, the maximum rank separation attainable at n = 3 . Absolute success is far below the Qwen3-0.6B block because this backbone is not instruction-tuned for interactive agents; the relevant quantity is the gap, which widens from +8 .1 to +23 .5 points on ALFWorld. On WebShop the weaker backbone is a discriminative stress setting: HiPER, GRPO, and GiGPO all finish at zero in these runs, so this contrast does not establish a broader ranking of their capability. 
+
+Stabilizing temporal abstraction. The most direct evidence is behavioral rather than aggregate. One released HiPER seed ends training with structured-output validity 0.016 , so its boundary decisions become largely unparsable, and its pick-two accuracy stays at 23 .3 ± 31 .8. STAC instead finishes with switch rates 0.150 , 0.266 , and 0.142 , corresponding to multi-turn subgoals, with validity at least 0.996 on every seed. 
+
+Constraint violation diagnostics. Fig. 1 tracks both constraint surrogates throughout training. Under HiPER, premature replanning stays high, ending at 0.553 on ALFWorld and 0.597 on WebShop, so more than half of all turns replace a single-turn subgoal, while stale persistence grows to 0.147 
+
+and 0.110 . STAC starts higher still yet drives them to 0.073 and 0.151 , reductions of 7.6× and 4.0×,while also ending lower on stale persistence at 0.098 and 0.039 ; mean segment lengths settle at 4.02 
+
+and 2.91 turns. Improving both at once shows the boundary terms do not merely trade one violation for the other. Because these runs use fixed multipliers, the converged values are the violation levels those prices induce, not budgets the optimizer was asked to meet. Appendix G disables one cost at a time and finds each controls its own violation and not the other, an effect resolved at three seeds even though the success differences between arms are not. 
+
+## 6 Additional Robustness Checks 
+
+Fixed penalties, not an adaptive constrained solver. The reported duration-based STAC experi-ments hold μshort = μstale = μ fixed throughout training. They therefore evaluate a fixed, two-sided 6Table 2: Robustness checks for duration-based STAC. Panel (a) is a matched local ALFWorld comparison on the Qwen2.5-1.5B-Instruct HiPER setting. Panel (b) varies the shared fixed penalty on Qwen3-0.6B ALFWorld. Values are mean ± SD over three seeds; lower violation rates are preferred. Bold marks the best value in each column.                                                                                                 
+
+> (a) Qwen2.5-1.5B-Instruct ALFWorld
+> Method Best ↑Final ↑
+> HiPER 92 .5±3.785 .2±3.6
+> STAC (duration) 96 .4±1.289 .9±2.1
+> (b) Qwen3-0.6B ALFWorld penalty sensitivity
+> μBest ↑Final ↑Prem. ↓Stale ↓
+> 083 .3±3.381 .5±3.60.553 ±0.041 0.147 ±0.026 0.025 87 .2±3.085 .1±3.20.318 ±0.034 0.132 ±0.023 0.05 90 .1±2.688 .4±2.80.176 ±0.026 0.111 ±0.020
+> 0.10 91 .4±3.689 .3±3.50.073 ±0.018 0.098 ±0.022 0.20 90 .9±2.489 .0±2.60.045 ±0.012 0.071 ±0.014 0.40 87 .5±2.985 .4±3.10.022 ±0.008 0.054 ±0.012
+
+regularizer on the normalized boundary advantage rather than the primal–dual update in Eq. (10). This objective is related to deliberation-cost regularization [8], but applies separate, mutually exclusive costs to premature S WITCH and stale K EEP decisions after the host has formed its native boundary credit. 
+
+Released-backbone replication and multiplier sensitivity. To check the local pipeline on the Qwen2.5-1.5B-Instruct backbone used in the released HiPER study, we ran a matched three-seed ALF-World comparison with the same local evaluation and checkpoint protocol. Table 2 summarizes both robustness checks. Panel (a) reports a +3 .9-point best-checkpoint and +4 .7-point final-checkpoint gain for the duration-based method. This is a controlled local comparison, not a claim of seed-matched reproduction of every upstream aggregate. Panel (b) varies the shared penalty on Qwen3-0.6B ALF-World. Increasing μ monotonically reduces the measured violations over the tested range, whereas task success peaks at the validation-selected μ = 0 .1 and declines under stronger penalties. We select 0.1 on this ALFWorld validation sweep and reuse it unchanged for WebShop and Llama; this selection coupling is a limitation of the reported peak values. 
+
+Scope and remaining limitations. For the matched Qwen3 and Llama local HiPER and STAC arms, we set HiPER’s keep_penalty and keep_consistency_penalty to zero and retain its environment reward and −0.1 malformed-output term. Thus the comparison does not establish whether a separately tuned host KEEP penalty or a hard first-turn S WITCH block could recover the same gains. Nor do we report a dmin /dmax sweep: the selected duration values are pre-specified heuristics, not uniquely justified optima. The short cost captures most standalone success gain at three seeds, while the stale cost selectively reduces stale persistence; its incremental task-success benefit remains unresolved. Broader hosts, more seeds, and these alternative controls are future work. 
+
+## 7 Conclusion 
+
+Explicit subgoal syntax alone does not determine how stable the learned temporal abstraction will be. We identified temporal abstraction instability and proposed STAC, which prices premature replanning and stale persistence as constraint costs on the sampled boundary decision alone, leaving rewards, critic targets, and the subgoal and action advantages untouched. Over the released hierarchical host it improves best-checkpoint success by 8.1 and 7.9 points with Qwen3-0.6B and 23 .5 and 15 .8 points with Llama-3.2-1B-Instruct, seven of these eight comparisons significant at pW < 0.05 . The costs are prespecified and the reported runs hold the multipliers fixed; adaptive dual optimization under prescribed budgets is the natural next step. 7References 
+
+[1] Pierre-Luc Bacon, Jean Harb, and Doina Precup. The option-critic architecture. In Proceedings of the AAAI conference on artificial intelligence , volume 31, 2017. [2] Oriol Corcoll and Raul Vicente. Disentangling controlled effects for hierarchical reinforcement learning. In Bernhard Schölkopf, Caroline Uhler, and Kun Zhang, editors, Proceedings of the First Conference on Causal Learning and Reasoning , volume 177 of Proceedings of Machine Learning Research , pages 178–200. PMLR, 2022. URL https://proceedings.mlr.press/v177/corcoll22a.html .[3] Juncheng Diao, Zhicong Lu, Peiguang Li, Yongwei Zhou, Changyuan Tian, Qingbin Li, Rongxiang Weng, Jingang Wang, and Xunliang Cai. HIPIF: Hierarchical planning and information folding for long-horizon LLM agent learning. arXiv preprint arXiv:2606.10507 , 2026. URL https://arxiv.org/abs/2606. 10507 .[4] T. Dietterich. Hierarchical reinforcement learning with the MAXQ value function decomposition. Journal of Artificial Intelligence Research , 13:227–303, 2000. [5] L. Feng, Z. Xue, T. Liu, and B. An. Group-in-group policy optimization for LLM agent training. arXiv preprint arXiv:2505.10978 , 2025. [6] Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Alex Vaughan, et al. The llama 3 herd of models. 
+
+arXiv preprint arXiv:2407.21783 , 2024. [7] Nico Gürtler, Dieter Büchler, and Georg Martius. Hierarchical reinforcement learning with timed subgoals. In Advances in Neural Information Processing Systems , volume 34, pages 21732–21743. Curran As-sociates, Inc., 2021. URL https://proceedings.neurips.cc/paper_files/paper/2021/hash/ b59c21a078fde074a6750e91ed19fb21-Abstract.html .[8] J. Harb, P.-L. Bacon, M. Klissarov, and D. Precup. When waiting is not an option: Learning options with a deliberation cost. In Proceedings of the AAAI Conference on Artificial Intelligence , 2018. [9] Zican Hu, Wei Liu, Xiaoye Qu, Xiangyu Yue, Chunlin Chen, Zhi Wang, and Yu Cheng. Divide and conquer: Grounding LLMs as efficient decision-making agents via offline hierarchical reinforcement learning. In 
+
+Proceedings of the 42nd International Conference on Machine Learning , volume 267 of Proceedings of Machine Learning Research , pages 24570–24590. PMLR, 2025. URL https://proceedings.mlr. press/v267/hu25q.html .[10] Hongbo Jin, Rongpeng Zhu, Jiayu Ding, Guibo Luo, and Ge Li. HiMAC: Hierarchical macro-micro learning for long-horizon LLM agents. arXiv preprint arXiv:2603.00977 , 2026. URL https://arxiv. org/abs/2603.00977 .[11] Seungjae Lee, Jigang Kim, Inkyu Jang, and H. Jin Kim. DHRL: A graph-based approach for long-horizon and sparse hierarchical reinforcement learning. In Advances in Neural Information Processing Systems ,volume 35, 2022. URL https://openreview.net/forum?id=5JQqvQ1ujSv . NeurIPS 2022 Oral. [12] Siyuan Li, Rui Wang, Minxue Tang, and Chongjie Zhang. Hierarchical reinforcement learning with advantage-based auxiliary rewards. In Advances in Neural Information Processing Systems , volume 32, pages 1407–1417. Curran Associates, Inc., 2019. URL https://proceedings.neurips.cc/paper_ files/paper/2019/hash/81e74d678581a3bb7a720b019f4f1a93-Abstract.html .[13] S. Mohajer Hamidi, L. Ye, and K. N. Plataniotis. DreamPhase: Offline imagination and uncertainty-guided planning for large-language-model agents. In International Conference on Learning Representations , 2026. URL https://openreview.net/forum?id=81PJ2KPnmK .[14] Ofir Nachum, Shixiang Gu, Honglak Lee, and Sergey Levine. Data-efficient hierarchical reinforce-ment learning. In Advances in Neural Information Processing Systems , volume 31. Curran Asso-ciates, Inc., 2018. URL https://proceedings.neurips.cc/paper_files/paper/2018/hash/ e6384711491713d29bc63fc5eeb5ba4f-Abstract.html .[15] Andrew Y Ng, Daishi Harada, and Stuart Russell. Policy invariance under reward transformations: Theory and application to reward shaping. In Icml , volume 99, pages 278–287. Citeseer, 1999. [16] Sangeun Park and Minhae Kwon. $\texttt{Multi}^2$: Hierarchical multi-agent decision-making with LLM-based agents in interactive environments. In Forty-third International Conference on Machine Learning , 2026. URL https://openreview.net/forum?id=H0tMEp0ZmO .
+
+8[17] Jiangweizhi Peng, Yuanxin Liu, Ruida Zhou, Charles Fleming, Zhaoran Wang, Alfredo Garcia, and Mingyi Hong. HiPER: Hierarchical plan–execute RL for multi-turn LLM agents. In Forty-third International Conference on Machine Learning , 2026. URL https://openreview.net/forum?id=RJWQcgd3hX .[18] J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov. Proximal policy optimization algorithms. 
+
+arXiv preprint arXiv:1707.06347 , 2017. [19] John Schulman, Philipp Moritz, Sergey Levine, Michael Jordan, and Pieter Abbeel. High-dimensional continuous control using generalized advantage estimation. arXiv preprint arXiv:1506.02438 , 2015. [20] Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu, et al. DeepSeekMath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 ,2024. [21] Mohit Shridhar, Xingdi Yuan, Marc-Alexandre Cote, Yonatan Bisk, Adam Trischler, and Matthew Hausknecht. {ALFW}orld: Aligning text and embodied environments for interactive learning. In 
+
+International Conference on Learning Representations , 2021. URL https://openreview.net/forum? id=0IOX0YcCdTn .[22] Richard S Sutton, Doina Precup, and Satinder Singh. Between mdps and semi-mdps: A framework for temporal abstraction in reinforcement learning. Artificial intelligence , 112(1-2):181–211, 1999. [23] An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, Chujie Zheng, Dayiheng Liu, Fan Zhou, Fei Huang, Feng Hu, Hao Ge, Haoran Wei, Huan Lin, Jialong Tang, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jing Zhou, Jingren Zhou, Junyang Lin, Kai Dang, Keqin Bao, Kexin Yang, Le Yu, Lianghao Deng, Mei Li, Mingfeng Xue, Mingze Li, Pei Zhang, Peng Wang, Qin Zhu, Rui Men, Ruize Gao, Shixuan Liu, Shuang Luo, Tianhao Li, Tianyi Tang, Wenbiao Yin, Xingzhang Ren, Xinyu Wang, Xinyu Zhang, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yinger Zhang, Yu Wan, Yuqiong Liu, Zekun Wang, Zeyu Cui, Zhenru Zhang, Zhipeng Zhou, and Zihan Qiu. Qwen3 technical report, 2025. URL 
+
+https://arxiv.org/abs/2505.09388 .[24] Shunyu Yao, Howard Chen, John Yang, and Karthik Narasimhan. Webshop: Towards scalable real-world web interaction with grounded language agents. Advances in Neural Information Processing Systems , 35: 20744–20757, 2022. [25] Tianren Zhang, Shangqi Guo, Tian Tan, Xiaolin Hu, and Feng Chen. Generating adjacency-constrained subgoals in hierarchical reinforcement learning. In Advances in Neural Information Processing Systems ,volume 33, pages 21579–21590. Curran Associates, Inc., 2020. URL https://proceedings.neurips. cc/paper_files/paper/2020/hash/f5f3b8d720f34ebebceb7765e447268b-Abstract.html .[26] Shuai Zhen, Yanhua Yu, Ruopei Guo, Nan Cheng, and Yang Deng. Hierarchical reinforcement learning with augmented step-level transitions for llm agents. In Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 7035–7053, 2026. [27] Yifei Zhou, Andrea Zanette, Jiayi Pan, Sergey Levine, and Aviral Kumar. ArCHer: Training language model agents via hierarchical multi-turn RL. In Proceedings of the 41st International Conference on Machine Learning , volume 235 of Proceedings of Machine Learning Research , pages 62178–62209. PMLR, 2024. URL https://proceedings.mlr.press/v235/zhou24t.html .
+
+9A Implementation, Experimental Details, and Broader Impact 
+
+Standalone integration. STAC requires a binary boundary decision, a subgoal-age counter, the base boundary advantage, and estimates of the two constraint rates. It can therefore be inserted after advantage normalization in any on-policy hierarchical optimizer. The host policy need not use the subgoal text, value heads, or return estimator used in our experiments. Our experimental structured-output adapter additionally supplies the parsed boundary-token mask described in Appendix I. An implementation should expose the constraint-cost functions gi and the multipliers μi, with the budgets 
+
+ρi and a dual optimizer needed only for the adaptive variant; setting both multipliers to zero is the behavior-preserving default for constrained boundary credit. 
+
+Artifacts and statistical protocol. Our experiment configuration fixes all non-treatment settings across arms and stores the complete resolved trainer configuration, per-update metrics, validation generations, and sampled training episodes. We recommend reporting switch rate, segment-length distribution, both constraint violation rates, and valid-format rate alongside task return. Violation rates and segment statistics are computed only over turns with a parsed valid boundary-token mask; malformed or missing boundary blocks are excluded from those denominators and reported separately through the valid-format rate. For the main result, we follow HiPER and select each seed’s highest-overall-validation checkpoint, then report every category from that checkpoint. Appendix H separately reports step-150 and late-window summaries to expose checkpoint-selection sensitivity. Figure 4 reports the arithmetic mean across the three seed-level validation trajectories without uncertainty intervals. 
+
+Training configuration. The released ALFWorld host enables the truncation bootstrap in Eq. (14); the WebShop host disables it. ALFWorld uses a 2048-token prompt limit; WebShop uses 4096 tokens because its released observation template is longer. The matched Qwen3 and Llama local HiPER and STAC runs set HiPER’s keep_penalty and keep_consistency_penalty to zero, while retaining the environment reward and the host’s −0.1 malformed-output reward term. We use all the HiPER baseline numbers in our experiments. The base-model row evaluates the untrained checkpoint under the same Plan–Execute prompt, temperature, episode limit, and splits. 
+
+Experimental Lagrangian instantiation. For all reported experiments we use the fixed-multiplier Lagrangian instantiation 
+
+μshort = μstale = 0 .1, gshort = I[dt < 2] , gstale = I[dt ≥ 8] . (12) For a valid boundary, bAb, STAC  
+
+> t
+
+= Abt − 0.1( cshort  
+
+> t
+
++ cstale  
+
+> t
+
+). The multipliers are held fixed throughout training rather than updated by Eq. (10). The reported result is therefore a fixed boundary penalty, not a primal–dual method that enforces prescribed violation budgets. We select 0.1 by Qwen3-0.6B ALFWorld validation success and reuse it unchanged in the other reported settings; Table 2 reports the sensitivity of the selected setting. 
+
+A.1 Heuristic choice of the two duration thresholds 
+
+Neither threshold in Eq. (12) is selected by validation. They are pre-specified duration heuristics, not guarantees about the appropriate duration of every individual subgoal. 
+
+The lower threshold discourages uniform one-turn collapse. The cost gshort = I[dt < 2] is active exactly when dt = 1 . A subgoal that terminates after a single turn in every state induces the same action distribution as a policy with no subgoal layer at all: the option reduces to a primitive action and the hierarchy is vacuous [22]. We therefore use dmin = 2 to discourage this uniform collapse. It does not imply that every one-turn segment is undesirable, and we do not claim that 2 is the only admissible threshold. 
+
+The upper threshold is horizon-informed, not a per-segment bound. An episode admits at most 
+
+T environment turns and a task requires K subgoals. The quantity T /K is an average fair-share reference: if every subgoal persisted beyond it, the remaining subgoals could not all fit in the horizon. It is not an upper bound on any individual segment. We use the corresponding distribution-level reference 
+
+dmax = 8 ≈
+
+j
+
+T / ¯K
+
+k
+
+, (13) 10 where ¯K is the mean number of subgoals per task in solved benchmark trajectories. We estimate ¯K
+
+from solved episodes of each benchmark, counting the phases of the recorded plan decomposition, independently of any STAC run: ¯K = 5 .61 over 113 ALFWorld episodes and ¯K = 4 .62 over 120 
+
+WebShop episodes. With T = 50 this gives 8.91 on ALFWorld and 10 .83 on WebShop. Choosing 8
+
+is therefore a pre-specified, horizon-informed heuristic, not a mathematical consequence or a tuned optimum. 
+
+Observed duration diagnostics. Under an identical dmax = 8 , the late-training 90th-percentile segment length is 8.27 on ALFWorld, sitting at the threshold, and 5.40 on WebShop, where the agent settles well below it without the constraint being active. The threshold governs the upper tail of the duration distribution rather than its mean, which remains at 4.02 and 2.91 turns. We report this as a post hoc diagnostic rather than evidence that 8 is uniquely correct. A duration-threshold sweep is left to future work. 
+
+A per-task adaptive form. Because ¯K varies by task category, a task- or state-dependent 
+
+dmax (st) = ( T − t)/K remaining is a natural extension. We do not evaluate it here. Table 3: Horizon fair-share reference ⌊T / ¯K⌋ evaluated per ALFWorld task category, with T = 50 
+
+and ¯K measured from solved episodes. The reference is lowest for the most multi-phase category and highest for the fewest-phase category, so Eq. (13) is not a constant in disguise.                          
+
+> Category Episodes ¯KT / ¯K
+> LOOK 20 3.50 14 .3
+> PICK 32 4.09 12 .2
+> CLEAN 17 6.59 7.6
+> HEAT 16 6.88 7.3
+> COOL 19 7.11 7.0
+> PICK 298.44 5.9
+> All 113 5.61 8.9
+
+Compute. Every run trains on a single node of eight NVIDIA H100 80GB GPUs, using vLLM for rollout generation and co-locating actor and critic on the same node. A 150-update run takes roughly 12–24 hours depending on benchmark and backbone, WebShop being slower than ALFWorld because of its longer observation template. 
+
+Broader impact. Temporal abstraction can make language agents more efficient and interpretable by exposing the subgoal that persists across actions. However, the chosen constraint-cost functions encode a behavioral prior. Costs that are too restrictive can suppress legitimate rapid replanning or force stale subgoals, especially under distribution shift. For deployment, boundary credit should be monitored, capped, and disabled when the structured interface is not semantically validated. It does not replace task-level safety constraints. 
+
+## B Host Advantage Estimator 
+
+HiPER uses one shared critic backbone with two scalar output heads [17]. The high-level head 
+
+V Hϕ (st) estimates the return from selecting a new subgoal at a segment boundary, while the low-level head V Lϕ (st, z t) estimates the return from continuing execution under the active subgoal. There is no separately learned boundary-value head. The two heads produce three actor advantages because the boundary advantage is derived from their value difference. Let 0 = b0 < b 1 < · · · < b K = T be the segment boundaries. Segment k contains turns [bk, b k+1 −1] ,has duration Dk = bk+1 − bk, and uses subgoal zk. Write sg[ ·] for stop-gradient and define 
+
+BHk+1 =
+
+
+
+V Hϕ (sbk+1 ), bk+1 < T, 
+
+sg[ V Hϕ (sbk )] , bootstrapped truncation ,
+
+0, otherwise .
+
+(14) 11 The middle case is the released host’s optional treatment of a trajectory cut off by the turn limit. The discounted segment reward, high-level residual, and subgoal advantage are 
+
+erk = 
+
+> Dk−1
+
+X
+
+> j=0
+
+γj rbk +j ,δzk = erk + γDk BHk+1 − V Hϕ (sbk ),
+
+bAzbk = δzk + γDk λH bAzbk+1 . (15) 
+
+bAzbk is defined at segment starts and is assigned to the newly generated subgoal tokens. Within a segment, define 
+
+eVt+1 =
+
+V Lϕ (st+1 , z k), t < b k+1 − 1,BHk+1 , t = bk+1 − 1. (16) The low-level residual and action advantage are 
+
+δat = rt + γ eVt+1 − V Lϕ (st, z k),
+
+bAat =
+
+> bk+1 −1
+
+X
+
+> ℓ=t
+
+(γλ L)ℓ−tδaℓ , t ∈ [bk, b k+1 − 1] . (17) The sum stops at the segment boundary, where the final residual bootstraps to the high-level head. 
+
+bAat is assigned to action tokens. For boundary credit, define the estimated gain from replacing the previous subgoal, 
+
+∆bt = V Hϕ (st) − V Lϕ (st, z t−1),
+
+bAbt = ( yt − βt)∆ bt , yt = I[qt = SWITCH] , βt = πbθ (SWITCH | st, z t−1). (18) This is a centered policy-gradient estimator for the realized binary decision and is assigned to the boundary tokens at every turn. Before the actor update, the advantage streams are independently standardized. The boundary stream gives the normalized boundary advantage Abt of Eq. (5), whose batch B contains exactly those turns with a valid boundary-token mask. This Abt is the sole host advantage consumed by STAC. The two critic targets are yHk = erk + γDk sg[ BHk+1 ] and yLt =
+
+rt + γ sg[ eVt+1 ]. The critic regresses V Hϕ (sbk ) to yHk and V Lϕ (st, z k) to yLt . STAC changes neither target. 
+
+## C Optimization Details 
+
+Locality. Potential-based reward shaping [15] replaces the trajectory reward rt with r′ 
+
+> t
+
+= rt +
+
+γΦ( st+1 ) − Φ( st). Because bootstrapped estimators aggregate discounted rewards through the critic, such a change can alter critic targets and advantages at earlier turns. STAC instead adds the sampled Lagrangian cost terms after host advantage estimation, only to the boundary span at turn t. Thus it changes neither the reward stream, critic targets, nor another turn’s advantage. Moreover, the mutually exclusive boundary decisions and bounded costs imply that the valid-decision perturbation is bounded by max( μshort , μ stale ).
+
+One update. Each update (1) rolls out the hierarchical policy, (2) tracks dt and computes Eq. (6), (3) computes and normalizes the host advantage streams, (4) forms Eq. (11), and (5) applies the unchanged on-policy actor and critic updates. Step (6) applies only to the adaptive primal–dual variant, which additionally updates the multipliers using Eq. (10); the reported runs omit it and hold 
+
+μ fixed. We log switch rate, segment-length quantiles, one-turn-segment rate, and both constraint rates, together with the multipliers whenever they are adapted. 
+
+## D Classical Termination Regularization 
+
+Classical hierarchical reinforcement learning represents the keep/switch decision as a termination function. Option-Critic learns termination policies end to end [1], while deliberation costs discourage 12 frequent termination [8]. A one-sided termination cost can favor indefinitely long options, and both formulations assume a closed, indexed decision space. STAC instead constrains both premature replanning and stale persistence at the boundary-policy level. It is compatible with GAE [19], PPO [18], and other on-policy hierarchical objectives. 
+
+## E Related Hierarchical Language-Agent Methods 
+
+Recent hierarchical language-agent methods differ in what constitutes a level of the hierarchy, how those levels are trained, and where credit is assigned. This section summarizes the methods cited in the introduction from their primary papers and official implementations. 
+
+ArCHer. ArCHer is a two-level actor–critic framework for multi-turn language-model interac-tion [27]. Its high level applies off-policy temporal-difference learning to utterance- or turn-level transitions, thereby propagating reward across an entire dialogue, while its low level applies token-level policy optimization within each utterance using the high-level value function for cross-turn credit. This separation allows the high and low levels to run RL algorithms with different update rules and substantially improves sample efficiency relative to fully on-policy multi-turn optimization. 
+
+GLIDER. GLIDER uses a two-level planner–controller hierarchy for grounding language models in sequential environments [9]. The high-level policy generates abstract chain-of-thought plans or subtasks, while a parameter-efficient low-level controller executes environment actions conditioned on the current plan. Training proceeds from behavior-cloning initialization to offline hierarchical RL with an advantage-weighted actor–critic objective, followed by offline-to-online adaptation; the paper evaluates transfer and generalization on ScienceWorld and ALFWorld. 
+
+STEP-HRL. STEP-HRL is the method name used in the paper formally titled Hierarchical Rein-forcement Learning with Augmented Step-Level Transitions for LLM Agents [26]. It introduces three functional components: a high-level policy that predicts the next subtask from the instruction and completed-subtask history, a low-level policy that acts from the current observation, subgoal, and compact local progress, and a local-progress module that iteratively folds intra-subtask interactions into that compact representation. The components share policy parameters but use distinct critics; training combines behavior-cloning initialization with offline RL. The compact progress state reduces dependence on full interaction histories and is evaluated on ScienceWorld and ALFWorld. 
+
+HiMAC. HiMAC decomposes control into a shared-parameter Macro-Policy and Micro-Policy [10]. The Macro-Policy generates a structured blueprint of natural-language subgoals, and the Micro-Policy generates atomic actions conditioned on each subgoal. Its critic-free hierarchical optimization extends group-relative policy optimization to produce separate blueprint-level and execution-level relative advantages. An alternating co-evolution schedule updates macro exploration with the executor fixed, then adapts the executor under a fixed high-confidence blueprint; experiments cover ALFWorld, WebShop, and Sokoban. 
+
+HIPIF. HIPIF combines hierarchical planning with information folding for long-horizon interac-tion [3]. At each step, a reflection operation decides whether the active subgoal is complete. When complete, the method folds that subgoal’s interaction history into a compact summary and generates the next subgoal; otherwise, it generates another primitive action under the current subgoal. Training uses a GRPO-style clipped objective whose step-level advantages combine terminal environment reward with subgoal-oriented process rewards, avoiding an ever-growing raw interaction context. 
+
+Multi 2. Multi 2 assigns the two hierarchy levels to separate role-specialized agents [16]. Its high-level System 1 agent generates context-aware subgoals and is trained by supervised fine-tuning on a subgoal dataset. Its low-level System 2 agent executes atomic actions, first learning from offline data with actor–critic RL and then receiving online RL fine-tuning while System 1 remains fixed. The method targets objective drift in long-horizon interaction and introduces hierarchical datasets spanning multiple interactive environments. 
+
+DreamPhase. A complementary line of work improves planning quality rather than hierarchical structure. DreamPhase equips a language agent with offline imagination, planning over internally 13 0 25 50 75 100 125 150            
+
+> Training step
+> 0246810
+> Subgoal segment length (turns)
+> one-turn segments
+> one-turn share: 0.55 →0.27
+> ALFWorld
+> 025 50 75 100 125 150
+> Training step
+> one-turn segments
+> one-turn share: 0.80 →0.36
+> WebShop
+> 90th percentile Median
+
+Figure 2: Subgoal durations move away from one-turn segments. Median and 90th-percentile STAC segment length, each computed over all segments in a training update and then averaged across three seeds; the shaded region spans the 50th–90th percentile range. The annotation gives the fraction of one-turn segments over the first twenty and final thirty updates. generated rollouts rather than additional environment interaction, and uses uncertainty estimates to guide which plan to follow [13]. This targets what the agent should plan, whereas STAC targets 
+
+when an active subgoal should be replaced, so the two are compatible: STAC constrains only the boundary decision of whichever planner is in use. 
+
+Relation to STAC. The hierarchical methods above demonstrate several benefits of hierarchical language-agent training, including cross-turn credit assignment, transferable low-level skills, compact progress representations, macro–micro optimization, folded histories, and role-specialized planning and execution. STAC addresses an orthogonal issue: regardless of how a host defines or trains its hierarchy, the learned boundary can still switch too frequently, persist after becoming stale, or leave the parsed optimization support. It therefore consumes a host-provided boundary advantage and modifies only boundary credit rather than prescribing a new planner, executor, trajectory representation, or base return estimator. 
+
+## F Additional Results 
+
+Duration distribution. Switch rate alone summarizes temporal abstraction with a single scalar, so Fig. 2 reports how the segment-length distribution itself evolves under STAC. Early in training the distribution concentrates on one-turn segments: they account for 0.55 of ALFWorld segments and 0.80 of WebShop segments, and the WebShop median segment is exactly one turn. By the end of training that mass has roughly halved, to 0.27 and 0.36 , and the distribution has both shifted and widened. The median rises from 1.55 to 3.03 turns on ALFWorld and from 1.00 to 2.30 on WebShop, while the 90th percentile rises from 4.27 to 8.27 and from 2.08 to 5.40 . The upper tail therefore grows faster than the median, which is the intended behavior: subgoals that coordinate long action sequences persist, while short segments remain available when replanning is appropriate. 
+
+Base model. Before RL training, Qwen3-0.6B succeeds on 1/384 ALFWorld episodes and 3/256 
+
+WebShop episodes, yielding 0.3 ± 0.5% and 1.2 ± 1.7% success. Its graded WebShop task score is 
+
+6.0 ± 1.9% ; Table 1 uses binary success consistently. 
+
+Statistical comparisons. Fig. 3 visualizes Table 1 with a confidence interval for each individual mean. Those intervals overlap in most panels, which reflects the width of a three-seed t interval rather than an absence of separation; the comparisons in Table 4 test the difference directly and are the quantity of interest. Table 4 reports every method against released HiPER as a two-sided unpaired Welch test with Welch–Satterthwaite degrees of freedom, computed from the three-seed means and standard deviations printed in Table 1 rather than from per-seed values. STAC improves on HiPER in all eight benchmark–checkpoint cells, and seven of the eight reach pW < 0.05 ; the 14 GRPO GiGPO HiPER STAC 0% 20% 40% 60% 80% 100%    
+
+> Qwen3-0.6B Success rate
+> ALFWorld (best)
+> GRPO GiGPO HiPER STAC
+> ALFWorld ( fi nal)
+> GRPO GiGPO HiPER STAC
+> WebShop (best)
+> GRPO GiGPO HiPER STAC
+> WebShop ( fi nal)
+> GRPO GiGPO HiPER STAC 0% 20% 40% 60%
+> Llama-3.2-1B-Instruct Success rate
+> GRPO GiGPO HiPER STAC GRPO GiGPO HiPER STAC GRPO GiGPO HiPER STAC
+> GRPO GiGPO HiPER STAC
+
+Figure 3: Main results with per-mean confidence intervals. The values of Table 1 plotted as success rates. Error bars are 95% Student-t confidence intervals for each mean, computed as t0.975 ,2 s/ √3
+
+from the three-seed standard deviation, so they describe the precision of a single arm rather than the significance of a difference. At n = 3 the multiplier is t0.975 ,2 = 4 .30 , which is why the intervals are wide and frequently overlap even where the Welch test in Table 4 rejects. On Llama-3.2-1B-Instruct WebShop at the final checkpoint, every baseline records exactly zero across seeds and therefore has no interval. exception is the Qwen3-0.6B ALFWorld final checkpoint at pW = 0 .0547 . Both flat baselines are below HiPER wherever the comparison is defined, so the hierarchy itself helps and the boundary terms add a further gain on top of it. Two limitations bound these numbers. First, every test uses three seeds, so the degrees of freedom are between two and four and the intervals are wide. Second, on Llama-3.2-1B-Instruct at the final checkpoint, HiPER, GRPO, and GiGPO all record 0.0 ± 0.0, so the flat-baseline comparisons have zero difference and zero pooled variance and no Welch statistic exists; those cells are marked “—” rather than assigned a p-value. Deriving tests from published means and standard deviations also discards the seed-level pairing, which is the conservative choice here. 
+
+Multi-phase behavior. At selected checkpoints, pick-two success rises from 0.231 ± 0.310 to 
+
+0.811 ± 0.078 ; the wide HiPER spread reflects seed-level bimodality rather than a stable mean. The largest observed gain is concentrated in this multi-phase category. 
+
+Hierarchy validity. All STAC seeds retain multi-turn subgoals, nearly perfect structured-output validity, and no final missing boundary masks. One released HiPER seed instead ends at validity 
+
+0.016 despite validation success 0.812 , so aggregate accuracy alone does not reveal the state of the hierarchy. 
+
+## G Constraint Ablation 
+
+STAC adds two costs, and it is natural to ask how much each contributes. We isolate them by disabling one constraint at a time on Qwen3-0.6B, holding every other setting fixed: short only keeps 
+
+gshort = I[dt < 2] and removes the stale cost, stale only keeps gstale = I[dt ≥ 8] and removes the short cost. Both reduce to HiPER when the remaining multiplier is also set to zero. Tables 5 and 6 report the result. 
+
+Each cost controls its own violation. The two constraints are selective in the expected direction. Adding the short cost alone drives premature replanning from 0.553 to 0.085 on ALFWorld and from 15 Table 4: Two-sided unpaired Welch tests against released HiPER. Differences are in success points; ∗
+
+denotes pW < 0.05 .
+
+Benchmark Method Diff. t 95% CI pW
+
+Qwen3-0.6B 
+
+ALFWorld best GRPO −45 .8 −18 .33 [−52 .8, −38 .8] 0.0001 ∗
+
+GiGPO −24 .2 −5.35 [−39 .1, −9.3] 0.0148 ∗
+
+STAC +8.1 2.87 [+0 .3, +16 .0] 0.0457 ∗
+
+ALFWorld final GRPO −45 .6 −13 .34 [−55 .4, −35 .9] 0.0003 ∗
+
+GiGPO −22 .4 −4.87 [−37 .1, −7.7] 0.0170 ∗
+
+STAC +7.8 2.69 [−0.3, +15 .9] 0.0547 
+
+WebShop best GRPO −16 .7 −6.10 [−24 .3, −9.1] 0.0038 ∗
+
+GiGPO −10 .1 −2.68 [−21 .3, +1 .1] 0.0656 
+
+STAC +7.9 3.22 [+0 .7, +15 .1] 0.0383 ∗
+
+WebShop final GRPO −11 .8 −4.66 [−18 .8, −4.8] 0.0097 ∗
+
+GiGPO −5.2 −1.46 [−16 .3, +5 .9] 0.2374 
+
+STAC +11 .0 3.69 [+2 .4, +19 .6] 0.0250 ∗
+
+Llama-3.2-1B-Instruct 
+
+ALFWorld best GRPO −20 .8 −5.53 [−32 .0, −9.6] 0.0084 ∗
+
+GiGPO −16 .1 −3.59 [−28 .6, −3.6] 0.0231 ∗
+
+STAC +23 .5 5.00 [+10 .4, +36 .6] 0.0076 ∗
+
+ALFWorld final GRPO −15 .6 −5.81 [−25 .3, −5.9] 0.0172 ∗
+
+GiGPO −10 .2 −3.49 [−19 .2, −1.2] 0.0364 ∗
+
+STAC +23 .2 6.03 [+12 .5, +33 .9] 0.0040 ∗
+
+WebShop best GRPO −0.2 −0.54 [−1.3, +0 .9] 0.6185 
+
+GiGPO −0.2 −0.69 [−1.0, +0 .6] 0.5293 
+
+STAC +15 .8 6.98 [+6 .3, +25 .4] 0.0188 ∗
+
+WebShop final GRPO 0.0 — — —GiGPO 0.0 — — —STAC +15 .2 5.74 [+3 .8, +26 .7] 0.0290 ∗80 90 100 110 120 130 140 150          
+
+> Training epoch
+> 50% 60% 70% 80% 90% 100%
+> Mean validation success
+> Qwen3-0.6B
+> 80 90 100 110 120 130 140 150
+> Training epoch
+> 0% 10% 20% 30% 40% 50% 60% Llama-3.2-1B-Instruct
+> HiPER STAC
+
+Figure 4: Late-training ALFWorld validation. Mean HiPER and STAC validation success across three seeds from epochs 80 through 150, without confidence intervals. Validation is performed every five epochs on 128 held-out episodes per seed. The vertical ranges differ between panels because the two backbones differ by roughly a factor of two in absolute success; a shared axis would flatten the Llama-3.2-1B panel. STAC is above HiPER at every evaluation on both backbones over this window. 
+
+0.597 to 0.165 on WebShop, while leaving stale persistence uncontrolled. Adding the stale cost alone drives stale persistence from 0.147 to 0.045 and from 0.110 to 0.025 , the lowest stale rates in either table, while leaving premature replanning essentially at its HiPER value ( 0.565 and 0.605 ). Neither cost substitutes for the other. 
+
+The two failure modes are not symmetric. By point estimate, short only recovers most of the gain, reaching 89 .2 of STAC’s 91 .4 on ALFWorld and 67 .4 of 69 .3 on WebShop, whereas stale only sits within noise of HiPER ( 84 .1 and 62 .0 against 83 .3 and 61 .4; pW = 0 .79 and 0.84 ). This 16 ordering suggests that premature replanning is the dominant failure mode at this scale: it is by far the more frequent violation under HiPER, and the arm that suppresses it is the arm that moves success. Suppressing stale persistence alone corrects a rarer failure and leaves subgoals that still collapse to single turns, which is visible in the mean segment length of 1.6 turns, essentially HiPER’s 1.7.
+
+Why both are still needed. Each single-constraint arm leaves the violation it does not control no better than HiPER, and the short-only arm trends worse. Its stale-persistence rate is 0.185 ± 0.031 
+
+against HiPER’s 0.147 ± 0.026 , a gap that is directional rather than resolved at n = 3 (pW = 0 .18 ), and its segments lengthen to 4.70 ± 0.61 turns, consistent with pressure away from switching acting as pressure toward keeping. The full method attains the lower stale rate of the two ( 0.098 ± 0.022 )at a shorter 4.02 ± 0.47 turns, which is what we mean by the stale cost acting as a brake; we note that this particular contrast is suggestive rather than established at this seed count. Multi-phase Pick2 accuracy follows the same ordering, rising from 23 .1 under HiPER to 68 .5 with the short cost, 27 .5
+
+with the stale cost, and 81 .1 with both, consistent with the claim that this category requires holding one subgoal across an entire fetch-and-place phase. 
+
+What three seeds do and do not resolve. The violation effects are large relative to their spread and are resolved at this seed count: the short cost reduces premature replanning from 0.553 ± 0.041 to 
+
+0.085 ± 0.021 on ALFWorld ( pW = 0 .0004 ) and from 0.597 ± 0.034 to 0.165 ± 0.029 on WebShop (pW = 0 .0001 ), while the stale cost reduces stale persistence from 0.147 ± 0.026 to 0.045 ± 0.013 
+
+(pW = 0 .0095 ). The success differences between arms are not: short only versus HiPER gives 
+
+pW = 0 .11 on ALFWorld and 0.087 on WebShop, and full versus short only gives pW = 0 .51 . The Pick2 column is the least resolved of all, because HiPER and the stale-only arm are seed-bimodal with standard deviations of 31 .0 and 28 .4. We therefore read this ablation as establishing which cost controls which violation , and as ordering the arms by point estimate, rather than as separating their task success. Table 5: Constraint ablation on ALFWorld (Qwen3-0.6B). “Short” and “Stale” mark which constraint is active; the HiPER row is the host with both multipliers at zero and the STAC row is the configuration used in Table 1. “(short)” and “(stale)” are the single-constraint arms and “(full)” is STAC as reported elsewhere in the paper. Values are mean ± SD across three seeds; violation rates and mean segment length are averaged over the final thirty updates. Arrows give the preferred direction. Bold marks the best value in each column. At n = 3 the violation-rate differences are resolved but the success differences between arms are not; see the text.                                                                                              
+
+> Method Short Stale Best ↑Final ↑Prem. ↓Stale ↓Seg. len. Pick2 ↑
+> HiPER ××83 .3±3.381 .5±3.60.553 ±0.041 0.147 ±0.026 1.70 ±0.24 23 .1±31 .0
+> STAC (short) ✓×89 .2±3.887 .0±3.90.085 ±0.021 0.185 ±0.031 4.70 ±0.61 68 .5±14 .6
+> STAC (stale) ×✓84 .1±3.582 .4±3.70.565 ±0.039 0.045 ±0.013 1.60 ±0.22 27 .5±28 .4
+> STAC (full) ✓✓91 .4±3.689 .3±3.50.073 ±0.018 0.098 ±0.022 4.02 ±0.47 81 .1±7.8
+
+Table 6: Constraint ablation on WebShop (Qwen3-0.6B). Columns follow Table 5. The same ordering holds: the short cost carries most of the success gain, the stale cost gives the lowest stale-persistence rate, and only the full method is low on both.                                                                   
+
+> Method Short Stale Best ↑Final ↑Premature ↓Stale ↓
+> HiPER ××61 .4±3.556 .5±3.00.597 ±0.034 0.110 ±0.020
+> STAC (short) ✓×67 .4±2.964 .3±3.70.165 ±0.029 0.095 ±0.019
+> STAC (stale) ×✓62 .0±3.457 .4±3.20.605 ±0.036 0.025 ±0.009
+> STAC (full) ✓✓69 .3±2.467 .5±4.20.151 ±0.027 0.039 ±0.011
+
+## H Final-Checkpoint and Late-Window Robustness 
+
+The main text follows HiPER’s best-validation-checkpoint convention. For completeness, Table 7 reports the ALFWorld category breakdown at the saved best checkpoints, Table 8 reports every category at the final checkpoint, and Table 9 gives a lower-variance late-window diagnostic. “Late” first averages the seven validations at updates 120–150 within each seed and then reports mean ±
+
+17 SD across seeds. Tables 7 and 8 additionally carry a Llama-3.2-1B-Instruct block; the late-window diagnostic in Table 9 remains Qwen3-0.6B only, since the flat baselines were not rerun on the second backbone. 
+
+Reading the Llama-3.2-1B block. This backbone never solves the two appliance categories: Heat is 0.0 for every seed of both methods, and Cool is 0.0 everywhere except one STAC seed at the final checkpoint. Pick2 is the diagnostic category, because completing it requires holding one subgoal across a full fetch-and-place phase before switching to the second object. There STAC reaches 
+
+80 .1 ± 12 .8 against HiPER’s 20 .1 ± 9.4 at the best checkpoint and 61 .7 ± 16 .9 against 8.3 ± 10 .4 at update 150, mirroring the same Pick2 weakness that HiPER shows on Qwen3-0.6B ( 23 .1 ± 31 .0). 18 Table 7: ALFWorld category accuracy (%) at the saved best checkpoints used in Table 1, mean ± SD across three seeds. “All” is logged task-distribution-weighted overall accuracy. Bold marks the better method within each model block.                                                                                                                                      
+
+> Method Pick Look Clean Heat Cool Pick2 All
+> Qwen3-0.6B
+> GRPO 51 .0±3.421 .0±18 .343 .9±9.231 .9±15 .525 .3±17 .640 .7±1.237 .5±2.8
+> GiGPO 75 .1±12 .055 .6±12 .757 .9±13 .950 .1±10 .353 .3±8.355 .0±10 .059 .1±7.1
+> HiPER 98 .1±1.685 .8±19 .595 .6±5.197 .0±5.386 .5±9.223 .1±31 .083 .3±3.3
+> STAC (ours) 94 .9±8.985 .8±4.797 .5±2.297 .8±3.985 .6±11 .281 .1±7.891 .4±3.6
+> Llama-3.2-1B-Instruct
+> HiPER 61 .5±11 .465 .9±7.30.0±0.00.0±0.00.0±0.020 .1±9.428 .6±5.5
+> STAC (ours) 86 .4±10 .070 .8±6.629 .0±10 .30.0±0.00.0±0.080 .1±12 .852 .1±6.0
+
+Table 8: Final-checkpoint category accuracy (%) at update 150, mean ± SD across three seeds. “Avg.” is logged task-distribution-weighted overall accuracy. Bold marks the better method within each model block.                                                                                                                                      
+
+> Method Pick Look Clean Heat Cool Pick2 Avg.
+> Qwen3-0.6B
+> GRPO 48 .9±8.927 .8±12 .747 .4±5.314 .1±0.440 .0±6.928 .3±12 .635 .9±4.7
+> GiGPO 75 .1±12 .055 .6±12 .757 .9±13 .950 .1±10 .353 .3±8.355 .0±10 .059 .1±7.1
+> HiPER 96 .8±5.683 .3±0.098 .2±3.192 .2±7.286 .7±2.323 .3±31 .881 .5±3.6
+> STAC 97 .8±3.891 .7±8.493 .0±8.084 .6±10 .392 .0±6.973 .3±17 .689 .3±3.5
+> Llama-3.2-1B-Instruct
+> HiPER 47 .7±9.847 .2±7.60.0±0.00.0±0.00.0±0.08.3±10 .417 .2±4.4
+> STAC 86 .0±15 .972 .2±11 .019 .3±13 .40.0±0.02.7±4.661 .7±16 .940 .4±5.0
+
+Relative to HiPER, STAC’s final-overall unpaired Welch difference is +0 .078 (95% CI 
+
+[−0.003 , +0 .159] , pW = 0 .0547 ). Its late-overall difference, averaging updates 120–150, is +0 .095 
+
+([+0 .052 , +0 .138] ). These parametric intervals remain preliminary at three seeds. The final ac-curacies are 0.359 ± 0.047 for GRPO, 0.591 ± 0.071 for GiGPO, 0.815 ± 0.036 for HiPER, and 
+
+0.893 ± 0.035 for STAC. The best-checkpoint steps across the three seeds are GRPO 140/150/140, GiGPO 150/150/150, HiPER 90/145/145, and STAC 120/145/145. The discrepancy between main and appendix summaries quantifies checkpoint-selection sensitivity rather than changing the method ranking. 
+
+## I Boundary-Mask Representation 
+
+One turn. Let the response generated at environment turn t contain Lt tokens, yt =(yt, 1, . . . , y t,L t ). The parser locates the structured block that expresses the boundary decision, and M bt,j = 1 exactly for token positions belonging to that block; every other position receives zero. For example, suppose a tokenized response is schematically 
+
+⟨switch ⟩ KEEP ⟨/switch ⟩
+
+| {z }
+
+> boundary block
+
+⟨subgoal ⟩ · · · 
+
+| {z }
+
+> subgoal block
+
+⟨action ⟩ · · · 
+
+| {z }
+
+> action block
+
+.
+
+If the boundary block occupies the first three token positions, its mask is 
+
+M bt = [1 , 1, 1, 0, 0, . . . , 0] .
+
+The exact number of ones depends on tokenization and on whether delimiter tokens are included in the configured mask. If the boundary block is missing or malformed, the parser selects no boundary tokens and 
+
+M bt = [0 , 0, . . . , 0] , ∥M bt ∥0 = 0 ,
+
+so that turn contributes no boundary-level term. 
+
+A complete task trace. The mask is reconstructed from the response at every environment turn, not only when the agent creates a new subgoal. Thus a T -turn task produces M b 
+
+> 1
+
+, . . . , M bT . After padding each response to a common width L, the masks form 
+
+M b ∈ { 0, 1}T ×L.
+
+19 Table 9: Late-window per-category accuracy (%), mean ± SD across seeds. “Avg.” is logged task-distribution-weighted overall accuracy.                                                                                            
+
+> Method Pick Look Clean Heat Cool Pick2 Avg. GRPO 39 .4±4.623 .5±9.132 .8±6.328 .3±3.118 .3±1.120 .7±3.528 .5±1.5
+> GiGPO 61 .6±9.346 .7±8.956 .0±11 .050 .1±9.729 .0±4.138 .8±9.648 .2±7.9
+> HiPER 96 .7±1.377 .4±1.592 .4±0.686 .2±7.785 .0±0.411 .6±13 .377 .9±2.0
+> STAC 94 .9±2.081 .6±2.693 .8±1.986 .7±1.485 .9±3.873 .8±2.687 .4±1.7
+
+A schematic four-turn trace is 
+
+M b =
+
+
+
+1 1 1 0 0 · · · 
+
+1 1 1 0 0 · · · 
+
+1 1 1 0 0 · · · 
+
+0 0 0 0 0 · · · 
+
+ .
+
+The first three rows contain valid boundary blocks; each may encode either K EEP or S WITCH . The fourth response has no valid boundary block, so its row is all zero. Consequently, M bt records where the current turn writes its boundary decision ; it does not identify the active subgoal or persist for the lifetime of that subgoal. Subgoal tokens are represented by a separate mask. 20
