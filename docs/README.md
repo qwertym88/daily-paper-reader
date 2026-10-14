@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-13</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-14</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 38 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 23 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
-    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>2 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>13</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>25</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>9</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>14</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-13 23:51:12 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-14 22:38:44 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读13篇、速读25篇共38篇，语音增强与决策学习成焦点。最值得看：强化学习驱动的音视频语音增强（9.0分）和MDP中的占用度量决策聚焦学习（8.0分）。建议普通读者优先了解强化学习如何同时优化模型结构与决策目标。</p>
+<p>2026-10-14 日报完成：23 篇论文中精读 9 篇、速读 14 篇，聚焦神经架构搜索与人形机器人控制。最值得看的是 FENAS 的少样本元集成 NAS 框架（9.0/10）和 HWAM 的人形世界动作模型（8.0/10），速读中 TRACE 的跨人形迁移全身控制也值得关注。普通读者可先浏览 FENAS 与 HWAM 的摘要，再按需深入速读中的机器人控制方向。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">13 篇</strong>
+    <strong class="dpr-home-dashboard-count">9 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Efficient Audio-Visual Speech Enhancement via Reinforcement Learning-Based Neural Architecture Search">Efficient Audio-Visual Speech Enhancement via Reinforcement Learning-Based Neural Architecture Search</span></li><li><span class="dpr-home-dashboard-paper-title" title="Decision-Focused Learning in MDPs: An Occupancy Measure Approach">Decision-Focused Learning in MDPs: An Occupancy Measure Approach</span></li><li><span class="dpr-home-dashboard-paper-title" title="Humanoid World Action Model With Joint State--Action Generation">Humanoid World Action Model With Joint State--Action Generation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="FENAS: A Few-Shot Meta-Ensembling Framework for Efficient Neural Architecture Search with Synergized Zero-Cost Proxies">FENAS: A Few-Shot Meta-Ensembling Framework for Efficient Neural Architecture Search with Synergized Zero-Cost Proxies</span></li><li><span class="dpr-home-dashboard-paper-title" title="HWAM: Humanoid World Action Model With Joint State--Action Generation">HWAM: Humanoid World Action Model With Joint State--Action Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="SafeDiSTL: Decomposing Joint Constraints for Safe Multi-Agent Reinforcement Learning">SafeDiSTL: Decomposing Joint Constraints for Safe Multi-Agent Reinforcement Learning</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>6</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>4</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>5</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">25 篇</strong>
+    <strong class="dpr-home-dashboard-count">14 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Physics Residual Dynamics and Reduced Order Whole-Body Planning for Obstacle Aware Human Robot Cloth CoTransportation">Physics Residual Dynamics and Reduced Order Whole-Body Planning for Obstacle Aware Human Robot Cloth CoTransportation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Continuous-Time Estimation-Aware Optimal Control of Mobile Sensors for Target Tracking">Continuous-Time Estimation-Aware Optimal Control of Mobile Sensors for Target Tracking</span></li><li><span class="dpr-home-dashboard-paper-title" title="A Closed-Loop Non-Asymptotic Convergence Analysis of PPO with Learned Critics and Clipping">A Closed-Loop Non-Asymptotic Convergence Analysis of PPO with Learned Critics and Clipping</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="TRACE: Efficient Transfer Learning for Neural Whole-Body Control Across Humanoid Embodiments">TRACE: Efficient Transfer Learning for Neural Whole-Body Control Across Humanoid Embodiments</span></li><li><span class="dpr-home-dashboard-paper-title" title="Hamiltonian Primal-Dual Policy Reinforcement Learning for Derivative-Free Model-Based Control">Hamiltonian Primal-Dual Policy Reinforcement Learning for Derivative-Free Model-Based Control</span></li><li><span class="dpr-home-dashboard-paper-title" title="Dynamic Programming for A Linear-Gaussian Dual Control Problem">Dynamic Programming for A Linear-Gaussian Dual Control Problem</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>17</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>3</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>8</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
 </div>
 
