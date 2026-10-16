@@ -1,0 +1,458 @@
+Title: Structure-Aware Numerical Stabilization for Half-Precision Proximal Policy Optimization
+
+URL Source: https://arxiv.org/pdf/2610.13306v1
+
+Published Time: Mon, 12 Oct 2026 00:59:42 GMT
+
+Number of Pages: 9
+
+Markdown Content:
+# Structure-Aware Numerical Stabilization for Half-Precision Proximal Policy Optimization 
+
+## Linxuan Wu 
+
+Institute of Automation, Chinese Academy of Sciences School of Artificial Intelligence, University of Chinese Academy of Sciences Beijing, China 
+
+## Liang Chen 
+
+Institute of Automation, Chinese Academy of Sciences School of Artificial Intelligence, University of Chinese Academy of Sciences Beijing, China 
+
+## Abstract 
+
+Local online training on resource-constrained platforms requires low computational and training-state overhead. We study the nu-merical stability and computational efficiency of half-precision proximal policy optimization (PPO) on commodity GPUs. Directly converting PPO training to FP16 is unreliable because numerical errors feed back through policy updates and subsequent data col-lection, while PPO repeatedly compares a current policy with a fixed behavior policy. We propose PPO-FP16 with three structure-aware modules. Global scalar protection stabilizes statistics shared across a minibatch or parameter update. Policy-change residual protection extracts and preserves small differences between the current and behavior policies. Efficient persistent-update protection stabilizes optimizer state and parameter writeback while reducing state storage. These changes preserve the PPO objective, hyper-parameters, and training budget. Across six continuous-control tasks and five seeds, PPO-FP16 achieves the lowest mean return-AUC rank (1.90) among the four methods and ranks first in 17 of 30 environment–seed comparisons. Eight of nine performance configurations yield 1 .16–2 .03 × faster PPO updates. Relative to Full FP32 Adam, optimizer-state memory falls by 71 .7–74 .9%, and peak allocated GPU memory falls by up to 44 .5%. The results show that protecting a small set of structurally important quantities can deliver stable, efficient FP16 PPO without retuning. 
+
+## CCS Concepts 
+
+• Computing methodologies → Reinforcement learning .
+
+## Keywords 
+
+reinforcement learning, proximal policy optimization, low-precision training, FP16, numerical stability 
+
+## 1 Introduction 
+
+Reinforcement learning (RL) agents adapt their policies through continued interaction with an environment. This ability is valuable in robotics, autonomous systems, and control. An agent trained in simulation may need further training after deployment to accom-modate differences in hardware, sensor noise, or task conditions. Local adaptation is especially useful when data cannot easily be uploaded, communication adds latency, or the device must operate independently for long periods. These resource-constrained set-tings motivate lower computational, memory, and energy costs for training [37]. Low-precision training offers a direct way to reduce these costs. FP16 parameters and states use half the storage of FP32 values, and compatible hardware can provide higher arithmetic through-put [20]. In continuous-control tasks, PPO often uses compact actor– critic networks, making it a promising candidate for deployment on resource-constrained edge devices. Yet half-precision PPO is diffi-cult to stabilize. Each policy update changes subsequent actions and the data used for later updates. PPO also performs several optimiza-tion epochs on each rollout and uses a probability ratio between the current and behavior policies in its clipped objective [24]. When the policy change is much smaller than either absolute log-probability, FP16 rounding can change the ratio and clipping decision. We study this numerical and computational problem on commodity GPUs as a step toward eventual use on resource-constrained platforms. SAC-FP16 showed that algorithm-specific numerical reformu-lation can stabilize half-precision SAC training [3]. SAC and PPO, however, have different objectives and data flows. SAC uses replay and a maximum-entropy objective, whereas PPO collects an on-policy rollout and performs multiple updates relative to the fixed behavior policy that generated it. In PPO, errors in batch-level ag-gregate statistics, such as means, variances, and gradient norms, can affect an entire minibatch, small differences between the current and behavior policies determine clipping decisions, and gradients must pass through Adam states and the discrete FP16 parameter grid before producing persistent policy changes. We therefore propose PPO-FP16. It preserves the PPO network architecture, objective, hyperparameters, and training budget while reorganizing three error-propagation paths. Module A, global scalar protection, stabilizes shared statistics through selective FP32 reductions and scale rearrangement. Module B, policy-change residual protection, extracts differences be-tween Gaussian policies before forming absolute log-probabilities and performs clipping in the log domain. Module C, efficient persistent-update protection, builds on hAdam’s root-second-moment representation. It introduces SHARP (Structured Half-precision Adam with Root-state Preconditioning), which shares second-moment state across parameter groups, and selectively compensates FP16 writeback of the log-standard-deviation. The residual-domain policy calculation and SHARP’s structured state sharing are our main new designs. Our contributions are: 
+
+• We identify three sensitive error-propagation paths in FP16 PPO through stage-by-stage comparisons on fixed train-ing data and numerical stress tests: shared statistics, small policy changes, and persistent parameter updates. 
+
+• We propose a structure-aware FP16 PPO design with three complementary protection modules while preserving the PPO objective and training configuration. 
+
+> 1arXiv:2610.13306v1 [cs.LG] 9 Oct 2026
+
+• We evaluate PPO-FP16 on six continuous-control tasks with five seeds. PPO-FP16 achieves the lowest mean return-AUC rank (1.90); eight of nine performance configurations yield 1.16–2 .03 × faster PPO updates, optimizer-state memory is reduced by 71 .7–74 .9% relative to Full FP32 Adam, and peak allocated GPU memory is reduced by up to 44 .5%. 
+
+## 2 Background 2.1 Numerical Limits of Low-Precision Training 
+
+IEEE FP32 has one sign bit, eight exponent bits, and 23 explicit fraction bits. FP16 has one sign bit, five exponent bits, and ten ex-plicit fraction bits [14]. Fewer exponent bits narrow the dynamic range, while fewer fraction bits widen the spacing between repre-sentable values. Training can consequently suffer from overflow, underflow, and loss of small terms during addition or subtraction. Early studies showed that successful limited-precision training de-pends on rounding, accumulation, scaling, and the placement of high-precision operations [2, 10, 31]. Recent methods control tensor scales and numerical dataflow more explicitly. Unit Scaling [4] targets unit variance in weights, activations, and gradients, while Jetfire [36] combines per-block quantization with an INT8 training dataflow. Recent low-precision studies have extended this direction to FP8 training, optimizer-state quantization, and long-horizon numerical stability [8, 22, 34, 35]. At lower precision, recent work studies how exponent–significand allocation affects training [27], develops FP4 training recipes [6, 32], and controls outliers or sensitive matrix multiplications through numerical and architectural transformations [1, 13]. These studies concern large language models rather than PPO, but reinforce the general principle that low-precision training depends on where and how numerical representations are applied. 
+
+## 2.2 Low-Precision RL and SAC-FP16 
+
+RL is commonly formulated as a Markov decision process M =
+
+(S , A, 𝑃, 𝑟, 𝛾 ), where S and A are state and action spaces, 𝑃 (𝑠 ′ |
+
+𝑠, 𝑎 ) is the transition probability, 𝑟 (𝑠, 𝑎 ) is the reward, and 𝛾 ∈ ( 0, 1)
+
+is the discount factor. A policy 𝜋 𝜃 (𝑎 | 𝑠 ), parameterized by 𝜃 , max-imizes expected discounted reward over trajectories it generates. Because the policy also determines the training-data distribution, numerical errors can persist through a cycle of parameter updates, changed actions, new data, and further updates. SAC-FP16 [3] addresses low-precision training of soft actor-critic (SAC) with a stable root second moment, stable probability calcu-lations, compensated updates, and compound scaling. Its hAdam component stores a root-second-moment state 𝑤 𝑡 ≈ √𝑣 𝑡 instead of directly storing Adam’s second moment 𝑣 𝑡 . This reduces the risk that small squared gradients underflow in FP16. SAC-FP16 demonstrates that numerical reformulation can stabilize SAC in half precision. SAC [12] and PPO [24] differ in both objective and data flow. PPO has neither a target network nor the Jacobian term of a tanh-squashed SAC policy. Instead, it reduces advantages, clips a ratio against an old policy, and repeatedly optimizes on a fixed rollout. We therefore examined whether SAC-FP16 components transfer to PPO. Our exploratory transfer study found limited, environment-dependent gains from these components. This motivated a closer analysis of PPO’s own numerical paths. Recent work has also studied low-precision reinforcement learn-ing at the scale of reasoning language models. QuRL [18] accelerates rollout generation with INT8 or FP8 actors and addresses mismatch and small quantized weight updates. QaRL [9] aligns training-side computation with quantized rollouts to reduce the mismatch be-tween a low-precision rollout policy and a full-precision learner. These methods focus on quantized LLM rollout generation, whereas our study concerns native half-precision PPO learner updates and persistent training state in continuous control. 
+
+## 2.3 Proximal Policy Optimization 
+
+PPO [24] is an on-policy policy-gradient method. Let the behavior policy 𝜋 𝜃 0 collect a rollout. For a sampled state–action pair (𝑠 𝑡 , 𝑎 𝑡 ),the probability ratio is 
+
+𝑟 𝑡 (𝜃 ) = 𝜋 𝜃 (𝑎 𝑡 | 𝑠 𝑡 )
+
+𝜋 𝜃 0 (𝑎 𝑡 | 𝑠 𝑡 ) = exp  log 𝜋 𝜃 (𝑎 𝑡 | 𝑠 𝑡 ) − log 𝜋 𝜃 0 (𝑎 𝑡 | 𝑠 𝑡 ) . (1) Given advantage estimate b𝐴 𝑡 , the clipped surrogate objective is 
+
+𝐿 CLIP (𝜃 ) = E𝑡 
+
+h
+
+min 
+
+
+
+𝑟 𝑡 (𝜃 ) b𝐴 𝑡 , clip (𝑟 𝑡 (𝜃 ), 1 − 𝜖 clip , 1 + 𝜖 clip ) b𝐴 𝑡 
+
+i 
+
+.
+
+(2) Here 𝜖 clip > 0 is the PPO clipping threshold and clip (𝑥, 𝑙, 𝑢 ) =
+
+min (max (𝑥, 𝑙 ), 𝑢 ). Clipping supports stable learning, but its deci-sion depends on an accurate probability ratio. Advantage estimates are obtained using standard generalized advantage estimation (GAE) [23] with the value network 𝑉 𝜙 . GAE accumulates temporal-difference residuals along the rollout, with 
+
+𝜆 ∈ [ 0, 1] controlling the bias–variance tradeoff. The rollout is di-vided into minibatches and reused for several optimization epochs. GAE propagates information through time; log-probability differ-ences enter an exponential; and repeated updates gradually separate the current and behavior policies. These connected operations allow local rounding errors to affect later updates. 
+
+## 3 Method: Structure-Aware Half-Precision PPO 
+
+We propose a structure-aware design for half-precision PPO. Low-precision errors concentrate in three paths with broad or persistent effects. First, errors in means, variances, and gradient norms affect an entire minibatch or parameter update. Second, rounding and can-cellation obscure small changes between the current and behavior policies. Third, Adam state updates and FP16 parameter writeback can distort the second moment or discard nonzero updates. By structure-aware , we mean choosing numerical representa-tions and computations according to a quantity’s role in PPO and the reach of its errors. We distinguish global statistics shared across samples or parameters, policy differences that determine clipping, and optimizer and parameter states that persist across updates. We protect information at these propagation points. Figure 1 locates the three modules in the PPO update. Parameters, the main forward and backward passes, gradients, and major optimizer states use FP16. FP32 is reserved for a few points where errors propagate across samples, time, or updates. By element count, FP32 accounts for less than 0 .1% of persistent training state. We write 𝑄 16 (𝑥 ) for rounding 𝑥 to FP16. Because 
+
+> 2
+
+A B C
+
+A B C
+
+> Traditional computation
+
+Residual extraction Small-change protection Log-domain clipping Root second moment Structured shared second moment Small-update compensation 
+
+0
+
+PPO Training Pipeline (FP16) 
+
+Environment Rollout Buffer Policy Loss (Clipping) Mini-batch Sample  
+
+> GAE & Batch Statistics
+
+Gradients Adam Optimizer &Writeback 
+
+Updated Policy 
+
+𝐀 𝐀 , 𝐀 𝐀 , 𝐀 𝐀 (𝐀, 𝐀, 𝐀, . . . ) Advantages,Returns Mean/Std (𝐀 𝐀 , 𝐀 𝐀 , 𝐀 𝐀 , . . . ) 𝐀 𝐀𝐀𝐀𝐀 (𝐀) 𝐀 = ∇𝐀 m, v, update u 𝐀 𝐀+1 
+
+> Repeat for multiple epochs on the same rollout
+
+Global Scalar Protection Policy-Change Residual Protection Efficient Persistent-Update Protection 
+
+Stabilize batch-level statistics and global gradient scale Accurately capture and preserve small policy changes Stabilize low-precision optimizer and ensure effective updates 
+
+1. Many-to-one aggregation 2. Small policy change is easily lost 3. Optimizer and writeback in FP16 
+
+𝐀 𝐀 
+
+𝐀 𝐀 
+
+𝐀 𝐀 
+
+𝐀 𝐀 
+
+𝐀 
+
+> ...
+
+Many local FP16 values aggregate Rounding error accumulation Outliers and overflow Affect the whole mini-batch 
+
+Global scalars 
+
+(𝐀, 𝐀, 𝐀 ) 
+
+Subtractive cancellation Rounding error Small change drowned by absolute log-probabilities 
+
+𝐀𦐀𝐀𝐀 𝐀 − 𝐀𦐀𝐀𝐀 𝐀 0
+
+𝐀𤠀𝐀(∙)  
+
+> very small policy change Sampling policy Current policy
+> 𝐀 𝐀 0(𝐀|𝐀) 𝐀 𝐀 (𝐀|𝐀)
+> (1) Second moment underflow (2) Large optimizer states (3) Small update swallowed
+> 𝐀(𝐀𞐀16)
+
+𝐀 2 
+
+> but 𝐀 ≠ 0 𝐀 2
+> underflows Distorted optimizer state Element-wise states are memory intensive High read/write cost Non-zero update but no parameter change
+> 𝐀
+
+𝐀 too small 
+
+𝐀 𝐀 16 (𝐀 − 𝐀) = 0  
+
+> 4MN → 2MN + 2M
+> 𝐀 = 𝐀
+> 𝐀
+> ( 𝐀 𝐀
+> 𝐀 )2high-low compensation
+
+∆log 𝐀 = 
+
+> −∆𝐀 − 𝐀 0∆𝐀 − 12 (∆𝐀) 2
+> expm1
+
+𝐀𝐀𝐀𝐀(𝐀, 𝐀 −, 𝐀 +)
+
+𝐀 − 𝐀 +𝐀 row1 row2 
+
+> rowM
+
+... . . . . .. . . . .. . . . . 𝐀 
+
+> FP32 residual
+
+2. Our Method 
+
+2. Our Method 2. Our Method 
+
+FP32 reduction for batch statistics 
+
+Safe global norm computation  
+
+> 𝐀 = max
+> 𝐀 |𝐀 𝐀 |
+
+mean, std, ||g|| in FP32 
+
+Store instead of 
+
+𝐀 𝐀 
+
+𝐀 𝐀 Figure 1: PPO-FP16 training pipeline and its three structure-aware protection modules. Module A protects global statistics and gradient scale, Module B protects small policy changes in the residual domain, and Module C stabilizes optimizer state. 
+
+GAE is recursive, each parallel environment maintains one FP32 recurrence state; rewards, values, advantages, and returns in the rollout remain FP16. The completed recurrence is written back to FP16 without retaining an FP32 advantage buffer. 
+
+## 3.1 Module A: Global Scalar Protection 
+
+Our sensitivity analysis found that some local low-precision errors spread through global statistics. PPO includes several many-to-one computations: sums, means, variances, or norms reduce many sample or parameter values to a few statistics, which are then shared by a minibatch or parameter update. Advantage statistics, value-loss reduction, and the global gradient norm all have this form. The advantage mean and variance normalize a whole minibatch, the batch-mean value loss sets the scale of critic gradients, and the global gradient norm determines one clipping coefficient shared by all parameters. Errors in these quantities therefore propagate beyond the values that first produced them. For example, a minibatch of advantages 𝐴 1, . . . , 𝐴 𝑁 is normalized by subtracting its mean 𝜇 𝐴 and dividing by its standard deviation 
+
+𝜎 𝐴 , with a small stabilizer 𝜖 𝐴 > 0 in the denominator. Both statistics are computed from the whole minibatch and then reused for every sample. The stabilizer 𝜖 𝐴 is distinct from PPO’s clipping threshold. Because 𝜇 𝐴 and 𝜎 𝐴 affect the whole minibatch, FP16 reduction error changes the scale of its policy loss and gradient. We therefore perform advantage statistics and value-loss reductions in FP32 while retaining FP16 data and main computation. This avoids repeated FP16 rounding of partial sums. Gradient norms have an additional failure mode before reduction. For gradients 𝑔 1, . . . , 𝑔 𝑀 , the global 𝐿 2 norm is 𝐺 =√︃ Í𝑀 𝑖 =1 𝑔 2
+
+𝑖 .PPO uses 𝐺 to determine a common gradient-clipping coefficient. Even when 𝑔 𝑖 is representable in FP16, its square may exceed the largest finite FP16 value (about 6 .55 × 10 4) before the sum begins. We follow the classical scaled-norm approach [5]. Let 
+
+𝑠 = max 
+
+𝑖 |𝑔 𝑖 |, 𝐺 = 𝑠 
+
+vut 𝑀 ∑︁ 
+
+𝑖 =1
+
+ 𝑔 𝑖 
+
+𝑠 
+
+2
+
+. (3) If 𝑠 = 0, we set 𝐺 = 0; otherwise Eq. (3) is algebraically equivalent to the original norm, while |𝑔 𝑖 /𝑠 | ≤ 1 prevents any squared term from exceeding one. 
+
+## 3.2 Module B: Policy-Change Residual Protection 
+
+PPO performs multiple optimization epochs on data from a fixed behavior policy. Clipping constrains each update, so the current and behavior policies are often close. 
+
+> 3
+
+PPO measures policy change through the probability ratio de-fined in Sec. 2. Here 𝜋 𝜃 0 collected the rollout and 𝜋 𝜃 is being opti-mized. For a state–action pair, write this ratio as 𝑟 . Computation usually avoids direct division of probabilities by using the log ratio 
+
+𝑑 = log 𝜋 𝜃 (𝑎 | 𝑠 ) − log 𝜋 𝜃 0 (𝑎 | 𝑠 ), so 𝑟 = 𝑒 𝑑 . For nearby poli-cies, clipping depends on a near-zero 𝑑 , rather than either absolute log-probability. Even when a small 𝑑 is representable, the usual FP16 path first forms two absolute log-probabilities and subtracts them. Round-ing in both absolute values can obscure their much smaller differ-ence. We instead extract policy-parameter differences early and use 
+
+expm1 , which evaluates 𝑒 𝑥 − 1 more accurately near zero, together with high–low compensated summation. A separate FP16 exponential may round 𝑒 𝑥 to one before sub-tracting one. Applying expm1 directly to the small residual avoids this premature loss. High–low compensated summation reduces further loss in local additions and subtractions. We use a TwoSum-form transforma-tion [21] to retain a rounded high-order component ℎ and a com-pensating low-order component 𝑙 . We apply it to the terms of Δ𝑧 
+
+and the one-dimensional log-probability residual, then reduce high and low parts separately across action dimensions in FP32. For continuous actions, the policy 𝜋 𝜃 (𝑎 | 𝑠 ) is a diagonal Gauss-ian density: 𝑎 | 𝑠 ∼ N ( 𝜇 𝜃 (𝑠 ), diag (𝜎 2 
+
+> 𝜃
+
+(𝑠 ))) . We write 𝑝 𝜃 (𝑎 | 𝑠 ) for this density and log 𝑝 for its log-density; thus, log 𝑝 ≡ log 𝜋 𝜃 (𝑎 | 𝑠 ).For one action dimension, 𝑎 ∼ N ( 𝜇, 𝜎 2). Writing ℓ = log 𝜎 and 
+
+𝑧 = (𝑎 − 𝜇 )𝑒 −ℓ , its standard log-density is log 𝑝 = −ℓ − 12 𝑧 2 − 𝐶 ,where 𝐶 = 12 log (2𝜋 ). This representation makes the difference between nearby Gaussian policies explicit. Rather than evaluating two complete log-probabilities, let (𝜇 0, ℓ 0)
+
+be the behavior-policy parameters and 𝑧 0 = (𝑎 − 𝜇 0)𝑒 −ℓ0 . Define the small residuals Δℓ = ℓ − ℓ0, Δ𝜇 = 𝜇 − 𝜇 0, and Δ𝑧 = 𝑧 − 𝑧 0.Since 𝑧 = 𝑧 0 + Δ𝑧 , the log-probability difference is 
+
+Δ log 𝑝 = −Δℓ − 𝑧 0Δ𝑧 − 12 (Δ𝑧 )2. (4) The common constant cancels without constructing either com-plete Gaussian log-probability. To compute Δ𝑧 , set 𝑞 = Δ𝜇 𝑒 −ℓ0 . Substituting the new mean and log-standard-deviation into 𝑧 = (𝑎 − 𝜇 )𝑒 −ℓ gives 𝑧 = (𝑧 0 − 𝑞 )𝑒 −Δℓ .Because nearby policies have small Δℓ, define 𝑡 = expm1 (− Δℓ) =
+
+𝑒 −Δℓ − 1. Subtracting 𝑧 0 now yields 
+
+Δ𝑧 = 𝑧 − 𝑧 0 = 𝑧 0𝑡 − 𝑞 (1 + 𝑡 ). (5) This expresses the unchanged probability ratio through small residuals, allowing expm1 and compensation to act before rounding and cancellation accumulate. Limited-precision rollout storage can also make the recon-structed behavior log-probability differ from its sampling-time value. Without correction, PPO would measure change relative to this reconstructed policy rather than the policy that generated the rollout. We therefore store a sampling-reference residual. At sampling time, the policy mean and log-standard-deviation are converted to FP32 to construct the Gaussian; the sampled action yields an FP32 log-probability 𝐿 0, temporarily held in an FP32 buffer. After the rollout, we reconstruct e𝐿 0 in FP32 from the saved low-precision action and policy parameters. Their difference is rounded once when written to the rollout buffer: 
+
+𝑐 = 𝑄 16 
+
+
+
+𝐿 0 − e𝐿 0
+
+
+
+. (6) During optimization, 𝑐 restores the sampling-time reference with-out a full high-precision rollout. Clipping can be decided before forming 𝑟 = 𝑒 𝑑 : 𝑒 𝑑 > 1 + 𝜖 clip 
+
+exactly when 𝑑 > log (1 + 𝜖 clip ), and analogously for the lower boundary. Define 𝑏 + = log (1 + 𝜖 clip ) and 𝑏 − = log (1 − 𝜖 clip ).The advantage sign determines which side of the ratio is clipped. We can therefore write ¯𝑑 =
+
+
+
+min (𝑑, 𝑏 +), ˆ𝐴 ≥ 0,
+
+max (𝑑, 𝑏 − ), ˆ𝐴 < 0. (7) This avoids an exponential intermediate in the clipping decision while preserving the PPO objective. Module B therefore combines residual-domain Gaussian com-putation, expm1 , compensated summation, sampling-reference cor-rection, and log-domain clipping to preserve small policy changes without changing the clipped objective. 
+
+## 3.3 Module C: Efficient Persistent-Update Protection 
+
+Adam [16] maintains persistent first- and second-moment states. The latter involves squared gradients. In FP16, a representable gradi-ent may have a square too small to represent, distorting the second moment and potentially destabilizing training. Recent convergence analysis likewise identifies weights and second moments as sensi-tive components when adaptive optimizers are quantized [28]. Building on hAdam from SAC-FP16 [3], we store 𝑤 𝑡 = √𝑣 𝑡 
+
+rather than the underflow-prone second moment 𝑣 𝑡 and update it with a stable hypot operation. Our implementation retains Adam’s first moment, bias correction, and update semantics; it changes the numerical representation of the second moment. Standard Adam stores both moments for every parameter. For an 
+
+𝑀 ×𝑁 weight matrix, each state has 𝑀𝑁 elements and must be read and written during updates. Low-precision optimizers compress these persistent states through 8-bit block-wise quantization [7], 4-bit moment quantization [17], or FP8 representations [8, 22, 35]. SHARP instead reduces their granularity by sharing a root-second-moment scale within parameter groups. Adafactor factorizes second moments [26]; Shampoo and KrADa-grad use structured matrix preconditioners [11, 19]; and 4-bit Sham-poo quantizes preconditioner state [33]. SHARP instead shares only the root-second-moment scale within PPO parameter groups. Building on hAdam, we introduce SHARP (Structured Half-precision Adam with Root-state Preconditioning), whose new con-tribution is structured state sharing for PPO parameters. SHARP maintains the first-moment state element-wise, while the root-second-moment state is shared within predefined parameter groups. For an 𝑀 × 𝑁 hidden-layer weight matrix, we use row-wise grouping, yielding 𝑀 shared root-second-moment states instead of 𝑀𝑁 element-wise second-moment states. Parameters within the same group therefore share only the preconditioning scale, while retaining independent first-moment states and parameter updates. Bias correction follows standard Adam, and the parameter 
+
+> 4
+
+update keeps the same Adam semantics; SHARP changes only the representation and granularity of the second-moment state. For small parameter groups and parameters that directly affect the policy output, we retain fine-grained states rather than enforcing sharing. For each row, SHARP updates the shared root-second-moment from a scale-safe gradient root-mean-square through the stable 
+
+hypot recurrence. Its ratio to the layer root-mean-square is clipped to [0.25 , 4] before preconditioning. With FP16 states, two element-wise Adam moments require 4𝑀𝑁 bytes, whereas SHARP requires 2 𝑀𝑁 +2𝑀 bytes for an 𝑀 ×𝑁 
+
+row-grouped weight matrix. Thus, for large 𝑁 , SHARP approaches a 50% reduction relative to element-wise FP16 Adam states and a 75% reduction relative to Full FP32 Adam states. Fewer second-moment values also reduce state reads and writes. FP16 writeback can also swallow small updates. Let 𝜃 𝑡 be a stored parameter and 𝑢 𝑡 its optimizer update at step 𝑡 . If 𝑢 𝑡 is below the local FP16 spacing, 𝑢 𝑡 ≠ 0 may still produce 
+
+𝑄 16 (𝜃 𝑡 − 𝑢 𝑡 ) = 𝜃 𝑡 , (8) Repeated swallowed updates can separate the FP16 trajectory from the intended trajectory. We add small-update compensation . In our implementation it applies only to the Gaussian policy’s log-standard-deviation, which controls exploration scale. When a nonzero update does not change this FP16 parameter, we accumulate the unwritten change in an FP32 residual. Later accumulated updates can cross the FP16 grid spacing and be written to the parameter. Module C thus protects both optimizer state and parameter write-back: SHARP reduces persistent second-moment storage and traffic, while selective residual writeback prevents repeated loss of small log-standard-deviation updates. 
+
+## 3.4 Computational and Storage Complexity 
+
+Let 𝐵 , 𝑅 , 𝐷 , 𝑃 , and 𝐺 denote minibatch size, rollout samples, action dimensions, parameters, and second-moment groups. All modules preserve PPO’s asymptotic update cost. Module A adds one 𝑂 (𝑃 )
+
+maximum reduction; Module B remains 𝑂 (𝐵𝐷 ) and adds 2 𝑅 tem-porary bytes; Module C remains 𝑂 (𝑃 ) but reduces the root-second-moment state from 𝑃 to 𝐺 ≪ 𝑃 elements. For an 𝑀 ×𝑁 row-grouped layer, optimizer state changes from 4 𝑀𝑁 to 2 𝑀𝑁 + 2𝑀 bytes, ap-proaching reductions of 50% versus element-wise FP16 Adam and 75% versus Full FP32 Adam. In practice, eight of nine configura-tions achieve 1 .16–2 .03 × update speedups, while optimizer-state memory falls by 71 .7–74 .9% relative to Full FP32 Adam (Sec. 4.4). 
+
+## 4 Experiments 
+
+We evaluate numerical sensitivity, the contributions of Modules A–C, long-horizon learning quality, compute and memory costs, and the limits of lower-precision formats. 
+
+Implementation details. All long-horizon methods use the same two-layer 2 × 64 tanh actor and critic, PPO objective, and hyper-parameters, with no environment- or precision-specific retuning. Runs use 2,048-step rollouts, 10 PPO epochs, 32 minibatches of 64 samples, and five seeds for 512,000 environment steps. The learning rate is 3 × 10 −4 with linear annealing, 𝛾 = 0.99, GAE 𝜆 = 0.95, the PPO clipping threshold is 0 .2, and the global gradient-clipping threshold is 0 .5. Adam uses (𝛽 1, 𝛽 2, 𝜖 ) = (0.9, 0.999 , 10 −5). Full FP32, AMP-FP16, AMP-BF16, and PPO-FP16 share these settings. PPO-FP16 keeps the main training state in FP16, with FP32 accounting for less than 0 .1% of persistent training-state elements. Experiments use PyTorch 2.3.0, CUDA 12.1, and an RTX 4060 Laptop GPU, which natively supports FP16 and BF16 computation. We use native Py-Torch dtypes and autocast rather than fake quantization or explicit quantize–dequantize emulation. The Native-BF16 study uses ac-tual BF16 tensors through a PyTorch reference implementation because the final SHARP CUDA kernel is FP16-specific. The nine-configuration performance benchmark uses one CUDA Graph for each complete PPO update. 
+
+## 4.1 Sensitivity Analysis 
+
+We first converted the parameters, gradients, and Adam states of standard PPO directly to FP16. We compared this naive path against FP32 stage by stage on the same training data. Naive FP16 did not immediately produce NaNs or Infs, but iteration KL and clip frac-tion soon diverged from FP32, as did learning curves across seeds. Here iteration KL is the approximate policy divergence accumu-lated within an update iteration, and clip fraction is the fraction of minibatch samples whose probability ratios leave the unclipped interval. Numerical error accumulated through the PPO update cycle. To locate the sources, we replayed the FP32 and FP16 paths on fixed rollouts and minibatches. We compared advantage statistics, losses, gradient norms, log-probabilities, log ratios, clipping deci-sions, Adam states, and actual parameter writeback. Stress tests covered extreme ranges rarely encountered in ordinary training. Holding the data fixed isolated differences in numerical representa-tion and computation. The first problem involved shared statistics. Errors in the ad-vantage mean and variance altered the scale of a whole minibatch. The global gradient norm had a similar reach. Direct FP16 squaring and summation produced nonfinite norms for all 24 large-gradient stress inputs; scaled-norm computation produced finite norms for all 24. Reduction error and overflow during squaring both mattered. The second problem involved the policy ratio. With Hopper states, actions, and old and new Gaussian parameters fixed, sub-tracting two absolute log-probabilities gave a mean absolute error (MAE) of 1 .07 × 10 −3 in the local policy change. Constructing the change directly from policy-parameter differences reduced MAE to 4.7 × 10 −5. The absolute-log-probability path obscured the small difference that determines the ratio and clipping decision. The third problem arose in optimizer state and writeback. Na-tive FP16 Adam rounded 64 .55% of second-moment states to zero, and the update-magnitude ratio relative to FP32 Adam reached 124 .07 ×. In the root-second-moment domain, the zero-state ratio fell to 0 .58%. The update-magnitude ratio fell to 1 .0722 ×. Later in 
+
+> 5
+
+training, many nonzero updates did not change FP16 parameters; accumulating them allowed eventual writeback. Thus both second-moment underflow and swallowed updates caused persistent error. Together, these tests locate three connected paths: shared reduc-tions spread local error, absolute probability calculations obscure small policy differences, and optimizer state and the FP16 grid re-tain error across updates. The three modules in Sec. 3 address these paths. 
+
+## 4.2 Module Ablations 
+
+We ablated the three modules in both subtractive and additive direc-tions on HalfCheetah-v5, with fixed networks and hyperparameters. Each configuration used three seeds. We marked a configuration Crash if it failed a 20,480-step stability gate; the others were reinitial-ized and trained for 151,552 steps. Full FP32 served as a reference. In the subtractive study, complete PPO-FP16 had the highest AUC and smallest endpoint variance. Removing A or B reduced AUC, while removing C caused a Crash. In the additive study, Naive FP16 crashed; adding C enabled training, and adding A and B raised AUC from 293.3 to 465.8 and 618.3. These results support complementary roles for the modules. 
+
+## 4.3 Long-Horizon Learning Quality 
+
+We trained for 512,000 steps in six Gymnasium MuJoCo-v5 continuous-control environments [29, 30]. We compared PPO-FP16 with Full FP32, AMP-FP16, and AMP-BF16. All methods used the same 2 × 64 tanh actor and critic, PPO objective, and hyperpa-rameters. Each method ran five seeds without environment- or precision-specific retuning. Full FP32 used FP32 parameters, activa-tions, gradients, and Adam states. AMP-FP16 kept FP32 parameters and Adam states while using FP16 autocast and GradScaler [20]. AMP-BF16 likewise kept FP32 parameters and Adam states while using BF16 autocast [15]. We define return AUC as the trapezoidal integral of deterministic evaluation return over environment steps, divided by the 512,000-step horizon. Figure 3 shows deterministic evaluation curves, and Table 3 reports return AUC. To avoid bias from different return scales, we ranked the four methods by return AUC within each environment and seed, then averaged over 30 environment–seed combinations. PPO-FP16 had the best mean rank, 1.90, versus 2.63 for each AMP method and 2.83 for Full FP32. It ranked first in 17 comparisons, versus 7, 5, and 1 for Full FP32, AMP-FP16, and AMP-BF16, respectively. PPO-FP16 had the highest mean AUC on Walker2d, Humanoid, and InvertedDoublePendulum, while maintaining stable learning on HalfCheetah, Hopper, and Swimmer. In paired comparisons, its AUC exceeded Full FP32, AMP-FP16, and AMP-BF16 in 20, 21, and 22 of the 30 environment–seed pairs, respectively. For cross-environment comparison, we normalized each envi-ronment’s AUC observations as e𝐴 = (𝐴 − 𝐴 min )/( 𝐴 max − 𝐴 min ),where 𝐴 min and 𝐴 max are the minimum and maximum over all four methods and five seeds in that environment. We then used an environment-stratified paired bootstrap to calculate 95% confidence intervals for method differences in e𝐴 . PPO-FP16’s normalized AUC difference from AMP-FP16 was 0.208, with interval [0.026 , 0.371 ].The confidence intervals against Full FP32 and AMP-BF16 include zero, while PPO-FP16 achieves the lowest overall return-AUC rank and maintains strong long-horizon learning quality across all six tasks without FP32 master parameters or element-wise FP32 Adam states. 
+
+## 4.4 Compute Performance and Memory 
+
+Performance tests covered nine network-width and batch-size com-binations on an RTX 4060 Laptop GPU. FP32 and PPO-FP16 per-formed the same complete PPO update. Each configuration used five independent processes, with 3,000 timed updates after warm-up. PPO-FP16 achieved 1 .16–2 .03 × faster updates in eight of nine configurations; the remaining one was near parity with FP32. SHARP reduced optimizer-state memory by 71 .7–74 .9% relative to Full FP32 Adam. Peak allocated GPU memory fell by up to 44 .5%. Recent low-precision systems also demonstrate substantial training gains on consumer GPUs [25]; our measurements address a different regime, namely native FP16 PPO updates with compact actor–critic networks. For a mixed-precision comparison, we tested widths 64, 512, and 2,048 at batch size 2,048 using Full FP32, AMP-FP16, AMP-BF16, and PPO-FP16. Each configuration used five paired processes, 500 warm-up iterations, and 1,000 timed updates. PPO-FP16 had the lowest update time at widths 64 and 512. At width 2,048 it was about 3–5% slower than AMP, but reduced optimizer-state memory from 64.70 to 16.23 MiB and peak allocated GPU memory from 181.89 to 101.01 MiB. Tables 1 and 2 use independent benchmark protocols; absolute latency should be compared only within each table. 
+
+## 4.5 Precision-Boundary Study 
+
+We study exponent range and significand precision separately. BF16 retains an FP32-like exponent range but has fewer significand bits [15]. Recent floating-point scaling studies also show that expo-nent allocation, significand length, and scaling granularity jointly determine low-precision training behavior [27]; FP4 methods there-fore require additional scaling or structural treatment [6, 32]. In a Native-BF16 variant , we replace PPO-FP16 parameters, gradi-ents, rollout data, first-moment state, and structured root-second-moment state with BF16 while retaining the three modules and their specified FP32 scalar boundaries. Because the final SHARP CUDA kernel targets FP16, we use an arithmetically equivalent PyTorch reference implementation. We compare learning quality, not BF16 speed, across the same six environments, five seeds, and 512,000 steps. Across the six environments, Native-BF16 retained only 10 .7– 79 .6% of PPO-FP16’s return AUC. A wider exponent range alone therefore did not preserve learning quality. The pattern is consistent with greater loss of small updates on BF16’s coarser parameter grid, but direct causal attribution requires update-level measurements. Our residual writeback covers only the log-standard-deviation, so it cannot compensate writeback of the other network parameters. We also held the exponent at five bits on HalfCheetah-v5 and shortened the main-tensor significand from E5M10 through E5M5. Each format ran two seeds for 100,352 steps. E5M9 still learned; E5M8 and E5M7 had lower returns and greater seed variation; E5M6 and E5M5 learned little. Together, these tests suggest that widening 
+
+> 6
+
+Table 1: PPO update time and speedup over five processes. 
+
+Width / batch FP32 (ms) PPO-FP16 (ms) Speedup 32 / 512 0.307 0.213 1.44 ×
+
+32 / 1024 0.335 0.227 1.48 ×
+
+64 / 512 0.293 0.254 1.16 ×
+
+64 / 1024 0.319 0.260 1.23 ×
+
+512 / 1024 0.817 0.816 1.00 ×
+
+512 / 2048 1.308 0.963 1.36 ×
+
+1024 / 1024 2.410 1.639 1.47 ×
+
+1024 / 2048 4.145 2.318 1.79 ×
+
+2048 / 2048 15.837 7.784 2.03 ×
+
+Table 2: Mixed-precision performance at batch size 2,048. Time is in ms; memory is in MiB. 
+
+Method Width Time Peak State Full FP32 64 0.363 16.69 0.085 512 1.385 27.09 4.176 2048 16.762 181.89 64.703 AMP-FP16 64 0.395 16.69 0.085 512 1.050 27.09 4.176 2048 8.156 181.89 64.703 AMP-BF16 64 0.401 16.69 0.085 512 1.039 27.09 4.176 2048 7.989 181.89 64.703 PPO-FP16 64 0.291 16.54 0.023 
+
+512 1.019 21.82 1.058 
+
+2048 8.416 101.01 16.231 Full FP32 PPO-FP16 PPO-FP16 - A PPO-FP16 - B PPO-FP16 - C 0500 1000 1500 2000 Return    
+
+> Crash
+> (a) Endpoint return
+> Full FP32 PPO-FP16 PPO-FP16 - A PPO-FP16 - B PPO-FP16 - C 0200 400 600 800 Normalized AUC
+> Crash
+> (b) Training AUC
+> Subtractive ablation on HalfCheetah-v5 Full FP32 Naive FP16 + C + C + A + C + A + B 0500 1000 1500 2000 Return
+> Crash
+> (a) Endpoint return
+> Full FP32 Naive FP16 + C + C + A + C + A + B 0200 400 600 800 Normalized AUC
+> Crash
+> (b) Training AUC
+> Additive construction on HalfCheetah-v5
+
+Figure 2: Module ablations on HalfCheetah-v5 over three seeds. Bars show mean ± standard deviation; Crash denotes instability. 0 100 200 300 400 500 
+
+Environment steps (k) 
+
+0500 1000 1500 2000 2500 
+
+> Deterministic return
+
+HalfCheetah 
+
+0 100 200 300 400 500 
+
+Environment steps (k) 
+
+01000 2000 3000 4000 
+
+> Deterministic return
+
+Hopper 
+
+0 100 200 300 400 500 
+
+Environment steps (k) 
+
+01000 2000 3000 4000 
+
+> Deterministic return
+
+Walker2d 
+
+0 100 200 300 400 500 
+
+Environment steps (k) 
+
+200 300 400 500 600 
+
+> Deterministic return
+
+Humanoid 
+
+0 100 200 300 400 500 
+
+Environment steps (k) 
+
+020 40 60 80 100 
+
+> Deterministic return
+
+Swimmer 
+
+0 100 200 300 400 500 
+
+Environment steps (k) 
+
+02000 4000 6000 8000 10000 
+
+> Deterministic return
+
+InvertedDoublePendulum 
+
+Full FP32 AMP-FP16 AMP-BF16 PPO-FP16 
+
+Figure 3: Long-horizon evaluation over six tasks and five seeds; shading shows 95% confidence intervals. Table 3: Return AUC over five seeds (mean ± standard deviation). Bold marks the best mean per environment. 
+
+Environment Full FP32 AMP-FP16 AMP-BF16 PPO-FP16 HalfCheetah 832.4 ± 753.9 846.7 ± 672.2 1130.5 ± 594.6 1085.1 ± 258.5 Hopper 1684.1 ± 364.3 1608.2 ± 624.5 1609.1 ± 440.1 1667.0 ± 445.6 Walker2d 1321.3 ± 615.8 944.7 ± 183.2 1012.1 ± 331.3 1388.1 ± 443.9 
+
+Humanoid 366.8 ± 21.9 380.6 ± 12.5 397.1 ± 22.8 448.0 ± 33.3 
+
+Swimmer 54.4 ± 20.2 54.0 ± 18.7 52.9 ± 11.3 54.0 ± 15.3 InvertedDoublePendulum 7506.1 ± 241.7 7533.1 ± 139.2 7518.8 ± 270.3 7929.1 ± 125.3 
+
+Mean rank (30 pairs) 2.83 2.63 2.63 1.90 First-place count (30 pairs) 7 5 1 17 7the exponent cannot replace the significand precision needed for persistent updates. 
+
+## 5 Conclusion 
+
+We presented PPO-FP16, a structure-aware approach that protects shared statistics, small policy changes, and persistent parameter updates while keeping parameters, gradients, and major optimizer states in FP16. Across six tasks and five seeds, it achieved the best mean return-AUC rank (1.90) and ranked first in 17 of 30 environment–seed comparisons. PPO updates were up to 2 .03 ×
+
+faster, optimizer-state memory was 71 .7–74 .9% lower than with Full FP32 Adam, and peak allocated GPU memory was up to 44 .5% lower. BF16 and reduced-significand experiments delineated the remaining precision limits. These results establish the numerical and computational feasibility of FP16 PPO on commodity GPUs. Deployment on embedded accelerators, larger models, and more general low-precision methods remain future work. 
+
+## References 
+
+[1] Saleh Ashkboos, Mahdi Nikdan, Rush Tabesh, Roberto Castro, Torsten Hoefler, and Dan Alistarh. 2025. HALO: Hadamard-Assisted Lower-Precision Optimiza-tion for LLMs. In Advances in Neural Information Processing Systems , Vol. 38. Curran Associates, Inc. doi:10.52202/085713-3966 [2] Ron Banner, Itay Hubara, Elad Hoffer, and Daniel Soudry. 2018. Scalable Meth-ods for 8-bit Training of Neural Networks. In Advances in Neural Information Processing Systems , Vol. 31. Curran Associates, Inc. [3] Johan Björck, Xiangyu Chen, Christopher De Sa, Carla P. Gomes, and Kilian Q. Weinberger. 2021. Low-Precision Reinforcement Learning: Running Soft Actor-Critic in Half Precision. In Proceedings of the 38th International Conference on Machine Learning (Proceedings of Machine Learning Research, Vol. 139) . PMLR, 980–991. [4] Charlie Blake, Douglas Orr, and Carlo Luschi. 2023. Unit Scaling: Out-of-the-Box Low-Precision Training. In Proceedings of the 40th International Conference on Machine Learning (Proceedings of Machine Learning Research, Vol. 202) . PMLR, 2548–2576. [5] James L. Blue. 1978. A Portable Fortran Program to Find the Euclidean Norm of a Vector. ACM Trans. Math. Software 4, 1 (1978), 15–23. doi:10.1145/355769.355771 [6] Hengjie Cao, Mengyi Chen, Yifeng Yang, Fang Dong, Ruijun Huang, Jixian Zhou, Anrui Chen, Mingzhi Dong, Yujiang Wang, Jinlong Hou, Yuan Cheng, Fan Wu, Fan Yang, Tun Lu, Ning Gu, and Li Shang. 2026. Metis: Training LLMs with FP4 Quantization. In International Conference on Learning Representations .[7] Tim Dettmers, Mike Lewis, Sam Shleifer, and Luke Zettlemoyer. 2022. 8-bit Optimizers via Block-wise Quantization. In International Conference on Learning Representations .[8] Maxim Fishman, Brian Chmiel, Ron Banner, and Daniel Soudry. 2025. Scaling FP8 Training to Trillion-Token LLMs. In International Conference on Learning Representations .[9] Hao Gu, Hao Wang, Jiacheng Liu, Lujun Li, Qiyuan Zhu, Bei Liu, Binxing Xu, Lei Wang, Xintong Yang, Sida Lin, Sirui Han, and Yike Guo. 2026. QaRL: Rollout-Aligned Quantization-Aware RL for Fast and Stable Training under Training– Inference Mismatch. In Findings of the Association for Computational Linguistics: ACL 2026 . Association for Computational Linguistics, 17051–17064. doi:10.18653/ v1/2026.findings-acl.841 [10] Suyog Gupta, Ankur Agrawal, Kailash Gopalakrishnan, and Pritish Narayanan. 2015. Deep Learning with Limited Numerical Precision. In Proceedings of the 32nd International Conference on Machine Learning (Proceedings of Machine Learning Research, Vol. 37) . PMLR, 1737–1746. [11] Vineet Gupta, Tomer Koren, and Yoram Singer. 2018. Shampoo: Preconditioned Stochastic Tensor Optimization. In Proceedings of the 35th International Conference on Machine Learning (Proceedings of Machine Learning Research, Vol. 80) . PMLR, 1842–1850. [12] Tuomas Haarnoja, Aurick Zhou, Pieter Abbeel, and Sergey Levine. 2018. Soft Actor-Critic: Off-Policy Maximum Entropy Deep Reinforcement Learning with a Stochastic Actor. In Proceedings of the 35th International Conference on Machine Learning (Proceedings of Machine Learning Research, Vol. 80) . PMLR, 1861–1870. [13] Alejandro Hernández Cano, Dhia Garbaya, Imanol Schlag, and Martin Jaggi. 2025. Towards Fully FP8 GEMM LLM Training at Scale. In Advances in Neural Information Processing Systems , Vol. 38. Curran Associates, Inc. doi:10.52202/ 085713-1896 [14] IEEE. 2019. IEEE Standard for Floating-Point Arithmetic. IEEE Std 754-2019. doi:10.1109/IEEESTD.2019.8766229 [15] Dhiraj Kalamkar, Dheevatsa Mudigere, Naveen Mellempudi, Dipankar Das, Ku-nal Banerjee, Sasikanth Avancha, Dharma Teja Vooturi, Nataraj Jammalamadaka, Jianyu Huang, Hector Yuen, Jiyan Yang, Jongsoo Park, Alexander Heinecke, Evangelos Georganas, Sudarshan Srinivasan, Abhisek Kundu, Misha Smelyan-skiy, Bharat Kaul, and Pradeep Dubey. 2019. A Study of BFLOAT16 for Deep Learning Training. arXiv:1905.12322 https://arxiv.org/abs/1905.12322 [16] Diederik P. Kingma and Jimmy Ba. 2015. Adam: A Method for Stochastic Opti-mization. In International Conference on Learning Representations .[17] Bingrui Li, Jianfei Chen, and Jun Zhu. 2023. Memory Efficient Optimizers with 4-bit States. In Advances in Neural Information Processing Systems , Vol. 36. doi:10.52202/075280-0666 [18] Yuhang Li, Reena Elangovan, Xin Dong, Priyadarshini Panda, and Brucek Khailany. 2026. QuRL: Low-Precision Reinforcement Learning for Efficient Reasoning. In International Conference on Learning Representations .[19] Jonathan Mei, Alexander Moreno, and Luke Walters. 2023. KrADagrad: Kronecker Approximation-Domination Gradient Preconditioned Stochastic Optimization. In 
+
+Proceedings of the Thirty-Ninth Conference on Uncertainty in Artificial Intelligence (Proceedings of Machine Learning Research, Vol. 216) . PMLR, 1412–1422. [20] Paulius Micikevicius, Sharan Narang, Jonah Alben, Gregory Diamos, Erich Elsen, David Garcia, Boris Ginsburg, Michael Houston, Oleksii Kuchaiev, Ganesh Venkatesh, and Hao Wu. 2018. Mixed Precision Training. In International Con-ference on Learning Representations .[21] Takeshi Ogita, Siegfried M. Rump, and Shin’ichi Oishi. 2005. Accurate Sum and Dot Product. SIAM Journal on Scientific Computing 26, 6 (2005), 1955–1988. doi:10.1137/030601818 [22] Houwen Peng, Kan Wu, Yixuan Wei, Guoshuai Zhao, Yuxiang Yang, Ze Liu, Yifan Xiong, Ziyue Yang, Bolin Ni, Jingcheng Hu, Ruihang Li, Miaosen Zhang, Chen Li, Jia Ning, Ruizhe Wang, Zheng Zhang, Shuguang Liu, Joe Chau, Han Hu, and Peng Cheng. 2023. FP8-LM: Training FP8 Large Language Models. arXiv:2310.18313 doi:10.48550/arXiv.2310.18313 [23] John Schulman, Philipp Moritz, Sergey Levine, Michael I. Jordan, and Pieter Abbeel. 2016. High-Dimensional Continuous Control Using Generalized Advan-tage Estimation. In International Conference on Learning Representations .[24] John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. 2017. Proximal Policy Optimization Algorithms. arXiv:1707.06347 https://arxiv. org/abs/1707.06347 [25] Erik Schultheis and Dan Alistarh. 2026. LLMQ: Efficient Lower-Precision LLM Training for Consumer GPUs. In Conference on Parsimony and Learning (Pro-ceedings of Machine Learning Research, Vol. 328) . PMLR, 265–284. [26] Noam Shazeer and Mitchell Stern. 2018. Adafactor: Adaptive Learning Rates with Sublinear Memory Cost. In Proceedings of the 35th International Conference on Machine Learning (Proceedings of Machine Learning Research, Vol. 80) . PMLR, 4596–4604. [27] Xingwu Sun, Shuaipeng Li, Ruobing Xie, Weidong Han, Kan Wu, Zhen Yang, Yixing Li, An Wang, Shuai Li, Jinbao Xue, Yu Cheng, Yangyu Tao, Zhanhui Kang, Cheng-Zhong Xu, Di Wang, and Jie Jiang. 2025. Scaling Laws for Floating-Point Quantization Training. In Proceedings of the 42nd International Conference on Machine Learning (Proceedings of Machine Learning Research, Vol. 267) . PMLR, 57544–57570. [28] Xuan Tang, Jichu Li, and Difan Zou. 2026. A Convergence Analysis of Adaptive Optimizers under Floating-Point Quantization. In International Conference on Learning Representations .[29] Emanuel Todorov, Tom Erez, and Yuval Tassa. 2012. MuJoCo: A Physics Engine for Model-Based Control. In 2012 IEEE/RSJ International Conference on Intelligent Robots and Systems . 5026–5033. doi:10.1109/IROS.2012.6386109 [30] Mark Towers, Ariel Kwiatkowski, John U. Balis, Gianluca De Cola, Tristan Deleu, Manuel Goulão, Andreas Kallinteris, Markus Krimmel, Arjun KG, Rodrigo Perez-Vicente, J. K. Terry, Andrea Pierré, Sander Schulhoff, Jun Jet Tai, Hannah Tan, and Omar G. Younis. 2025. Gymnasium: A Standard Interface for Reinforcement Learning Environments. In Advances in Neural Information Processing Systems ,Vol. 38. Curran Associates, Inc., Red Hook, NY, USA, 163114–163129. doi:10. 52202/085713-4916 [31] Naigang Wang, Jungwook Choi, Daniel Brand, Chia-Yu Chen, and Kailash Gopalakrishnan. 2018. Training Deep Neural Networks with 8-bit Floating Point Numbers. In Advances in Neural Information Processing Systems , Vol. 31. Curran Associates, Inc. [32] Ruizhe Wang, Yeyun Gong, Xiao Liu, Guoshuai Zhao, Ziyue Yang, Baining Guo, Zheng-Jun Zha, and Peng Cheng. 2025. Optimizing Large Language Model Train-ing Using FP4 Quantization. In Proceedings of the 42nd International Conference on Machine Learning (Proceedings of Machine Learning Research, Vol. 267) . PMLR, 62937–62957. [33] Sike Wang, Pan Zhou, Jia Li, and Hua Huang. 2024. 4-bit Shampoo for Memory-Efficient Network Training. In Advances in Neural Information Processing Systems ,Vol. 37. Curran Associates, Inc. [34] Mitchell Wortsman, Tim Dettmers, Luke Zettlemoyer, Ari Morcos, Ali Farhadi, and Ludwig Schmidt. 2023. Stable and Low-Precision Training for Large-Scale 
+
+> 8
+
+Vision-Language Models. In Advances in Neural Information Processing Systems ,Vol. 36. Curran Associates, Inc. doi:10.52202/075280-0451 [35] Haocheng Xi, Han Cai, Ligeng Zhu, Yao Lu, Kurt Keutzer, Jianfei Chen, and Song Han. 2025. COAT: Compressing Optimizer States and Activation for Memory-Efficient FP8 Training. In International Conference on Learning Representations .[36] Haocheng Xi, Yuxiang Chen, Kang Zhao, Kai Jun Teh, Jianfei Chen, and Jun Zhu. 2024. Jetfire: Efficient and Accurate Transformer Pretraining with INT8 Data Flow and Per-Block Quantization. In Proceedings of the 41st International Conference on Machine Learning (Proceedings of Machine Learning Research, Vol. 235) . PMLR, 54049–54063. [37] Zhi Zhou, Xu Chen, En Li, Liekang Zeng, Ke Luo, and Junshan Zhang. 2019. Edge Intelligence: Paving the Last Mile of Artificial Intelligence With Edge Computing. 
+
+Proc. IEEE 107, 8 (2019), 1738–1762. doi:10.1109/JPROC.2019.2918951
