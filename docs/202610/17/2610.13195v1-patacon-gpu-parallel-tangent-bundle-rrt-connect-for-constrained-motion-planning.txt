@@ -1,0 +1,425 @@
+Title: PATACON: GPU-Parallel Tangent-Bundle RRT-Connect for Constrained Motion Planning
+
+URL Source: https://arxiv.org/pdf/2610.13195v1
+
+Published Time: Mon, 12 Oct 2026 00:50:08 GMT
+
+Number of Pages: 9
+
+Markdown Content:
+# PATACON: GPU-Parallel Tangent-Bundle RRT-Connect for Constrained Motion Planning 
+
+Gahyun Oh 1, Junho An 1, Suhyun Jeon 2, Suhan Park 1,∗
+
+Abstract — Fast whole-body motion planning enables contin-uous replanning for humanoid robots in dynamic environments while satisfying collision avoidance and kinematic constraints. However, constrained motion planning incurs substantial com-putational cost due to repeated constraint projection in addition to collision checking and nearest-neighbor search. Recently, GPU-based massively parallel planners have been proposed to reduce computational cost. Nevertheless, these planners still steer in the ambient configuration space, so projecting candidates that deviate from the manifold remains a significant source of overhead, particularly in highly constrained, high-dimensional problems. In this work, we introduce PATACON, a GPU-parallel bidirectional planner that explores tangent space to exploit the local manifold geometry induced by known constraint functions. Experiments on dual-arm closed-chain and humanoid whole-body constrained planning tasks show that PATACON outperforms the prior work as configuration-space dimension and constraint codimension grow, achieving up to an 11.25 times speedup. These results suggest that GPU-parallel tangent-space exploration brings constrained whole-body motion planning closer to real-time performance. 
+
+I. I NTRODUCTION 
+
+Dual-arm closed-chain and humanoid whole-body mo-tion require maintaining task-dependent kinematic relation-ships while satisfying joint limits and avoiding collisions. These kinematic requirements can be formulated as nonlin-ear equality constraints, which define a lower-dimensional constraint manifold embedded in a high-dimensional con-figuration space [1]. In sampling-based motion planning, collision checking and nearest-neighbor queries are generally major sources of computational cost [2], [3]. Planning on a constraint manifold introduces additional overhead because constraint projection is performed repeatedly throughout tree expansion. Reducing this computational burden is particu-larly important in scenarios that require repeated replanning as the target, obstacles, or task conditions change, where low planning latency is essential for responsive execution. A widely used approach generates candidate motions in the ambient configuration space and projects them onto the manifold as the tree grows [1]. cpRRTC [4] brought this approach to the GPU by assigning each thread block to steer from the nearest node toward a random sample, project the waypoints of the resulting straight-line segment in parallel, and perform collision checks with early termination. This reduces constrained planning to milliseconds, but the 
+
+> 1
+
+Department of Robotics, Kwangwoon University, Seoul, Republic of Korea. 
+
+> 2
+
+Department of Intelligence and Information, Graduate School of Con-vergence Science and Technology, Seoul National University, Republic of Korea. 
+
+> ∗
+
+Corresponding author. GPU       
+
+> PATACON: GPU-Parallel Tangent-Space Planning
+> 𝑞 !"#$" 𝑞 %&'(
+> Constraint Function
+> ℎ 𝑞 = 0
+> …
+> Dynamic selection per iteration
+> (each block picks one ready TS )
+> Tangent-space Bank (shared)
+> Goal Tree
+> ⋯⋯
+> Start Tree
+> CUDA Block 0
+> Selected TS
+> CUDA Block 1
+> Selected TS
+> CUDA Block N-1
+> Selected TS
+> ⋯
+> Constraint Manifold 𝑴 CoM Start State Goal State CoM g 𝑞 ≤ 0
+
+Fig. 1. Overview of PATACON, a GPU-parallel bidirectional constrained planner. Task-specific constraints define a constraint manifold, and CUDA blocks select local tangent spaces from shared tree-specific banks to explore different regions of the manifold concurrently. Candidate motion segments generated in each tangent space are projected and validated on the manifold before insertion into the trees. 
+
+exploration scheme is unchanged; each extension still steers in the ambient space and relies on projection to satisfy the constraints. Ambient-space steering, however, ignores the shape of the manifold. Kim et al. [5] showed that a target sampled in the ambient space can contribute little progress along the manifold once projected, and that the resulting large number of projections degrades both computational efficiency and the Voronoi bias of RRT. Because the constraint Jacobian provides the tangent space at any configuration, displace-ments can instead be restricted to it: Stilman [6] observed that tangent displacements are more likely to remain within the constraint tolerance, and TB-RRT [5] grows trees on tangent spaces bounded by the local curvature, outperforming projection-based planners with larger gains on more complex problems. However, TB-RRT expands one node at a time, incurs additional preprocessing and bookkeeping for its tan-gent spaces, and relies on lazy projection. Therefore, the feasibility checked on tangent spaces must be re-evaluated after projection. We propose PATACON ( PA rallel TA ngent-bundle RRT-
+
+CON nect), a GPU-parallel bi-directional planner that brings tangent-space-guided exploration to massively parallel tree expansion, as illustrated in Fig. 1. Unlike TB-RRT, PATA-CON projects and validates every candidate before tree inser-tion, so every node is feasible. Its efficiency has two sources: tangent-space candidates are more likely to remain within the constraint tolerance [6] and avoid ambient targets whose projections make little progress along the manifold [5], and a single sample and nearest-neighbor query yield multiple candidate edges that are validated concurrently on the GPU, arXiv:2610.13195v1 [cs.RO] 9 Oct 2026 which amortizes the preprocessing and bookkeeping of tan-gent spaces over multiple edges. Our main contributions are as follows: 1) Tangent-space-guided GPU-parallel extension. PATA-CON replaces the ambient-space steering of existing GPU-parallel planners with extension along local tangent spaces, so that candidates follow the manifold geometry before projection. 2) Shared tangent-space banks. Tangent spaces are main-tained in tree-specific banks shared across thread blocks, together with the correspondence between projected man-ifold states and their tangent-space coordinates, so that multiple blocks can explore different regions of the man-ifold concurrently. 3) Speculative multi-edge expansion. From one sample and one nearest-neighbor query, PATACON generates consecutive candidate edges along a tangent direction, validates them concurrently, and inserts the longest valid prefix, unlike the step-by-step CONNECT heuristic of RRT-Connect [7]. We evaluate PATACON on eight benchmarks ranging from 7-DoF manipulation to 35-DoF humanoid whole-body planning. Although cpRRTC is faster on low-dimensional problems, PATACON shows increasing advantages with configuration-space dimension and constraint restrictiveness, reaching a 11 .25 × speedup with a 100% success rate. II. R ELATED WORK 
+
+Sampling-based constrained motion planners enforce non-linear equality constraints through numerical projection or lo-cal approximations of the constraint manifold [1]. Projection-based methods range from randomized gradient descent for closed chains [8] to Jacobian-based tangent-space sampling and first-order retraction [6] and CBiRRT [9] with Task Space Regions [10], whereas AtlasRRT [11] and TB-RRT [5] grow trees on local charts or tangent spaces, and Kingston et al. [12] unify these mechanisms. These methods, however, are primarily sequential. Learning-based planners reduce online search through learned latent spaces [13]–[15] or constraint-aware sam-plers [16], but require offline data generation and training; we instead accelerate planning directly from the given constraint functions. Parallelization reduces the wall-clock cost of planning through GPU collision checking [17], [18], multiple or shared trees on CPUs [19]–[21], SIMD vectorization [22], [23], and GPU trajectory optimization [24]. pRRTC [25] and BatchRRT [26] run RRT-style tree growth on the GPU, and cpRRTC [4] extends pRRTC to constrained planning by pro-jecting motion-segment waypoints in parallel. However, the steering methods remain in the ambient space, so parallelism lowers the cost of each projection but not the off-manifold motion to be projected. Simply adding tangent-space steering to such planners is insufficient, because tangent-space management and local nearest-neighbor search add per-extension overhead. PATA-CON instead exploits the fact that tangent-space candidates stay close to the manifold: one sample and nearest-neighbor query yield several consecutive candidate edges, which are validated in parallel on the GPU to amortize this overhead. III. P ROBLEM DEFINITION 
+
+Let C ⊆ Rn denote the joint-feasible robot configuration space, where q ∈ C represents a robot configuration. Task-dependent kinematic constraints are represented by a differ-entiable nonlinear equality-constraint function h : C → Rm,which defines the constraint manifold as 
+
+M = {q ∈ C | h(q) = 0 }. (1) At a regular configuration q in the interior of C, we assume that the constraint Jacobian Jh(q) = ∂h (q)/∂q has full row rank m. The constraint manifold is then locally of dimension 
+
+d = n − m, and its tangent space is given by 
+
+Tq M = {v ∈ Rn | Jh(q)v = 0 }. (2) Equivalently, let N (q) ∈ Rn×d denote an orthonormal basis of the null space of Jh(q), such that Jh(q)N (q) = 0 
+
+and N (q)⊤N (q) = Id. This basis provides the local tangent-space representation used by the planner. Let Cfree ⊆ C denote the set of configurations that are free of both self-collision and environmental collision. The feasible portion of the constraint manifold is then 
+
+Mfree = M ∩ C free . (3) Given feasible start and goal configurations qstart , q goal ∈Mfree , the constrained motion-planning problem considered in this work is to find a continuous path 
+
+σ : [0 , 1] → M free , (4) such that 
+
+σ(0) = qstart , σ(1) = qgoal . (5) Thus, every configuration along the resulting path must satisfy the nonlinear kinematic constraints, joint limits, and collision-avoidance requirements. IV. GPU-P ARALLEL TANGENT -B UNDLE RRT-C ONNECT 
+
+PATACON restructures tangent-space-guided RRT-Connect for GPU-parallel execution through two algorithmic components: Tangent-Guided Sampling (TGS) and 
+
+Tangent-Guided Multi-Edge Projection (TGMP) . TGS guides exploration using local tangent-space geometry, while TGMP converts each TGS exploration decision into a multi-step expansion that generates multiple consecutive candidate edges. PATACON combines concurrent exploration across multiple tangent-space regions with GPU-parallel processing of the candidate edges generated by TGMP. In each exploration iteration, PATACON expands the se-lected tree through the TGS–TGMP pipeline, projects and validates the resulting candidate edges in parallel, and inserts only the longest consecutively valid prefix. A successful EXTEND is followed by a target-directed CONNECT to-ward the opposite tree. The following subsections describe these stages in order. Fig. 2 illustrates the GPU execution structure, while Algorithm 1 summarizes the overall planning procedure. A. Tangent-Guided Sampling for Concurrent Exploration 
+
+TGS determines the local region and expansion state used for each tree-expansion attempt. For a tangent-space root 
+
+qr ∈ M , PATACON uses the orthonormal null-space basis 
+
+N (qr ) defined in Sec. III. The corresponding tangent-space projector is 
+
+PTr = N (qr )N (qr )⊤. (6) 
+
+Tr = qr + N (qr )c | c ∈ Rd . (7) Sampling within Tr guides exploration toward directions consistent with the local constraint geometry, reducing un-necessary exploration away from the manifold before pro-jection. This geometric guidance, however, introduces addi-tional computation for tangent-space management, selection, and local nearest-neighbor search, which motivates the multi-step expansion of TGMP to amortize this overhead. Each tree node stores its projected manifold configuration qi ∈ M free ,parent index, associated tangent-space index τ (qi), and local tangent-space representation ¯qi ∈ Tτ (qi). The projected configuration qi is used for feasibility and path validation, whereas ¯qi is used for tangent-space exploration and tangent-space-local nearest-neighbor search. PATACON maintains separate tangent-space banks in GPU global memory for the start and goal trees, with each bank shared across the CUDA blocks exploring the corresponding tree. At initialization, tangent spaces rooted at qstart and qgoal 
+
+are inserted into their respective banks. A newly generated tangent space becomes selectable only after its root node and associated tangent-space data have been fully initialized. At each exploration iteration, a CUDA block selects the grow tree Tgrow and opposite tree Topp according to their current sizes. When the two trees have comparable sizes, the grow tree is alternated; when their size difference exceeds a prescribed threshold, the smaller tree is preferentially expanded until the imbalance is reduced, following the balanced bidirectional search principle [27]. After selecting the grow tree, each CUDA block dynam-ically selects a ready tangent space from the corresponding bank. The initial bank index varies with the block and plan-ning iteration, after which the bank is scanned cyclically until a ready tangent space is found. Therefore, tangent spaces are dynamically selected rather than statically assigned to individual CUDA blocks. Following TB-RRT [5], PATACON applies backtracking prevention when sampling from a newly created tangent space. Let qp denote the root of its parent tangent space and 
+
+qr the root of the new tangent space. The displacement qr −qp
+
+is projected onto the new tangent space to obtain a forward direction dr . If the sampled tangent-space displacement has a negative inner product with dr , its direction is reversed. This restricts sampling to the forward half-space of the tangent space and prevents the tree from backtracking toward previously explored regions. Within the selected tangent space Tr , a block-local Halton sample [28], [29] determines a normalized combination of Tangent space                   
+
+> GPU
+> Block 2
+> Block 5
+> Block 8
+> Block 0
+> Block 3
+> Block 6
+> Block 1
+> Block 4
+> Block 7
+> Edge 0 Edge 1 Edge 2 Edge 3
+> Block 2
+> Warp
+> Warp
+> Warp
+> Warp
+> Warp Warp
+> Warp Warp
+> Start Goal Constraint Manifold
+> Warp
+> ⋮⋮⋮⋮
+> Thread
+> 0
+> Thread
+> 1
+> Thread
+> 2
+> Thread
+> 3
+> Thread
+> 4
+> Thread
+> 5
+> Thread
+> 6
+> Thread
+> 7
+> Thread
+> 28
+> Thread
+> 29
+> Thread
+> 30
+> Thread
+> 31
+> Fig. 2. GPU mapping of PATACON. CUDA blocks concurrently explore local tangent-space regions, while candidate edges generated by each EXTEND are distributed across cooperative thread groups for parallel validation.
+
+tangent-basis directions and a displacement that remains within the joint-space sampling bounds, producing a tangent-space sample ¯qrand . Let V (T, r ) denote the set of config-urations in tree T associated with tangent space Tr . The expansion node is then selected by a nearest-neighbor query over V (Tgrow , r ),
+
+qnear = argmin   
+
+> qi∈V(Tgrow ,r )
+
+dist (¯ qi, ¯qrand ) , (8) where ¯qi denotes the tangent-space representation of qi
+
+in Tr , and dist( qa, q b) = ∥qa − qb∥2. This nearest-neighbor search is parallelized within each CUDA block using thread-level distance evaluation followed by block-level reduction. The sample ¯qrand and the tangent-space representation ¯qnear 
+
+of the selected node qnear are then passed to TGMP for subsequent expansion. 
+
+B. Tangent-Guided Multi-Edge Projection 
+
+TGMP converts the expansion generated by TGS into a multi-step tree expansion. Instead of generating only one candidate edge per sampling and nearest-neighbor operation, TGMP reuses the selected tangent-space context and expan-sion direction to generate multiple consecutive candidates within a single EXTEND call. For exploratory expansion, the tangent-space sample ¯qrand 
+
+and the local representation ¯qnear of the selected expansion node define the displacement 
+
+vext = ¯ qrand − ¯qnear . (9) If ∥vext ∥2 ≤ ϵdir , EXTEND returns T RAPPED . Otherwise, the displacement is normalized as 
+
+u = vext 
+
+∥vext ∥2
+
+, (10) and generates the k-th tangent-space candidate as 
+
+¯qk = ¯ qnear + kξu, k = 1 , . . . , K, (11) where ξ denotes the extension step size and K ≤ Kmax .The ordered sequence Qcand = (¯ q1, . . . , ¯qK ) represents a multi-step expansion along the common tangent-space Algorithm 1 PATACON (qstart , q goal , N blk , K max )
+
+1: Ts.AddVertex( qstart ), Tg .AddVertex( qgoal )
+
+2: TSBank s.Add(CreateTangentSpace( qstart )) 
+
+3: TSBank g .Add(CreateTangentSpace( qgoal )) 
+
+4: for each CUDA block b = 1 , . . . , N blk in parallel 
+
+5: for i = 1 , . . . , I max do 
+
+6: (Tgrow , T opp ) ← BALANCE TREES (Ts, T g , b, i )
+
+7: Tr ← SELECT TANGENT SPACE (TSBank( Tgrow ), b, i )
+
+8: ¯qrand ← SAMPLE (Tr )
+
+9: (qnear , ¯qnear ) ← NEAREST INTANGENT SPACE (Tgrow , Tr , ¯qrand )
+
+10: vext ← ¯qrand − ¯qnear 
+
+11: (sext , q end ) ← EXTEND (Tgrow , q near , ¯qnear , v ext , K max )
+
+12: if sext = Trapped then ▷ No valid extension 13: continue 
+
+14: end if 
+
+15: qtar ← arg min    
+
+> qj∈V(Topp )
+
+dist( qj , q end )
+
+16: (sconn , σ ) ← CHECK CONNECTION (Tgrow , T opp , q end , q tar )
+
+17: if sconn = Connected then 
+
+18: return σ
+
+19: end if 
+
+20: qcur ← qend 
+
+21: for j = 1 , . . . , J max do ▷ CONNECT 22: Tr ← TANGENT SPACE (qcur )
+
+23: ¯qcur ← TANGENT CONFIG (qcur )
+
+24: vcon ← PTr (qtar − qcur )
+
+25: (scon , q end ) ← EXTEND 
+
+ Tgrow , q cur , ¯qcur , v con , K max 
+
+
+
+26: if scon = Trapped then ▷ No valid extension 27: break 
+
+28: end if 
+
+29: qcur ← qend 
+
+30: (sconn , σ ) ← CHECK CONNECTION (Tgrow , T opp , q cur , q tar )
+
+31: if sconn = Connected then 
+
+32: return σ
+
+33: end if 
+
+34: end for 
+
+35: end for 
+
+36: return Invalid 
+
+direction and defines the candidate edges processed in the subsequent projection and validation stage. 
+
+EM (¯ qk) = ∥h(¯ qk)∥2. (12) Because the affine tangent space provides only a local linear approximation of the nonlinear constraint manifold, a generated candidate ¯qk does not necessarily satisfy the non-linear constraints. PATACON evaluates its constraint residual as Candidate generation terminates when Kmax candidates have been generated or immediately after appending the first candidate satisfying 
+
+EM (¯ qk) > ϵ M . (13) The threshold-crossing candidate remains in Qcand and is passed to the projection and validation stage. The residual 
+
+EM is used only as a practical criterion for determining when the current tangent-space approximation should be renewed and is not interpreted as the geometric distance from ¯qk to the constraint manifold. Moreover, generating a threshold-crossing candidate alone does not establish its feasibility or immediately create a new tangent space. TGMP itself defines the multi-step expansion indepen-dently of the execution schedule used for candidate-edge val-idation. Therefore, the candidate edges generated by TGMP 
+
+Algorithm 2 EXTEND (T, q cur , ¯qcur , v, K max )
+
+1: if ∥v∥2 ≤ ϵdir then ▷ No extension direction 2: return (Trapped , ∅)
+
+3: end if 
+
+4: u ← v/ ∥v∥2
+
+5: Qcand ← ∅ ▷ Tangent-space candidate batch 6: for k = 1 , . . . , K max do ▷ Generate tangent candidates 7: ¯qk ← ¯qcur + kξu 
+
+8: Append ¯qk to Qcand 
+
+9: if EM (¯ qk ) > ϵ M then ▷ Check tangent error 10: break 
+
+11: end if 
+
+12: end for 
+
+13: Qvalid ← PROJECT AND COLLISION CHECK (qcur , Qcand )
+
+14: if |Q valid | = 0 then ▷ No valid prefix 15: return (Trapped , ∅)
+
+16: end if 
+
+17: r ← TANGENT SPACE INDEX (qcur )
+
+18: qend ← INSERT BATCH (T, q cur , Qvalid , r )
+
+19: if |Q valid | = |Q cand | then ▷ Full batch for TS renewal 20: ¯qend ← LAST (Qcand )
+
+21: if EM (¯ qend ) > ϵ M then ▷ Check TS renewal 22: CreateTangentSpace( T, q end )
+
+23: end if 
+
+24: end if 
+
+25: return (Advanced , q end )
+
+can be processed sequentially, as in the +TGMP ablation variant, or concurrently on the GPU, as in the full PATACON planner. 
+
+C. GPU-Parallel Edge Projection and Validation 
+
+PATACON parallelizes the projection and validation of the multiple candidate edges generated by TGMP. Different candidate edges are assigned to separate cooperative thread groups and processed concurrently, whereas the waypoint projection within each individual edge follows the original sequential projection order. For each candidate edge, intermediate waypoints are gen-erated according to the edge-discretization resolution G.Starting from the edge source, the waypoints are projected sequentially toward the constraint manifold so that each projection step follows the preceding projected waypoint. Collision checking and feasibility validation are performed for the projected edge, while multiple candidate edges un-dergo this procedure concurrently on the GPU. An edge is considered valid only when its sequential way-point projection converges within the prescribed projection tolerances and all projected configurations satisfy the joint limits and collision constraints. During target-directed CON-NECT, the target-progress condition described in Sec. IV-D is additionally applied. Although candidate edges are processed concurrently, their validation results are consumed in the original TGMP ex-pansion order. Only the longest consecutively valid prefix beginning with the first candidate edge is inserted into the tree. If the first candidate edge is invalid, EXTEND returns T RAPPED ; otherwise, the valid prefix is inserted and EXTEND returns A DVANCED with the final inserted configuration qend .Tangent-space renewal is determined separately from valid-prefix insertion. A new tangent space is created at qend Constraint Manifold 𝑀          
+
+> 𝑞 ത௥௔௡ௗ 𝑞 ത௡௘௔௥ 𝜉 𝑞 ത௦௧௘௘௥ 𝑞 ത௡௘௔௥ 𝜉 𝑞 ത௦௧௘௘௥ E୑(𝑞 ത୩) > 𝜀୑ or K = 𝐾௠௔௫
+> [Candidate Generation Stops]
+> 𝜉 𝜉
+> EXTEND
+> 𝑞௥௢௢௧ 𝑞௥௢௢௧
+> 𝑞௥௢௢௧ 𝑞௥௢௢௧
+> 𝑞௧௔௥௚௘௧ CONNECT Valid prefix exists [CONNECT]
+> 𝑞 ത୩ 𝑞 ത୩ 𝑞 ത୩ 𝑞 ത୩
+> E୑(𝑞 ത୩) 𝑞 ത୩ 𝜉 𝜉
+> E୑(𝑞 ത୩) Fig. 3. Tangent-Space EXTEND and CONNECT. EXTEND generates multiple candidates along a common tangent direction, while CONNECT repeatedly applies EXTEND toward a fixed target in the opposite tree.
+
+only when the entire TGMP candidate batch is accepted and the final tangent-space candidate satisfies 
+
+EM (¯ qend ) > ϵ M . (14) The boundary node then becomes the root of the new tan-gent space with ¯qi = qi; otherwise, the inserted nodes remain associated with their original tangent space. Consequently, full-batch acceptance is required only for tangent-space re-newal, whereas any nonempty valid prefix is sufficient to trigger the subsequent CONNECT attempt. 
+
+D. Target-Directed Connection and Bridge Validation 
+
+After an exploratory EXTEND returns A DVANCED , PAT-ACON selects the closest configuration in the opposite tree as a fixed target for the current CONNECT attempt, 
+
+qtar = argmin   
+
+> qj∈V(Topp )
+
+dist( qj , q end ). (15) Unlike the tangent-space-local nearest-neighbor search used by TGS, this target search considers all configurations in the opposite tree. Starting from qcur = qend , PATACON repeatedly applies EXTEND to Tgrow toward the same fixed target qtar . During a CONNECT attempt, the opposite tree provides the target configuration but is not itself expanded by that CONNECT operation. At each CONNECT step, let Tr denote the tangent space associated with qcur . The ambient displacement toward the fixed target is projected onto the tangent vector space as 
+
+vcon = PTr (qtar − qcur ). (16) The resulting vcon is passed to the same TGMP-based EX-TEND procedure used during exploratory expansion. Thus, CONNECT also generates a multi-step candidate sequence and processes the resulting candidate edges using the GPU-parallel edge projection and validation procedure described in Sec. IV-C. Because numerical projection can modify the motion im-plied by the tangent-space direction, satisfying the projection and collision constraints alone does not guarantee progress toward the fixed target. Therefore, each candidate edge considered during CONNECT must additionally satisfy 
+
+dist( qk, q tar ) < dist( qk−1, q tar ) − ϵprog , (17) 
+
+Algorithm 3 CHECK CONNECTION (Tgrow , T opp , q, q tar )                          
+
+> 1: if dist( q, q tar )> ϵ con then
+> 2: return (NotConnected ,∅)
+> 3: end if
+> 4: (sbridge ,Qbridge )←VALIDATE BRIDGE (q, q tar )
+> 5: if sbridge ̸= Valid then
+> 6: return (NotConnected ,∅)
+> 7: end if
+> 8: σ←TRACE PATH (Tgrow , T opp ,Qbridge )
+> 9: return (Connected , σ )
+
+where ϵprog > 0 denotes the minimum required reduction in distance to the target. If an edge fails this condition, that edge is rejected and valid-prefix insertion terminates before it, even if its projection and collision checks succeed. After each successful EXTEND, qcur is updated to the returned qend , and PATACON evaluates 
+
+dist( qcur , q tar ) ≤ ϵcon . (18) When this condition is satisfied, the remaining bridge between qcur and qtar is projected and validated using the same sequential waypoint projection and collision-validation procedure. The two trees are considered connected only if this final bridge validation succeeds; otherwise, the CON-NECT attempt continues until EXTEND returns T RAPPED 
+
+or the maximum number of EXTEND calls Jmax is reached. Algorithm 3 summarizes the target-proximity test, final bridge validation, and path construction. V. E XPERIMENTS 
+
+We conducted three sets of experiments to evaluate PATACON. First , we compare planner performance across regimes spanning increasingly restrictive constraints and higher-dimensional configuration spaces. Second , we per-form a cumulative ablation study by progressively introduc-ing Tangent-Guided Sampling (TGS) and Tangent-Guided Multi-Edge Projection (TGMP) to cpRRTC. Finally , we evaluate solution-quality improvement under a common any-time optimization framework. 
+
+A. Experimental Environment 
+
+We evaluate PATACON primarily against two represen-tative constrained motion planners: McVAMP [23] and cpRRTC [4], representing CPU SIMD-accelerated manifold-constrained planning and GPU-parallel projection-based RRT-Connect, respectively. We additionally include TB-RRT [5] as a tangent-space-based constrained planner on the single-arm Franka benchmark. For McVAMP, we use its publicly available implementa-tion. For cpRRTC, we implement the planner by extending the publicly available pRRTC codebase according to the algorithm described in the cpRRTC paper. For TB-RRT, we use the implementation provided by OMPL. Within each benchmark regime, all planners use the same robot model, environment, start–goal pairs, joint limits, con-straint definitions, feasibility tolerances, and planning time-out. For each regime, we randomly sample 100 feasible start– goal joint-state pairs, which are shared across all evaluated planners. All experiments were conducted on a workstation equipped with an AMD Ryzen 7 9800X3D CPU, an NVIDIA GeForce RTX 5090 GPU, and 64 GB of system memory. Unless otherwise specified, PATACON used Nblk = 512 ,
+
+Kmax = 4 , ϵM = 0 .1, and an edge-discretization resolu-tion of G = 16 . One-time robot, environment, and device initialization was excluded from the timing measurements, while all computations required for each planning query were included. The benchmark robots span configuration spaces of differ-ent dimensions: (A) 7-DoF for the Franka Panda, (B) 14-DoF for the dual Franka, (C) 15-DoF for the fixed-base FFW-SG2, (D) 18-DoF for the mobile-base FFW-SG2, and (E) 35-DoF for the Unitree G1. We denote the constraints as follows: BK is a 6D bimanual kinematic-chain equality constraint on the relative end-effector pose; OR is a 2D orientation equality constraint that aligns the z-axes while leaving rotation about the aligned axis unconstrained; and FT is a 12D equality constraint that fixes the poses of both feet (6D per foot). CoM constrains the planar (x, y ) center of mass to lie within the support region using inequality constraints. 
+
+B. Planning Performance across Constraint Regimes 
+
+Fig. 5 compares the planning time and success rate across the benchmark regimes. Each trial is limited to 500 s, and the RRT extension range is set to ξ = 0 .4 where applicable. TB-RRT is evaluated only on the single-arm Franka benchmark because preliminary evaluations showed substantially larger planning times on higher-dimensional problems. McVAMP is evaluated on the Franka and dual-Franka benchmarks, but is omitted from the higher-dimensional FFW-SG2 and Unitree G1 benchmarks due to similarly high computational cost. We therefore focus on cpRRTC and PATACON in these higher-dimensional regimes. On the Franka benchmarks, cpRRTC and PATACON show comparable planning performance, with their relative advan-tage varying across the constraint settings. In contrast, PATA-CON consistently achieves lower planning latency across the higher-dimensional FFW-SG2 and Unitree G1 benchmarks. Its relative advantage becomes more pronounced in the more restrictive constraint settings, particularly when the axis con-straint is introduced. This trend is most evident on the fixed-base FFW-SG2 benchmark with bimanual-pose and axis Start Goal        
+
+> (A) Manipulation (7-DoF)
+> (B) Bimanual Manipulation (14-DoF) (C) Upper-body Manipulation (15-DoF) (D) Whole-body Manipulation (18-DoF) (E) Whole-body Manipulation (35-DoF)
+> Fig. 4. Experimental setups used for constrained motion-planning benchmarks. Start and goal configurations are shown for the Franka Panda, dual Franka, fixed- and mobile-base FFW-SG2, and Unitree G1.
+
+constraints, where the mean planning latency corresponds to an equivalent planning throughput of approximately 38.5 solutions per second for PATACON, compared with 3.4 for cpRRTC. A similar tendency is observed on the Unitree G1 benchmarks, where PATACON is faster both with and with-out the axis constraint, while the performance gap increases after the axis constraint is added. These results suggest that the benefit of tangent-space-guided parallel exploration becomes more pronounced in higher-dimensional and more restrictive constrained planning regimes. 
+
+C. Ablation Study 
+
+Starting from cpRRTC, +TGS introduces the tangent-guided exploration described in Sec. IV-A. +TGMP further generates multiple consecutive candidate edges within asingle EXTEND call, but processes them edge by edge: each candidate edge is projected and collision-validated before the next edge is processed. PATACON retains this tangent-guided multi-edge expansion, but projects and validates multiple candidate edges concurrently on the GPU while preventing backtracking toward previously explored tangent-space regions. TGS alone increases planning time because construct-ing and maintaining tangent-space information introduces additional overhead despite providing geometry-aware ex-ploration and a restricted nearest-neighbor search. TGMP reduces this overhead by reusing the same tangent-space context across multiple consecutive expansion steps, thereby amortizing the cost of tangent-space construction. TABLE I PLANNING PERFORMANCE OVER 100 TRIALS .TIME : MEAN ± STD . OVER SUCCESSFUL TRIALS .                                                                                           
+
+> Robot Constraint Planner Time (ms) Succ. Franka OR(2D) TB-RRT 570.58 ±446.23 98 McVAMP 5.20 ±3.37 100
+> cpRRTC 0.52 ±0.06 100
+> PATACON 1.65 ±0.10 100
+> Dual
+> BK(6D) McVAMP 44.60 ±23.69 100
+> cpRRTC 3.94 ±0.39 100
+> PATACON 4.77 ±0.78 100 BK + OR (8D) McVAMP 270.49 ±312.54 100
+> cpRRTC 5.55 ±0.66 100
+> PATACON 5.82 ±0.76 100
+> FFW-F
+> BK (6D) cpRRTC 29.49 ±3.52 100
+> PATACON 20.95 ±3.20 100
+> BK + OR (8D) cpRRTC 291.96 ±81.03 100
+> PATACON 25.94 ±4.06 100 FFW-M BK + OR / CoM (8D/2D) cpRRTC 117.79 ±16.84 100
+> PATACON 60.14 ±4.79 100 G1
+> BK + FT / CoM (18D/2D) cpRRTC 72.41 ±19.25 100
+> PATACON 57.44 ±9.00 100
+> BK + OR + FT / CoM (20D/2D) cpRRTC 242.48 ±19.47 100
+> PATACON 152.95 ±44.29 100
+> FFW-F: FFW-SG2 with fixed base; FFW-M: FFW-SG2 with mobile base. BK: 6D, OR: 2D, FT: 12D, CoM (2D Inequality Constraints) See Sec. V for constraint definitions. Solved Problems (%)
+
+Fig. 5. Cumulative planning success across constrained planning bench-marks. Each curve shows the percentage of 100 randomly sampled start–goal problems solved within the corresponding planning time. Planning time is shown on a logarithmic scale. 
+
+PATACON further reduces planning time by projecting and validating multiple candidate edges in parallel on the GPU. In addition, the backtracking-prevention strategy bi-ases expansion away from the parent tangent-space region, reducing redundant exploration of already visited regions and promoting progress toward unexplored portions of the constraint manifold. Overall, the results show that tangent-guided exploration becomes most effective when combined with multi-edge expansion, GPU-parallel edge processing, and directed exploration that avoids backtracking. 
+
+D. Anytime Planning Performance 
+
+The previous experiments demonstrate that PATACON can rapidly obtain a feasible solution. This low first-solution latency leaves additional computation time that can be ex-ploited for further solution refinement. We therefore em-bed PATACON in an AORRTC-based anytime optimization framework [30] and evaluate whether the remaining compu-
+
+TABLE II CUMULATIVE ABLATION ON THE G1 WHOLE -BODY BENCHMARK .
+
+Variant Time (ms) ↓ Success (%) ↑
+
+cpRRTC 242.48 ± 19.47 100 +TGS 339.78 ± 117.54 100 +TGMP 288.43 ± 123.17 100 
+
+PATACON 152.95 ± 44.29 100 
+
+Fig. 6. Anytime optimization behavior of AO-PATACON on the G1 whole-body benchmark over 10 independent runs. The upper plot shows the success rate over computation time, and the lower plot shows the median best-so-far path cost during continued optimization. 
+
+tation budget can be used to progressively improve solution quality on the G1 whole-body benchmark. The resulting anytime planner is denoted AO-PATACON. AO-PATACON does not continue expanding the existing trees after finding the first feasible solution. Instead, it uses the cost of that solution as an upper bound, reinitializes the trees, and restarts the search. Whenever a lower-cost solution is found, the cost bound is tightened and the search is restarted again. This process is repeated throughout the 10-s optimization budget. The best-so-far solution cost at optimization time t is defined as 
+
+C∗(t) = min   
+
+> τ≤t
+
+C(στ ), (19) where στ denotes a feasible solution obtained at time τ , and the configuration-space path length is used as the solution cost. To quantify the improvement obtained after the first fea-sible solution, we define the relative cost reduction as 
+
+Rcost = Cinit − C∗(TAO )
+
+Cinit 
+
+× 100 , (20) where Cinit denotes the cost of the first feasible solution. As shown in Fig. 6, AO-PATACON reaches a 100% success rate during the early stage of planning and sub-sequently continues to improve the quality of the incum-bent solution within the remaining optimization budget. The best-so-far path cost decreases in a stepwise manner as lower-cost feasible paths are discovered, with the largest reductions occurring shortly after the first feasible solutions are obtained. The magnitude of subsequent improvements gradually decreases, indicating convergence toward lower-cost solutions as additional computation time is provided. These results show that, because PATACON finds the first feasible solution quickly, a larger portion of the fixed planning budget can be devoted to subsequent solution refinement. AO-PATACON can then use the remaining com-putation time to progressively improve path quality in an anytime manner. VI. C ONCLUSION 
+
+In this work, we presented PATACON, a GPU-parallel tangent-bundle RRT-Connect framework for constrained mo-tion planning. PATACON integrates tangent-space-guided exploration with GPU-parallel tree expansion and validation, enabling efficient exploration of constrained configuration spaces. Experimental results across dual-arm and whole-body planning problems show that PATACON becomes increas-ingly advantageous as the constraints become more restric-tive and the planning problem becomes more challenging. These results demonstrate the effectiveness of combining local tangent-space guidance with massively parallel GPU execution for high-dimensional constrained motion planning. ACKNOWLEDGMENTS 
+
+We used ChatGPT (OpenAI) to refine the language of the manuscript and Codex (OpenAI) to assist in writing portions of the code used in the experiments reported in Section V. APPENDIX 
+
+CORRECTION OF BENCHMARK RESULTS 
+
+After the initial submission, we found that a computational task had not terminated and was still running on the same GPU during benchmarking. This caused resource contention and led to overestimated cpRRTC planning times in the Franka OR (2D) and Dual Franka BK+OR (8D) benchmarks. The originally reported planning times of 2.11 ± 2.18 ms and 8.94 ± 4.90 ms were corrected to 0.52 ± 0.06 ms and 5.55 ± 0.66 ms, respectively, after re-evaluation without concurrent GPU workloads. The corrected results, reflected in Table I and Fig. 5, show that cpRRTC achieves lower mean planning times than PATACON in both benchmarks. REFERENCES [1] Z. Kingston, M. Moll, and L. E. Kavraki, “Sampling-based methods for motion planning with constraints,” Annual Review of Control, Robotics, and Autonomous Systems , vol. 1, pp. 159–185, 2018. [2] A. Yershova and S. M. LaValle, “Improving motion-planning algo-rithms by efficient nearest-neighbor searching,” IEEE Transactions on Robotics , vol. 23, no. 1, pp. 151–157, 2007. [3] M. Kleinbort, O. Salzman, and D. Halperin, “Collision detection or nearest-neighbor search? on the computational bottleneck in sampling-based motion planning,” in Algorithmic Foundations of Robotics XII .Springer, 2020, pp. 624–639. [4] J. Hu, J. Wang, and H. I. Christensen, “cpRRTC: GPU-parallel RRT-connect for constrained motion planning,” 2025. [5] B. Kim, T. T. Um, C. Suh, and F. C. Park, “Tangent bundle RRT: A randomized algorithm for constrained motion planning,” Robotica ,vol. 34, no. 1, pp. 202–225, 2016. [6] M. Stilman, “Global manipulation planning in robot joint space with task constraints,” IEEE Transactions on Robotics , vol. 26, no. 3, pp. 576–584, 2010. [7] J. J. Kuffner and S. M. LaValle, “RRT-connect: An efficient approach to single-query path planning,” in Proceedings of the IEEE Interna-tional Conference on Robotics and Automation (ICRA) , vol. 2, 2000, pp. 995–1001. [8] J. H. Yakey, S. M. LaValle, and L. E. Kavraki, “Randomized path plan-ning for linkages with closed kinematic chains,” IEEE Transactions on Robotics and Automation , vol. 17, no. 6, pp. 951–958, 2001. [9] D. Berenson, S. S. Srinivasa, D. Ferguson, and J. J. Kuffner, “Manip-ulation planning on constraint manifolds,” in Proceedings of the IEEE International Conference on Robotics and Automation (ICRA) , 2009, pp. 625–632. [10] D. Berenson, S. S. Srinivasa, and J. J. Kuffner, “Task space regions: A framework for pose-constrained manipulation planning,” The Interna-tional Journal of Robotics Research , vol. 30, no. 12, pp. 1435–1460, 2011. [11] L. Jaillet and J. M. Porta, “Path planning under kinematic constraints by rapidly exploring manifolds,” IEEE Transactions on Robotics ,vol. 29, no. 1, pp. 105–117, 2013. [12] Z. Kingston, M. Moll, and L. E. Kavraki, “Exploring implicit spaces for constrained sampling-based planning,” The International Journal of Robotics Research , vol. 38, no. 10–11, pp. 1151–1178, 2019. [13] B. Ichter and M. Pavone, “Robot motion planning in learned latent spaces,” IEEE Robotics and Automation Letters , vol. 4, no. 3, pp. 2407–2414, 2019. [14] G. Sutanto, I. R. Fern´ andez, P. Englert, R. K. Ramachandran, and G. Sukhatme, “Learning equality constraints for motion planning on manifolds,” in Conference on Robot Learning . PMLR, 2021, pp. 2292–2305. [15] S. Park, S. Jeon, and J. Park, “A constrained motion planning method exploiting learned latent space for high-dimensional state and con-straint spaces,” IEEE/ASME Transactions on Mechatronics , vol. 29, no. 4, pp. 3001–3009, 2024. [16] A. H. Qureshi, J. Dong, A. Baig, and M. C. Yip, “Constrained motion planning networks X,” IEEE Transactions on Robotics , vol. 38, no. 2, pp. 868–886, 2022. [17] J. Bialkowski, S. Karaman, and E. Frazzoli, “Massively parallelizing the RRT and the RRT*,” in Proceedings of the IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS) , 2011, pp. 3513– 3518. [18] J. Pan and D. Manocha, “GPU-based parallel collision detection for fast motion planning,” The International Journal of Robotics Research ,vol. 31, no. 2, pp. 187–200, 2012. [19] M. Otte and N. Correll, “C-FOREST: Parallel shortest-path planning with superlinear speedup,” IEEE Transactions on Robotics , vol. 29, no. 3, pp. 798–806, 2013. [20] J. Ichnowski and R. Alterovitz, “Parallel sampling-based motion planning with superlinear speedup,” in Proceedings of the IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS) ,2012, pp. 1206–1212. [21] S. A. Jacobs, K. Manavi, J. Burgos, J. Denny, S. Thomas, and N. M. Amato, “A scalable method for parallelizing sampling-based motion planning algorithms,” in Proceedings of the IEEE International Conference on Robotics and Automation (ICRA) , 2012, pp. 2529– 2536. [22] W. Thomason, Z. Kingston, and L. E. Kavraki, “Motions in microsec-onds via vectorized sampling-based planning,” in Proceedings of the IEEE International Conference on Robotics and Automation (ICRA) ,2024, pp. 8749–8756. [23] S. R. Iyer, I.-C. Chang, A. Z. Liu, Y. Gu, and Z. Kingston, “Vectoriz-ing projection in manifold-constrained motion planning for real-time whole-body control,” in Proceedings of the IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS) , 2026, to Appear. [24] B. Sundaralingam, S. K. S. Hari, A. Fishman, C. Garrett, K. Van Wyk, V. Blukis, A. Millane, H. Oleynikova, A. Handa, F. Ramos, N. Ratliff, and D. Fox, “CuRobo: Parallelized collision-free robot motion gen-eration,” in Proceedings of the IEEE International Conference on Robotics and Automation (ICRA) , 2023, pp. 8112–8119. [25] C. H. Huang, P. Jadhav, B. Plancher, and Z. Kingston, “pRRTC: GPU-parallel RRT-connect for fast, consistent, and low-cost motion planning,” in Proceedings of the IEEE International Conference on Robotics and Automation (ICRA) , 2026. [26] J. Liu, M. Li, Z. Liu, and T. Sun, “BatchRRT: A fully-batched reformulation of RRT with GPU-accelerated SDF collision checking for real-time human-robot collision avoidance,” IEEE Robotics and Automation Letters , vol. 11, no. 5, pp. 6384–6391, 2026. [27] J. J. Kuffner and S. M. LaValle, “An efficient approach to path planning using balanced bidirectional RRT search,” Robotics Institute, Carnegie Mellon University, Pittsburgh, PA, Tech. Rep., 2005. [28] J. H. Halton, “On the efficiency of certain quasi-random sequences of points in evaluating multi-dimensional integrals,” Numerische Mathe-matik , vol. 2, no. 1, pp. 84–90, 1960. [29] M. S. Branicky, S. M. LaValle, K. Olson, and L. Yang, “Quasi-randomized path planning,” in Proceedings of the IEEE International Conference on Robotics and Automation (ICRA) , vol. 2, 2001, pp. 1481–1487. [30] T. S. Wilson, W. Thomason, Z. Kingston, and J. D. Gammell, “AORRTC: Almost-surely asymptotically optimal planning with RRT-connect,” IEEE Robotics and Automation Letters , 2025, accepted September 2025.

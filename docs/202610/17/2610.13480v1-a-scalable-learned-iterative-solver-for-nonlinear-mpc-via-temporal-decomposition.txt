@@ -1,0 +1,955 @@
+Title: A Scalable Learned Iterative Solver for Nonlinear MPC via Temporal Decomposition
+
+URL Source: https://arxiv.org/pdf/2610.13480v1
+
+Published Time: Mon, 12 Oct 2026 01:11:21 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# A Scalable Learned Iterative Solver for Nonlinear MPC via Temporal Decomposition 
+
+## Lukas Lüken a,∗, Sergio Lucia a
+
+> a
+
+Chair of Process Automation Systems, TU Dortmund University, Emil-Figge Straße 70, Dortmund, 44227, North Rhine-Westphalia, Germany 
+
+A R T I C L E I N F O 
+
+Keywords :Constrained optimization Machine learning Model predictive control Learning to optimize Neural networks 
+
+A B S T R A C T 
+
+Nonlinear model predictive control (NMPC) can be applied to large nonlinear systems with complex objectives while enforcing constraints, but the cost of solving the underlying optimization problems limits real-time application for systems with fast dynamics or many states. Neural networks can reduce this online cost by approximating the control law, but may violate constraints and typically require many precomputed optimizer solutions for training. The learning-based iterative solver for constrained optimization (LISCO) instead learns to predict primal-dual steps toward satisfaction of the Karush-Kuhn-Tucker (KKT) conditions through self-supervised training without precomputed solutions, but its dense, monolithic architecture grows with the prediction horizon. We remove this horizon dependence by exploiting the temporal structure of the problem in the solver architecture, which makes the network size independent of the horizon while leaving the training loss and the solver iteration unchanged. A closed-loop resampling strategy further aligns the training distribution with closed-loop operation at no additional sampling cost. On an economic NMPC benchmark of a CSTR cascade, the proposed solver scales to larger problems than monolithic LISCO and achieves median speedups of up to a factor of four over IPOPT. In closed loop, it achieves comparable control performance to IPOPT with no observed constraint violations. 
+
+## 1. Introduction 
+
+Nonlinear model predictive control (NMPC) is highly relevant in process control, as it optimizes performance directly while enforcing input and state constraints [1, 2]. Its online application requires solving a nonlinear optimization problem at every sampling instant. The computational cost of this problem grows with the prediction horizon, the model size and the number of constraints [3]. Real-time application is therefore limited for systems with fast dynamics, for large systems with many states and inputs, and for robust NMPC formulations [4]. The online cost of NMPC has been addressed with efficient formulations such as the real-time iteration scheme [5] and fast solvers which exploit the structure of the NMPC problem [6, 7, 8, 9]. These methods lower the online cost substantially, but still require solving structured linear systems at each iteration, with a computational cost that grows with the problem size. For small linear problems, explicit MPC precomputes the control law offline [10], which does not extend to large nonlinear problems. This motivates learning-based methods, which are fast to evaluate and easy to deploy on control hardware. Existing learning-based methods can be broadly catego-rized into two areas, the direct approximation of the solution and the learning of the solver itself. In the first area, a neural network directly predicts the optimization solution or the control input. Approximate MPC follows this approach 
+
+> ∗
+
+Corresponding author  
+
+> lukas.lueken@tu-dortmund.de
+
+( Lukas Lüken);  
+
+> sergio.lucia@tu-dortmund.de
+
+( Sergio Lucia) 
+
+> ORCID
+
+(s): 0009-0004-5599-8282 ( Lukas Lüken); 0000-0002-3347-5593 
+
+( Sergio Lucia) 
+
+by approximating the MPC control law, which maps the current state to the first control input of the optimal input sequence [11, 12, 13, 14]. Evaluating the network is often orders of magnitude faster than solving the problem online, but approximation errors can cause constraint violations and suboptimal closed-loop behavior [15, 16], and super-vised training typically requires sampling large numbers of optimizer solutions, which is computationally expensive. For constrained optimization more generally, the framework DC3 [17] adds a completion and correction step that reduces constraint violations, but incurs a computational overhead and leaves a residual optimality gap. Primal-dual learning and related self-supervised optimization proxies [18, 19, 20, 21] remove the need for sampled optimizer solutions. However, their direct predictions can still be infeasible or suboptimal. A further line of work learns an initial guess that warm-starts a classical solver [22, 23, 24], which accelerates the solution but still requires an online solver. In the second area, an update map or algorithm is learned and applied iteratively, so that the residual can be recom-puted and monitored online. In the learning-to-optimize (L2O) literature, the iteration map itself is learned, mostly for unconstrained problems such as neural network training [25, 26]. Related approaches tune or optimize the hyperpa-rameters of a given algorithm [27, 28] or unroll it and fit the parameters of the unrolled scheme [29, 30]. In these cases, learning builds on a prescribed optimization algorithm to accelerate the solution process. In our previous work, we introduced the learning-based iterative solver for constrained optimization (LISCO), tailored to constrained nonlinear pro-grams (NLP) and applied to NMPC [31, 32]. It learns a primal-dual update map for a modified Karush-Kuhn-Tucker 
+
+L. Lüken, S. Lucia Page 1 of 16 arXiv:2610.13480v1 [math.OC] 9 Oct 2026 (KKT) residual, is trained self-supervised without sampled optimizer solutions, and produces full primal-dual iterates that support a residual-based stopping criterion. Each itera-tion is a single network evaluation and therefore requires no linear system solve. This approach has since been applied to mixed-integer and robust NMPC [33]. However, LISCO remains monolithic, as one dense net-work maps the full primal-dual residual to the full step. The input and output layers of such a network grow with the primal-dual dimension and therefore with the horizon, so the network size and the training effort have to grow with the problem [31]. Consistent with this, in our previous work we observed decreasing speedups over IPOPT [34] as the horizon length increased, with larger networks and more training epochs required to retain convergence [31]. Classical solvers such as IPOPT exploit the block-banded KKT structure induced by the dynamics and stage-wise costs and constraints using sparse linear algebra, e.g. MA27 [35], whereas the learned solver has so far not made use of this temporal structure. In this work, we close this gap by incorporating the temporal structure of the NMPC problem into the learned update map. Classical decomposition methods, such as the alternat-ing direction method of multipliers [36] and overlapping Schwarz schemes [37, 38, 39], also exploit the temporal locality of optimal control problems, but rely on local sub-problem solves, multiplier updates or explicit coordination at solve time. The proposed solver handles this coupling through overlapping residual windows and overlap averag-ing within the learned update map, so the solver iteration and the self-supervised training loss remain unchanged. The contributions of this paper are as follows. 1. We introduce a learned primal-dual solver for NMPC based on temporal decomposition. A shared neural network computes local updates in parallel on overlap-ping segments of the prediction horizon. Combining these local updates yields a full primal-dual step, while sharing the network across segments makes its size independent of the prediction horizon. 2. We extend the self-supervised training by a closed-loop resampling strategy, in which the initial state of a converged training sample is replaced by the predicted next state instead of being resampled uniformly. Since this state is already contained in the converged primal-dual iterate, the training distribution is aligned with closed-loop operation at no additional sampling cost. The remainder of this paper is structured as follows. We introduce the NMPC problem, its formulation as a parametric NLP with the modified KKT residual, the mono-lithic LISCO solver and the block-banded structure of the NMPC KKT system in Section 2. Next, we present the proposed architecture and its training in Section 3, describe the CSTR-cascade benchmark and the computational studies in Section 4, report the results in Section 5, and conclude in Section 6. 
+
+## 2. Background 
+
+2.1. Nonlinear Model Predictive Control 
+
+Consider a discrete-time system 𝐱 𝑖 +1 = 𝑓 (𝐱 𝑖 , 𝐮 𝑖 ) with initial condition 𝐱 0 = 𝐱 init , states 𝐱 𝑖 ∈ ℝ𝑛 𝑥 , inputs 𝐮 𝑖 ∈ ℝ𝑛 𝑢 ,dynamics 𝑓 and time index 𝑖 ∈ {0 , … , 𝑁 −1 | 𝑁 ∈ ℕ, 𝑁 ≥
+
+1} . The input sequence is determined by solving the finite-horizon NMPC problem (1), with stage cost 𝓁 , terminal cost 
+
+𝑉 𝑓 , the discretized dynamics as equality constraints, and inequality constraints 𝐠 MPC [3]: 
+
+min  
+
+> 𝐱 [0∶ 𝑁 ],𝐮 [0∶ 𝑁 −1]
+
+𝑉 𝑓 
+
+(𝐱 𝑁 
+
+) +
+
+> 𝑁 −1
+
+∑
+
+> 𝑖 =0
+
+𝓁 (𝐱 𝑖 , 𝐮 𝑖 
+
+) (1a) 
+
+s.t. 𝐱 𝑖 +1 = 𝑓 (𝐱 𝑖 , 𝐮 𝑖 
+
+) , 𝐱 0 = 𝐱 init , (1b) 
+
+𝐠 MPC 
+
+(𝐱 𝑖 +1 , 𝐮 𝑖 
+
+) ≤ 𝟎 , (1c) 
+
+𝑖 ∈ {0 , … , 𝑁 − 1 | 𝑁 ∈ ℕ, 𝑁 ≥ 1} .
+
+(1d) Following the receding-horizon principle, the problem is solved at the current state 𝐱 0, the first input 𝐮 0 is applied, and the procedure is repeated at the next sampling instant, which defines the implicit control law: 
+
+𝐮 0 = Π MPC (𝐱 init ). (2) A direct alternative to solving (1) online is to approxi-mate the control law itself. Approximate MPC fits a neural network ΠapproxMPC with parameters 𝜃 to the map from the initial state to the first control action, using precomputed optimizer solutions as training targets, so that evaluating the network online replaces solving the optimization problem [12, 15]: ̂
+
+𝐮 0 = Π approxMPC (𝐱 init ; 𝜃 ). (3) It is often orders of magnitude faster than solving (1) on-line, but leads to approximation errors that may result in constraint violations or loss in performance. 
+
+2.2. Parametric Nonlinear Optimization and Optimality Conditions 
+
+The NMPC problem (1) can be rewritten as a parametric nonlinear program (4) with objective 𝑞 , decision variables 
+
+𝐰 ∈ ℝ𝑛 𝑤 , parameters 𝐩 ∈ ℝ𝑛 𝑝 , inequality constraints 
+
+𝐠 ∈ ℝ𝑛 𝑔 and equality constraints 𝐡 ∈ ℝ𝑛 ℎ , all assumed smooth and possibly nonconvex: 
+
+min  
+
+> 𝐰
+
+𝑞 (𝐰 , 𝐩 ) (4a) 
+
+s.t. 𝐠 (𝐰 , 𝐩 ) ≤ 𝟎 , (4b) 
+
+𝐡 (𝐰 , 𝐩 ) = 𝟎 . (4c) Collecting the primal variables and the equality and inequal-ity multipliers into the primal-dual vector 𝐳 = ( 𝐰 , 𝝂 , 𝝀 ) ∈ 
+
+ℝ𝑛 𝑧 and writing the Lagrangian (𝐳 , 𝐩 ) = 𝑞 (𝐰 , 𝐩 ) + 
+
+𝝂 ⊤𝐡 (𝐰 , 𝐩 ) + 𝝀 ⊤𝐠 (𝐰 , 𝐩 ), the first-order optimality conditions are the KKT conditions (5): 
+
+∇𝐰  (𝐳 ∗, 𝐩 ) = 𝟎 , (5a)  
+
+> L. Lüken, S. Lucia Page 2 of 16
+
+𝐡 (𝐰 ∗, 𝐩 ) = 𝟎 , (5b) 
+
+𝐠 (𝐰 ∗, 𝐩 ) ≤ 𝟎 , (5c) 
+
+𝝀 ∗ ≥ 𝟎 , (5d) 
+
+𝝀 ∗ ⊙ 𝐠 (𝐰 ∗, 𝐩 ) = 𝟎 . (5e) To solve the parametric NLP (4) for a given parameter 𝐩 ,iterative solvers are used to drive the KKT residual to a given tolerance [40]. These iterative solvers are generally described by the following iterative update rule: 
+
+𝐳 𝑘 +1 = 𝐳 𝑘 + 𝛼 𝑘 Δ𝐳 𝑘 , (6) with iterate 𝐳 𝑘 , step Δ𝐳 𝑘 and step size 𝛼 𝑘 .The NMPC problem (1) is an instance of (4) under the identification 𝐰 = (𝐮 0, 𝐱 1, … , 𝐮 𝑁 −1 , 𝐱 𝑁 ) and 𝐩 = 𝐱 init ,where the state and input trajectories are the decision vari-ables, the initial state is the only parameter, the discretized dynamics are the equality constraints, and the stage con-straints are the inequality constraints. 
+
+2.3. Modified KKT Residual 
+
+The KKT conditions (5) contain inequalities (5c), (5d) and the complementarity condition (5e), which hinder the direct application of root-finding methods for nonlinear sys-tems of equations that drive the residual to zero. The penal-ized Fischer-Burmeister function (7) replaces the inequality and complementarity conditions by a single equation per inequality constraint [41, 42, 43]: 
+
+𝜙 𝑗 (𝜆 𝑗 , 𝑔 𝑗 ) = 𝜌 FB 
+
+(
+
+𝜆 𝑗 − 𝑔 𝑗 −
+
+√
+
+𝜆 2 
+
+> 𝑗
+
++ 𝑔 2 
+
+> 𝑗
+
++ 𝜖 2
+
+)
+
++ (1 − 𝜌 FB ) 𝜆 + 
+
+> 𝑗
+
+𝑔 − 
+
+> 𝑗
+
+, 𝑗 = 1 , … , 𝑛 𝑔 ,
+
+(7) where 𝜆 + 
+
+> 𝑗
+
+= max{ 𝜆 𝑗 , 0} and 𝑔 − 
+
+> 𝑗
+
+= max{− 𝑔 𝑗 , 0} and 𝜌 FB ∈(0 , 1] is the penalization parameter and 𝜖 > 0 the smoothing parameter to improve conditioning. For 𝜖 > 0, the Fischer-Burmeister term is smooth, while the penalty term remains nonsmooth for 𝜌 FB < 1. For any 𝜖 ≥ 0, satisfaction of 
+
+𝜙 𝑗 (𝜆 𝑗 , 𝑔 𝑗 ) = 0 ensures that 𝑔 𝑗 ≤ 0 and 𝜆 𝑗 ≥ 0 and 𝜖 
+
+acts as a slack on the complementarity condition such that 
+
+|𝜆 𝑗 𝑔 𝑗 | = 𝜖 2∕2 for 𝜌 FB = 1 and |𝜆 𝑗 𝑔 𝑗 | ≤ 𝜖 2∕2 for 𝜌 FB < 1.Replacing the inequality, dual-feasibility and comple-mentarity conditions with 𝝓 = 𝟎 yields the modified KKT residual (8), whose zeros recover the original KKT condi-tions in the limit 𝜖 → 0:
+
+𝐫 𝜙 (𝐳 , 𝐩 ) = 
+
+⎡⎢⎢⎣
+
+∇𝐰  (𝐳 , 𝐩 )
+
+𝐡 (𝐰 , 𝐩 )
+
+𝝓 (𝝀 , 𝐠 (𝐰 , 𝐩 )) 
+
+⎤⎥⎥⎦
+
+∈ ℝ𝑛 𝑧 . (8) For 𝜖 > 0, a zero residual instead certifies a modified KKT point, whose distance from the exact KKT point grows with 
+
+𝜖 [44]. This distance of the modified KKT point from the exact KKT point does not affect the constraint satisfaction of the original problem, because even for 𝜖 > 0, a zero residual certifies that the equality and inequality constraints are satisfied to the same tolerance as the original KKT conditions, with 𝜖 acting as a slack on the complementarity condition and thereby affecting the optimality gap but not the feasibility of the solution. 
+
+2.4. Learning-Based Iterative Solver for Constrained Optimization (LISCO) 
+
+Our previously proposed learning-based iterative solver for constrained optimization (LISCO) predicts the step Δ𝐳 𝑘 
+
+via a neural network Ψ𝜃 with parameters 𝜃 [31, 32]. At each iteration the network takes the current residual (8) as its input and returns the step, which is applied to the iterate 𝐳 𝑘 
+
+according to the update rule (6). We call this architecture 
+
+monolithic because a single network Ψ𝜃 maps the entire residual to the entire step. Since every iterate 𝐳 𝑘 is a full primal-dual vector, the residual can be recomputed after each step and used as a stopping criterion, and each iteration requires one network evaluation with no linear-system solve. Figure 1 illustrates this. Over the course of a solve, the residual can span many orders of magnitude, which would make it a poorly scaled input. The network therefore receives the residual split into a direction and a magnitude, the normalized residual 𝐫 𝑘 ∕‖𝐫 𝑘 ‖2
+
+and the logarithm of its norm log ‖𝐫 𝑘 ‖2:
+
+𝝉 𝑘 = 𝝉 (𝐳 𝑘 , 𝐩 ) = 
+
+(
+
+𝐫 𝑘 ∕‖𝐫 𝑘 ‖2, log ‖𝐫 𝑘 ‖2
+
+)
+
+∈ ℝ𝑛 𝑧 +1 . (9) The output is rescaled by the residual norm, so that the step is large when the residual is large and shrinks to small corrections as the residual approaches zero: 
+
+Δ̂ 𝐳 𝑘 = Π 𝜃, solv (𝐳 𝑘 , 𝐩 ) = 𝛾 ‖𝐫 𝑘 ‖2 Ψ𝜃 (𝝉 𝑘 , 𝐩 ), (10) with 𝐫 𝑘 ∶= 𝐫 𝜙 (𝐳 𝑘 , 𝐩 ) and a fixed problem-specific factor 
+
+𝛾 > 0. The exact input scaling and the numerical safeguards are described in [31]. The network is trained without precomputed optimizer solutions. For each training sample 𝑠 , with parameter 𝐩 (𝑠 )
+
+and current iterate 𝐳 (𝑠 ) 
+
+> 𝑘
+
+, one step produces the next iterate ̂
+
+𝐳 (𝑠 )(𝜃 ) = 𝐳 (𝑠 ) 
+
+> 𝑘
+
++ Π 𝜃, solv (𝐳 (𝑠 ) 
+
+> 𝑘
+
+, 𝐩 (𝑠 )). The loss measures the residual at this iterate, thereby training the network to reduce the residual toward zero, where the modified KKT condi-tions hold. The per-sample loss (11) and the batch loss (12), averaged over a mini-batch of 𝑁 batch parameter samples, are 
+
+𝑙 (𝐳 , 𝐩 ) = log 
+
+( 12 ‖𝐫 𝜙 (𝐳 , 𝐩 )‖22 + 𝜎 
+
+)
+
+, (11) 
+
+𝐿 (𝜃 ) = 1
+
+𝑁 batch 
+
+> 𝑁 batch
+
+∑
+
+> 𝑠 =1
+
+𝑙 (̂
+
+𝐳 (𝑠 )(𝜃 ), 𝐩 (𝑠 )). (12) The logarithm limits the variation in the loss across the orders of magnitude spanned by the residual, and the offset 
+
+𝜎 > 0 avoids numerical issues near a zero residual. Because the loss is evaluated on the residual after the full step, the network learns to predict steps of appropriate magnitude at 
+
+𝛼 𝑘 = 1, and the line search is kept only as a safeguard.  
+
+> L. Lüken, S. Lucia Page 3 of 16
+
+KKT conditions 
+
+Solver Figure 1: Monolithic LISCO update map. From the parameters 𝐩 and the current iterate ̂ 𝐳 𝑘 , the modified KKT residual (8) is evaluated and a single dense network maps it to the full primal-dual step Δ̂ 𝐳 𝑘 , which updates the iterate. Iterating this map drives the residual to the tolerance. The decomposed map proposed in this work is shown for comparison in Figure 2. 
+
+Local minima of the per-sample loss coincide with iterates that satisfy the modified KKT conditions, so the training target is well-posed (Lemma 1 of [31]). During training, the predicted steps Δ𝐳 (𝑠 ) 
+
+> 𝑘
+
+are applied to the current iterate, so each iterate 𝐳 (𝑠 ) 
+
+> 𝑘
+
+is generated by the solver itself. This forward sampling trains the network on the iterates that occur at inference. Once a sample reaches the tolerance, its parameter 𝐩 (𝑠 ) is resampled and the initial iterate 𝐳 (𝑠 )0 is reset. Section 3.4 describes the parameter resampling distribution and its closed-loop modification. 
+
+2.5. Block-Banded Structure of the NMPC KKT System 
+
+The dynamics of the NMPC problem (1) couple only consecutive stages, where each equality constraint relates 
+
+𝐱 𝑖 +1 to 𝐱 𝑖 and 𝐮 𝑖 , so the coupling is limited to neighboring stages along the horizon. Additionally, if the inequality constraints are formulated as stage constraints, such as box constraints on the inputs and states, then the staged structure induces a partition of the primal-dual vector into equally sized stages: 
+
+𝐳 = (𝐳 0, … , 𝐳 𝑁 −1 
+
+),
+
+𝐳 𝑖 = ( 𝐮 𝑖 , 𝐱 𝑖 +1 
+
+⏟⏟⏟ 
+
+> 𝑛 𝑠 𝑤
+
+, 𝝂 𝑖 
+
+⏟⏟⏟
+
+> 𝑛 𝑠 ℎ
+
+, 𝝀 𝑖 
+
+⏟⏟⏟
+
+> 𝑛 𝑠 𝑔
+
+) ∈ ℝ𝑛 𝑠 𝑧 , (13) with 𝑛 𝑠 𝑧 = 𝑛 𝑠 𝑤 +𝑛 𝑠 ℎ +𝑛 𝑠 𝑔 and 𝑛 𝑧 = 𝑁 𝑛 𝑠 𝑧 . The per-stage dimen-sions are 𝑛 𝑠 𝑤 = 𝑛 𝑥 + 𝑛 𝑢 , 𝑛 𝑠 ℎ = 𝑛 𝑥 for the state dynamics, and 
+
+𝑛 𝑠 𝑔 for the inequality constraints. This partition assigns each stage 𝑖 exactly one input 𝐮 𝑖 , one state 𝐱 𝑖 +1 , one dynamics constraint and its multiplier 𝝂 𝑖 , together with the stage-local inequality constraints and their multipliers 𝝀 𝑖 .We group the residual components according to the stage partition of the primal-dual vector: 
+
+𝐫 𝜙 (𝐳 , 𝐩 ) = (𝐫 𝜙, 0, … , 𝐫 𝜙,𝑁 −1 
+
+),
+
+𝐫 𝜙,𝑖 =
+
+⎡⎢⎢⎣
+
+∇(𝐮 𝑖 ,𝐱 𝑖 +1 )
+
+𝐡 𝑖 
+
+𝝓 𝑖 
+
+⎤⎥⎥⎦
+
+∈ ℝ𝑛 𝑠 𝑧 . (14) Each stage residual 𝐫 𝜙,𝑖 has the same dimension 𝑛 𝑠 𝑧 as the stage block 𝐳 𝑖 .The discretized dynamics 𝐡 𝑖 involve 𝐱 𝑖 , 𝐮 𝑖 and 𝐱 𝑖 +1 and therefore couple stages 𝑖 and 𝑖 −1 through 𝐱 𝑖 , while the stage cost 𝓁 (𝐱 𝑖 , 𝐮 𝑖 ) also contains elements from stages 𝑖 (𝐮 𝑖 ) and 
+
+𝑖 − 1 (𝐱 𝑖 ). The stationarity row of 𝐱 𝑖 +1 involves 𝝂 𝑖 and 𝝂 𝑖 +1 
+
+and so couples stage 𝑖 to stage 𝑖 + 1 . The stage constraints 
+
+𝐠 MPC (𝐱 𝑖 +1 , 𝐮 𝑖 ) depend only on the current stage 𝑖 . Therefore, no coupling extends further than one stage, which gives the bandedness: 
+
+𝜕 𝐫 𝜙,𝑖 
+
+𝜕 𝐳 𝑖 ′
+
+= 𝟎 for all |𝑖 − 𝑖 ′| > 1. (15) Consequently, every generalized Jacobian of 𝐫 𝜙 with respect to 𝐳 is block-tridiagonal in the stage index, with stage bandwidth one. Optimizers such as IPOPT [34] exploit this sparsity by utilizing sparse linear solvers such as MA27 [35] to reduce the computational complexity of solving the KKT system. While this sparse structure is inherent to the NMPC problem (1), the monolithic update (10) does not exploit it and instead couples every residual entry to every entry of the step, so the input and output dimensions of Ψ𝜃 grow linearly in 𝑁 . Under the usual choice that the hidden layers are at least as wide as the input and output dimensions, the parameter count then grows at least quadratically in 𝑁 [31]. 
+
+## 3. A Learned Solver for NMPC via Temporal Decomposition 
+
+To exploit the block-banded structure of the NMPC problem (1) (see Section 2.5), we decompose the update map along the horizon. Figure 2 illustrates the main idea. A 
+
+L. Lüken, S. Lucia Page 4 of 16 KKT conditions  decompose  merge 
+
+> Decomposed Solver
+
+Figure 2: LISCO update map with temporal decomposition. The global modified KKT residual (8) is split into overlapping stage windows. A single shared network is evaluated on all windows in parallel. The overlapping predictions are combined by the fixed averaging operator. The per-stage magnitude and the global step scaling 𝛾 are restored to form the primal-dual step. 
+
+shared neural network computes local primal-dual updates from overlapping windows of residuals from consecutive stages, and these local predictions are combined into a full update. The network is evaluated on all windows in parallel, and predictions for stages covered by multiple windows are averaged. Because the network is shared, its input and output sizes depend only on the window length and remain independent of the horizon. The outer iteration (6), the residual (8) and the training loss (12) are kept exactly as in the monolithic solver [31], so only the map from the residual to the step (10) is replaced. The following subsections define the overlapping windows illustrated in Figure 3, the shared network and the averaging of local predictions. 
+
+3.1. Windows and Local Residual Features ...  
+
+> ... ...
+
+Figure 3: Time decomposition of the horizon. The stage-partitioned primal-dual iterate 𝐳 = ( 𝐳 0, … , 𝐳 𝑁 −1 ) is covered by overlapping windows 0, … , 𝑀 −1 of 𝑚 consecutive stages, shifted by the stride 𝑠 , so consecutive windows overlap in 𝑚 − 𝑠 
+
+stages (red). A stage that lies in two windows, such as stage 
+
+2, receives one prediction per window, and these are averaged into a single step by the merge operation (25) . The number of windows is 𝑀 = 1 + ( 𝑁 − 𝑚 )∕ 𝑠 .
+
+The proposed decomposition introduces two hyperpa-rameters, the window length 𝑚 and the stride 𝑠 . A window is a set of 𝑚 consecutive stages of the horizon, and consecutive windows are shifted by 𝑠 stages, giving the window stage sets 
+
+𝑗 = { 𝑗𝑠, 𝑗𝑠 + 1 , … , 𝑗𝑠 + 𝑚 − 1 } , (16) 
+
+𝑀 = 1 + 𝑁 − 𝑚 𝑠 , (17) for 𝑗 = 0 , … , 𝑀 − 1 , where 𝑀 is the resulting number of windows. We index stages by 𝑖 , windows by 𝑗 , and local positions within a window by 𝑙 , while 𝑘 is the solver iteration. The windows are chosen to cover the horizon with an overlap of 𝑚 − 𝑠 stages between consecutive windows, as shown in Figure 3. The windows must satisfy the following admissibility conditions: 
+
+1 ≤ 𝑠 ≤ 𝑚 ≤ 𝑁, (18a) 
+
+(𝑁 − 𝑚 ) mod 𝑠 = 0 . (18b) The set 𝑖 collects the pairs (𝑗, 𝑙 ) of windows 𝑗 and local positions 𝑙 inside these windows that map to stage 𝑖 and is defined as 
+
+𝑖 = { (𝑗, 𝑙 ) ∶ 𝑗𝑠 + 𝑙 = 𝑖, 0 ≤ 𝑗 < 𝑀, 0 ≤ 𝑙 < 𝑚 },
+
+(19) for all 𝑖 = 0 , … , 𝑁 −1 . The predictions of the windows in 𝑖 
+
+are merged into a single step Δ𝐳 𝑘,𝑖 for each stage 𝑖 by taking the average as described in Section 3.2, for the positions that overlap. Using the stage partition (14), the per-stage residual 𝐫 𝑘,𝑖 ,its norm 𝜂 𝑘,𝑖 , and its normalization ̂ 𝐫 𝑘,𝑖 are given as follows: 
+
+𝐫 𝑘,𝑖 ∶= 𝐫 𝜙,𝑖 (𝐳 𝑘 , 𝐩 ), (20a) 
+
+𝜂 𝑘,𝑖 ∶= ‖𝐫 𝑘,𝑖 ‖2, (20b) ̂
+
+𝐫 𝑘,𝑖 ∶= 𝐫 𝑘,𝑖 ∕𝜂 𝑘,𝑖 , (20c) for 𝑖 = 0 , … , 𝑁 − 1 . Unlike the input transformation of the monolithic solver (9), which is applied once globally, the per-stage features (20) are computed for every stage 𝑖 and then collected into windows. The stage residual 𝐫 𝑘,𝑖 does not encode its position in the horizon. A single shared network therefore cannot determine 
+
+L. Lüken, S. Lucia Page 5 of 16 where a window lies in the horizon, yet the stages are not interchangeable, since the stages near the beginning and end of the horizon play different roles, particularly because of the initial condition and horizon boundary. We therefore augment the window input with positional information that contains the stage indices of the window, so that the shared network can distinguish otherwise identical residuals occur-ring at different positions. For each stage 𝑖 in a horizon of length 𝑁 , the positional information is defined as: 
+
+𝝅 𝑖 =
+
+[ 𝑖 𝑁 − 1 , 1− 𝑖 𝑁 − 1 
+
+]
+
+∈ ℝ2, 𝑖 = 0 , … , 𝑁 −1 ,
+
+(21) which is normalized by 𝑁 − 1 , so its range does not change with the horizon length. The window input consists of the normalized stage resid-uals of the window 𝑗 , their log-magnitudes, and the posi-tional information of the stages at iteration 𝑘 :
+
+𝝉 𝑘,𝑗 =
+
+( (̂
+
+𝐫 𝑘,𝑖 
+
+)
+
+> 𝑖 ∈𝑗
+
+, ( log 𝜂 𝑘,𝑖 
+
+)
+
+> 𝑖 ∈𝑗
+
+, (𝝅 𝑖 
+
+)
+
+> 𝑖 ∈𝑗
+
+)
+
+∈ ℝ𝑚 𝑛 𝑠 𝑧 +3 𝑚 .
+
+(22) The dimension of 𝝉 𝑘,𝑗 is therefore 𝑚 𝑛 𝑠 𝑧 + 3 𝑚 and is set by the window length 𝑚 . The problem parameter 𝐩 is passed to every window, as in (10). 
+
+3.2. Shared Update Network and Step Averaging 
+
+The shared network Ψ𝜃 maps the window input 𝝉 𝑘,𝑗 and the problem parameters 𝐩 to a vector of predictions for the 
+
+𝑚 stages in window 𝑗 :
+
+𝐝 𝑘,𝑗 = Ψ 𝜃 
+
+(𝝉 𝑘,𝑗 , 𝐩 )
+
+= (𝐝 𝑘,𝑗, 0, … , 𝐝 𝑘,𝑗,𝑚 −1 
+
+) ∈ ℝ𝑚 𝑛 𝑠 𝑧 , (23) where the tuple denotes vector concatenation. Each block 
+
+𝐝 𝑘,𝑗,𝑙 ∈ ℝ𝑛 𝑠 𝑧 is the prediction from window 𝑗 for stage 
+
+𝑖 = 𝑗𝑠 + 𝑙 , before averaging and rescaling. For fixed window length 𝑚 , stage dimension 𝑛 𝑠 𝑧 and parameter dimension 𝑛 𝑝 ,the network dimensions are independent of 𝑁 :
+
+𝑛 in = 𝑛 𝑝 + 𝑚 𝑛 𝑠 𝑧 + 3 𝑚, 𝑛 out = 𝑚 𝑛 𝑠 𝑧 . (24) If 𝑚 ≪ 𝑁 , these inputs and outputs are significantly smaller than the input and output dimensions of the monolithic solver, which depend linearly on the full horizon length 𝑁 .The 𝑀 network evaluations are independent and can be executed in parallel. For 𝑠 < 𝑚 , a stage lies in several windows, so multiple predictions are available for the same stage block and must be combined. The overlapping predictions are merged by taking the average: ̄
+
+𝐝 𝑘,𝑖 = 1
+
+|𝑖 |∑
+
+> (𝑗,𝑙 )∈ 𝑖
+
+𝐝 𝑘,𝑗,𝑙 ∈ ℝ𝑛 𝑠 𝑧 , (25) where |𝑖 | is the number of windows that simultaneously cover stage 𝑖 . The merge is applied both during training and 
+
+Algorithm 1 Solver iteration with temporal decomposition 
+
+Require: Parameter 𝐩 , initial iterate 𝐳 0, trained weights 𝜃 ,window length 𝑚 , stride 𝑠 , tolerance 𝛿 , cap 𝐾 max  
+
+> 1:
+
+𝑘 ← 0 
+
+> 2:
+
+while ‖𝐫 𝜙 (𝐳 𝑘 , 𝐩 )‖∞ > 𝛿 and 𝑘 < 𝐾 max do  
+
+> 3:
+
+𝐫 𝑘 ← 𝐫 𝜙 (𝐳 𝑘 , 𝐩 ) {Eq. (8)}  
+
+> 4:
+
+Split 𝐫 𝑘 into stages 𝐫 𝑘,𝑖 and form ̂ 𝐫 𝑘,𝑖 , 𝜂 𝑘,𝑖 {Eq. (20)}  
+
+> 5:
+
+Gather window inputs 𝝉 𝑘,𝑗 for 𝑗 = 0, … , 𝑀 − 1 
+
+{Eq. (22)}  
+
+> 6:
+
+𝐝 𝑘,𝑗 ← Ψ𝜃 (𝝉 𝑘,𝑗 , 𝐩 ) for all 𝑗 in parallel {Eq. (23)} 
+
+> 7:
+
+̄ 𝐝 𝑘,𝑖 ← average over 𝑖 {Eq. (25)}  
+
+> 8:
+
+Δ̂𝐳 𝑘,𝑖 ← 𝛾 min( 𝜂 𝑘,𝑖 , 𝜂 max )̄ 𝐝 𝑘,𝑖 {Eq. (26)}  
+
+> 9:
+
+𝐳 𝑘 +1 ← 𝐳 𝑘 + 𝛼 𝑘 Δ̂ 𝐳 𝑘 {Eq. (6)}  
+
+> 10:
+
+𝑘 ← 𝑘 + 1  
+
+> 11:
+
+end while  
+
+> 12:
+
+return 𝐳 𝑘 
+
+at inference, allowing the network to learn predictions that are consistent across overlapping windows. The resulting update for stage 𝑖 is therefore given by the merged prediction ̄ 𝐝 𝑘,𝑖 , scaled by the per-stage magnitude 
+
+𝜂 𝑘,𝑖 and the global factor 𝛾 :
+
+Δ̂ 𝐳 𝑘,𝑖 = 𝛾 min (𝜂 𝑘,𝑖 , 𝜂 max 
+
+)̄ 𝐝 𝑘,𝑖 , 𝑖 = 0 , … , 𝑁 −1 . (26) The decomposed solver scales each stage by its own magni-tude 𝜂 𝑘,𝑖 , in place of the single global magnitude ‖𝐫 𝑘 ‖2 of the monolithic solver, so a stage whose residual is already small is scaled independently of one whose residual is still large. For numerical robustness, a cap 𝜂 max bounds the per-stage magnitude. The full update step is then given by 
+
+Δ̂ 𝐳 𝑘 = (Δ̂ 𝐳 𝑘, 0, … , Δ̂ 𝐳 𝑘,𝑁 −1 
+
+). (27) For 𝑚 = 𝑁 , the decomposed architecture differs from (10) only in the per-stage residual normalization and scaling, and the inclusion of the positional information. In this case there is a single window: 
+
+𝑚 = 𝑁 ⟹ 𝑀 = 1 . (28) Algorithm 1 summarizes the decomposed solver. Rela-tive to the monolithic solver, lines 4 to 8 implement the win-dow construction, parallel network evaluation, and merging. The shared neural network Ψ𝜃 is evaluated on all 𝑀 win-dows in parallel as described in line 6, and the resulting predictions are merged into a single step Δ̂ 𝐳 𝑘 in lines 7 and 8. The decomposition requires no communication be-tween windows, inner iterations, or local subproblem solves. Within an iteration the only coupling between windows is the merge (25). Across iterations, the only coupling is the recomputation of the global residual. The iteration runs until the residual norm falls below the tolerance 𝛿 or the iteration cap 𝐾 max is reached, with 𝛼 𝑘 = 1 by default. The line-search safeguard applied in the reported computational studies is described in Section 4.4.  
+
+> L. Lüken, S. Lucia Page 6 of 16
+
+3.3. Self-supervised Training 
+
+We train the shared network using the self-supervised loss from our previous work [31], summarized in Sec-tion 2.4. The loss (12) measures the residual of the full problem after the decomposed update and is averaged over a batch of primal-dual iterates. The residual and stopping cri-terion retain their interpretation from the monolithic solver, since a zero residual still certifies a modified KKT point. Training iterates are generated by the forward sampling strategy of Section 2.4, which uses the solver’s own iterates to cover a broad range of residual magnitudes. 
+
+3.4. Closed-Loop Resampling 
+
+The forward sampling strategy of Section 2.4 generates training iterates by applying the learned solver to sampled problems. In the original training procedure, the parameters defining these problems are resampled uniformly. For the NMPC formulation considered here, the problem parameter is the initial state, 𝐩 = 𝐱 init . During closed-loop operation, these initial states are the states visited by the controller. In economic NMPC in particular, the controller may drive the system to a steady state on the boundary of the feasible set, and such states with several simultaneously active con-straints are rarely produced by uniform sampling over the state space. A solver trained on uniformly sampled initial states therefore encounters a distribution shift in closed-loop operation. To align the training distribution, we modify the train-ing resampling strategy by introducing a reset probability 
+
+𝑞 reset ∈ (0 , 1] , as summarized in Algorithm 2, which extends the self-supervised training procedure of our previous work [31]. Whenever a sample reaches the training tolerance 𝛿 train ,the initial state of the next training problem is set to the predicted next state 𝐱 1 of the converged solution with prob-ability 1 − 𝑞 reset . With probability 𝑞 reset , a new initial state is sampled uniformly instead. Since 𝐱 1 is a component of the primal solution ̂ 𝐰 , this state is available in the converged iterate at no additional cost, and the expected trajectory length is 1∕ 𝑞 reset steps. For 𝑞 reset = 1, every converged sample is replaced by a uniformly resampled parameter, which recovers the uniform training distribution from our previous work [31]. Two safeguards bound the effort spent on a single sam-ple, the iteration cap 𝑁 max on the number of steps and the stall cap 𝑁 stall on the number of steps without improvement of the residual. A sample that reaches either cap is treated as non-converged and resampled uniformly. 
+
+## 4. Case Study 
+
+We evaluate the proposed method on the economic NMPC of a cascade of continuous stirred-tank reactors (CSTR). The studies investigate horizon and system-size scaling, smoothing, window length and overlap, and closed-loop control performance. We compare against monolithic LISCO, IPOPT [34] with MA27 [35], and, in closed loop, approximate MPC. 
+
+Algorithm 2 Self-Supervised Solver Training with Closed-Loop Resampling ( 𝑞 reset = 1 recovers uniform resampling) 
+
+Require: Batch size 𝑁 batch , tolerance 𝛿 train , iteration cap 
+
+𝑁 max , stall cap 𝑁 stall , reset probability 𝑞 reset ∈ (0 , 1]  
+
+> 1:
+
+Sample {𝐩 (𝑠 )}𝑁 batch  
+
+> 𝑠 =1
+
+, initialize the iterates 𝐳 (𝑠 ), set 
+
+𝑘 (𝑠 ), 𝑐 (𝑠 ) ← 0 
+
+> 2:
+
+for each training step do 
+
+> 3:
+
+̂ 𝐳 (𝑠 ) ← 𝐳 (𝑠 ) + Π 𝜃, solv (𝐳 (𝑠 ), 𝐩 (𝑠 )) for all 𝑠 {Eq. (6), 
+
+𝛼 𝑘 = 1 } 
+
+> 4:
+
+Update 𝜃 by a stochastic gradient step on 𝐿 (𝜃 )
+
+{Eq. (12)}  
+
+> 5:
+
+for each sample 𝑠 do  
+
+> 6:
+
+𝐳 (𝑠 ) ←̂ 𝐳 (𝑠 ), 𝑘 (𝑠 ) ← 𝑘 (𝑠 ) + 1  
+
+> 7:
+
+𝑐 (𝑠 ) ← 0 if ‖𝐫 𝜙 (𝐳 (𝑠 ), 𝐩 (𝑠 ))‖22 improves on its best value so far, else 𝑐 (𝑠 ) ← 𝑐 (𝑠 ) + 1  
+
+> 8:
+
+if 12 ‖𝐫 𝜙 (𝐳 (𝑠 ), 𝐩 (𝑠 ))‖22 < 𝛿 train then  
+
+> 9:
+
+𝐩 (𝑠 ) ← 𝐱 (𝑠 )1 with probability 1 − 𝑞 reset , otherwise resample 𝐩 (𝑠 ) {𝐱 (𝑠 )1 from ̂ 𝐰 (𝑠 )} 
+
+> 10:
+
+Reset 𝐳 (𝑠 ) to the initial iterate, 𝑘 (𝑠 ), 𝑐 (𝑠 ) ← 0 
+
+> 11:
+
+else if 𝑘 (𝑠 ) ≥ 𝑁 max or 𝑐 (𝑠 ) ≥ 𝑁 stall then  
+
+> 12:
+
+Resample 𝐩 (𝑠 ), reset 𝐳 (𝑠 ) to the initial iterate, 
+
+𝑘 (𝑠 ), 𝑐 (𝑠 ) ← 0 
+
+> 13:
+
+end if  
+
+> 14:
+
+end for  
+
+> 15:
+
+end for  
+
+> 16:
+
+return trained solver Π𝜃, solv 
+
+4.1. CSTR Cascade Process Model 
+
+We consider a cascade of 𝑛 𝑟 continuous stirred-tank reactors as presented in [45]. A solvent stream enters the first reactor and passes through the cascade, and the reactants A and B are fed into every reactor separately. Two reactions take place. The first reaction, A + B → R, produces the desired product R, whereas the second reaction, 2 A → S,produces the undesired side product S. The objective is to maximize the production of R, minimize the production of S, limit control effort, and satisfy constraints on the states and inputs. The states of each reactor 𝑛 are the concentrations of the four species, 𝑐 A,𝑛 , 𝑐 B,𝑛 , 𝑐 R,𝑛 , 𝑐 S,𝑛 in mol∕L , and the reactor temperature 𝑇 𝑟,𝑛 in ◦C. The inputs are the molar feed rates 
+
+𝑢 A,𝑛 and 𝑢 B,𝑛 of A and B, respectively, in mol∕s . All reactors have equal volume 𝑉 𝑛 = 𝑉 𝑅 ∕𝑛 𝑟 , so the total reactor volume is independent of the cascade length. We consider a fixed jacket temperature 𝑇 𝑗 shared by all reactors. Stacking the per-reactor states and inputs gives the following vectors and dimensions: 
+
+𝐱 = (𝑐 A,1∶ 𝑛 𝑟 , 𝑐 B,1∶ 𝑛 𝑟 , 𝑐 R,1∶ 𝑛 𝑟 , 𝑐 S,1∶ 𝑛 𝑟 , 𝑇 𝑟, 1∶ 𝑛 𝑟 
+
+) ∈ ℝ𝑛 𝑥 ,
+
+𝐮 = (𝑢 A,1∶ 𝑛 𝑟 , 𝑢 B,1∶ 𝑛 𝑟 
+
+) ∈ ℝ𝑛 𝑢 ,𝑛 𝑥 = 5 𝑛 𝑟 , 𝑛 𝑢 = 2 𝑛 𝑟 , 𝑉 𝑛 = 𝑉 𝑅 
+
+𝑛 𝑟 
+
+. (29)  
+
+> L. Lüken, S. Lucia Page 7 of 16
+
+The reaction rates 𝑟 1,𝑛 and 𝑟 2,𝑛 follow Arrhenius kinetics, with pre-exponential constants 𝑘 1, 𝑘 2 and activation energies 
+
+𝐸 𝑎, 1, 𝐸 𝑎, 2:
+
+𝑟 1,𝑛 = 𝑘 1 exp 
+
+( −𝐸 𝑎, 1
+
+𝑅 𝑔 (𝑇 𝑟,𝑛 + 273 .15) 
+
+)
+
+𝑐 A,𝑛 𝑐 B,𝑛 ,𝑟 2,𝑛 = 𝑘 2 exp 
+
+( −𝐸 𝑎, 2
+
+𝑅 𝑔 (𝑇 𝑟,𝑛 + 273 .15) 
+
+)
+
+𝑐 2A,𝑛 . (30) The product reaction is second order overall, first order in each reactant, while the side reaction is second order in A alone. The ordinary differential equations (ODEs) for the 𝑛 -th reactor are given as follows: ̇𝑐 A,𝑛 = 𝛽 (𝑐 A,𝑛 −1 − 𝑐 A,𝑛 ) − 𝑟 1,𝑛 − 2 𝑟 2,𝑛 + 𝑢 A,𝑛 
+
+𝑉 𝑛 
+
+, (31a) ̇𝑐 B,𝑛 = 𝛽 (𝑐 B,𝑛 −1 − 𝑐 B,𝑛 ) − 𝑟 1,𝑛 + 𝑢 B,𝑛 
+
+𝑉 𝑛 
+
+, (31b) ̇𝑐 R,𝑛 = 𝛽 (𝑐 R,𝑛 −1 − 𝑐 R,𝑛 ) + 𝑟 1,𝑛 , (31c) ̇𝑐 S,𝑛 = 𝛽 (𝑐 S,𝑛 −1 − 𝑐 S,𝑛 ) + 𝑟 2,𝑛 , (31d) ̇𝑇 𝑟,𝑛 = 𝛽 (𝑇 𝑟,𝑛 −1 − 𝑇 𝑟,𝑛 ) + 𝑘 𝐴 
+
+𝜌 𝑐 𝑝 𝑉 𝑛 
+
+(𝑇 𝑗 − 𝑇 𝑟,𝑛 )+ 1
+
+𝜌 𝑐 𝑝 
+
+( − Δ 𝐻 1 𝑟 1,𝑛 − Δ 𝐻 2 𝑟 2,𝑛 
+
+), (31e) for 𝑛 = 1 , … , 𝑛 𝑟 .We impose the cascade boundary conditions 𝑐 A,0 =
+
+𝑐 B,0 = 𝑐 R,0 = 𝑐 S,0 = 0 and 𝑇 𝑟, 0 = 𝑇 𝑟, in , with the dilution rate 𝛽 = 𝑉 out ∕𝑉 𝑛 . Thus, the stream entering the first reactor contains no reactants or products and has the inlet temperature, so the same balance equations apply to the first and all downstream reactors. The balances in (31) account for convection from the upstream reactor, outflow from the current reactor, reaction production and consumption, and the feeds of A and B. The temperature balance addition-ally includes jacket heat transfer and reaction enthalpies. Because the balance for reactor 𝑛 depends only on reactors 
+
+𝑛 − 1 and 𝑛 , the cascade has local spatial coupling. This spatial structure is not exploited in the present work and is left for future investigation. Stacking the balances of all reactors gives the continuous-time model ̇ 𝐱 = 𝑓 𝑐 (𝐱 , 𝐮 ).The model is discretized using an implicit Euler scheme with step Δ𝑡 as follows: 
+
+𝐱 𝑖 +1 = 𝐱 𝑖 + Δ 𝑡 𝑓 𝑐 (𝐱 𝑖 +1 , 𝐮 𝑖 ) =∶ 𝑓 (𝐱 𝑖 , 𝐮 𝑖 ), (32) which defines the discrete dynamics 𝑓 used in (1) with time and stage index 𝑖 . We use one implicit-Euler step per NMPC interval. The resulting discrete state equations form equality constraints of the NLP and preserve the stage structure of Section 2.1. In this case study, we use Δ𝑡 = 1 s . The physical parameters are given in Table 1. The reactors are cooled, since the jacket temperature is below the inlet temperature, and both reactions are exothermic. 
+
+Table 1 
+
+Parameters of the CSTR cascade model. The first reaction 
+
+A + B → R is denoted by subscript 1 and the second reaction 
+
+2 A → S by subscript 2.Symbol Value [Unit] Description 
+
+𝑛 𝑟 study dependent [–] Number of reactors 
+
+Δ𝑡 1.0 [s] Discretization step 
+
+𝑉 𝑅 15 [L] Total reactor volume 
+
+𝑉 out 1 [L/s] Volumetric flow rate 
+
+𝑘 1 2 [L/(mol s)] Rate constant 
+
+𝑘 2 2 [L/(mol s)] Rate constant 
+
+𝐸 𝑎, 1 500 [J/mol] Activation energy 
+
+𝐸 𝑎, 2 600 [J/mol] Activation energy 
+
+𝑅 𝑔 8.3145 [J/(mol K)] Universal gas constant 
+
+Δ𝐻 1 −100 [kJ/mol] Reaction enthalpy 
+
+Δ𝐻 2 −50 [kJ/mol] Reaction enthalpy 
+
+𝑘 𝐴 2 [kW/K] Heat transfer coeff. × area 
+
+𝜌 1 [kg/L] Density 
+
+𝑐 𝑝 0.5 [kJ/(kg K)] Heat capacity 
+
+𝑇 𝑗 50 [ ◦C] Jacket temperature 
+
+𝑇 𝑟, in 60 [ ◦C] Inlet temperature 
+
+4.2. Economic NMPC Formulation 
+
+The economic NMPC considered here is an instance of the NMPC problem (1) with the discrete model (32), without a terminal cost and terminal constraints. The parameter is the current state, so 𝑛 𝑝 = 𝑛 𝑥 , and the initial state is eliminated from the decision vector and enters only the first dynamics constraint through 𝐱 0 = 𝐩 .We use the following economic stage cost, with the weights 𝑤 𝑅 = 10 , 𝑤 𝑆 = 1 , 𝑤 𝑢 𝐴 = 0 .1 and 𝑤 𝑢 𝐵 = 0 :
+
+𝓁 (𝐱 𝑖 +1 , 𝐮 𝑖 ) = − 𝑤 𝑅 𝑐 R,𝑛 𝑟 (𝐱 𝑖 +1 )+ 𝑤 𝑆 𝑐 S,𝑛 𝑟 (𝐱 𝑖 +1 )+ 𝑤 𝑢 𝐴 ‖𝐮 A,𝑖 ‖22
+
++ 𝑤 𝑢 𝐵 ‖𝐮 B,𝑖 ‖22, (33) where 𝑐 R,𝑛 𝑟 and 𝑐 S,𝑛 𝑟 are the product and side-product con-centrations of the last reactor and 𝐮 A,𝑖 , 𝐮 B,𝑖 are the feed rates of all reactors at stage 𝑖 . Only the concentrations in the last reactor enter the product-related terms because this reactor defines the cascade outlet. The feed of B is not penalized, 𝑤 𝑢 𝐵 = 0, and is limited only by its bounds. Since the objective is economic with strong weights on the maximization of the product and minimization of the side product, the NMPC drives the system to a steady state on the boundary of the feasible set. Each dynamics constraint 𝑖 couples 𝐱 𝑖 , 𝐮 𝑖 and 𝐱 𝑖 +1 ,which is the nearest-neighbor coupling of the stage partition (13). The inequality constraints 𝐠 MPC (𝐱 𝑖 +1 , 𝐮 𝑖 ) ≤ 𝟎 in (1) are formulated as box constraints on the states and inputs. Since the physical variables differ by orders of magnitude, from concentrations of order 10 −1 mol∕L to temperatures of order 10 2 ◦C, the resulting NLP may be ill-conditioned. To improve the conditioning, the decision variables are scaled so that their typical values lie roughly between 0 and 1. The 
+
+L. Lüken, S. Lucia Page 8 of 16 scaling ranges and the bounds of the decision variables are given in Table 2.                                      
+
+> Table 2
+> Scaling ranges and decision variable bounds. The listed scaling ranges are mapped to [0 ,1] .Variable Unit Scaling range Bounds
+> 𝑐 A,𝑛 mol/L [0 ,0.1] [0 ,∞)
+> 𝑐 B,𝑛 mol/L [0 ,1] unconstrained
+> 𝑐 R,𝑛 mol/L [0 ,4] unconstrained
+> 𝑐 S,𝑛 mol/L [0 ,1] unconstrained
+> 𝑇 𝑟,𝑛 ◦C[20 ,80] [20 ,80]
+> 𝑢 A,𝑛 mol/s [0 ,1.5] [0 ,1.5]
+> 𝑢 B,𝑛 mol/s [0 ,1.5] [0 ,1.5]
+
+The resulting per-stage dimensions of the stage partition (13) as a function of the number of reactors 𝑛 𝑟 are 
+
+𝑛 𝑠 𝑤 = 7 𝑛 𝑟 primal variables, 
+
+𝑛 𝑠 ℎ = 5 𝑛 𝑟 equality constraints, 
+
+𝑛 𝑠 𝑔 = 7 𝑛 𝑟 inequality constraints, 
+
+𝑛 𝑠 𝑧 = 19 𝑛 𝑟 primal-dual variables, 
+
+𝑛 𝑝 = 5 𝑛 𝑟 parameters. (34) 
+
+4.3. Computational Studies 
+
+The decomposed solver is evaluated in four computa-tional studies, which investigate the scaling with the horizon and the number of reactors, the effect of the smoothing parameter 𝜖 , the influence of the window length and stride, and the closed-loop control performance. Throughout these studies, four methods for solving the NMPC problem (1) are compared. Monolithic LISCO is the architecture pre-sented in our previous work [31]. The decomposed solver of Section 3 is the proposed method and we use IPOPT [34] as the NLP-solver baseline. Approximate MPC maps the initial state directly to the first control action, is trained by imitation learning on precomputed optimizer solutions, and is considered only in the closed-loop comparison. The code for reproducing all studies is openly available. 1
+
+All controllers are based on the same NMPC formu-lation and are evaluated on the same parameter samples, so speedups are compared per problem instance. The two learned solvers use the same hidden architecture, consisting of two hidden layers of 1024 units with GELU activation [46], and share the same training budget, optimizer set-tings, loss (12), resampling strategy, and evaluation settings. Their input and output layers necessarily differ, since by (10) the monolithic network maps the full residual to the full step, so these layers scale with 𝑁 𝑛 𝑠 𝑧 , whereas by (24) the decomposed network processes a single window and is independent of 𝑁 . The monolithic network therefore carries more trainable parameters than the decomposed one, with the gap widening with 𝑁 and 𝑛 𝑟 . Parameter counts and training times are reported per configuration in Section 5.1. 
+
+> 1https://github.com/lukaslueken/lisco-decompose
+
+IPOPT is configured with the sparse symmetric-indefinite linear solver MA27 from the HSL library [35], which exploits the block-banded structure of (15), at a tolerance of 10 −5 . Comparing solve times between the learned solvers and IPOPT further requires that both target a comparable accuracy. The learned solver runs at a fixed smoothing 𝜖 ,which relaxes the complementarity condition by up to 𝜖 2∕2 ,and the interior-point barrier parameter plays the same role for IPOPT, so the barrier target is set to 𝜇 target = 𝜖 2∕2 . With 
+
+𝜖 = 10 −1 this gives 𝜇 target = 5 ⋅ 10 −3 , which is used in the horizon-scaling and closed-loop studies. In all studies, the solvers are cold-started to directly measure the quality of the predicted steps rather than the quality of an initial guess. The learned solvers initialize the primal variables at the midpoint of the scaling ranges and the multipliers at zero, in training and at inference, and IPOPT starts from its default initialization. The horizon-scaling study evaluates how solver perfor-mance scales with the horizon length 𝑁 and the number of reactors 𝑛 𝑟 . Monolithic LISCO and the decomposed solver are trained and then evaluated alongside IPOPT for the horizon lengths 𝑁 ∈ {10 , 20 , 50 , 100} and the reactor counts 𝑛 𝑟 ∈ {2 , 3, 5} , with all remaining settings fixed by Table 3. Training effort, parameter counts, convergence and solve times are reported in Section 5.1. The choice of the smoothing parameter 𝜖 involves a trade-off, as larger values improve the conditioning of the residual but relax the complementarity condition further. This trade-off is quantified in the smoothing study, in which the decomposed solver is trained and evaluated for a sweep of 𝜖 at a fixed configuration with 𝑛 𝑟 = 2 and 𝑁 = 50 . The resulting optimality gap is evaluated in Section 5.2 against IPOPT, which serves here as the objective reference and is therefore run at a tolerance of 10 −8 without an increased barrier parameter. In the overlap study, we vary the window length 𝑚 
+
+and the stride 𝑠 of the decomposition, which determine the locality of the update map and the number of predictions per stage. This study considers only the decomposed solver, with all remaining settings taken from Table 3, and the results are reported in Section 5.3. In the closed-loop study, we apply the decomposed solver as an NMPC controller and compare it to IPOPT and approximate MPC. The three controllers start from the same set of 50 uniformly sampled initial states at a fixed configuration with 𝑛 𝑟 = 5 and 𝑁 = 50 . Each trajectory is simulated for 50 steps, and the closed-loop cost and constraint violations are compared in Section 5.4. In this study, the decomposed solver is trained with the closed-loop resampling of Section 3.4 at 𝑞 reset = 0 .02 , so the expected trajectory length of 50 steps during training matches the simulation length. All remaining studies use uniform resampling with 𝑞 reset = 1 . To isolate the effect of the training distribution, a second solver trained with uniform resampling and otherwise identical settings is eval-uated in the same closed-loop setting. Approximate MPC, as introduced in Section 2.1, is trained on closed-loop data.  
+
+> L. Lüken, S. Lucia Page 9 of 16
+
+We collect 150000 optimizer solutions from 3000 closed-loop trajectories with uniformly sampled initial states and 50 steps each. These solutions are generated with IPOPT using a tolerance of 10 −5 and a barrier target of 𝜇 target =5 ⋅ 10 −3 to match the accuracy of the learned solvers and the IPOPT baseline. Its training uses the same hidden network architecture as the learned solvers, a batch size of 1024, a learning rate of 5 ⋅ 10 −4 and 2500 epochs. Generating its training set requires solving the NLP for every sample, sequentially along each trajectory, whereas the loss (12) requires no reference solutions. Section 5.4 compares the resulting offline computational effort. 
+
+4.4. Training, Evaluation and Implementation 
+
+All four studies share one configuration, which is listed in Table 3. The overlap and closed-loop studies use 𝑛 𝑟 =5 reactors, while the smoothing study uses 𝑛 𝑟 = 2. The horizon-scaling study varies the number of reactors. Fol-lowing Algorithm 2, the training loop evaluates the loss after applying one solver step, then applies these steps to the current iterates and resamples the parameters of samples that reach the tolerance 𝛿 train , the iteration cap 𝑁 max or the stall cap 𝑁 stall . The number of epochs scales with the horizon as 𝑁 epochs = 6000 𝑁 , so that for longer horizons, training takes proportionally longer, with the same rule for both learned architectures. The default window length and stride, 
+
+𝑚 = 5 and 𝑠 = 1 , are used in all studies except the overlap study, which examines the influence of this choice. The NLP and its residuals are evaluated in double precision, while the network operates in bfloat16. This halves the network memory relative to single precision without a meaningful loss in accuracy, since the network output is scaled relative to the residual magnitude and the residual itself is evaluated in double precision. All runs use Δ𝑡 = 1 s , so the horizon length and the predicted time interval scale together. While the objective function (33) is convex, the nonlin-ear dynamics (32) cause the NLP to be nonconvex. There-fore, the Hessian of the Lagrangian can be indefinite, and Assumption 5 of [31], which underlies the well-posedness result of Section 2.4, may not hold. To keep the training problem well-posed, we form the training gradient with the convexification and regularization of [31]. We replace the Hessian of the Lagrangian with the objective Hessian, which is diagonal with entries 2 𝑤 𝑢 𝐴 on the feed rates of A and zero elsewhere, and add to its diagonal 𝜌 reg 𝐈 with the regularization factor 𝜌 reg > 0 so that it is positive definite. We further apply the same dual regularization as in [31] with factor 𝜔 > 0 to improve the conditioning of the KKT matrix during training when the multipliers grow large. Both modifications act only on the gradient used to update the network during training and leave the residual (8) unchanged, so convergence at inference and all reported results are those of the original problem. For the evaluation, a problem instance is drawn by uni-formly sampling the initial state from the scaling ranges listed in Table 2 and retaining it only if IPOPT finds a feasi-ble solution, so that all controllers are compared on instances                                                   
+
+> Table 3
+> Shared configuration of all studies. Group Setting Value Network hidden layers 2 × 1024 , GELU [46] precision bfloat16 Solver step scaling 𝛾 0.1 norm clamp 𝜂 max 100 smoothing 𝜖 10 −1
+> penalization 𝜌 FB 0.8 window 𝑚 / stride 𝑠 5 / 1 Training epochs 6000 𝑁
+> batch size 256 optimizer AdamW [47] learning rate 5⋅10 −4
+> regularization 𝜌 reg =𝜔 = 10 −2
+> loss offset 𝜎 10 −16
+> reset prob. 𝑞 reset 1 (0.02 closed loop) tolerance 𝛿 train 12‖𝐫 𝜙 ‖22<10 −16
+> stall cap 𝑁 stall 2iteration cap 𝑁 max 1000 Evaluation samples study specific tolerance 𝛿 ‖𝐫 𝜙 ‖∞≤10 −5
+> iteration cap study specific initialization cold start
+
+known to be feasible. The iteration cap is 300 in the horizon-scaling, smoothing and closed-loop studies and 200 in the overlap study. A sample that does not reach the tolerance within the iteration cap is counted as non-convergent rather than discarded, so the convergence fraction and the timing statistics refer to the same sample set. For a non-convergent sample, the solver returns the iterate with the lowest residual norm encountered, whose first input is applied in the closed-loop simulation. The reported solve times include all nec-essary computations for its implementation: residual eval-uation, feature construction, network evaluation, merging, scaling and the iterate update, over all iterations until the tolerance is met. The one-time setup and compilation times are excluded. Timings are measured on single instances without batching, because an NMPC controller solves one problem per sampling instant. The learned solvers apply their steps with a two-way backtracking line search. The default step size is 𝛼 𝑘 = 1 , and it is reduced by a factor of 0.95 only if the residual norm of an iterate exceeds the best value reached so far by at least a factor of 10 . Once the residual decreases again, the step size is increased by a factor of 1∕0 .95 per iteration, up to a maximum of 1. Since the solver is trained to predict steps of appropriate size, the line search is activated only for rare, ill-conditioned instances. All computational studies are run on an AMD Ryzen 9 9950X with 16 cores and an NVIDIA GeForce RTX 4090 under WSL2. The NLP, its derivatives and the modified KKT residual are implemented in CasADi [48], the networks in PyTorch [49], and during training the CasADi functions are evaluated in parallel over the batch on the GPU via cusadi  
+
+> L. Lüken, S. Lucia Page 10 of 16
+
+[50], so the GPU is used only during training. At inference, all computations run on the CPU, where the KKT functions are executed as C code generated by CasADi, the solver iteration together with the decomposition and merge logic is compiled with Numba [51], and the network is evaluated in bfloat16 with PyTorch. The learned solvers and IPOPT are thus compared on the same hardware. 
+
+## 5. Results 
+
+5.1. Horizon and Problem-Size Scaling 
+
+For the horizon-scaling study, we train the monolithic and decomposed solvers for the horizon lengths 𝑁 ∈{10 , 20 , 50 , 100} and the reactor counts 𝑛 𝑟 ∈ {2 , 3, 5} and evaluate them against IPOPT, with all remaining settings fixed by Table 3. Table 4 lists the convergence fractions, the trainable parameter counts and the training times of the learned solvers, and the solve times are shown in Fig. 4 and Table 5. The proposed decomposed solver reaches the residual tolerance on all 256 evaluation samples for every combi-nation of horizon length and reactor count. The monolithic solver converges on all samples only at 𝑛 𝑟 = 2 and 𝑁 = 10 ,on 94.5% and 99.6% of the samples at (𝑛 𝑟 , 𝑁 ) = (2 , 20) and 
+
+(3 , 10) , and on no sample in the remaining configurations. No monolithic runs are conducted at 𝑁 = 100 , since the architecture already fails to converge at shorter horizons under the given network size. Both learned solvers share the hidden architecture and the training budget of Table 3, and the monolithic network has up to 5.2 times as many trainable parameters, with 10.81 versus 2.06 million parameters at 
+
+𝑛 𝑟 = 5 and 𝑁 = 50 , the largest configuration with a monolithic run, because its input and output layers grow with 𝑁 𝑛 𝑠 𝑧 by (10). To restore convergence, the monolithic network and its training effort would have to grow with the problem size [31]. The decomposition avoids this cost, as the input and output dimensions of the shared network are set by the window length through (24). Since the number of epochs scales with 𝑁 , the training times grow with the horizon and reach 2.81 hours for the decomposed solver at 
+
+𝑛 𝑟 = 5 and 𝑁 = 100 . For the same number of training epochs, training the decomposed solver takes 1.16 to 1.75 times longer than training the monolithic solver, since the shared network is evaluated 𝑀 times per step, once per window, which outweighs its smaller size. Fig. 4 shows the CPU solve times over the horizon length at 𝑛 𝑟 = 5, and Table 5 lists the timing statistics for all configurations. All solvers run on the same CPU, and IPOPT is configured for a comparable relaxation using the barrier target of Section 4.3. Under these conditions the decomposed solver achieves lower median solve times than IPOPT with MA27 in every configuration, with median speedups between 1.68 and 4.11, the largest occurring at 
+
+𝑛 𝑟 = 5 and 𝑁 = 20 . The advantage also holds for the upper tail of the solve-time distribution, as the 95th percentile solve time of the decomposed solver lies below the median solve time of IPOPT in every configuration, with similar tail behavior across the reactor counts. The per-sample speedup remains above one in every configuration except at (𝑛 𝑟 , 𝑁 ) = (2 , 20) and (2 , 100) , where its minimum is 0.52 and 1.00, respectively. In each iteration of the decomposed solver, the shared network is evaluated in parallel for 𝑀 windows, and the reported times include this cost. The measured times remain specific to the hardware and implementation of Section 4.4. We use the same window length, stride and hidden archi-tecture at every reactor count, without retuning the decom-position. The size of the decomposed network is independent of the horizon length and grows only mildly with the reactor count through the stage dimension 𝑛 𝑠 𝑧 = 19 𝑛 𝑟 of (34). The convergence of the decomposed solver is unaffected by the reactor count, and its median solve times increase from 
+
+3.44 ms to 4.81 ms at 𝑁 = 50 . As shown in Table 5, the median speedup over IPOPT increases with the reactor count for every tested horizon length 𝑁 ≥ 20 . Further speedups are possible if a good initial guess is provided, e.g. via a predictor strategy as in [31]. 20 40 60 80 100 Prediction Horizon N                
+
+> 10 1
+> Solve Time [ms] Solve Time vs Horizon ( nr= 5 , cpu)
+> decomposed LISCO (median) decomposed LISCO (max) IPOPT w. MA27 (median) IPOPT w. MA27 (max)
+> Figure 4: CPU solve time against the horizon length 𝑁 at
+> 𝑛 𝑟 = 5 for the decomposed solver and IPOPT with MA27, with the median (solid) and the maximum (dotted) over 256 instances per configuration. The monolithic solver is not shown, as it does not converge at 𝑛 𝑟 = 5 .
+
+5.2. Smoothing-Parameter Trade-off 
+
+We train and evaluate the decomposed solver for the smoothing parameters 𝜖 ∈ {10 −1 , 10 −2 , … , 10 −6 } at a single problem size with 𝑛 𝑟 = 2 and 𝑁 = 50 , with all remaining settings fixed by Table 3. Fig. 5 shows the fraction of converged samples over the solver iterations for each 𝜖 ,and Fig. 6 shows the relative objective gap with respect to IPOPT at the final iterate. Since IPOPT serves only as the objective reference in this study and is not included in a timing comparison, we run it at a tolerance of 10 −8 without the increased barrier target of Section 4.3. The number of iterations required to reach the residual tolerance grows as 𝜖 decreases. At 𝜖 = 10 −1 , all 256 samples converge within about 30 iterations, whereas at 𝜖 = 10 −6 
+
+some runs reach the iteration cap of 300, within which 94.1%  
+
+> L. Lüken, S. Lucia Page 11 of 16
+
+Table 4 
+
+Training cost and convergence of the monolithic and the decomposed solver at equal hidden architecture and training budget for all reactor counts 𝑛 𝑟 and horizon lengths 𝑁 . Reported are the trainable parameters 𝑛 par , the training times 𝑡 train and the fraction of the 256 evaluation samples reaching ‖𝐫 𝜙 ‖∞ ≤ 10 −5 within 300 iterations, where 0.000 means that no sample reached the tolerance. Dashes mark configurations without a monolithic run. monolithic decomposed 
+
+𝑛 𝑟 𝑁 𝑛 par [M] 𝑡 train [h] conv. 𝑛 par [M] 𝑡 train [h] conv. 2 10 1.84 0.11 1.000 1.47 0.14 1.000 2 20 2.62 0.23 0.945 1.47 0.27 1.000 2 50 4.95 0.54 0.000 1.47 0.77 1.000 2 100 – – – 1.47 2.05 1.000 3 10 2.23 0.12 0.996 1.67 0.15 1.000 3 20 3.40 0.25 0.000 1.67 0.29 1.000 3 50 6.91 0.61 0.000 1.67 0.85 1.000 3 100 – – – 1.67 2.31 1.000 5 10 3.02 0.12 0.000 2.06 0.21 1.000 5 20 4.97 0.25 0.000 2.06 0.39 1.000 5 50 10.81 0.99 0.000 2.06 1.19 1.000 5 100 – – – 2.06 2.81 1.000 
+
+Table 5 
+
+CPU solve times of the decomposed solver (LISCO) and IPOPT with MA27 over 256 instances per configuration, with the primal-dual dimension 𝑛 𝑧 and the median, 95th percentile and maximum solve times. The speedup is the per-sample ratio 
+
+𝑡 IPOPT ∕𝑡 LISCO on identical instances, reported by its minimum, median and maximum. Both solvers converge on every instance. The monolithic solver is omitted, as it does not converge at most configurations. 
+
+𝑡 LISCO [ms] 𝑡 IPOPT [ms] speedup [ ×]
+
+𝑛 𝑟 𝑁 𝑛 𝑧 med p95 max med p95 max min med max 2 10 380 0.89 1.29 1.66 2.65 2.92 3.39 1.64 2.99 4.14 2 20 760 1.69 1.99 6.21 3.47 3.77 4.42 0.52 2.03 2.83 2 50 1900 3.44 3.93 4.36 5.79 6.24 6.99 1.28 1.68 2.23 2 100 3800 6.24 9.91 10.66 10.97 11.63 12.00 1.00 1.72 2.02 3 10 570 1.08 1.46 2.05 3.50 3.81 4.43 1.65 3.23 4.86 3 20 1140 1.72 2.21 3.42 5.01 5.52 5.80 1.47 2.93 3.81 3 50 2850 4.79 5.39 5.89 8.10 8.72 9.20 1.37 1.70 2.00 3 100 5700 6.64 7.20 8.32 14.70 15.68 16.57 1.71 2.22 2.55 5 10 950 1.80 2.38 3.79 5.17 5.58 6.04 1.39 2.86 3.77 5 20 1900 2.27 2.83 3.34 9.37 9.80 13.99 2.67 4.11 5.44 5 50 4750 4.81 6.66 8.03 16.80 18.35 19.12 2.24 3.56 4.55 5 100 9500 9.29 11.00 12.05 31.11 33.81 34.96 2.55 3.43 4.26 
+
+of the samples converge. For all intermediate values of 𝜖 , at least 99.6% of the samples converge. An important advantage of the smoothing formulation is that feasibility is not affected by the choice of 𝜖 . As estab-lished in Section 2.3, a residual below the tolerance bounds the equality constraints directly and places the inequality constraints on their feasible side for every 𝜖 , so an accepted iterate is feasible to the tolerance level independently of the smoothing. The smoothing relaxes the complementarity condition and thereby affects the solution optimality but not constraint satisfaction, which is an important advantage for control applications. In Fig. 6, the median relative objective gap decreases from approximately 4 ⋅ 10 −3 at 𝜖 = 10 −1 to 
+
+4 ⋅ 10 −5 at 𝜖 = 10 −2 and 4 ⋅ 10 −7 at 𝜖 = 10 −3 . For 𝜖 ≤ 10 −4 ,the gap settles at approximately 10 −8 .The smoothing parameter therefore trades optimality against convergence speed, while feasibility is retained at every 𝜖 . Based on this sweep, the remainder of the paper uses 𝜖 = 10 −1 , which yields the fastest convergence to the tolerance at a median relative objective gap of approximately 
+
+4 ⋅ 10 −3 .
+
+5.3. Decomposition Structure and Overlap 
+
+In the overlap study, we train and evaluate the decom-posed solver for the window lengths 𝑚 ∈ {1 , … , 6} and the strides 𝑠 ∈ {1 , … , 5} at 𝑛 𝑟 = 5 , 𝑁 = 50 and 𝜖 =10 −1 and report the 90th percentile of the iterations to the residual tolerance over 512 evaluation samples in Fig. 7. Only combinations with 𝑠 ≤ 𝑚 are admissible and the divisibility condition of (18) must hold. Thus, the horizon is adjusted to 𝑁 = 51 or 𝑁 = 49 where 𝑁 = 50 does not 
+
+L. Lüken, S. Lucia Page 12 of 16 10 0 10 1 10 2
+
+> Iteration 0.0 0.2 0.4 0.6 0.8 1.0 Fraction converged
+
+Convergence fraction ( ‖rφ‖∞ 10 −5)            
+
+> ²= 10 −1(1.000)
+> ²= 10 −2(1.000)
+> ²= 10 −3(0.996)
+> ²= 10 −4(1.000)
+> ²= 10 −5(0.996)
+> ²= 10 −6(0.941)
+
+Figure 5: Fraction of the 256 samples reaching the residual tolerance ‖𝐫 𝜙 ‖∞ ≤ 10 −5 over the solver iterations for the smoothing parameters 𝜖 ∈ {10 −1 , … , 10 −6 } at 𝑛 𝑟 = 2 and 
+
+𝑁 = 50 , with an iteration cap of 300. 10 −1 10 −2 10 −3 10 −4 10 −5 10 −6      
+
+> ²
+> 10 8
+> 10 7
+> 10 6
+> 10 5
+> 10 4
+> 10 3
+> |q − q∗| / |q∗|
+
+Final objective gap vs IPOPT 
+
+Figure 6: Absolute relative objective gap |𝑞 − 𝑞 ∗|∕|𝑞 ∗| at the final iterate for the smoothing sweep at 𝑛 𝑟 = 2 and 𝑁 = 50 
+
+over 256 samples, where 𝑞 ∗ denotes the objective of the IPOPT reference solution at tolerance 10 −8 . The line marks the median and the boxes span the 10th to 90th percentile. 
+
+satisfy it, and combinations for which no such adjustment exists are absent. The results show that an overlap consistently lowers the iteration count. At 𝑚 = 5 , the 90th percentile increases from 18 iterations at 𝑠 = 1 to 80 at 𝑠 = 5 , and the non-overlapping partitions with 𝑠 = 𝑚 are the slowest configurations that still achieve the required convergence fraction, with 115, 110 and 80 iterations for 𝑚 = 2 , 3 and 5. The purely stage-local map with 𝑚 = 𝑠 = 1 does not reach 90% convergence, as only 81.1% of the samples converge within the cap, so window inputs beyond a single stage are necessary in this case study. At maximum overlap, the lowest iteration count is achieved with a window length of 𝑚 = 5 .Thus, windows of a few stages suffice for fast conver-gence in this case study, provided that they overlap suffi-ciently. 1 2 3 4 5 6                 
+
+> Window length m
+> 12345
+> Stride  s
+> 57 29 25 18 25
+> 115 42 22 21 21
+> 110 35 23 35
+> 37 23
+> 80 25 20 40 60 80 100
+> Iterations
+> <90 % converged not evaluated
+
+Figure 7: 90th percentile of the iterations to the residual tolerance ‖𝐫 𝜙 ‖∞ ≤ 10 −5 for different window lengths 𝑚 and strides 𝑠 , with 𝑛 𝑟 = 5 reactors and 𝑁 ∈ {49 , 50 , 51} . Each configuration is evaluated on 512 samples with a maximum number of 200 iterations. The grey cell indicates that fewer than 90% of the samples converge within the iteration limit. Dashes indicate combinations that violate the admissibility condition (18) and were not evaluated. The black outline marks the lowest observed 90th percentile. 
+
+5.4. Closed-Loop Controller Comparison 
+
+For the closed-loop comparison, we apply the decom-posed solver, IPOPT and approximate MPC as NMPC con-trollers with 𝑛 𝑟 = 5 reactors and a prediction horizon of 𝑁 =50 steps, following Section 4.3. We simulate 50 trajectories of 50 steps each, using the same initial states for all three controllers. These initial states are sampled uniformly over the scaling ranges in Table 2. Each controller therefore exe-cutes 2500 steps, over which the mean constraint violations in Table 6 are averaged. Constraint violations are measured on the scaled variables, so a magnitude of 10 −1 corresponds to 10% of the range of the violated variable, and Table 6 reports their mean and maximum for the input and state bounds. Violations below 10 −5 are not counted, since this is below the residual tolerance. Table 6 lists the resulting costs, solve times and con-straint violations. The decomposed solver, trained with closed-loop resampling, reaches the residual tolerance on every executed step, and neither it nor IPOPT violates any constraint. Its mean closed-loop cost of −358 .87 differs from IPOPT’s −358 .44 by only 0.12%. The decomposed solver has a median solve time of 5.2 ms compared to 18 .6 ms 
+
+for IPOPT, corresponding to a speedup factor of 3.6, and its maximum of 11 .6 ms remains below the median of IPOPT. These times are consistent with the scaling study of Section 5.1 at the same problem size, where the solver trained and evaluated on the uniform distribution requires a median of 4.81 ms . Approximate MPC requires only 0.08 ms 
+
+per step and achieves a similar cost to IPOPT, but produces constraint violations (Table 6). Approximate MPC is trained on 150000 precomputed optimizer solutions, whereas the self-supervised loss (12) requires no reference solutions. Generating this training set 
+
+L. Lüken, S. Lucia Page 13 of 16 takes 0.78 hours, which together with the 1.05 hours of supervised training gives a total offline effort of 1.83 hours for approximate MPC. This exceeds the 0.75 hours of the complete self-supervised training of the decomposed solver. The economic controller drives the system to a steady state on the boundary of several simultaneously active state constraints, and such states are rarely produced by uniform sampling over the scaling ranges, as discussed in Section 3.4. Table 7 lists the fraction of solves that reach the residual tolerance within the iteration cap, binned by the simulation step, for the solvers trained with closed-loop and with uni-form resampling. On the first step, both solvers converge for all 50 uniformly sampled initial states. From the second step onward, the trajectories leave the initial-state distribution, and the convergence of the uniformly trained solver drops to 84.5% on steps 2 to 5, to 0.4% on steps 6 to 10 and to zero beyond step 10, which amounts to 8.8% over all steps. The solver trained with closed-loop resampling converges in every bin.                                                 
+
+> Table 6
+> Closed-loop comparison of IPOPT, the decomposed solver (LISCO) trained with closed-loop resampling and approximate MPC trained on closed-loop data, over 50 trajectories of 50 steps each, started from uniformly sampled initial states at
+> 𝑛 𝑟 = 5 and 𝑁 = 50 . Reported are the mean closed-loop cost, the per-solve times and the mean and maximum constraint violations on the scaled variables for the input and state bounds, where violations below the tolerance 10 −5 are not counted. The last two rows list the offline data sampling and training times. metric IPOPT LISCO approx. MPC closed-loop cost (mean) -358.4415 -358.8662 -358.4793 solve time median [ms] 18.61 5.20 0.08 solve time p90 [ms] 19.20 6.30 0.10 solve time max [ms] 21.41 11.62 0.43 input viol. (mean) 0.0000 0.0000 0.0000 input viol. (max) 0.0000 0.0000 0.0002 state viol. (mean) 0.0000 0.0000 0.0004 state viol. (max) 0.0000 0.0000 0.0060 sampling time [h] ––0.78 training time [h] –0.75 1.05
+
+## 6. Conclusion 
+
+We introduced a learned primal-dual solver for NMPC based on temporal decomposition. A shared neural network computes local updates in parallel on overlapping horizon segments. This makes the network size independent of the prediction horizon while retaining self-supervised training without precomputed optimizer solutions. We also intro-duced a closed-loop resampling strategy that uses predicted next states to align the training distribution with closed-loop operation at no additional sampling cost. On an economic NMPC benchmark of a CSTR cas-cade with up to 100 stages and 9500 primal-dual variables,                           
+
+> Table 7
+> Fraction of closed-loop solves reaching the residual tolerance
+> ‖𝐫 𝜙 ‖∞≤10 −5 within 300 iterations, binned by the simulation step, for the decomposed solver trained with closed-loop resampling ( 𝑞 reset = 0 .02 ) and with uniform resampling ( 𝑞 reset =1), over the 50 trajectories of 50 steps of the closed-loop study. step bin closed-loop trained uniform trained steps 1–1 100.0% 100.0% steps 2–5 100.0% 84.5% steps 6–10 100.0% 0.4% steps 11–25 100.0% 0.0% steps 26–50 100.0% 0.0% all 1–50 100.0% 8.8%
+
+the decomposed solver converged across all tested problem sizes, including configurations where monolithic LISCO did not, and achieved median speedups of up to a factor of four over IPOPT. With closed-loop resampling, it converged throughout the tested closed-loop trajectories and achieved control performance comparable to IPOPT with no observed constraint violations. Future work will investigate decomposed prediction of initial iterates for warm-started operation and extend the architecture to scenario trees in robust NMPC and to weakly coupled process networks. 
+
+## CRediT authorship contribution statement 
+
+Lukas Lüken: Writing - original draft, Investigation, Visualization, Software, Methodology, Formal analysis, Conceptualization. Sergio Lucia: Writing - review and editing, Supervision, Conceptualization. 
+
+## Declaration of competing interest 
+
+The authors declare that they have no known competing financial interests or personal relationships that could have appeared to influence the work reported in this paper. 
+
+## Declaration of generative AI and AI-assisted technologies in the writing process 
+
+During the preparation of this work the authors used AI technologies (ChatGPT 5.6, Claude Fable 5 and Opus 5) to assist with grammar, phrasing, and code development. After using these tools, the authors reviewed and edited the content as needed and take full responsibility for the content of the publication. 
+
+## Data availability 
+
+The code necessary to reproduce the reported results is openly available under https://github.com/lukaslueken/ lisco-decompose . 
+
+> L. Lüken, S. Lucia Page 14 of 16
+
+## References 
+
+[1] M. Ellis, H. Durand, P. D. Christofides, A tutorial review of economic model predictive control methods, J. Process Control 24 (2014) 1156– 1178. [2] J. B. Rawlings, D. Angeli, C. N. Bates, Fundamentals of economic model predictive control, in: 2012 IEEE 51st IEEE Conference on Decision and Control (CDC), pp. 3851–3861. [3] J. B. Rawlings, D. Q. Mayne, M. M. Diehl, Model Predictive Control: Theory, Computation, and Design, Nob Hill Publishing, Madison, Wisconsin, 2nd edition, 2017. [4] S. Lucia, T. Finkler, S. Engell, Multi-stage nonlinear model predictive control applied to a semi-batch polymerization reactor under uncer-tainty, J. Process Control 23 (2013) 1306–1319. [5] M. Diehl, H. G. Bock, J. P. Schlöder, A Real-Time Iteration Scheme for Nonlinear Optimization in Optimal Feedback Control, SIAM J. Control Optim. 43 (2005) 1714–1736. [6] G. Frison, M. Diehl, HPIPM: A high-performance quadratic program-ming framework for model predictive control, IFAC-PapersOnLine 53 (2020) 6563–6569. [7] R. Verschueren, G. Frison, D. Kouzoupis, J. Frey, N. van Duijkeren, A. Zanelli, B. Novoselnik, T. Albin, R. Quirynen, M. Diehl, Acados— a modular open-source framework for fast embedded optimal control, Math. Program. Comput. 14 (2022) 147–183. [8] A. Zanelli, A. Domahidi, J. Jerez, M. Morari, FORCES NLP: An efficient implementation of interior-point methods for multistage nonlinear nonconvex programs, Int. J. Control 93 (2020) 13–29. [9] H. J. Ferreau, S. Almér, R. Verschueren, M. Diehl, D. Frick, A. Dom-ahidi, J. L. Jerez, G. Stathopoulos, C. Jones, Embedded Optimization Methods for Industrial Automatic Control, IFAC-PapersOnLine 50 (2017) 13194–13209. [10] A. Bemporad, M. Morari, V. Dua, E. N. Pistikopoulos, The explicit linear quadratic regulator for constrained systems, Automatica 38 (2002) 3–20. [11] T. Parisini, R. Zoppoli, A receding-horizon regulator for nonlinear systems and a neural approximation, Automatica 31 (1995) 1443– 1451. [12] B. Karg, S. Lucia, Efficient representation and approximation of model predictive control laws via deep learning, IEEE Trans. Cybern. 50 (2020) 3866–3878. [13] L. Lüken, D. Brandner, S. Lucia, Sobolev training for data-efficient approximate nonlinear MPC, IFAC-PapersOnLine 56 (2023) 5765– 5772. [14] S. Chen, K. Saulnier, N. Atanasov, D. D. Lee, V. Kumar, G. J. Pappas, M. Morari, Approximating explicit model predictive control using constrained neural networks, in: 2018 Annual American Control Conference (ACC), pp. 1520–1527. [15] M. Hertneck, J. Köhler, S. Trimpe, F. Allgöwer, Learning an approxi-mate model predictive controller with guarantees, IEEE Control Syst. Lett. 2 (2018) 543–548. [16] B. Karg, T. Alamo, S. Lucia, Probabilistic performance validation of deep learning-based robust NMPC controllers, Int. J. Robust Nonlinear Control 31 (2021) 8855–8876. [17] P. L. Donti, D. Rolnick, J. Z. Kolter, DC3: A learning method for optimization with hard constraints, arXiv:2104.12225 (2021). [18] S. Park, P. Van Hentenryck, Self-supervised primal-dual learning for constrained optimization, Proc. AAAI Conf. Artif. Intell. 37 (2023) 4052–4060. [19] F. Fioretto, P. V. Hentenryck, T. W. Mak, C. Tran, F. Baldo, M. Lom-bardi, Lagrangian duality for constrained deep learning, in: Joint Eu-ropean Conference on Machine Learning and Knowledge Discovery in Databases, Springer, 2020, pp. 118–135. [20] J. Kotary, F. Fioretto, P. Van Hentenryck, B. Wilder, End-to-End Constrained Optimization Learning: A Survey, arXiv:2103.16378 [cs] (2021). [21] F. Fromme, L. Lüken, S. Lucia, Unsupervised closed-loop primal-dual learning of approximate model predictive controllers, in: 2025 European Control Conference (ECC), IEEE, 2025, pp. 2970–2976. [22] M. Klaučo, M. Kalúz, M. Kvasnica, Machine learning-based warm starting of active set methods in embedded model predictive control, Eng. Appl. Artif. Intell. 77 (2019) 1–8. [23] Y. Vaupel, N. C. Hamacher, A. Caspari, A. Mhamdi, I. G. Kevrekidis, A. Mitsos, Accelerating nonlinear model predictive control through machine learning, J. Process Control 92 (2020) 261–270. [24] R. Sambharya, G. Hall, B. Amos, B. Stellato, End-to-end learning to warm-start for real-time quadratic optimization, in: Learning for Dynamics and Control Conference, PMLR, 2023, pp. 220–234. [25] T. Chen, X. Chen, W. Chen, Z. Wang, H. Heaton, J. Liu, W. Yin, Learning to optimize: A primer and a benchmark, J. Mach. Learn. Res. 23 (2022) 8562–8620. [26] K. Li, J. Malik, Learning to optimize, arXiv:1606.01885 (2016). [27] A. Mitsos, J. Najman, I. G. Kevrekidis, Optimal deterministic algorithm generation, J. Glob. Optim. 71 (2018) 891–913. [28] R. Sambharya, B. Stellato, Learning algorithm hyperparameters for fast parametric convex optimization, SIAM J. Math. Data Sci. 8 (2026) 649–676. [29] N. Shlezinger, J. Whang, Y. C. Eldar, A. G. Dimakis, Model-Based Deep Learning, Proc. IEEE 111 (2023) 465–499. [30] B. Li, L. Yang, Y. Chen, S. Wang, H. Mao, Q. Chen, Y. Ma, A. Wang, T. Ding, J. Tang, R. Sun, PDHG-unrolled learning-to-optimize method for large-scale linear programming, in: R. Salakhutdinov, Z. Kolter, K. Heller, A. Weller, N. Oliver, J. Scarlett, F. Berkenkamp (Eds.), Proceedings of the 41st International Conference on Machine Learning, volume 235 of Proceedings of Machine Learning Research ,PMLR, 2024, pp. 29164–29180. [31] L. Lüken, S. Lucia, Self-supervised learning of iterative solvers for constrained optimization, Results Control Optim. 23 (2026) 100751. [32] L. Lüken, S. Lucia, Learning iterative solvers for accurate and fast nonlinear model predictive control via unsupervised training, in: 2024 European Control Conference (ECC), pp. 1843–1850. [33] J. Adamek, L. Lüken, S. Lucia, Enabling robust mixed-integer nonlinear model predictive control via self-supervised learning and combinatorial integral approximation, J. Process Control 159 (2026) 103636. [34] A. Wächter, L. T. Biegler, On the implementation of an interior-point filter line-search algorithm for large-scale nonlinear programming, Math. Program. 106 (2006) 25–57. [35] I. S. Duff, J. K. Reid, The multifrontal solution of indefinite sparse symmetric linear equations, ACM Trans. Math. Softw. 9 (1983) 302– 325. [36] S. Boyd, N. Parikh, E. Chu, B. Peleato, J. Eckstein, Distributed opti-mization and statistical learning via the alternating direction method of multipliers, Found. Trends Mach. Learn. 3 (2011) 1–122. [37] S. Na, M. Anitescu, Superconvergence of Online Optimization for Model Predictive Control, IEEE Trans. Autom. Control 68 (2023) 1383–1398. [38] S. Shin, M. Anitescu, V. M. Zavala, Exponential Decay of Sensitivity in Graph-Structured Nonlinear Programs, SIAM J. Optim. 32 (2022) 1156–1183. [39] L. Bartali, M. Gabiccini, S. J. Wright, Schwarz decomposition for parallel minimum lap-time problems: Evaluating against ADMM, Veh. Syst. Dyn. 64 (2024) 1–26. [40] J. Nocedal, S. J. Wright, Numerical Optimization, Springer Series in Operations Research, Springer, New York, 2nd edition, 2006. [41] A. Fischer, A special newton-type optimization method, Optimization 24 (1992) 269–284. [42] B. Chen, X. Chen, C. Kanzow, A penalized Fischer-Burmeister NCP-function, Math. Program. 88 (2000) 211–216. [43] D. Liao-McPherson, I. Kolmanovsky, FBstab: A proximally sta-bilized semismooth algorithm for convex quadratic programming, Automatica 113 (2020) 108801. [44] D. Liao-McPherson, M. Huang, I. Kolmanovsky, A Regularized and Smoothed Fischer–Burmeister Method for Quadratic Programming With Applications to Model Predictive Control, IEEE Trans. Autom. Control 64 (2019) 2937–2944. 
+
+L. Lüken, S. Lucia Page 15 of 16 [45] M. Heinlein, S. Subramanian, S. Lucia, Robust Model Predictive Control Exploiting Monotonicity Properties, IEEE Trans. Autom. Control 70 (2025) 6260–6267. [46] D. Hendrycks, K. Gimpel, Gaussian error linear units (gelus), arXiv:1606.08415 (2016). [47] I. Loshchilov, F. Hutter, Decoupled weight decay regularization, arXiv preprint arXiv:1711.05101 (2017). [48] J. A. E. Andersson, J. Gillis, G. Horn, J. B. Rawlings, M. Diehl, CasADi: A software framework for nonlinear optimization and op-timal control, Math. Program. Comput. 11 (2019) 1–36. [49] A. Paszke, S. Gross, F. Massa, A. Lerer, J. Bradbury, G. Chanan, T. Killeen, Z. Lin, N. Gimelshein, L. Antiga, A. Desmaison, A. Kopf, E. Yang, Z. DeVito, M. Raison, A. Tejani, S. Chilamkurthy, B. Steiner, L. Fang, J. Bai, S. Chintala, PyTorch: An imperative style, high-performance deep learning library, in: H. Wallach, H. Larochelle, A. Beygelzimer, F. dAlché-Buc, E. Fox, R. Garnett (Eds.), Advances in Neural Information Processing Systems, vol-ume 32, Curran Associates, Inc., 2019. [50] S. H. Jeon, S. Hong, H. J. Lee, C. Khazoom, S. Kim, CusADi: A GPU Parallelization Framework for Symbolic Expressions and Optimal Control, https://arxiv.org/abs/2408.09662v1, 2024. [51] S. K. Lam, A. Pitrou, S. Seibert, Numba: A LLVM-based Python JIT compiler, in: Proceedings of the Second Workshop on the LLVM Compiler Infrastructure in HPC, LLVM ’15, Association for Computing Machinery, New York, NY, USA, 2015, pp. 1–6. 
+
+L. Lüken, S. Lucia Page 16 of 16

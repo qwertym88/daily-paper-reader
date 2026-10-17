@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-16</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-17</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 20 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 18 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>4</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>14</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-16 22:43:11 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-17 22:07:15 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读6篇、速读14篇共20篇，人形机器人控制与强化学习是绝对主线。最值得看的是9.0分的《P-BFM》用无监督强化学习为人形控制构建感知行为基础模型，以及8.0分《From Video to Vision》让人形机器人从人类动作视频中学会通用搬运。普通读者可先读这两篇精读，再顺着固定点流匹配、区域注意力分割、手术机器人安全触觉共享控制三篇速读拓展视野。</p>
+<p>今日从18篇论文中精读4篇、速读14篇，重点集中在约束运动规划与非线性MPC求解。</p>
+<p>最值得看的是两篇8.0分精读：PATACON用GPU并行切丛RRT-Connect处理约束运动规划，以及通过时间分解实现可扩展的学习型迭代NMPC求解器，两者都用并行化与分解来提速。</p>
+<p>普通读者可先读这两篇精读，再按兴趣扫速读里的随机线性系统最小能量控制与人形双臂遥操作。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +73,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">6 篇</strong>
+    <strong class="dpr-home-dashboard-count">4 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="P-BFM: Perceptive Behavioral Foundation Models for Humanoid Control via Unsupervised Reinforcement Learning">P-BFM: Perceptive Behavioral Foundation Models for Humanoid Control via Unsupervised Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="From Video to Vision: Learning Generalizable Humanoid Carrying from Human Motion">From Video to Vision: Learning Generalizable Humanoid Carrying from Human Motion</span></li><li><span class="dpr-home-dashboard-paper-title" title="TRACE: Efficient Transfer Learning for Neural Whole-Body Control Across Humanoid Embodiments">TRACE: Efficient Transfer Learning for Neural Whole-Body Control Across Humanoid Embodiments</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="PATACON: GPU-Parallel Tangent-Bundle RRT-Connect for Constrained Motion Planning">PATACON: GPU-Parallel Tangent-Bundle RRT-Connect for Constrained Motion Planning</span></li><li><span class="dpr-home-dashboard-paper-title" title="A Scalable Learned Iterative Solver for Nonlinear MPC via Temporal Decomposition">A Scalable Learned Iterative Solver for Nonlinear MPC via Temporal Decomposition</span></li><li><span class="dpr-home-dashboard-paper-title" title="DEFlow: Deep Equilibrium Flow Maximum-Entropy Reinforcement Learning">DEFlow: Deep Equilibrium Flow Maximum-Entropy Reinforcement Learning</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,9 +89,9 @@
     <strong class="dpr-home-dashboard-count">14 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Reinforcement Learning via Fixed-point Flow Matching">Reinforcement Learning via Fixed-point Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="Region Aware Squeeze-and-Excitation Networks for Image Segmentation">Region Aware Squeeze-and-Excitation Networks for Image Segmentation</span></li><li><span class="dpr-home-dashboard-paper-title" title="A Reinforcement Learning Framework for Safety-Aware Haptic Shared Control in Surgical Robotics">A Reinforcement Learning Framework for Safety-Aware Haptic Shared Control in Surgical Robotics</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Minimum-Energy Control for Stochastic Linear Systems">Minimum-Energy Control for Stochastic Linear Systems</span></li><li><span class="dpr-home-dashboard-paper-title" title="Human-Like Redundancy Resolution for Real-Time Bimanual Humanoid Teleoperation">Human-Like Redundancy Resolution for Real-Time Bimanual Humanoid Teleoperation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Model-Based Online Decision Making via Generative Trajectory Planning">Model-Based Online Decision Making via Generative Trajectory Planning</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>9</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>8</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
 </div>
 
