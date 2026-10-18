@@ -41,7 +41,7 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-17</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-18</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 18 篇</strong>
@@ -51,7 +51,7 @@
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>4</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>14</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-17 22:07:15 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-18 21:52:09 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日从18篇论文中精读4篇、速读14篇，重点集中在约束运动规划与非线性MPC求解。</p>
-<p>最值得看的是两篇8.0分精读：PATACON用GPU并行切丛RRT-Connect处理约束运动规划，以及通过时间分解实现可扩展的学习型迭代NMPC求解器，两者都用并行化与分解来提速。</p>
-<p>普通读者可先读这两篇精读，再按兴趣扫速读里的随机线性系统最小能量控制与人形双臂遥操作。</p>
+<p>2026-10-18 日报精选 18 篇论文，精读 4 篇、速读 14 篇。最值得关注的是图 Transformer 用于神经网络表征学习（DTA-GT，8.0 分），以及平均场随机最优控制中 MP 与 DPP 的关联（8.0 分）。普通读者可先精读这两篇高分论文，再浏览人形机器人导航与重定向方向的速读论文。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -76,9 +74,9 @@
     <strong class="dpr-home-dashboard-count">4 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="PATACON: GPU-Parallel Tangent-Bundle RRT-Connect for Constrained Motion Planning">PATACON: GPU-Parallel Tangent-Bundle RRT-Connect for Constrained Motion Planning</span></li><li><span class="dpr-home-dashboard-paper-title" title="A Scalable Learned Iterative Solver for Nonlinear MPC via Temporal Decomposition">A Scalable Learned Iterative Solver for Nonlinear MPC via Temporal Decomposition</span></li><li><span class="dpr-home-dashboard-paper-title" title="DEFlow: Deep Equilibrium Flow Maximum-Entropy Reinforcement Learning">DEFlow: Deep Equilibrium Flow Maximum-Entropy Reinforcement Learning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="DTA-GT: Direction- and Topology-Aware Graph Transformer for Neural Network Representation Learning">DTA-GT: Direction- and Topology-Aware Graph Transformer for Neural Network Representation Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Connection between MP and DPP for Mean-Field Stochastic Optimal Control Problems">Connection between MP and DPP for Mean-Field Stochastic Optimal Control Problems</span></li><li><span class="dpr-home-dashboard-paper-title" title="Depth Memory">Depth Memory</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -89,9 +87,9 @@
     <strong class="dpr-home-dashboard-count">14 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Minimum-Energy Control for Stochastic Linear Systems">Minimum-Energy Control for Stochastic Linear Systems</span></li><li><span class="dpr-home-dashboard-paper-title" title="Human-Like Redundancy Resolution for Real-Time Bimanual Humanoid Teleoperation">Human-Like Redundancy Resolution for Real-Time Bimanual Humanoid Teleoperation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Model-Based Online Decision Making via Generative Trajectory Planning">Model-Based Online Decision Making via Generative Trajectory Planning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Embodiment-Aware Inference-Time Search for Human Reaction Selection in Humanoid Retargeting">Embodiment-Aware Inference-Time Search for Human Reaction Selection in Humanoid Retargeting</span></li><li><span class="dpr-home-dashboard-paper-title" title="LiDAR-based Humanoid Navigation in Dynamic, Non-Convex Environments via Spatio-Temporal Safe Corridors">LiDAR-based Humanoid Navigation in Dynamic, Non-Convex Environments via Spatio-Temporal Safe Corridors</span></li><li><span class="dpr-home-dashboard-paper-title" title="PrT-Flow: Probability-Tractable Flow Matching for Reinforcement Learning">PrT-Flow: Probability-Tractable Flow Matching for Reinforcement Learning</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>8</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>10</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span></div>
 </section>
 </div>
 

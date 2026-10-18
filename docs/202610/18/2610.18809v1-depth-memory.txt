@@ -1,0 +1,1805 @@
+Title: Depth Memory
+
+URL Source: https://arxiv.org/pdf/2610.18809v1
+
+Published Time: Wed, 14 Oct 2026 05:33:37 GMT
+
+Number of Pages: 34
+
+Markdown Content:
+Preprint 
+
+# DEPTH MEMORY 
+
+David Gonz´ alez-Mart´ ınez ∗1,2,3 Philipp Nazari ∗1,2,3,4
+
+T. Konstantin Rusch 1,2,3,5 Shiwei Liu 1,2,31ELLIS Institute T¨ ubingen 2Max Planck Institute for Intelligent Systems, T¨ ubingen 
+
+> 3
+
+T¨ ubingen AI Center 4ETH Z¨ urich 5Liquid AI ∗Equal contribution 
+
+## ABSTRACT 
+
+Residual connections propagate information through a network by additively ac-cumulating layer outputs. Recently proposed alternatives, such as Manifold-Constrained Hyper-Connections (mHC) and Attention Residuals (AttnRes), in-stead use more expressive depth aggregation mechanisms that improve language modeling performance at scale. In this work, we consider the mixing of repre-sentations over depth as a problem of storing and retrieving information across layers. Formalizing this perspective, we introduce Depth Memory (DM) , a uni-fied framework that describes the standard pre-layer-norm (PreLN) transformer, mHC, and AttnRes in terms of streams that carry representations through the net-work. One such stream, for example, could be an explicit memory stream that is queried to enrich the input to every layer, and whose output is subsequently written back into the memory for use by later layers. For AttnRes, this memory stream is a growing cache of explicit layer representations. For mHC, it is an expanded residual stream. Building on this view, we propose Linear Depth Mem-ory (LDM) , which formulates information retrieval across depth as a regression problem solved using recursive least squares. The resulting architecture propa-gates three streams across depth: the standard residual stream, a linear associative memory stream, and an inverse covariance stream. For high-throughput training and inference, we propose a hardware-aware implementation of LDM that reduces peak activation memory and memory traffic. LDM consistently achieves the low-est perplexities among PreLN, mHC and AttnRes baselines at the 400M and 1.5B parameter scales, alongside competitive zero-shot accuracy. 
+
+Code Checkpoints 
+
+## 1 INTRODUCTION 
+
+> Sequence mixing Channel mixing Depth mixing
+
+Figure 1: The axes of rep-resentation mixing: sequence (tokens), channel (features), and depth (layers). The transformer architecture underpins modern language model-ing (Vaswani et al., 2023). Since its introduction, architecture re-search has mainly seen innovation along two axes: sequence mix-ing, which includes softmax attention (Vaswani et al., 2023), lin-ear attention (Katharopoulos et al., 2020), and state-space mod-els (Gu et al., 2022), and channel mixing, through works like gated MLPs (Shazeer, 2020) and MoEs (Fedus et al., 2022). The stan-dard mechanism for propagating information across depth, how-ever, has remained largely unchanged since the introduction of ResNet (He et al., 2016): layer outputs are accumulated addi-tively through residual connections. Recent works have estab-lished alternatives to this standard mechanism at scale (Kimi Team et al., 2026a; DeepSeek-AI et al., 2026). For example, Hyper-Connections (HC, Zhu et al. (2025)) and Manifold-Constrained Hyper-Connections (mHC, Xie et al. (2026)) maintain an expanded residual stream, while Atten-tion Residuals (AttnRes, Kimi Team et al. (2026b)) explicitly attend to previous layer outputs (Fig-ure 2b). Analogous to sequence and channel mixing operators (Figure 1), we refer to these methods as depth mixing mechanisms. 1arXiv:2610.18809v1 [cs.LG] 13 Oct 2026 Preprint           
+
+> xl
+> xl+1
+> Ml
+> Write
+> Ml+1
+> Read Sublayer
+> +
+> k0v0
+> klvl
+> qlRead Sublayer Write
+> k0v0
+> klvl
+> kl+1vl+1
+> Xl
+> Hres
+> l+1
+> Hpre
+> l+1
+> Hpost
+> l+1
+> •
+> Sublayer
+> ××
+> +
+> Xl+1
+> residual stream memory stream operator vector matrix
+
+(a) LDM (ours) (b) AttnRes (c) mHC 
+
+Figure 2: (a) LDM carries a separate per-token depth memory alongside the residual stream. Read and Write are simplified for brevity (the inverse covariance stream and the write address generation are omitted). (b) AttnRes reads from a growing key–value memory Ml and writes the sublayer output back into it. (c) mHC generates its three mappings from the current expanded state and applies them around one transformer branch. In this work, we approach depth mixing from a different angle. Viewing it as a problem of storing and retrieving information across layers, we introduce Depth Memory , a framework that interprets the propagation of information across depth as a problem of managing layer representations using a set of streams . At each layer, and independently for each token, a Read operation forms the layer input from these streams, and a Write operation updates the streams using the layer output. This framework encompasses the standard residual stream, AttnRes’s growing cache of layer representations, and mHC’s expanded residual stream, covering both explicit and implicit forms of depth mixing (Figure 2). Besides taxonomizing existing residual methods using our depth memory framework, we propose instantiating it as a Linear Depth Memory (LDM) . LDM maintains three streams: the standard resid-ual stream, a fixed-size matrix-valued memory stream, and an inverse covariance stream (Figure 2a). Analogous to test-time regression for sequence mixing (Wang et al., 2025), we formulate matrix-valued memory stream updates as the solution to a depth regression problem, which fits a linear map to reconstruct previous layer outputs from their corresponding keys. LDM solves this optimization problem optimally through recursive least squares (RLS, Section 3.2). Our hardware-aware implementation of LDM addresses efficiency challenges posed by a naive in-stantiation of the framework. First, we implement an unwinding mechanism that does not require storing each layer’s memory stream. Second, we employ a windowed Write algorithm that defers parts of the memory updates. Implemented as efficient CuTe DSL kernels, LDM achieves compara-ble speed to the baselines (Figure 5). We evaluate LDM on language modeling benchmarks across 400M Llama-like (Touvron et al., 2023) and 1.5B Qwen-like (Yang et al., 2025a) transformer backbones. LDM achieves lower perplexity than a standard pre-layer-norm (PreLN) transformer, mHC and AttnRes at both scales, along with competitive zero-shot accuracy. These gains hold across standard aspect ratios. We furthermore perform extensive ablations to isolate the contributions of different LDM architectural components. In summary, our main contributions are: 1. We introduce depth memory, a framework that describes the propagation of information across depth through a collection of streams and their Read and Write operations. 2. We instantiate this framework in the form of LDM, a linear depth memory that solves a depth re-gression problem using recursive least squares to store layer representations in a fixed-size state. 3. We provide an efficient implementation of LDM that combines unwinding and deferred writing techniques to reduce activation memory overhead and memory traffic of LDM. 4. We show that LDM consistently achieves the lowest perplexities among tuned PreLN, mHC, and AttnRes baselines at the 400M and 1.5B scales, while maintaining competitive zero-shot accuracy, and that these gains hold across standard model aspect ratios. 2Preprint 
+
+## 2 BACKGROUND 
+
+Consider a standard pre-normalized transformer (PreLN, Xiong et al. (2020)) with B blocks and 
+
+L = 2 B layers. We write equations for a single token and suppress its index. Let xl ∈ RD denote its representation after layer l, with x0 = e as the token embedding. In PreLN, representations across depth follow the recurrence 
+
+xl = xl−1 + δl, δl = Fl (Norm l(xl−1)) , l = 1 , . . . , L, (1) where Norm l is typically RMSNorm (Zhang & Sennrich, 2019), and Fl is either an attention layer or an MLP. Unrolling this recurrence gives 
+
+xl = e +
+
+> l
+
+X
+
+> i=1
+
+δi.
+
+In particular, residual connections establish a residual stream that aggregates layer outputs additively (Figure 2a). Recent work extends this additive aggregation with richer representations and learned mechanisms for mixing information across depth. We review two prominent approaches below, then unify them within our depth memory framework in Section 3.1. 2.1 ATTENTION RESIDUALS 
+
+Attention Residuals (AttnRes, Kimi Team et al. (2026b)) replace simple additive accumulation of layer outputs via the residual stream with softmax attention over earlier layer outputs. Set v0 =
+
+k0 = e and vi = ki = δi, for i ≥ 1. Full AttnRes forms the input to layer l as 
+
+al =
+
+> l−1
+
+X
+
+> i=0
+
+αl,i vi, αl,i = exp  q⊤ 
+
+> l−1
+
+RMSNorm( ki)Pl−1 
+
+> j=0
+
+exp  q⊤ 
+
+> l−1
+
+RMSNorm( kj ) . (2) The layer then produces δl = Fl(Norm l(al)) , which is stored for subsequent layers to attend to. The query ql−1 ∈ RD is a learned per-layer parameter. Through the attention mechanism, each layer can selectively weight previous representations, while PreLN gives every previous layer the same weight (Figure 2b). The above formulation of AttnRes, known as Full AttnRes, incurs memory overhead during inference because it needs to retain previous representations. Block AttnRes groups layers into blocks and summarizes each block by the sum of its layer outputs. At every layer, Block AttnRes forms the input from the embedding, the completed blocks, and the current block’s partial sum. 2.2 HYPER -C ONNECTIONS 
+
+Hyper-Connections (HC, Zhu et al. (2025)) expand the residual representation into N streams, col-lected as columns of Xl ∈ RD×N . Three learned mappings take the incoming state Xl−1 and produce vectors Hpre  
+
+> l
+
+(Xl−1), Hpost  
+
+> l
+
+(Xl−1) ∈ RN as well as the matrix Hres  
+
+> l
+
+(Xl−1) ∈ RN ×N . A layer acts on this expanded residual stream via 
+
+δl = Fl (Norm l(Xl−1Hpre  
+
+> l
+
+(Xl−1))) , Xl = Xl−1Hres  
+
+> l
+
+(Xl−1) + δl
+
+ Hpost  
+
+> l
+
+(Xl−1)⊤.
+
+The pre-mapping Hpre  
+
+> l
+
+combines streams into a D-dimensional layer input, the post-mapping Hpost 
+
+> l
+
+distributes the layer output across streams, and the residual mapping Hres  
+
+> l
+
+mixes streams (Figure 2c). Manifold-Constrained Hyper-Connections (mHC, Xie et al. (2026)) constrain this architecture to stabilize signal propagation over depth. In particular, Hres  
+
+> l
+
+is constrained to be approximately doubly stochastic through applications of the Sinkhorn-Knopp algorithm (Sinkhorn & Knopp, 1967). 
+
+Hyper-Connections as a memory. (m)HC updates the residual stream with a rank-1 matrix, and contracts it to generate layer inputs. Informally, this mechanism can be interpreted as a linear as-sociative memory over depth (Kohonen, 1972; Kimi Team et al., 2026b). The pre-mapping Hpre 
+
+> l
+
+generates a query that reads from the state, and the post-mapping Hpost  
+
+> l
+
+generates a key under which the layer output is written to the expanded residual stream through an outer product update. The residual mapping Hres  
+
+> l
+
+acts as a transition matrix on the state. Since this state combines ear-lier layer outputs, subsequent reads mix information across depth without explicitly retaining each 3Preprint Table 1: Overview of depth mixing methods. Each method maintains streams that are accessed through Read and Write operators. LDM uses the RLS update derived in Section 3.2, with pseudo-value ul and gain κl. Gates and the inverse covariance update for Pl are omitted for brevity. Method Streams State update (Write) Memory readout (Read) PreLN (xl) xl = xl−1 + vl xl
+
+AttnRes (( K≤l, V≤l)) Append( kl, vl) Attend( Ml, ql)
+
+mHC (Xl) Xl = Xl−1Hres  
+
+> l
+
+(Xl−1) + vlHpost  
+
+> l
+
+(Xl−1)⊤ XlHpre 
+
+> l+1
+
+(Xl)
+
+LDM (xl, Ml, Pl) (xl, Ml) = ( xl−1 + vl, Ml−1 + ulκ⊤ 
+
+> l
+
+) xl + Mlql
+
+output. HC and mHC can therefore be understood as performing a form of implicit depth mixing, with both queries and keys generated from the incoming matrix-valued state itself. Building on this perspective, we next establish depth memory as a framework that encompasses both (m)HC and AttnRes, before instantiating the framework as a linear depth memory. 
+
+## 3 DEPTH MEMORY 
+
+In this section, we first introduce depth memory (DM), a framework that takes a memory-centric view to describe how information in a transformer flows over depth and encompasses PreLN as well as AttnRes and mHC. We then instantiate DM as a linear depth memory, which we formulate as solving a regression problem over depth. Finally, we describe how to use unwinding and windowed updates to implement linear depth memory efficiently. 3.1 THE FRAMEWORK 
+
+The depth memory framework assumes a tuple Sl = ( S(1)  
+
+> l
+
+, . . . , S(P ) 
+
+> l
+
+) of P streams , which are read from and written to using Read and Write operators. For a single stream, we identify Sl = S(1)  
+
+> l
+
+.The input to sublayer Fl is enhanced by reading from the streams Sl−1 using a query ql−1, and it is updated using keys kl and values vl, where the value is the sublayer output vl = δl,
+
+δl = Fl (Norm l (Read (Sl−1, ql−1))) , Sl = Write (Sl−1, kl, vl) .
+
+Any instantiation of DM requires specifying the tuple Sl of streams as well as the Read and Write operators. The following paragraphs incorporate PreLN, AttnRes and mHC. 
+
+PreLN. For PreLN there exists exactly one stream, which is the classic residual stream: Sl = xl.The Read and Write operators retrieve the stream and write layer outputs into it, Read (xl−1, ·) = xl−1, xl = Write (xl−1, ·, δl) = xl−1 + δl.
+
+AttnRes. Like PreLN, AttnRes maintains exactly one stream. This stream consists of a growing set of key–value pairs: Sl = Ml = ( K≤l, V≤l). Here, Ml acts as a memory for the model that explicitly maintains every previous layer’s representation. Reading and writing correspond to attending and appending to the cache: Read (Ml−1, ql−1) = Attend( Ml−1, ql−1)
+
+Ml = Write (Ml−1, kl, vl) = Ml−1.Append( kl, vl).
+
+Since this mechanism keeps a copy of every representation, we refer to it as an explicit depth mixer. Its memory stream grows over depth, as incoming representations are appended. 
+
+mHC. For mHC, there again is exactly one stream. This time it is the expanded residual stream, 
+
+Sl = ( Xl). The queries and keys are generated via ql = Hpre 
+
+> l+1
+
+(Xl) and kl = Hpost  
+
+> l
+
+(Xl−1).Reading and writing correspond to Read (Xl−1, ql−1) = Xl−1ql−1, Xl = Write (Xl−1, kl, vl) = Xl−1Hres  
+
+> l
+
+(Xl−1) + vlk⊤ 
+
+> l
+
+.
+
+The memory stream of mHC has a fixed size (see also Section 2). Compared to AttnRes, incoming representations are additively written into the stream, not appended. We thus refer to it as an implicit 
+
+depth mixer. Table 1 provides an overview of depth mixing architectures in our framework. In the next section, we introduce linear depth memory, an implicit depth mixer derived from first principles. 4Preprint 3.2 LINEAR DEPTH MEMORY 
+
+In this section, we develop linear depth memory (LDM) , a novel depth mixing module. At its core, LDM implements a linear associative memory (Kohonen, 1972). Such memories store key–value associations and lay the foundation for linear attention (Schlag et al., 2021). The simplest version of LDM maintains two streams, Sl = ( xl, Ml), where xl is the standard PreLN residual stream and 
+
+Ml is a matrix-valued hidden state. The read and write operations are Read (( xl−1, Ml−1), ql−1) = xl−1 + Ml−1ql−1,
+
+(xl, Ml) = Write (( xl−1, Ml−1), kl, vl) = ( xl−1 + vl, Ml−1 + vlk⊤ 
+
+> l
+
+). (3) Note how, since simple LDM carries two streams, Read and Write need to incorporate both streams. One of the streams is the classic PreLN residual stream, while the other one maintains a matrix-valued memory stream via outer-product writes. Our ablations in Section 4.2 reveal the importance of maintaining these two streams separately. The memory stream is closely related to softmax depth attention (Equation (2)). Indeed, the latter takes the form 
+
+ol−1 = V⊤ 
+
+> <l
+
+softmax ( K<l ql−1) . (4) Following Katharopoulos et al. (2020), replacing the exponential kernel in Equation (4) with the linear dot-product kernel without normalization yields 
+
+ol−1 = V⊤
+
+> <l
+
+K<l ql−1 =
+
+> l−1
+
+X
+
+> i=0
+
+vik⊤
+
+> i
+
+!
+
+ql−1 = Ml−1ql−1,
+
+where Ml−1 = Pl−1 
+
+> i=0
+
+vik⊤ 
+
+> i
+
+is exactly maintained by the LDM outer product recurrence in Equation (3). Thus, this simple instantiation of LDM implements linear attention over depth, replacing a growing collection of layer representations with a fixed-size matrix summary. The additive update rule approximates the solution of a regression problem (Wang et al., 2025). We adapt this perspective for our main instantiation. 
+
+An exact solution to depth regression. Following Wang et al. (2025), we interpret the simple outer product update in Equation (3) as an approximate solution to 
+
+M∗ 
+
+> l
+
+= arg min 
+
+> Ml
+> l
+
+X
+
+> i=0
+
+∥vi − Mlki∥22. (5) We call this the depth regression objective, by analogy with test-time regression along the sequence axis. If K⊤≤lK≤l is invertible, the unique solution to Equation (5) is M∗ 
+
+> l
+
+= V⊤≤lK≤l
+
+ K⊤≤lK≤l
+
+−1.Approximating the key Gram matrix by the identity recovers the update in Equation (3). For sequence mixing, efficient training and prefill motivate parallelizable (approximate) solvers of Equation (5). Delta-rule-based models take an online gradient step at each token (Schlag et al., 2021; Yang et al., 2024; 2025b; Kimi Team et al., 2025). DeltaProduct takes multiple steps per token (Siems et al., 2025). MesaNet uses an iterative conjugate gradient solve (von Oswald et al., 2026). For depth mixing, however, transformer layers are already evaluated sequentially, allowing the use of non-parallelizable solvers. LDM maintains the exact regression solution through recursive least squares (RLS), as in von Oswald et al. (2024). We apply RLS to a generalized version of Equa-tion (5), introducing learnable per-layer forgetting factors λj > 0, dynamic importance weights 
+
+ωi > 0, and a weighted ridge penalty: 
+
+M∗ 
+
+> l
+
+= arg min 
+
+> M
+
+
+
+> l
+
+X
+
+> i=0
+
+
+
+> l
+
+Y
+
+> j=i+1
+
+λj
+
+ ωi∥vi − Mk i∥22 +
+
+
+
+> l
+
+Y
+
+> j=0
+
+λj
+
+ α−1∥M∥2
+
+> F
+
+ . (6) Equation (6) admits an exact recursive solution via Sherman–Morrison. Initialize M−1 = 0 and the inverse key covariance as P−1 = αI ∈ RDk ×Dk , and define the weighted observations kl = √ωlkl
+
+and vl = √ωlvl. The RLS gain and pseudo-value (the prediction error of Ml−1) are 
+
+κl = Pl−1kl/(λl + k⊤ 
+
+> l
+
+Pl−1kl), ul = vl − Ml−1kl. (7) 5Preprint 
+
+> Forward Backward
+
+M−1 M0 M1 M2 M3 M4 M5
+
+dM0 dM1 dM2 dM3 dM4 dM5
+
+M−1 M2 M5  
+
+> (q,k,v)0
+
+c0    
+
+> d( q,k,v)0
+> (q,k,v)1
+
+c1    
+
+> d( q,k,v)1
+> (q,k,v)2
+
+c2    
+
+> d( q,k,v)2
+> (q,k,v)3
+
+c3    
+
+> d( q,k,v)3
+> (q,k,v)4
+
+c4    
+
+> d( q,k,v)4
+> (q,k,v)5
+
+c5        
+
+> d( q,k,v)5
+> materialized stored not materialized Write land Read for layer l+1
+
+Figure 3: Efficient implementation of LDM for L = 5 layers and windows (denoted by the dashed boxes) of size E = 3 . Each dot denotes the Write at layer l fused with the Read for layer l + 1 .In the forward pass, each dot saves a small context cl, which is used for the backward pass. Some details are omitted for clarity (see Appendix F). These can be used to solve Equation (6) online, 
+
+Ml = Ml−1 + ulκ⊤ 
+
+> l
+
+, Pl = ( Pl−1 − κlk⊤ 
+
+> l
+
+Pl−1)/λ l. (8) The complete derivation is given in Appendix E.1. As shown, the RLS update introduces a third stream, an inverse covariance stream Pl, to LDM. 
+
+Multiple groups. We find that partitioning the memory state Ml into G groups, each with value dimension Dv = D/G , improves expressivity and empirically improves performance slightly (Sec-tion 4.2). Each group maintains its own inverse covariance matrix and is queried independently. The resulting Dv -dimensional readouts are concatenated to form the full D-dimensional memory read-out. The state then becomes Sl = ( xl, Ml, Pl), where Pl ∈ RG×Dk ×Dk . The forgetting factors and gates are also applied and learned independently for each group (thus, in practice, we treat them as vectors, with each element corresponding to a group). 
+
+Efficient parameterization through shared latent representations. Having established LDM as an abstract architectural component above, we now present how to parametrize it efficiently. Let Aff 
+
+denote a learned affine map. For the Read operator, we generate a shared latent representation 
+
+h(R) 
+
+> l−1
+
+= SiLU (Aff( Norm RMS (xl−1))) ∈ RH .
+
+From this latent representation, we obtain the query as well as a per-group read gate 
+
+ql−1 = Norm L2 (Aff( h(R)
+
+> l−1
+
+)) ∈ RG×Dk , gl−1 = 2 σ(Aff( h(R)
+
+> l−1
+
+)) ∈ RG.
+
+The gated query retrieves data from the streams as Read (( xl−1, Ml−1, Pl−1), ql−1) = xl−1 + γl−1 ⊙ Ml−1 ( gl−1 ⊙ ql−1) ,
+
+where γl−1 ∈ RG is a learnable per-group gain that controls the magnitude of the read. For the Write operator, we analogously first generate a latent representation 
+
+h(W ) 
+
+> l
+
+= SiLU (Aff ( Norm RMS (xl))) ∈ RH ,
+
+from which we obtain the keys kl and groupwise weight ωl,
+
+kl = Norm L2 (Aff( h(W ) 
+
+> l
+
+)) ∈ RG×Dk , ωl = 2 σ(Aff( h(W ) 
+
+> l
+
+)) ∈ RG.
+
+The RLS write then computes 
+
+(xl, Ml, Pl) = Write (( xl−1, Ml−1, Pl−1), kl, vl, ωl, λl)
+
+in the sense of Equation (8). We additionally write the embedding into the first memory state and perform a read before the LM head (see Appendix E.2). 6Preprint     
+
+> 20 40 60 80 100
+
+Tokens (B)      
+
+> 2.25 2.35 2.45 2.55
+> Training Loss
+> 75 80 85 90 95 100
+
+Tokens (B)    
+
+> 2.26 2.30 2.34
+> ×1.22
+> ×1.09
+> PreLN AttnRes (Block) mHC LDM
+
+Figure 4: Left: Training loss at 1.5B model size (100B tokens, learning rate 10 −3). Right: the last 25B tokens. Arrows: tokens LDM needs to reach each baseline’s final loss. 3.3 HARDWARE -A WARE IMPLEMENTATION 
+
+A naive implementation of LDM (1) stores a state Ml per layer for later reuse during backpropaga-tion and (2) reads and writes the current state at every Read and Write, which incurs memory traffic. We propose an efficient implementation that reduces both activation memory overhead and traffic: 
+
+(1) State unwinding. The RLS recurrence is reversible given compact per-layer auxiliary informa-tion. Indeed, Equation (8) shows that Ml−1 can be reconstructed from Ml via 
+
+Ml−1 = Ml − ulκ⊤ 
+
+> l
+
+. (9) In particular, the backward pass can undo the state update given a context cl saved for each layer, which holds ul and κl, the inverse covariance Pl−1 before the update, and a few small vectors and scalars needed for the gradients, such as kl and λl (Appendix F). Since Pl ∈ RG×Dk ×Dk and typically Dk is small (see Section 4), storing cl is much cheaper than storing Ml ∈ RG×Dv ×Dk .Our implementation of LDM updates the state Ml in place during the forward pass and unwinds the depth recurrence from the final state ML during the backward pass (Figure 3). 
+
+(2) Windowed writes. To reduce memory traffic, we fuse each Write with the Read for the next layer. We additionally defer the Write operations within a window W = {b + 1 , . . . , e } of E layers (let the state be Mb before the window) and compute every Read and Write from Mb, since 
+
+Mj x = Mbx + X
+
+> b<i ≤j
+
+ui(κ⊤ 
+
+> i
+
+x), (10) for any j ∈ W and any vector x (e.g., the gated query of a Read or the weighted key of the next Write), with the pseudo-values ui and RLS gains κi corresponding to Equation (7). No intermediate state is materialized inside a window, reducing Write traffic. The window size E trades state traffic against accesses to the pseudo-values. Our main experiments use E = 4 . In the backward pass, we similarly avoid materializing the unwound states and state gradients inside a window. We implement LDM in CuTe DSL for Hopper and Blackwell GPUs. Figure 3 summarizes our implementation, and Appendix F provides further details. 
+
+## 4 EXPERIMENTS 
+
+In this section, we evaluate LDM by pretraining 400M Llama-like and 1.5B Qwen-like transformers on 50B and 100B FineWeb-Edu tokens, respectively (Penedo et al., 2024). Unless stated otherwise, the queries and keys are generated from hidden representations of dimension H = 32 at 400M and 
+
+H = 64 at 1.5B. We set the per-group value dimension to the attention head dimension, yielding 
+
+G = 16 groups for both models. We furthermore fix α = 1 , which we found to work better than making it learnable. 7Preprint Table 2: Pretraining evaluations for both 400M and 1.5B models, generated using the lm-eval-harness (Gao et al., 2024). Val is the pretraining validation perplexity.                                                                                                                                                 
+
+> Method ARC-E ARC-C Hella PIQA Wino OBQA Lmb Avg Lmb Wiki Val
+> acc ↑acc n↑acc n↑acc ↑acc ↑acc n↑acc ↑acc ↑ppl ↓ppl ↓ppl ↓
+> 400M @ 50B
+> PreLN 65.66 31.23 46.80 68.93 55.25 37.00 38.46 49.05 25.32 22.59 12.73 AttnRes (Full) 64.94 32.08 49.34 70.08 55.64 36.40 41.35 49.98 19.62 21.46 12.35 AttnRes (Block) 67.63 32.85 49.55 70.08 56.04 37.20 40.91 50.61 20.71 20.86 12.12 mHC 65.11 31.66 49.26 70.02 55.09 35.00 40.69 49.55 20.23 21.20 12.23 LDM, Dk=4 66.79 32.34 48.71 69.42 54.70 37.20 42.27 50.20 19.59 20.84 12.14
+> LDM (Ours) 67.13 32.34 49.41 70.40 54.93 36.40 42.58 50.46 19.10 20.70 12.08
+> 1.5B @ 100B  PreLN 74.07 41.47 62.04 75.14 62.35 42.60 51.19 58.41 10.49 15.06 9.48 AttnRes (Block) 75.88 42.92 63.51 75.03 60.77 43.60 54.22 59.42 8.84 14.54 9.26 mHC 75.67 41.72 63.32 75.57 62.98 44.40 54.08 59.68 9.05 14.44 9.25
+> LDM (Ours) 76.35 42.66 63.98 75.14 62.83 42.00 55.00 59.71 8.42 14.21 9.15
+
+4.1 MAIN RESULTS 
+
+Setup. We compare LDM with PreLN, mHC, and AttnRes using matched backbone configurations. At both 400M and 1.5B, LDM adds approximately 1% more parameters than PreLN, comparable to the overhead of mHC (Table 4). Our main LDM configuration uses Dk = 8 at both scales, and we additionally evaluate Dk = 4 at 400M. We train both Full and Block AttnRes at 400M, but only Block AttnRes at 1.5B because of the higher training cost of Full AttnRes. Following Kimi Team et al. (2026b), we target approximately eight depth blocks for Block AttnRes, using eight at 400M and seven at 1.5B to avoid splitting transformer blocks across depth blocks. All models use AdamW with a weight decay of 0.1 and linear warmup followed by cosine decay to 10% of the peak learning rate. We sweep the peak learning rate for each method and scale using a grid spaced by factors of two, selecting the value with the lowest held-out validation loss. We report held-out validation, WikiText-2 (Merity et al., 2016), and LAMBADA (Paperno et al., 2016) perplexity, together with zero-shot accuracy on ARC-Easy, ARC-Challenge (Clark et al., 2018), HellaSwag (Zellers et al., 2019), PIQA (Bisk et al., 2019), WinoGrande (Sakaguchi et al., 2019), OpenBookQA (Mihaylov et al., 2018), and LAMBADA. Full implementation details are in Appendix B. 
+
+Lower perplexity and competitive accuracy. Table 2 reports our main pretraining results. It reveals that our main LDM configuration ( Dk = 8 ) achieves the lowest validation, WikiText-2, and LAMBADA perplexity at both model sizes. It also achieves the highest average zero-shot accuracy at 1.5B and ranks second at 400M. Figure 4 shows the training loss at 1.5B. 
+
+Matched memory matrix size. Both mHC and LDM maintain states of fixed size across depth, whereas Full AttnRes retains a growing cache of layer outputs. With Dk = 8 , LDM’s memory matrix contains 8D entries per token, twice the 4D entries in mHC’s expanded residual state. We therefore also evaluate LDM with Dk = 4 at 400M, matching the number of entries in its memory matrix to mHC’s expanded residual state (note that LDM additionally maintains a classic residual stream and an inverse covariance stream). This smaller configuration still achieves lower validation, WikiText-2, and LAMBADA perplexity than mHC, alongside higher average zero-shot accuracy. Thus, LDM remains competitive with other baselines even with a smaller memory matrix. 
+
+Throughput. Figure 5 compares LDM’s training, prefill and decode throughput with AttnRes, im-plemented using Flash Linear Attention kernels (Yang & Zhang, 2024), and mHC using an improved version of the official mHC kernels. More details and settings can be found in Appendix C. Across 1.7B–14B models, sequence lengths, context lengths, and batch sizes, LDM exceeds Full AttnRes throughput in every setting and mHC in all training and most inference settings, while remaining competitive with Block AttnRes, especially during decode. 4.2 ABLATIONS AND ARCHITECTURAL CHOICES 
+
+We ablate LDM’s main design choices at 400M, training each variant on 15B FineWeb-Edu tokens with a peak learning rate of 10 −3 and otherwise following our main training recipe. Table 3 reports 8Preprint                      
+
+> 2K 4K 2K 4K
+> Sequence length
+> 025 50 75 100
+> Throughput (% of PreLN)
+> 1.7B 14B 116 64 116 64
+> Batch size
+> 1.7B 14B 116 64 116 64
+> Batch size
+> 1.7B 14B
+> (a) Training step (b) Prefill, 2K (c) Decode, 2K
+> LDM AttnRes (Block) mHC AttnRes (Full)
+
+Figure 5: Throughput relative to PreLN on B200 for Qwen-like 1.7B and 14B models, comparing LDM, mHC and AttnRes. The mHC results use an improved version of the official mHC kernels. (a) Training step with 2K and 4K sequence length. (b) Prefill of 2K prompts at different batch sizes. (c) KV-cached decode after 2K prefill at different batch sizes. More settings in Appendix C. Table 3: LDM ablations, 400M @ 15B. ∆ denotes change in held-out perplexity ( ↓) relative to our main configuration. (a) F (r): memory-only layer input (normalization omitted). x = δ: no post-layer residual addition. (b) Delta/Outer: replace RLS with delta rule/outer product update. (c) 
+
+v = x: store the residual stream. QK (δ): queries and keys from layer outputs. Static q: learned query per read with read gate fixed to one. (d) −γ, g = 1, ω = 1: fix read gain, read gate, or write weight to one, respectively. λ = 1: disable forgetting. Selected training curves in Figure 18, full definitions and results in Appendix D.2 and Table 8. 
+
+Baselines (a) Residual (b) Update (c) Addressing (d) Gain, gates, forgetting PreLN LDM F (r) x = δ Delta Outer v = x QK (δ) Static q −γ g = 1 ω = 1 λ = 1
+
+∆ 0.78 0.00 1.88 0.87 0.06 0.07 0.33 0.07 0.19 0.04 0.07 0.01 −0.01 
+
+changes in held-out perplexity relative to the default LDM configuration. Appendix D.2 provides full definitions of each variant. Our main findings are as follows: 
+
+(a) Keeping the residual stream is crucial. We assess the importance of LDM’s separate residual stream by interrupting its flow at one of two points: before the layer, so that the layer receives only the memory readout, or after the layer, so that the stream is replaced by the layer output. Both variants underperform PreLN. 
+
+(b) Depth regression approximations. Replacing RLS with either a plain outer product or a delta rule update (Schlag et al., 2021; Yang et al., 2024) still yields better performance than PreLN, but neither alternative matches RLS. This result is consistent with reported benefits of more accurate test-time regression solvers in sequence modeling (von Oswald et al., 2026; Tumma et al., 2026).    
+
+> 1816
+> Groups G
+> 2.596 2.598 2.600
+> Held-out loss
+
+Figure 6: Held-out loss versus group count (400M, 15B tokens). 
+
+(c) Addressing and stored values. We next examine how LDM’s performance depends on the choice of stored represen-tations, the construction of queries and keys, and the number of memory groups. Storing xl instead of δl hurts most, poten-tially due to redundancy in the stored information (given that earlier representations would be stored at each Write). Deriv-ing queries and keys from δl instead of xl also hurts, and static per-layer queries (read gate fixed to one) hurt more. Grouping provides small but consistent gains (Figure 6). 
+
+(d) Gain, gates and forgetting. Disabling either the read gain 
+
+γ or the read gate g hurts slightly. Fixing the write weight ωl
+
+to one or disabling forgetting ( λl = 1) has a negligible effect in this setting. 9Preprint       
+
+> 896/32 28 960/28 34 1024/24 43 1120/20 56 1216/16 76 15.0 15.5 16.0 16.5
+> Held-out perplexity  400M 1504/54 28 1728/40 43 2048/28 73 11.0 11.2 11.4 1.6B Width/depth and aspect ratio
+> Other methods PreLN AttnRes (Block) AttnRes (Full) HC mHC LDM
+
+Figure 7: Final held-out perplexity on DepthBench against the aspect ratio (width/depth) at a fixed budget of 400M (left) and 1.6B (right) parameters. Tick labels denote the width/depth of each shape and its aspect ratio. 4.3 DIFFERENT ASPECT RATIOS 
+
+Following the protocol of DepthBench (Wang et al., 2026), we evaluate whether LDM’s gains persist across different model aspect ratios (width/depth) at fixed parameter budgets of 400M and 1.6B (for the latter, DepthBench provides results for their most promising baselines). We compare against the published DepthBench baseline results, matching their training setup exactly to ensure comparabil-ity. At 400M, DepthBench tunes the learning rate separately for each baseline and finds 2 × 10 −3 to be optimal in most cases. At 1.6B, it uses 5 × 10 −4 for all methods. We adopt these learning rates for LDM without further tuning. Additional experimental details are provided in Appendix D.3. 
+
+Results and shape preferences. LDM improves over PreLN at every evaluated aspect ratio at both scales (Figure 7). At 400M, LDM favors moderate aspect ratios and outperforms the baselines, except in the deepest configuration, where HC performs slightly better. At 1.6B, however, LDM achieves the lowest perplexity at every considered aspect ratio. In particular, HC, which becomes less stable as scale increases (Wang et al., 2026), no longer improves with depth, whereas LDM’s perplexity decreases monotonically. Appendix D.3 extends our 400M sweep to extreme aspect ratios, further supporting LDM’s preference for shallower configurations at that scale. 
+
+## 5 DISCUSSION AND CONCLUSION 
+
+In this work, we introduce Depth Memory, a framework that interprets the propagation of infor-mation over depth as a problem of managing layer representations using a set of streams. This perspective unifies standard residual connections, AttnRes, and mHC, while distinguishing methods that retain explicit layer representations from those that mix them into a fixed-size state. It also pro-vides a starting point for designing new depth mixers. Building on this view, we then propose Linear Depth Memory (LDM), which formulates memory updates as a depth regression problem, solving it exactly using recursive least squares. To do so, LDM maintains a standard residual stream, a memory stream, and an inverse covariance stream. Each token thus carries a compressed, queryable representation of earlier layer outputs, which enriches the inputs to subsequent layers. Our imple-mentation uses state unwinding and windowed updates to reduce activation storage and memory traffic, making LDM feasible in practice. At both 400M and 1.5B, trained on 50B and 100B tokens, respectively, our main LDM configuration achieves the lowest reported perplexities among the tuned PreLN, AttnRes, and mHC baselines, alongside competitive zero-shot accuracy. These gains hold across standard aspect ratios. 
+
+Limitations and future work. In this work, we focus on language models with up to 1.6B param-eters that are trained on up to 100B tokens. Future work could evaluate LDM at larger scales and in other domains such as image classification. Moreover, LDM can add peak memory during train-ing, which other stable formulations of the backward recurrence or checkpointing (as used in mHC) could reduce. Finally, our Depth Memory framework admits a plethora of different instantiations, such as alternative linear recurrences or memories with nonlinear read and write operations. We consider the exploration of that design space a promising avenue for future work. 10 Preprint ACKNOWLEDGMENTS 
+
+This work was supported in part by the Hector Foundation and by the Max Planck ETH Center for Learning Systems. We thank the authors of DepthBench (Wang et al., 2026) for providing early access to their codebase, on which ours is based. 
+
+## REFERENCES 
+
+Badr AlKhamissi, Mohamed Gabr, Muhammad ElNokrashy, and Khaled Essam. Adapting MAR-BERT for improved Arabic dialect identification: Submission to the NADI 2021 shared task. In Nizar Habash, Houda Bouamor, Hazem Hajj, Walid Magdy, Wajdi Zaghouani, Fethi Bougares, Nadi Tomeh, Ibrahim Abu Farha, and Samia Touileb (eds.), Proceedings of the Sixth Arabic Natural Language Processing Workshop , pp. 260–264, Kyiv, Ukraine (Virtual), April 2021. Association for Computational Linguistics. URL https://aclanthology.org/2021. wanlp-1.29/ .Yonatan Bisk, Rowan Zellers, Ronan Le Bras, Jianfeng Gao, and Yejin Choi. Piqa: Reasoning about physical commonsense in natural language, 2019. URL https://arxiv.org/abs/1911. 11641 .Peter Clark, Isaac Cowhey, Oren Etzioni, Tushar Khot, Ashish Sabharwal, Carissa Schoenick, and Oyvind Tafjord. Think you have solved question answering? try arc, the ai2 reasoning challenge, 2018. URL https://arxiv.org/abs/1803.05457 .DeepSeek-AI, Anyi Xu, Bangcai Lin, Bing Xue, Bingxuan Wang, Bingzheng Xu, Bochao Wu, Bowei Zhang, Chaofan Lin, Chen Dong, Chenchen Ling, Chengda Lu, Chenggang Zhao, Chengqi Deng, Chengyu Hou, Chenhao Xu, Chenze Shao, Chong Ruan, Conner Sun, Damai Dai, Daya Guo, Dejian Yang, Deli Chen, Donghao Li, Dongjie Ji, Erhang Li, Fang Wei, Fangyun Lin, Fangzhou Yuan, Feiyu Xia, Fucong Dai, Guangbo Hao, Guanting Chen, Guoai Cao, Guolai Meng, Guowei Li, Han Yu, Han Zhang, Hanwei Xu, Hao Li, Haofen Liang, Haoling Zhang, Haoming Luo, Haoran Wei, Haotian Yuan, Haowei Zhang, Haowen Luo, Haoyu Chen, Haozhe Ji, Hengqing Zhang, Honghui Ding, Hongxuan Tang, Huanqi Cao, Huazuo Gao, Hui Qu, Hui Zeng, J Yang, JQ Zhu, Jia Luo, Jia Song, Jia Yu, Jialiang Huang, Jialu Cai, Jian Liang, Jiangting Zhou, Jiasheng Ye, Jiashi Li, Jiaxin Xu, Jiewen Hu, Jieyu Yang, Jin Chen, Jin Yan, Jingchang Chen, Jingli Zhou, Jingting Xiang, Jingyang Yuan, Jingyuan Cheng, Jingzi Zhou, Jinhua Zhu, Jiping Yu, Joseph Sun, Jun Ran, Junguang Jiang, Junjie Qiu, Junlong Li, Junmin Zheng, Junxiao Song, Kai Dong, Kaige Gao, Kang Guan, Kexing Zhou, Kezhao Huang, Kuai Yu, Lean Wang, Lecong Zhang, Lei Wang, Leyi Xia, Li Zhang, Liang Zhao, Lihua Guo, Lingxiao Luo, Linwang Ma, Linyan Zhu, Litong Wang, Liyu Cai, Liyue Zhang, Longhao Chen, MS Di, MY Xu, Max Mei, Miaojun Wang, Mingchuan Zhang, Minghua Zhang, Minghui Tang, Mingming Li, Mingxu Zhou, Minmin Han, Ning Wang, Panpan Huang, Panpan Wang, Peixin Cong, Peiyi Wang, Peng Zhang, Qiancheng Wang, Qihao Zhu, Qingyang Li, Qinyu Chen, Qiushi Du, Qiwei Jiang, Rui Tian, Ruifan Xu, Ruijie Lu, Ruiling Xu, Ruiqi Ge, Ruisong Zhang, Ruizhe Pan, Runji Wang, Runqian Chen, Runqiu Yin, Runxin Xu, Ruomeng Shen, Ruoyu Zhang, Ruyi Chen, SH Liu, Shanghao Lu, Shangmian Sun, Shangyan Zhou, Shanhuang Chen, Shaofei Cai, Shaoheng Nie, Shaoqing Wu, Shaoyuan Chen, Shengding Hu, Shengyu Liu, Shiqiang Hu, Shirong Ma, Shiyu Wang, Shuiping Yu, Shunfeng Zhou, Shuting Pan, Shuying Yu, Songyang Zhou, Tao Ni, Tao Yun, Tian Jin, Tian Pei, Tian Ye, Tianle Lin, Tianran Ji, Tianyi Cui, Tianyuan Yue, Tingting Yu, Tun Wang, W Zhang, WL Xiao, Wangding Zeng, Wei An, Weilin Zhao, Wen Liu, Wenfeng Liang, Wenjie Pang, Wenjing Luo, Wenjing Yao, Wenjun Gao, Wenkai Yang, Wenlve Huang, Wenqing Hou, Wentao Zhang, Wenting Ma, Xi Gao, Xiang He, Xiangwen Wang, Xianzu Wang, Xiao Bi, Xiaodong Liu, Xiaohan Wang, Xiaokang Chen, Xiaokang Zhang, Xiaotao Nie, Xiaowen Sun, Xiaoxiang Wang, Xin Cheng, Xin Liu, Xin Xie, Xingchao Liu, Xingchen Liu, Xingkai Yu, Xingyou Li, Xinyu Yang, Xinyu Zhang, Xu Chen, Xuanyu Wang, Xuecheng Su, Xueyin Chen, Xuheng Lin, Xuwei Fu, YC Yan, YQ Wang, YW Ma, Yanfeng Luo, Yang Zhang, Yanhong Xu, Yanru Ma, Yanwen Huang, Yao Li, Yao Li, Yao Xu, Yao Zhao, Yaofeng Sun, Yaohui Wang, Yi Qian, Yi Shao, Yi Yu, Yichao Zhang, Yifan Ding, Yifan Shi, Yijia Wu, Yiliang Xiong, Yiling Ma, Ying He, Ying Tang, Ying Zhou, Yingjia Luo, Yinmin Zhong, Yishi Piao, Yisong Wang, Yixiang Zhang, Yixiao Chen, Yixuan Tan, Yixuan Wei, Yiyang Ma, Yiyuan Liu, Yonglun Yang, Yongqiang Guo, Yongtong Wu, Yu Wu, YuKun Li, Yuan Cheng, Yuan Ou, Yuanfan Xu, Yuanhao 11 Preprint Li, Yuduan Wang, Yuehan Yang, Yuer Xu, Yuhan Wu, Yuhao Meng, Yuheng Zou, Yukun Zha, Yunfan Xiong, Yupeng Chen, Yuping Lin, Yuqian Cao, Yuqian Wang, Yushun Zhang, Yuting Yan, Yutong Lin, Yuxian Gu, Yuxiang Luo, Yuxiang You, Yuxuan Liu, Yuxuan Zhou, Yuyang Zhou, Yuzhen Huang, ZF Wu, Zehao Wang, Zehua Zhao, Zehui Ren, Zekai Zhang, Zhangli Sha, Zhe Fu, Zhe Ju, Zhean Xu, Zhenda Xie, Zhengyan Zhang, Zheren Gao, Zhewen Hao, Zhibin Gou, Zhicheng Ma, Zhigang Yan, Zhihong Shao, Zhixian Huang, Zhixuan Chen, Zhiyu Wu, Zhizhou Ren, Zhongyu Wu, Zhuoshu Li, Zhuping Zhang, Zian Xu, Zihao Wang, Zihua Qu, Zihui Gu, Zijia Zhu, Zilin Li, Zipeng Zhang, Ziwei Xie, Ziyi Gao, Ziyi Wan, Zizheng Pan, and Zongqing Yao. Deepseek-v4: Towards highly efficient million-token context intelligence, 2026. URL 
+
+https://arxiv.org/abs/2606.19348 .Muhammad ElNokrashy, Badr AlKhamissi, and Mona Diab. Depth-wise attention (dwatt): Alayer fusion method for data-efficient classification, 2024. URL https://arxiv.org/abs/ 2209.15168 .Yanwen Fang, Yuxi Cai, Jintai Chen, Jingyu Zhao, Guangjian Tian, and Guodong Li. Cross-layer retrospective retrieving via layer attention, 2023. URL https://arxiv.org/abs/2302. 03985 .William Fedus, Barret Zoph, and Noam Shazeer. Switch transformers: Scaling to trillion parameter models with simple and efficient sparsity. Journal of Machine Learning Research , 23(120):1–39, 2022. URL http://jmlr.org/papers/v23/21-0998.html .Leo Gao, Jonathan Tow, Baber Abbasi, Stella Biderman, Sid Black, Anthony DiPofi, Charles Fos-ter, Laurence Golding, Jeffrey Hsu, Alain Le Noac’h, Haonan Li, Kyle McDonell, Niklas Muen-nighoff, Chris Ociepa, Jason Phang, Laria Reynolds, Hailey Schoelkopf, Aviya Skowron, Lintang Sutawika, Eric Tang, Anish Thite, Ben Wang, Kevin Wang, and Andy Zou. The language model evaluation harness, 07 2024. URL https://zenodo.org/records/12608602 .Gleb Gerasimov, Yaroslav Aksenov, Nikita Balagansky, Viacheslav Sinii, and Daniil Gavrilov. You do not fully utilize transformer’s representation capacity, 2025. URL https://arxiv.org/ abs/2502.09245 .Aidan N. Gomez, Mengye Ren, Raquel Urtasun, and Roger B. Grosse. The reversible residual network: Backpropagation without storing activations, 2017. URL https://arxiv.org/ abs/1707.04585 .Dirk Groeneveld, Iz Beltagy, Evan Walsh, Akshita Bhagia, Rodney Kinney, Oyvind Tafjord, Ananya Jha, Hamish Ivison, Ian Magnusson, Yizhong Wang, Shane Arora, David Atkinson, Russell Au-thur, Khyathi Chandu, Arman Cohan, Jennifer Dumas, Yanai Elazar, Yuling Gu, Jack Hessel, Tushar Khot, William Merrill, Jacob Morrison, Niklas Muennighoff, Aakanksha Naik, Crys-tal Nam, Matthew Peters, Valentina Pyatkin, Abhilasha Ravichander, Dustin Schwenk, Saurabh Shah, William Smith, Emma Strubell, Nishant Subramani, Mitchell Wortsman, Pradeep Dasigi, Nathan Lambert, Kyle Richardson, Luke Zettlemoyer, Jesse Dodge, Kyle Lo, Luca Soldaini, Noah Smith, and Hannaneh Hajishirzi. OLMo: Accelerating the science of language models. In Lun-Wei Ku, Andre Martins, and Vivek Srikumar (eds.), Proceedings of the 62nd Annual Meet-ing of the Association for Computational Linguistics (Volume 1: Long Papers) , pp. 15789–15809, Bangkok, Thailand, August 2024. Association for Computational Linguistics. doi: 10.18653/v1/ 2024.acl-long.841. URL https://aclanthology.org/2024.acl-long.841/ .Albert Gu, Karan Goel, and Christopher R´ e. Efficiently modeling long sequences with structured state spaces, 2022. URL https://arxiv.org/abs/2111.00396 .Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep Residual Learning for Image Recognition . In 2016 IEEE Conference on Computer Vision and Pattern Recognition (CVPR) ,pp. 770–778, Los Alamitos, CA, USA, June 2016. IEEE Computer Society. doi: 10.1109/CVPR. 2016.90. URL https://doi.ieeecomputersociety.org/10.1109/CVPR.2016. 90 .Mike Heddes, Adel Javanmard, Kyriakos Axiotis, Gang Fu, Mohammadhossein Bateni, and Vahab Mirrokni. Deepcrossattention: Supercharging transformer residual connections. In Forty-second International Conference on Machine Learning , 2025. URL https://openreview.net/ forum?id=j3JBfFnGYh .12 Preprint Angelos Katharopoulos, Apoorv Vyas, Nikolaos Pappas, and Franc ¸ois Fleuret. Transformers are RNNs: Fast autoregressive transformers with linear attention. In Hal Daum´ e III and Aarti Singh (eds.), Proceedings of the 37th International Conference on Machine Learning , volume 119 of 
+
+Proceedings of Machine Learning Research , pp. 5156–5165. PMLR, 13–18 Jul 2020. URL 
+
+https://proceedings.mlr.press/v119/katharopoulos20a.html .Kimi Team, Yu Zhang, Zongyu Lin, Xingcheng Yao, Jiaxi Hu, Fanqing Meng, Chengyin Liu, Xin Men, Songlin Yang, Zhiyuan Li, et al. Kimi linear: An expressive, efficient attention architecture. 
+
+arXiv preprint arXiv:2510.26692 , 2025. Kimi Team, Tongtong Bai, Yifan Bai, Yiping Bao, M. C., Jianfeng Cai, Xinyuan Cai, Peizhou Cao, Yuxuan Cao, Ziwei Chai, Y. Charles, H. S. Che, Guanduo Chen, Guangyu Chen, Guanzheng Chen, Huarong Chen, Jia Chen, Jianlong Chen, Jun Chen, Kexin Chen, Peng Chen, Ruijue Chen, Wentao Chen, Xin Chen, Yang Chen, Yanru Chen, Yifei Chen, Yingjiang Chen, Yuankun Chen, Yujie Chen, Yutian Chen, Zhirong Chen, Dazhi Cheng, Yean Cheng, Jialei Cui, Jingbing Cui, Anqi Dai, Jiaqi Deng, Hao Ding, Rui Ding, Shaofeng Ding, Mengfan Dong, Mengnan Dong, Yuhao Dong, Yuxin Dong, Angang Du, Chenzhuang Du, Dikang Du, Jusen Du, Yulun Du, Yu Fan, Jing Feng, Qiulin Feng, Yichen Feng, Kelin Fu, Qiang Fu, Fuxuan Gao, Hongcheng Gao, Jingyue Gao, Tong Gao, Weijia Gao, Shangyi Geng, Jie Gong, Linhu Gong, Shengao Gong, Xiaochen Gong, Qizheng Gu, Yicheng Gu, Shuhao Guan, Haiqing Guo, Shiqi Guo, Xiang Guo, Zhengyan Guo, Beixi Hao, Wenxin Hao, Xiaoru Hao, Dailan He, Haotian He, Lehan He, Qi He, Weiran He, Xinran He, Xinyi He, Yibo He, Yunjia He, Chao Hong, Tiange Hong, Hao Hu, Jiaxi Hu, Ruikun Hu, Weiming Hu, Yangyang Hu, Zhenxing Hu, Liang Hua, Jinbin Huang, Ke Huang, Ruiyuan Huang, Siying Huang, Weixiao Huang, Yan Huang, Zhengjie Huang, Zhiqi Huang, Yulong Hui, Chaobo Jia, Yutong Jiang, Zhejun Jiang, Zuoyou Jiang, Wenyi Jin, Xinyi Jin, Yu Jing, Huanjun Kong, Guokun Lai, Aidi Li, Cheng Li, Chengyuan Li, Cong Li, Fang Li, Guanyu Li, Haoyang Li, Jia Li, Junxiong Li, Lei Li, Letian Li, Lincan Li, Weihong Li, Wentao Li, Xintong Li, Yang Li, Yishen Li, Yiwei Li, Yuxiao Li, Zhaowei Li, Zhaoxi Li, Zheming Li, Zhengxiao Li, Zhiyuan Li, Jiawei Lin, Xiaohan Lin, Yibo Lin, Zichao Lin, Ziyan Lin, Bill Liu, Boxiao Liu, Chuan Liu, Liang Liu, Shaowei Liu, Shudong Liu, Shuran Liu, Tianwei Liu, Weizhou Liu, Yangyang Liu, Yanming Liu, Yibo Liu, Yipeng Liu, Zhengying Liu, Zhiheng Liu, Enzhe Lu, Haoyu Lu, Lin-qiang Lu, Tingzhan Lu, Zhiyuan Lu, Aotian Luo, G. Luo, Junyu Luo, Yifan Luo, B. Lyu, Wen-zhou Lyu, Shaoguang Mao, Yuan Mei, Xin Men, Minqing Ni, Yixuan Niu, Siyuan Pan, Shujun Peng, Zhangyang Qi, Ruoyu Qin, ZeChao Qin, Zeyu Qin, Haiquan Qiu, Jianxin Qiu, Jiezhong Qiu, Bowen Qu, Yuhao Qu, Zeyu Shang, Youbo Shao, Han Shen, Jincheng Shi, Juanfeng Shi, Lidong Shi, Shengyuan Shi, Wingchun Siu, Pengwei Song, Xiaoxi Song, Jianlin Su, Yunfeng Su, Zhaochen Su, Lin Sui, Jingsong Sun, Junyao Sun, Shaoning Sun, Shuzhe Sun, Tongyu Sun, Yujun Sun, Yunpeng Tai, Chuning Tang, Heyi Tang, Sirui Tang, Zecheng Tang, Chaoran Tian, Rongpeng Tian, Yu Tian, Wei Tu, Chensi Wang, Chuang Wang, Chunjie Wang, Dinglu Wang, Feng Wang, Hailong Wang, Haiming Wang, Hao Wang, Hao Wang, Huaqing Wang, Hui Wang, Jiayi Wang, Jinglong Wang, Jinhong Wang, Jiuzheng Wang, Linian Wang, Shaobo Wang, Shen-zhi Wang, Shuyi Wang, Si Wang, Siyuan Wang, Tianfu Wang, Wenjue Wang, Xingran Wang, Xinmei Wang, Xinyuan Wang, Xusheng Wang, Yalin Wang, Yangkun Wang, Yao Wang, Yaoyu Wang, Yejie Wang, Yiqin Wang, Yucheng Wang, Yuzhi Wang, Zhaoji Wang, Zhaowei Wang, Zhengtao Wang, Zhenhao Wang, Zhongsheng Wang, Zifan Wang, Chu Wei, Ming Wei, Shouxin Wei, Zichen Wen, Fan Wu, Haoning Wu, Rucong Wu, Wenhao Wu, Xiaoxue Wu, Yingcong Wu, Yongqi Wu, Yuxin Wu, Zijian Wu, Xinglang Xian, Chenxuan Xiang, Yuye Xiang, Bocheng Xiao, Chenjun Xiao, Xin Xiao, Jin Xie, Xiaotong Xie, Yifeng Xie, Zhe Xie, Bowei Xing, Yiming Xiong, Baosheng Xu, Boyu Xu, Jiale Xu, Jianfan Xu, Jing Xu, Jinjing Xu, L. H. Xu, Qing-tao Xu, Shuyao Xu, Suting Xu, Tiantian Xu, Tianxiang Xu, Weixin Xu, Xinran Xu, Yangchuan Xu, Ye Xu, Yueni Xu, Ziyao Xu, Haonan Xue, Junjie Yan, Yaoyao Yan, Fan Yang, Guangyao Yang, Hao Yang, Junwei Yang, Ruoyu Yang, Wenjie Yang, Xiaofei Yang, Xinyu Yang, Yi Yang, Yiling Yang, Ying Yang, Yuchen Yang, Zhen Yang, Zhilin Yang, Zian Yang, Zuhao Yang, Hao-tian Yao, Dan Ye, Haoran Ye, Wenjie Ye, Zhanbo Ye, Bohong Yin, Haoxiang Yin, Xietong Yin, Chengzhen Yu, Haozhen Yu, Longhui Yu, Shengnan Yu, Shuying Yu, Tianxiang Yu, Enming Yuan, Mengjie Yuan, Tongtian Yue, Wei Yue, Yang Yue, Dunyuan Zha, Haobing Zhan, B. H. Zhang, Dehao Zhang, Fei Zhang, Hao Zhang, Haoyuan Zhang, Huanyu Zhang, Jiapei Zhang, Jiaxuan Zhang, Jin Zhang, Kaiyi Zhang, Miaozhen Zhang, Puqi Zhang, Qinglei Zhang, Rong Zhang, Rui Zhang, Shaoshuai Zhang, Shiyi Zhang, Xiaobin Zhang, Xiaoyun Zhang, Y. Zhang, Yangkun Zhang, Ye Zhang, Yichi Zhang, Yikun Zhang, Yizhi Zhang, Yongting Zhang, Yu Zhang, 13 Preprint Yutao Zhang, Yutong Zhang, Zheng Zhang, Zijing Zhang, Bin Zhao, Chenguang Zhao, Feifan Zhao, Jinglun Zhao, Jinxiang Zhao, Shuai Zhao, Wenshuo Zhao, Xiangyu Zhao, Xuanle Zhao, Yikai Zhao, Zijia Zhao, Haozhi Zheng, Huabin Zheng, Ruihan Zheng, Shaojie Zheng, Tengyang Zheng, Haofeng Zhong, Lei Zhong, Longguang Zhong, M. Zhou, Qiankang Zhou, Runjie Zhou, Ruozhang Zhou, Xinyu Zhou, Yiqiao Zhou, Zaida Zhou, Jinguo Zhu, Liya Zhu, Xinhao Zhu, Yangjunfeng Zhu, Yuxuan Zhu, Zhen Zhu, Chen Zhuang, Weiyu Zhuang, and Xinxing Zu. Kimi k3: Open frontier intelligence, 2026a. URL https://arxiv.org/abs/2607.24653 .Kimi Team, Guangyu Chen, Yu Zhang, Jianlin Su, Weixin Xu, Siyuan Pan, Yaoyu Wang, Yucheng Wang, Guanduo Chen, Bohong Yin, Yutian Chen, Junjie Yan, Ming Wei, Y. Zhang, Fanqing Meng, Chao Hong, Xiaotong Xie, Shaowei Liu, Enzhe Lu, Yunpeng Tai, Yanru Chen, Xin Men, Haiqing Guo, Y. Charles, Haoyu Lu, Lin Sui, Jinguo Zhu, Zaida Zhou, Weiran He, Weixiao Huang, Xinran Xu, Yuzhi Wang, Guokun Lai, Yulun Du, Yuxin Wu, Zhilin Yang, and Xinyu Zhou. Attention residuals, 2026b. URL https://arxiv.org/abs/2603.15031 .Teuvo Kohonen. Correlation matrix memories. IEEE Transactions on Computers , C-21(4):353–359, 1972. doi: 10.1109/TC.1972.5008975. Tianyu Li, Dongchen Han, Zixuan Cao, Haofeng Huang, Mengyu Zhou, Ming Chen, Erchao Zhao, Xiaoxi Jiang, Guanjun Jiang, and Gao Huang. Siamesenorm: Breaking the barrier to reconciling pre/post-norm, 2026. URL https://arxiv.org/abs/2602.08064 .Ze-Wei Liou and Tri Dao. ReplaySSM: Cache SSM inputs, not state. https://tridao.me/ blog/2026/replayssm/ , June 2026. Blog post. Cheng Luo, Zefan Cai, and Junjie Hu. Multi-head attention residuals, 2026. URL https:// arxiv.org/abs/2607.27230 .Matthew MacKay, Paul Vicol, Jimmy Ba, and Roger B Grosse. Reversible recurrent neu-ral networks. In S. Bengio, H. Wallach, H. Larochelle, K. Grauman, N. Cesa-Bianchi, and R. Garnett (eds.), Advances in Neural Information Processing Systems , volume 31. Curran Associates, Inc., 2018. URL https://proceedings.neurips.cc/paper_files/ paper/2018/file/4ff6fa96179cdc2838e8d8ce64cd10a7-Paper.pdf .Brian Mak and Jeffrey Flanigan. Residual matrix transformers: Scaling the size of the residual stream, 2025. URL https://arxiv.org/abs/2506.22696 .Stephen Merity, Caiming Xiong, James Bradbury, and Richard Socher. Pointer sentinel mixture models, 2016. URL https://arxiv.org/abs/1609.07843 .Todor Mihaylov, Peter Clark, Tushar Khot, and Ashish Sabharwal. Can a suit of armor conduct electricity? a new dataset for open book question answering, 2018. URL https://arxiv. org/abs/1809.02789 .Matteo Pagliardini, Amirkeivan Mohtashami, Francois Fleuret, and Martin Jaggi. Denseformer: enhancing information flow in transformers via depth weighted averaging. In Proceedings of the 38th International Conference on Neural Information Processing Systems , NIPS ’24, Red Hook, NY, USA, 2024. Curran Associates Inc. ISBN 9798331314385. Denis Paperno, Germ´ an Kruszewski, Angeliki Lazaridou, Quan Ngoc Pham, Raffaella Bernardi, Sandro Pezzelle, Marco Baroni, Gemma Boleda, and Raquel Fern´ andez. The lambada dataset: Word prediction requiring a broad discourse context, 2016. URL https://arxiv.org/ abs/1606.06031 .Guilherme Penedo, Hynek Kydl´ ıˇ cek, Loubna Ben allal, Anton Lozhkov, Margaret Mitchell, Colin Raffel, Leandro Von Werra, and Thomas Wolf. The fineweb datasets: Decanting the web for the finest text data at scale, 2024. URL https://arxiv.org/abs/2406.17557 .Zihan Qiu, Zekun Wang, Xiao Li, Yanpeng Li, Yang Xu, Yixuan Wang, Huaqing Zhang, Rui Men, Bochao Mao, Chengruidong Zhang, Fan Zhou, Hao Luo, Haofeng Huang, Haoran Lian, Haoyan Huang, Hongqing Chen, Jianwei Zhang, Jing Xu, Junjie Wang, Langshi Chen, Liangyu Wang, Linlang Jiang, Man Yuan, Minmin Sun, Peng Jin, Siqi Zhang, Siyu Wang, Xingzhang Ren, Yakai Wang, Yi Zhang, Yiming Dong, Yizhong Cao, Yubo Ma, Yunfei Mao, Bo Zheng, and Dayiheng 14 Preprint Liu. On the design of qwen3.8-next architecture: Evaluation, efficiency, and training stability, 2026. URL https://arxiv.org/abs/2608.30320 .Keisuke Sakaguchi, Ronan Le Bras, Chandra Bhagavatula, and Yejin Choi. Winogrande: An adver-sarial winograd schema challenge at scale, 2019. URL https://arxiv.org/abs/1907. 10641 .Imanol Schlag, Kazuki Irie, and J¨ urgen Schmidhuber. Linear transformers are secretly fast weight programmers. In Marina Meila and Tong Zhang (eds.), Proceedings of the 38th International Conference on Machine Learning , volume 139 of Proceedings of Machine Learning Research , pp. 9355–9366. PMLR, 18–24 Jul 2021. URL https://proceedings.mlr.press/v139/ schlag21a.html .Noam Shazeer. Glu variants improve transformer, 2020. URL https://arxiv.org/abs/ 2002.05202 .Mohammad Shoeybi, Mostofa Patwary, Raul Puri, Patrick LeGresley, Jared Casper, and Bryan Catanzaro. Megatron-lm: Training multi-billion parameter language models using model par-allelism, 2020. URL https://arxiv.org/abs/1909.08053 .Julien Siems, Timur Carstensen, Arber Zela, Frank Hutter, Massimiliano Pontil, and Riccardo Grazzi. Deltaproduct: Improving state-tracking in linear rnns via householder products, 2025. URL https://arxiv.org/abs/2502.10297 .Richard Sinkhorn and Paul Knopp. Concerning nonnegative matrices and doubly stochastic matri-ces. Pacific Journal of Mathematics , 21(2):343–348, 1967. Jonathan Su. Low-rank attention residuals, 2026. URL https://arxiv.org/abs/2607. 09694 .Team OLMo, Pete Walsh, Luca Soldaini, Dirk Groeneveld, Kyle Lo, Shane Arora, Akshita Bha-gia, Yuling Gu, Shengyi Huang, Matt Jordan, Nathan Lambert, Dustin Schwenk, Oyvind Tafjord, Taira Anderson, David Atkinson, Faeze Brahman, Christopher Clark, Pradeep Dasigi, Nouha Dziri, Michal Guerquin, Hamish Ivison, Pang Wei Koh, Jiacheng Liu, Saumya Malik, William Merrill, Lester James V. Miranda, Jacob Morrison, Tyler Murray, Crystal Nam, Valentina Py-atkin, Aman Rangapur, Michael Schmitz, Sam Skjonsberg, David Wadden, Christopher Wilhelm, Michael Wilson, Luke Zettlemoyer, Ali Farhadi, Noah A. Smith, and Hannaneh Hajishirzi. 2OLMo 2 Furious, 2024. URL https://arxiv.org/abs/2501.00656 .Hugo Touvron, Thibaut Lavril, Gautier Izacard, Xavier Martinet, Marie-Anne Lachaux, Timoth´ ee Lacroix, Baptiste Rozi` ere, Naman Goyal, Eric Hambro, Faisal Azhar, Aurelien Rodriguez, Ar-mand Joulin, Edouard Grave, and Guillaume Lample. Llama: Open and efficient foundation language models, 2023. URL https://arxiv.org/abs/2302.13971 .Neehal Tumma, Noel Loo, and Daniela Rus. Preconditioned deltanet: Curvature-aware sequence modeling for linear recurrences, 2026. URL https://arxiv.org/abs/2604.21100 .Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, and Illia Polosukhin. Attention is all you need, 2023. URL https://arxiv. org/abs/1706.03762 .Johannes von Oswald, Maximilian Schlegel, Alexander Meulemans, Seijin Kobayashi, Eyvind Niklasson, Nicolas Zucchet, Nino Scherrer, Nolan Miller, Mark Sandler, Blaise Ag¨ uera y Ar-cas, Max Vladymyrov, Razvan Pascanu, and Jo˜ ao Sacramento. Uncovering mesa-optimization algorithms in transformers, 2024. URL https://arxiv.org/abs/2309.05858 .Johannes von Oswald, Nino Scherrer, Seijin Kobayashi, Luca Versari, Songlin Yang, Sarthak Mittal, Maximilian Schlegel, Kaitlin Maile, Yanick Schimpf, Oliver Sieberling, Alexander Meulemans, Rif A. Saurous, Guillaume Lajoie, Charlotte Frenkel, Razvan Pascanu, Blaise Ag¨ uera y Arcas, and Jo˜ ao Sacramento. Mesanet: Sequence modeling by locally optimal test-time training, 2026. URL https://arxiv.org/abs/2506.05233 .Ke Alexander Wang, Jiaxin Shi, and Emily B Fox. Test-time regression: a unifying framework for designing sequence models with associative memory. arXiv preprint arXiv:2501.12352 , 2025. 15 Preprint Keyu Wang, Yangyi Huang, Jiale Kang, David Gonz´ alez-Mart´ ınez, Weiyang Liu, and Shiwei Liu. Depthbench: Measuring how residual connections enable more computational depth, 2026. URL 
+
+https://arxiv.org/abs/2609.32534 .Bernard Widrow and Marcian E. Hoff. Adaptive switching circuits. In IRE WESCON Convention Record , pp. 96–104, Los Angeles, CA, USA, August 1960. Part 4. Da Xiao, Qingye Meng, Shengping Li, and Xingyuan Yuan. MUDDFormer: Breaking residual bot-tlenecks in transformers via multiway dynamic dense connections. In Forty-second International Conference on Machine Learning , 2025. URL https://openreview.net/forum?id= qkhgzNiEdj .Zhenda Xie, Yixuan Wei, Huanqi Cao, Chenggang Zhao, Chengqi Deng, Jiashi Li, Damai Dai, Huazuo Gao, Mingyu Xu, Kuai Yu, Liang Zhao, Shangyan Zhou, Zhean Xu, Zhengyan Zhang, Wangding Zeng, Shengding Hu, Yuqing Wang, Jingyang Yuan, Lean Wang, and Wenfeng Liang. mHC: Manifold-constrained hyper-connections. In Forty-third International Conference on Ma-chine Learning , 2026. URL https://openreview.net/forum?id=mDhyxu8WRb .Ruibin Xiong, Yunchang Yang, Di He, Kai Zheng, Shuxin Zheng, Chen Xing, Huishuai Zhang, Yanyan Lan, Liwei Wang, and Tieyan Liu. On layer normalization in the transformer architecture. In Hal Daum´ e III and Aarti Singh (eds.), Proceedings of the 37th International Conference on Machine Learning , volume 119 of Proceedings of Machine Learning Research , pp. 10524–10533. PMLR, 13–18 Jul 2020. URL https://proceedings.mlr.press/v119/xiong20b. html .An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, Chujie Zheng, Dayiheng Liu, Fan Zhou, Fei Huang, Feng Hu, Hao Ge, Haoran Wei, Huan Lin, Jialong Tang, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jing Zhou, Jingren Zhou, Junyang Lin, Kai Dang, Keqin Bao, Kexin Yang, Le Yu, Lianghao Deng, Mei Li, Mingfeng Xue, Mingze Li, Pei Zhang, Peng Wang, Qin Zhu, Rui Men, Ruize Gao, Shixuan Liu, Shuang Luo, Tianhao Li, Tianyi Tang, Wenbiao Yin, Xingzhang Ren, Xinyu Wang, Xinyu Zhang, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yinger Zhang, Yu Wan, Yuqiong Liu, Zekun Wang, Zeyu Cui, Zhenru Zhang, Zhipeng Zhou, and Zihan Qiu. Qwen3 technical report, 2025a. URL https://arxiv.org/abs/2505.09388 .Songlin Yang and Yu Zhang. Fla: A triton-based library for hardware-efficient implementations of linear attention mechanism, January 2024. URL https://github.com/fla-org/ flash-linear-attention .Songlin Yang, Bailin Wang, Yu Zhang, Yikang Shen, and Yoon Kim. Parallelizing linear transform-ers with the delta rule over sequence length. Advances in neural information processing systems ,37:115491–115522, 2024. Songlin Yang, Jan Kautz, and Ali Hatamizadeh. Gated delta networks: Improving mamba2 with delta rule. In International Conference on Learning Representations , volume 2025, pp. 29687– 29707, 2025b. Yongyi Yang and Jianyang Gao. mhc-lite: You don’t need 20 sinkhorn-knopp iterations, 2026. URL 
+
+https://arxiv.org/abs/2601.05732 .Rowan Zellers, Ari Holtzman, Yonatan Bisk, Ali Farhadi, and Yejin Choi. Hellaswag: Can a ma-chine really finish your sentence?, 2019. URL https://arxiv.org/abs/1905.07830 .Biao Zhang and Rico Sennrich. Root mean square layer normalization. CoRR , abs/1910.07467, 2019. URL http://arxiv.org/abs/1910.07467 .Xiangdong Zhang, Xiaohan Qin, Sunan Zou, Tuo Dai, Xiaoming Shi, Huaijin Wu, Yebin Yang, Zhuo Xia, Shaofeng Zhang, Lin Yao, Yuliang Liu, Yu Cheng, and Junchi Yan. xHC: Expanded hyper-connections, 2026a. URL https://arxiv.org/abs/2607.14530 .Yifan Zhang, Yifeng Liu, Mengdi Wang, and Quanquan Gu. Deep delta learning, 2026b. URL 
+
+https://arxiv.org/abs/2601.00417 .16 Preprint Defa Zhu, Hongzhi Huang, Zihao Huang, Yutao Zeng, Yunyao Mao, Banggu Wu, Qiyang Min, and Xun Zhou. Hyper-connections. In The Thirteenth International Conference on Learning Representations , 2025. URL https://openreview.net/forum?id=9FqARW7dwB .
+
+## A EXTENDED RELATED WORK 
+
+Our work sits at the intersection of two lines of research: mechanisms that enrich information flow across transformer depth, particularly through depth mixing, and associative memory mechanisms developed primarily for sequence modeling. We discuss both connections below. A.1 INFORMATION FLOW ACROSS TRANSFORMER DEPTH 
+
+Enriching the residual representation. The standard transformer propagates information across depth through a single additive residual stream. A number of works have explored richer alter-natives to this formulation. SiameseNorm (Li et al., 2026) maintains two streams that comple-ment each other with different normalization approaches. Moreover, residual matrix transformers (Mak & Flanigan, 2025) propagate a matrix-valued residual representation. Hyper-Connections (Zhu et al., 2025) introduce multiple residual channels along with learned mappings between them, and Manifold-Constrained Hyper-Connections (mHC) (Xie et al., 2026) (and its follow-up mHC-lite (Yang & Gao, 2026)) enhance their stability. xHC (Zhang et al., 2026a) expands the residual stream further, updating only a subset of its streams in each layer and enriching what each layer writes back. Related approaches include Deep Delta Learning (Zhang et al., 2026b), which uses a delta-like rule to update a (possibly matrix-sized) residual stream, and other architectures that increase the capacity or flexibility of the representations propagated between layers. These methods modify the residual representation itself. LDM instead preserves the standard addi-tive residual stream and introduces a separate recurrent associative state. 
+
+Explicit depth mixing. A second family of methods directly combines representations produced at different depths. We refer to this general class of mechanisms as explicit depth mixing. Unlike ordi-nary residual accumulation, depth mixing methods allow the computation at one layer to selectively incorporate representations produced at earlier layers. Several works have explored representation aggregation across layers. DenseFormer (Pagliardini et al., 2024) combines preceding hidden representations using learned depth-dependent weights. Cross-Layer Retrospective Retrieving via Layer Attention (Fang et al., 2023) uses attention to re-trieve representations from earlier layers. Although this work considers a formulation similar to our memory, its final methods are different from ours. DeepCrossAttention (Heddes et al., 2025) consid-ers richer cross-layer mixing, including input-dependent mechanisms. MUDDFormer (Xiao et al., 2025) similarly constructs layer inputs by dynamically combining representations across depth, and LIMe (Gerasimov et al., 2025) also revisits the use of intermediate transformer representations. Ear-lier work also introduced Vertical Attention (AlKhamissi et al., 2021) and Depth-Wise Attention (ElNokrashy et al., 2024), likewise exploring attention or fusion across network layers. Most closely related to our framing, Attention Residuals (AttnRes) (Kimi Team et al., 2026b) re-places fixed residual accumulation with softmax attention over representations from the embedding and the preceding layers. Figure 2b illustrates Full AttnRes. Its blockwise variant applies the same operation to coarser groups of layers. Subsequent work has considered alternative parameterizations of attention-based residual mixing (Su, 2026; Luo et al., 2026). LDM differs from these approaches in how previous depth representations are made available. Ex-plicit depth mixing mechanisms retain or otherwise expose a collection of previous representations and directly form a mixture over them. LDM instead recurrently compresses key–value associations from the embedding and the previous layers into a fixed-size state. A later layer retrieves from this state using a content-dependent query. As shown in the main text, the simplest LDM recurrence can therefore be interpreted as implementing linearized attention over depth implicitly , without explicitly materializing the collection of previous depth representations. 
+
+Use in large-scale runs. Richer mechanisms for information propagation across depth have also be-gun to appear in large-scale language models. Recent models, including DeepSeek-V4 (DeepSeek-AI et al., 2026), Kimi K3 (Kimi Team et al., 2026a), and Qwen3.8-Flash-Next (Qiu et al., 2026), 17 Preprint incorporate variants of enriched residual or cross-layer routing mechanisms. This provides addi-tional evidence that modifying information flow across transformer depth works at large scale and appears to be a promising scaling axis. A.2 ASSOCIATIVE MEMORIES , L INEAR ATTENTION AND REGRESSION 
+
+Our second connection is to the literature on linear attention and associative memory. A linear associative memory (Kohonen, 1972) stores key–value associations through a matrix-valued state and retrieves values using a query. Under the simplest outer product update, this recurrence is informally equivalent to unnormalized linear attention (Katharopoulos et al., 2020; Schlag et al., 2021). Recent work has further interpreted such memories as online regression problems in the context of sequence mixing. In particular, Test-Time Regression (Wang et al., 2025) provides a regression per-spective on sequence models with associative memory. From this view, delta rule models (Schlag et al., 2021; Yang et al., 2024; 2025b; Kimi Team et al., 2025), whose update goes back to the Widrow–Hoff rule (Widrow & Hoff, 1960), take one online gradient step on the regression ob-jective per token. DeltaProduct (Siems et al., 2025) takes several steps per token, and the later Preconditioned DeltaNet (Tumma et al., 2026) accounts for the curvature of the least squares loss with a (diagonal) preconditioner. Closely related ideas appear in work on mesa-optimization. The original MesaLayer (von Oswald et al., 2024) uses a recursive least squares update implemented through the Sherman–Morrison identity, maintaining the exact regression solution recurrently along the sequence axis. This recurrence is inherently sequential, which makes efficient sequence training challenging. To address this, subsequent MesaNet work (von Oswald et al., 2026) instead develops iterative solvers that permit efficient parallel training over the sequence dimension. LDM transfers this perspective from the sequence axis to the depth axis. Each layer gives a key– value observation, and the memory stream propagated through the network maintains a regression solution over representations produced by preceding layers. This distinction removes an important systems constraint. In particular, transformer layers are naturally evaluated sequentially in depth, so the memory update does not need to be parallelizable along that axis. We can therefore use a Sherman–Morrison rank-one recursive least squares update directly, obtaining the exact solution to the weighted depth regression objective described in the main text. We note, however, that using techniques like unwinding or windowing (Section 3.3) might have additional constraints. A.3 RELATION OF OUR HARDWARE -A WARE IMPLEMENTATION TO PAST WORK 
+
+During training, our hardware-aware implementation avoids storing intermediate states during the forward pass by “unwinding” the memory, as explained in Appendix F. Although different, this has some connections to past work. Reversible residual networks (Gomez et al., 2017) split the residual stream into two halves that update each other additively, so that the input of a layer can be recom-puted from its output and no activations have to be stored for the backward pass of “reversible” layers. Reversible recurrent networks (MacKay et al., 2018) use a similar technique along the se-quence axis to reconstruct earlier hidden states from later ones. Since forgetting makes their update not exactly invertible, they store the information it discards. Windowed writes also have a counterpart along the sequence axis, although only for inference, since training generally uses chunkwise-parallel algorithms. ReplaySSM (Liou & Dao, 2026) recently used a similar idea to speed up decoding in Mamba-2 and Gated DeltaNet by caching the most recent rank-one updates and writing the state back only when the cache is full. Our windowed writes apply the same idea across depth, during training as well as inference. 
+
+## B EXPERIMENTAL DETAILS 
+
+We train on the FineWeb-Edu dataset (Penedo et al., 2024). In particular, we train on (subsets of) the publicly available 100B token subset 1. For all experiments, data ordering is fixed for every baseline to ensure fairness. Validation loss is taken from a held-out shard of the 100B subset. 
+
+> 1https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu/viewer/ sample-100BT
+
+18 Preprint Table 4: Backbone configurations used in our experiments. The bottom rows list the parameters that each method adds to the backbone. 
+
+Configuration 400M Llama-like 1.5B Qwen-like 
+
+Backbone parameters 405.4M 1.512B Transformer blocks 24 28 Model width D 1,024 2,048 Attention type MHA GQA Query heads 16 16 Key/value heads 16 8Queries per KV head 1 2Head dimension 64 128 Query projection width 1,024 2,048 Key/value projection width 1,024 1,024 FFN type SwiGLU SwiGLU FFN intermediate width 2,736 6,144 Normalization Pre-RMSNorm Pre-RMSNorm RMSNorm ϵ 10 −6 10 −6
+
+Query/key normalization None RMSNorm RoPE base θ 10 4 10 6
+
+Maximum sequence length 2,048 2,048 Vocabulary size 50,280 50,280 Input/output embeddings Untied Tied Attention bias No No FFN bias No No Dropout 0 0Master/compute precision FP32/BF16 FP32/BF16 Initialization std. 0.02 0.02 
+
+Parameters added by the depth mixing method 
+
+AttnRes (Block or Full) 0.10M (0.02%) 0.23M (0.02%) mHC 4.94M (1.22%) 11.51M (0.76%) LDM 3.78M (0.93%) 16.25M (1.07%) LDM, Dk = 4 3.58M (0.88%) –
+
+Data is tokenized with OLMo-core’s GPT-NeoX Dolma v1.5 tokenizer (Groeneveld et al., 2024) (with a vocabulary size of 50,280). Documents are packed into sequences of 2,048 tokens. All models are trained with AdamW ( β1 = 0 .9, β2 = 0 .95 , ϵ = 10 −8, weight decay 0.1) and global gradient norm clipping at 1.0. RMSNorm gains are excluded from weight decay for all methods. We use a global batch of 512 sequences, i.e., 1,048,576 tokens per optimizer step. The learning rate follows a cosine schedule, decaying to 10% of its peak, with a linear warmup from 0 over the first 1,000 steps at 400M and 2,000 steps at 1.5B. The 400M models are trained for 47,684 steps (50.0B tokens) and the 1.5B models for 94,972 steps (99.6B tokens). B.1 ARCHITECTURE 
+
+For a matched comparison, all baselines use the same backbone configurations, and only the method-specific details vary. Details about our Llama-like and Qwen-like architectures can be found in Table 4. B.2 IMPLEMENTATION AND BASELINES 
+
+Our codebase is adapted from DepthBench (Wang et al., 2026) 2, which is itself based on OLMo-core (Team OLMo et al., 2024) 3. Each baseline is implemented in our codebase following its description. For some unspecified details, we used public conventions or tried different approaches in our initial explorations, which we describe below. 
+
+> 2
+
+https://github.com/keyu-wang-2002/DepthBench 
+
+> 3
+
+https://github.com/allenai/OLMo-core 
+
+19 Preprint 
+
+PreLN. We retain the standard OLMo-core pre-normalized transformer implementation. For the Qwen-like backbone, attention Q/K normalization is applied independently within each head. The same backbone normalization settings are used across methods. 
+
+AttnRes. We adapt FLA’s fused AttnRes implementation 4. We use zero-initialized depth queries as described in the original paper. Routing parameters follow the backbone’s mixed precision policy. Following the recommendations of Kimi Team et al. (2026b), for the block variant, we use eight depth blocks at 400M and seven at 1.5B. For the latter, we use seven so that every block contains whole transformer layers (in this case, this gives four per block). The RMSNorm used for the keys has a learnable gain but no bias, following popular implementations like FLA or Megatron (Shoeybi et al., 2020). We did not test removing it. The original paper does not specify whether the depth queries use weight decay. Decay pushes the queries towards zero and thus biases the mixing towards uniform weights. In preliminary experi-ments, both choices performed similarly, with a slight but consistent advantage for using decay for the queries. We hence use weight decay for the queries in our main runs. 
+
+mHC. We use DeepSeek’s official mHC implementation in TileKernels, 5 with four residual streams and 20 Sinkhorn iterations. We use their fused TileLang kernels for the three coefficient mappings and the two application kernels, along with their precision policy (TF32 controller projection, FP32 controller parameters and scalars, and BF16 residual streams), as well as their block-wise activa-tion recomputation, which stores one residual entry per Lr mHC layers and rebuilds the remaining widened streams during the backward pass. We use the block size described in the mHC paper, 
+
+Lr ≈ pN L/ (N + 2) = 6 .Following Xie et al. (2026), the controller projection is initialized to zero, and its biases are initial-ized as follows. First, the pre-layer mixing bias is −3 except for the layer’s selected stream, which is +3 , and the residual mixing bias is +3 on the diagonal and −3 elsewhere. The post-mapping bias is initialized to zero, and the selected stream of each connector cycles with the connector’s index modulo N . The learned logit scales are initialized to 0.01 . In some preliminary experiments where we used other initializations, this did not appear to impact performance. This detail appears to only be available in the ICML version of the paper. We exclude biases and logit scales from weight decay. Controller RMS normalization, pre-mixing sigmoid stabilization, and Sinkhorn stabilization use ϵ = 10 −6. We did not try ablating this. There are other details undisclosed in the mHC paper. First, in our implementation, the first layer expands the D-dimensional residual stream into an N × D-dimensional one by replicating it N
+
+times. This appears to be in line with other public implementations like Megatron and the official DeepSeek-V4 checkpoints, so we use it. Second, for the final layer, Megatron offers the option to use an average of the N channels to reduce it to a single vector; however, it also supports a final “head” that increases expressivity. The released DeepSeek-V4 (DeepSeek-AI et al., 2026) checkpoint also uses such a learnable head. In early experiments, we found that it had little effect on the training curves but seemed consistently equal to or better than the alternatives. Because of that, and to stay close to DeepSeek-V4, we use the learnable head. Its projection is initialized from N (0 , 0.02 2)
+
+(similar to the backbone’s matrices), its bias to zero, and its logit scale to 0.01 .
+
+LDM. Our ablations run on a more flexible implementation with no windowing. On the other hand, the main training results follow the implementation in Appendix F. In particular, we use state unwinding (Equation (9)) and windowed writes with a window size of E = 4 . The settings are those of Section 4: G = 16 groups, Dk = 8 (except for the Dk = 4 result at 400M scale), and H set to 32 at 400M and 64 at 1.5B scales, respectively. We do not use weight decay on the read gains, the gate biases, and the forgetting logits. The linear layers of the address networks (for queries, keys) are initialized in the same way as the backbone linear layers. Their gate heads start with zero weights and biases, so that g = ω = 1 at initialization. The read gains are initialized to one. The forgetting factors are sigmoids of learned logits and are initialized to 0.99 .
+
+> 4https://github.com/fla-org/flash-linear-attention/blob/ 02e270330b4fc5bb2fd738281b5d594bc89e6d5f/fla/ops/attnres/fused.py
+> 5https://github.com/deepseek-ai/TileKernels
+
+20 Preprint B.3 TRAINING 
+
+We use FSDP with FP32 master parameters and BF16 computation, with gradient reductions in FP32. For the 400M models, we use the equivalent of DDP (no sharding) but utilize the FSDP API to ensure an identical precision policy. 
+
+Hyperparameter tuning. To enable a fair comparison, we tune the learning rates of each baseline at both scales. We use a grid anchored at 10 −3, with candidates multiplied or divided by powers of two (e.g. 2.5 × 10 −4, 5 × 10 −4, 10 −3, 2 × 10 −3, 4 × 10 −3). For each baseline and scale, we run candidate learning rates until we find either three consecutive values, where the middle one has the lowest held-out loss, or two consecutive values whose held-out losses differ by less than 0.001 nats (in these cases, training and held-out validation losses often flip), and we select the value with the lowest held-out loss. The final checkpoint of the selected run is used for all evaluations. Other hyperparameters are kept fixed. The resulting sweeps are reported in Appendix D.1. B.4 EVALUATION 
+
+We evaluate the final checkpoint of each selected pretraining run with the lm-eval-harness 
+
+(Gao et al., 2024) in zero-shot mode, with a maximum length of 2,048 tokens. The suite includes ARC-Easy and ARC-Challenge (Clark et al., 2018), HellaSwag (Zellers et al., 2019), PIQA (Bisk et al., 2019), WinoGrande (Sakaguchi et al., 2019), OpenBookQA (Mihaylov et al., 2018), Wiki-Text (Merity et al., 2016) (word perplexity), and LAMBADA (Paperno et al., 2016) (accuracy and perplexity). 
+
+## C EFFICIENCY MEASUREMENTS 
+
+We measure different notions of efficiency for every method on Qwen3 models (1.7B to 14B param-eters; we retain the native vocabulary size of 151936 for all of them) on NVIDIA B200 GPUs, in BF16 with compiled models, and report measurements as a percentage of the corresponding PreLN baseline. The models follow the 1.5B Qwen-like configuration of Table 4, with the changes listed in Table 5. Every point in the plots below represents the median over three rounds. We made several adjustments to increase the fairness of the measurements. Before inference, we fold normalization weights into the mHC controllers (Xie et al., 2026). “mHC (released kernels)” denotes DeepSeek’s TileKernels as released (though with several adaptations around the exact kernels to make them compatible with our codebase). The mHC row replaces their projection backward with a faster matmul operation and splits the projection at inference, both of which we found to work better in terms of efficiency (with exact improvements varying per setting). “mHC, no recompute” keeps every stream instead of recomputing them (recomputation follows the approach in Xie et al. (2026)). Our main figures, for fairness, always report the “mHC” setting. Here we report the entire set for completeness. Still, it is possible that other optimizations might produce different results. 
+
+Training (Figure 8). We measure the optimizer step of about 1M tokens on 8 GPUs with FSDP and PyTorch’s efficient implementation of scaled dot product attention (SDPA). We use the largest microbatch at which every method fits at 2K tokens, and half at 4K tokens (with half the sequences per step, so each step still covers about 1M tokens). 
+
+Prefill (Figure 10). We measure forward over the entire prompt on one GPU, keeping only the last position’s logits, from a single prompt up to the largest batch size that fits for all methods. 
+
+Decode (Figures 11 and 13). We measure KV-cached greedy decoding on one GPU with FlashAt-tention 4. The prompt is prefilled in 512-token chunks, which gives the time to first token. Each generated token then replays a CUDA graph of one decode step. 
+
+Peak memory (Table 6 and Figures 9, 12 and 14). We report the peak memory allocated per GPU in GiB in the settings of the main text figure (Table 6): the training step with sequences of 2K tokens, and prefill and decode at batch 64 with a 2K token prompt or context. Figures 9, 12 and 14 report peak memory as a percentage of PreLN in every setting above. 21 Preprint Table 5: Qwen3 shapes of the efficiency measurements. All other settings are those of the 1.5B Qwen-like model in Table 4. 
+
+1.7B 4B 8B 14B Transformer blocks 28 36 36 40 Model width D 2,048 2,560 4,096 5,120 Query heads 16 32 32 40 Key/value heads 8 8 8 8Head dimension 128 128 128 128 FFN intermediate width 6,144 9,728 12,288 17,408 Vocabulary size 151,936 151,936 151,936 151,936 Input/output embeddings Tied Tied Untied Untied LDM groups G 16 20 32 40 
+
+Table 6: Peak memory allocated per GPU (GiB). Training runs on 8 GPUs with sequences of 2K tokens; prefill and decode run on one GPU at batch 64 with a 2K token prompt or context. Recom-putation does not apply at inference, so the mHC row without recompute is training only. 
+
+1.7B 4B 8B 14B 
+
+Training 
+
+PreLN 80.2 82.6 107.6 97.3 LDM 94.0 92.8 123.2 107.4 AttnRes (Block) 80.3 82.8 107.7 97.4 AttnRes (Full) 90.5 94.0 126.7 111.0 mHC 80.3 81.1 106.2 95.3 mHC (released kernels) 80.3 81.1 104.8 94.9 mHC, no recompute 115.3 110.3 151.5 126.7 
+
+Prefill 
+
+PreLN 7.8 14.3 24.4 39.9 LDM 14.7 22.9 38.1 57.1 AttnRes (Block) 11.3 19.9 33.4 52.4 AttnRes (Full) 34.8 58.0 94.4 137.4 mHC 10.8 18.1 30.5 47.5 mHC (released kernels) 10.8 18.1 30.5 47.5 
+
+Decode 
+
+PreLN 19.4 28.6 36.9 52.1 LDM 21.2 30.8 40.4 56.5 AttnRes (Block) 20.4 30.2 39.4 55.6 AttnRes (Full) 26.3 39.7 54.7 76.8 mHC 20.2 29.6 38.6 54.2 mHC (released kernels) 20.2 29.6 38.6 54.2 
+
+22 Preprint 
+
+1.7B 4B 8B 14B 
+
+Model size 
+
+60 70 80 90 100 
+
+> % of PreLN
+
+Training, 2K sequences 
+
+1.7B 4B 8B 14B 
+
+Model size 
+
+Training, 4K sequences 
+
+LDM AttnRes (Block) AttnRes (Full) mHC mHC (released kernels) mHC, no recompute 
+
+Figure 8: Training throughput as a percentage of PreLN. 
+
+1.7B 4B 8B 14B 
+
+Model size 
+
+100 110 120 130 140 
+
+> % of PreLN
+
+Training, 2K sequences 
+
+1.7B 4B 8B 14B 
+
+Model size 
+
+Training, 4K sequences 
+
+LDM AttnRes (Block) AttnRes (Full) mHC mHC (released kernels) mHC, no recompute 
+
+Figure 9: Peak memory per GPU of the training step as a percentage of PreLN.     
+
+> 1416 64 256 60 70 80 90 100
+> 2K prompt % of PreLN
+
+1.7B    
+
+> 1416 64
+
+4B    
+
+> 1416 64
+
+8B    
+
+> 1416 64
+
+14B                 
+
+> 1416 64 60 70 80 90 100
+> 4K prompt % of PreLN
+> 1416 64 1416 64 1416 1416 64
+
+Batch   
+
+> 60 70 80 90 100
+> 8K prompt % of PreLN
+> 1416
+
+Batch   
+
+> 1416
+
+Batch   
+
+> 1416
+
+Batch     
+
+> LDM AttnRes (Block) AttnRes (Full) mHC mHC (released kernels)
+
+Figure 10: Prefill throughput as a percentage of PreLN, by prompt length (rows) and model size (columns). 23 Preprint 
+
+1 4 16 64 40 60 80 100 
+
+> 2K prompt % of PreLN
+
+1.7B 
+
+1 4 16 64 
+
+4B 
+
+1 4 16 64 
+
+8B 
+
+1 4 16 64 
+
+14B 
+
+1 4 16 64 40 60 80 100 
+
+> 4K prompt % of PreLN
+
+1 4 16 64 1 4 16 64 1 4 16 64 1 4 16 64 
+
+Batch 
+
+40 60 80 100 
+
+> 8K prompt % of PreLN
+
+1 4 16 64 
+
+Batch 
+
+1 4 16 64 
+
+Batch 
+
+1 4 16 64 
+
+Batch 
+
+LDM AttnRes (Block) AttnRes (Full) mHC mHC (released kernels) 
+
+Figure 11: Time to first token relative to PreLN (PreLN’s time divided by the method’s), by prompt length (rows) and model size (columns). 
+
+1 4 16 64 256 100 200 300 400 500 600 
+
+> 2K prompt % of PreLN
+
+1.7B 
+
+1 4 16 64 
+
+4B 
+
+1 4 16 64 
+
+8B 
+
+1 4 16 64 
+
+14B 
+
+1 4 16 64 100 200 300 400 500 600 
+
+> 4K prompt % of PreLN
+
+1 4 16 64 1 4 16 64 1 4 16 1 4 16 64 
+
+Batch 
+
+100 200 300 400 500 600 
+
+> 8K prompt % of PreLN
+
+1 4 16 
+
+Batch 
+
+1 4 16 
+
+Batch 
+
+1 4 16 
+
+Batch 
+
+LDM AttnRes (Block) AttnRes (Full) mHC mHC (released kernels) 
+
+Figure 12: Peak memory of prefill as a percentage of PreLN, by prompt length (rows) and model size (columns). 24 Preprint 
+
+1 4 16 64 50 60 70 80 90 100 
+
+> 2K context % of PreLN
+
+1.7B 
+
+1 4 16 64 
+
+4B 
+
+1 4 16 64 
+
+8B 
+
+1 4 16 64 
+
+14B 
+
+1 4 16 64 50 60 70 80 90 100 
+
+> 4K context % of PreLN
+
+1 4 16 64 1 4 16 64 1 4 16 64 1 4 16 64 
+
+Batch 
+
+50 60 70 80 90 100 
+
+> 8K context % of PreLN
+
+1 4 16 64 
+
+Batch 
+
+1 4 16 64 
+
+Batch 
+
+1 4 16 64 
+
+Batch 
+
+LDM AttnRes (Block) AttnRes (Full) mHC mHC (released kernels) 
+
+Figure 13: Decode throughput per generated token as a percentage of PreLN, by context length (rows) and model size (columns). 
+
+1 4 16 64 100 110 120 130 140 150 
+
+> 2K context % of PreLN
+
+1.7B 
+
+1 4 16 64 
+
+4B 
+
+1 4 16 64 
+
+8B 
+
+1 4 16 64 
+
+14B 
+
+1 4 16 64 100 110 120 130 140 150 
+
+> 4K context % of PreLN
+
+1 4 16 64 1 4 16 64 1 4 16 64 1 4 16 64 
+
+Batch 
+
+100 110 120 130 140 150 
+
+> 8K context % of PreLN
+
+1 4 16 64 
+
+Batch 
+
+1 4 16 64 
+
+Batch 
+
+1 4 16 64 
+
+Batch 
+
+LDM AttnRes (Block) AttnRes (Full) mHC mHC (released kernels) 
+
+Figure 14: Peak memory of decode as a percentage of PreLN, by context length (rows) and model size (columns). 25 Preprint 
+
+## D EXTENDED RESULTS 
+
+D.1 LEARNING RATE SWEEPS 
+
+Table 7 shows the final held-out validation loss of every run in the learning rate sweeps (we describe our protocol in Appendix B). We bold the selected learning rate of each method and scale. Figure 15 plots the losses of each model at each learning rate. Table 7: Learning rate sweeps: final held-out FineWeb-Edu cross-entropy of each method, model scale and peak learning rate. The selected learning rate of each method is in bold. 
+
+Scale Method 5 × 10 −4 1 × 10 −3 2 × 10 −3 4 × 10 −3
+
+400M PreLN 2.5627 2.5441 2.5465 –AttnRes (Full) – 2.5172 2.5135 2.5133 
+
+AttnRes (Block) – 2.5064 2.4950 2.5026 mHC 2.5291 2.5043 2.5041 –LDM (Ours) 2.5138 2.4913 2.4957 –LDM, Dk = 4 2.5178 2.4965 2.4991 –1.5B PreLN 2.2554 2.2496 2.2633 –AttnRes (Block) 2.2333 2.2257 2.2437 –mHC 2.2336 2.2244 2.2366 –LDM (Ours) 2.2207 2.2141 2.2260 –   
+
+> 5e-4 1e-3 2e-3 4e-3
+> Peak learning rate
+> 2.50 2.52 2.54 2.56
+> Final held-out loss
+
+400M    
+
+> 5e-4 1e-3 2e-3 4e-3
+> Peak learning rate
+> 2.22 2.23 2.24 2.25 2.26
+
+1.5B        
+
+> PreLN LDM LDM, Dk= 4 AttnRes (Block) AttnRes (Full) mHC
+
+Figure 15: Final held-out loss vs peak learning rate (the numbers of Table 7). The filled marker is each method’s lowest loss. Figures 16 and 17 show the training loss of every run in Table 7. 26 Preprint 
+
+0 25 50 2.6 2.8 3.0 3.2 
+
+> Training Loss
+
+lr 5e-4 0 25 50 lr 1e-3 0 25 50 lr 2e-3 0 25 50 lr 4e-3 0 25 50 selected lr 20 35 50 
+
+> Tokens (B)
+
+2.6 2.7 2.8 
+
+> Training Loss
+
+20 35 50 
+
+> Tokens (B)
+
+20 35 50 
+
+> Tokens (B)
+
+20 35 50 
+
+> Tokens (B)
+
+20 35 50        
+
+> Tokens (B)
+> PreLN AttnRes (Block) AttnRes (Full) mHC LDM, Dk=4 LDM
+
+Figure 16: Training loss of the 400M learning rate sweeps over 50B FineWeb-Edu tokens. The last panel uses each method’s selected rate. Top: the whole run. Bottom: from 12.5B tokens (25% of training) onwards. 
+
+0 50 100 2.2 2.4 2.6 2.8 3.0 
+
+> Training Loss
+
+lr 5e-4 0 50 100 lr 1e-3 0 50 100 lr 2e-3 25 50 75 100 
+
+> Tokens (B)
+
+2.3 2.4 2.5 
+
+> Training Loss
+
+25 50 75 100 
+
+> Tokens (B)
+
+25 50 75 100    
+
+> Tokens (B)
+> PreLN AttnRes (Block) mHC LDM
+
+Figure 17: Training loss of the 1.5B learning rate sweeps over 100B FineWeb-Edu tokens. Every method’s selected rate is 10 −3. Top: the whole run. Bottom: from 24.9B tokens (25% of training) onwards. 27 Preprint D.2 ABLATIONS 
+
+Here, we provide more precise definitions of our ablations. We use the notation of Section 3.2, repeated here for clarity. At layer l the incoming residual stream is xl−1, the layer output is δl, the state is Sl = ( xl, Ml, Pl), and the LDM equations, with rl−1 denoting the memory readout of the Read, are 
+
+ql−1 = Query( xl−1), rl−1 = γl−1 ⊙ Ml−1(gl−1 ⊙ ql−1), (11) 
+
+δl = Fl
+
+ Norm l(xl−1 + rl−1), xl = xl−1 + δl,
+
+kl = Key( xl), vl = δl, Sl = Write  Sl−1, kl, vl
+
+, (12) with the RLS Write as in Equation (8), G groups of width D/G , the per-group read gate gl−1 ∈ RG,the per-group write weight ωl ∈ RG and the learned per-group read gain γl−1 ∈ RG. In Table 8, we show the final held-out loss of every variant, and Figure 18 plots their training curves. 
+
+(a) Residual stream. The variant Fl(rl−1) replaces the stream with the read at every layer (includ-ing the final read). 
+
+δl = Fl
+
+ Norm l(rl−1).
+
+The variant xl = δl removes the skip connection after each layer (note that the written value stays 
+
+vl = δl). Each variant can be understood as removing one of the two identity paths of the residual stream. 
+
+(b) Recurrence. We try different Write recurrences. Addresses, gates, and the learned forgetting factor λl remain the same as in our main variant for comparability. Per group, with the weighted observations kl = √ωl kl and vl = √ωl vl,Delta rule: Ml = λlMl−1 + ul k⊤ 
+
+> l
+
+, ul = vl − λlMl−1kl,
+
+Outer product: Ml = λlMl−1 + vl k⊤ 
+
+> l
+
+.
+
+Note that these two do not maintain inverse covariances. RLS can be understood as applying for-getting through Pl instead of decaying the state. The delta rule and the outer product update are different approximations to the depth regression problem. 
+
+(c) Addressing. The variant vl = xl writes the updated residual stream instead of the layer output in Equation (12). Since xl = e + Pli=1 δi, the memory stores cumulative sums of earlier outputs rather than the outputs themselves. This means that earlier outputs get stored at every layer iteration. The variant QK (δl) changes the address sources while the stored value does not. In particular 
+
+ql−1 = Query( δl−1), the most recent layer output, instead of Query( xl−1), and kl = Key( δl)
+
+instead of Key( xl). For the embedding write δ0 = x0, so the two coincide there. The variant Static q replaces the query network by a vector learned for each layer, ql−1 = qstatic  
+
+> l−1
+
+,i.e., it is independent of the token. The read gate is computed from the same input as the query, so it is fixed as well, gl−1 = 1.The variants G = 1 and G = 8 change G, the number of groups per token. 
+
+(d) Gain, gates and forgetting. The variant −γ fixes the read gain to one, γl−1 = 1 in Equa-tion (11). The variant gl−1 = 1 fixes the read gate to one, so the read is rl−1 = γl−1 ⊙ Ml−1ql−1.The variant ωl = 1 fixes the write weight to one. The corresponding gate heads are removed from the address networks. The variant λl = 1 fixes the forgetting factor to one instead of learning it, so every earlier write keeps its full weight in the least squares objective. 28 Preprint Table 8: Final held-out FineWeb-Edu cross-entropy of the 400M ablation runs (15B tokens). ∆ is relative to LDM. 
+
+Group Variant Loss ↓ ∆
+
+Baselines PreLN 2.6554 +0.0567 
+
+LDM 2.5987 0.0000 (a) Residual stream Fl(rl−1) 2.7296 +0.1310 
+
+xl = δl 2.6611 +0.0625 (b) Recurrence Delta 2.6028 +0.0041 Outer 2.6037 +0.0050 (c) Addressing vl = xl 2.6227 +0.0241 
+
+QK (δl) 2.6040 +0.0053 Static q 2.6128 +0.0141 
+
+G = 1 2.6007 +0.0021 
+
+G = 8 2.5955 −0.0032 (d) Gain, gates and forgetting −γ 2.6014 +0.0027 
+
+gl−1 = 1 2.6035 +0.0048 
+
+ωl = 1 2.5992 +0.0006 
+
+λl = 1 2.5981 −0.0006 0 5 10 15 2.6 2.7 2.8 2.9 3.0 
+
+> Training Loss
+
+(a) Residual stream   
+
+> Fl(rl−1)
+> xl=δl
+> PreLN LDM
+
+10 12.5 15 2.65 2.70 2.75 2.80 (b) Recurrence 
+
+> Delta Outer PreLN LDM
+
+10 12.5 15 
+
+Tokens (B) 
+
+2.65 2.70 2.75 2.80 
+
+> Training Loss
+
+(c) Addressing      
+
+> vl=xl
+> QK (δl)
+> Static q
+> G= 1
+> G= 8
+> PreLN LDM
+
+10 12.5 15 
+
+Tokens (B) 
+
+2.65 2.70 2.75 2.80 (d) Gain, gates and forgetting       
+
+> −γ
+> gl−1=1
+> ωl=1
+> λl=1
+> PreLN LDM
+
+Figure 18: Training loss of the 400M ablation runs over 15B FineWeb-Edu tokens, grouped as in Table 8. 29 Preprint D.3 DIFFERENT ASPECT RATIOS 
+
+We follow the exact training protocol of DepthBench (Wang et al., 2026). All models are Llama-style decoder-only transformers, trained with a context of 2,048 tokens on FineWeb-Edu with a global batch of 512 sequences (about 1M tokens per step), AdamW ( β1 = 0 .9, β2 = 0 .95 , weight decay 0.1) and a cosine schedule with 10% warmup. At 400M, DepthBench tunes the learning rate of each baseline and finds 2 × 10 −3 optimal for most of them. At 1.6B, it uses 5 × 10 −4 for all methods without tuning. We use the same values for LDM and do not tune them. At 400M and at 1.6B, we train for 8B tokens (7,600 steps) and 32B tokens (30,400 steps), respectively. We report the final held-out perplexity on DepthBench’s FineWeb-Edu evaluation set. The baseline results are those published by DepthBench. They are exactly comparable to ours, since our runs use the identical training setup, including code, and data and its ordering. The model shapes are listed in Table 9. LDM uses our main configuration except for weight decay, which follows DepthBench and also applies to the RMSNorm gains. Only the read gains, the forgetting logits and the biases of the address networks are not decayed. The group width equals the attention head width of each shape, which corresponds to 16 groups at every shape. We use H = 32 and H = 64 for the 400M and the 1.6B models, respectively. Figure 19 extends the 400M panel of Figure 7 to DepthBench’s “extreme” aspect ratios, with 42 and 70 layers, where we compare against HC and AttnRes (Full) (the only methods reported by DepthBench at these shapes, which appeared to prefer extremely deep shapes). At these shapes, HC is ahead of LDM, and the perplexity of LDM increases at 70 layers. We note that these shapes were run for the purpose of a stress test and do not represent aspect ratios commonly used in models. Moreover, as found in Section 4.3, on bigger models, LDM seems to prefer deeper shapes, and the advantage of HC vanishes. Table 9: DepthBench shapes. The 400M shapes have 16 query and 16 key/value heads, the 1.6B shapes 16 query and 8 key/value heads. 
+
+Tier Layers Width D D/L Head width FFN width Backbone LDM adds 400M 16 1,216 76.0 76 3,248 406.5M 2.97M (0.73%) 20 1,120 56.0 70 2,992 414.1M 3.42M (0.83%) 24 1,024 42.7 64 2,736 405.4M 3.78M (0.93%) 28 960 34.3 60 2,560 406.3M 4.16M (1.02%) 32 896 28.0 56 2,400 399.4M 4.47M (1.12%) 42 800 19.0 50 2,144 404.2M 5.30M (1.31%) 70 640 9.1 40 1,712 409.2M 7.31M (1.79%) 1.6B 28 2,048 73.1 128 6,144 1.615B 16.25M (1.01%) 40 1,728 43.2 108 5,184 1.607B 19.73M (1.23%) 54 1,504 27.9 94 4,512 1.617B 23.37M (1.45%) 640/70 9800/42 19 896/32 28 960/28 34 1024/24 43 1120/20 56 1216/16 76       
+
+> Width/depth and aspect ratio
+> 15.0 15.5 16.0 16.5
+> Held-out perplexity
+> Other methods PreLN AttnRes (Block) AttnRes (Full) HC mHC LDM
+
+Figure 19: Final held-out perplexity on DepthBench at 400M parameters vs the aspect ratio (width/depth), from 16 to 70 layers. Tick labels give the width/depth of each shape and aspect ratio. 30 Preprint 
+
+## E LDM D ETAILS 
+
+E.1 DERIVATION OF THE RLS R ECURSIONS 
+
+For conciseness, fix one group, with Ml ∈ RDv ×Dk and Pl ∈ RDk ×Dk . Write l maps the state after Write l − 1 to the state after Write l. Write 0 stores the embedding. Let α > 0, λl > 0, and 
+
+ωl > 0. The weighted objective is as in Equation (6). Define 
+
+Al =
+
+> l
+
+X
+
+> i=0
+
+
+
+> l
+
+Y
+
+> j=i+1
+
+λj
+
+ ωikik⊤ 
+
+> i
+
++
+
+
+
+> l
+
+Y
+
+> j=0
+
+λj
+
+ α−1I,
+
+Bl =
+
+> l
+
+X
+
+> i=0
+
+
+
+> l
+
+Y
+
+> j=i+1
+
+λj
+
+ ωivik⊤ 
+
+> i
+
+.
+
+The objective gradient is 2( MA l − Bl). Since Al is positive definite, the unique minimizer is 
+
+Ml = BlA−1 
+
+> l
+
+. With A−1 = α−1I and B−1 = 0,
+
+Al = λlAl−1 + klk⊤ 
+
+> l
+
+, Bl = λlBl−1 + vlk⊤ 
+
+> l
+
+,
+
+where kl = √ωlkl and vl = √ωlvl.
+
+Forward inverse covariance update. Set Pl = A−1 
+
+> l
+
+. Sherman–Morrison gives 
+
+Pl = 1
+
+λl
+
+Pl−1 − Pl−1klk⊤ 
+
+> l
+
+Pl−1
+
+λl + k⊤ 
+
+> l
+
+Pl−1kl
+
+!
+
+.
+
+The denominator is strictly positive. With the gain from Equation (7), it is easy to see that this is the inverse covariance update in Equation (8). In particular, k⊤ 
+
+> l
+
+Pl = κ⊤ 
+
+> l
+
+.
+
+Forward memory update. Using Bl−1 = Ml−1Al−1, we have that 
+
+Ml = ( λlBl−1 + vlk⊤ 
+
+> l
+
+)Pl
+
+= Ml−1(I − klk⊤ 
+
+> l
+
+Pl) + vlk⊤ 
+
+> l
+
+Pl
+
+= Ml−1 + ( vl − Ml−1kl)κ⊤ 
+
+> l
+
+= Ml−1 + ulκ⊤ 
+
+> l
+
+.
+
+Gating and regularization. The dynamic weight ωl sets the “importance” of observation l and λl
+
+discounts all earlier observations (and the initial ridge penalty). A fixed ridge penalty would instead introduce an additional full-rank term (1 − λl)α−1I into the covariance recurrence. That alternative remains solvable, but no longer admits the Sherman–Morrison-based update. E.2 BOUNDARY CASES 
+
+Before writing the embedding e, we initialize the memory as 
+
+M−1 = 0, P−1 = αI.
+
+The initial value written into the memory is v0 = e, and its key and weight are generated from e
+
+using the same write-side parametrization, yielding 
+
+(e, M0, P0) = Write (( 0, M−1, P−1), k0, v0, ω0, λ0) .
+
+After the final transformer layer, one final Read is added to the residual stream. We generate qout 
+
+from xL using the same parametrization and define 
+
+xout = Read (( xL, ML, PL), qout ) .
+
+The final representation xout is then passed to the LM head. 31 Preprint 
+
+## F HARDWARE -A WARE IMPLEMENTATION 
+
+This appendix provides an expanded explanation of Section 3.3. All quantities below are per token and per group. Algorithm 1 summarizes our implementation. 
+
+Notation. We fix one group, and use kl = √ωlkl and vl = √ωlvl for the weighted key and value of a Write, and ˜ql = γl gl ql for the gated query. The read is then rl = Ml ˜ql. We also use da = ∇aL
+
+for brevity. When a is used in several places, ∇aL is a sum with one term per use (by the chain rule). We use a superscript Ml to keep only the terms of the uses of a in computing ul and Ml (the memory update), and a superscript Pl to keep only those in computing κl and Pl (the gain and inverse covariance update). For example, κl is used to compute Ml and Pl, kl to compute ul, κl and Pl, and Ml to compute ul+1 , Ml+1 and the read rl, so 
+
+dκl = d κMl 
+
+> l
+
++ d κPl 
+
+> l
+
+, dkl = d kMl 
+
+> l
+
++ d kPl 
+
+> l
+
+, dMl = d MMl+1  
+
+> l
+
++ d rl ˜q⊤ 
+
+> l
+
+.
+
+Steps. We call the Write at layer l, fused with the Read for layer l + 1 , a “step”. Step l takes the state 
+
+(Ml−1, Pl−1), the weighted key and value kl and vl, the gated query ˜ql and the forgetting factor 
+
+λl. It produces the next state (Ml, Pl) and the read rl = Ml ˜ql, which is fed into layer l + 1 .Step 0 writes the embedding ( v0 = e) into the initial state (M−1, P−1) = ( 0, α I), producing the state (M0, P0) after the write, as well as the read r0 for layer 1. Step L ends with the final read into the LM head, with query qout (Appendix E.2) written as qL. An L-layer model then has L + 1 
+
+steps. F.1 UNWINDING 
+
+Needed gradients. As usual, the backward pass runs the forward steps in reverse order. At step l,the backward pass “receives” three gradients: • drl, the gradient of the read rl = Ml ˜ql of step l (which is fed into layer l + 1 , or into the LM head for l = L), • dPl, the gradient of Pl,• dMMl+1  
+
+> l
+
+= d Ml − drl ˜q⊤ 
+
+> l
+
+, the gradient of Ml without the term corresponding to its read rl
+
+(which step l adds through drl). Since ML is only used by the final read and PL is not used, dMML+1  
+
+> L
+
+= 0 and dPL = 0. From these, the backward pass of step l must produce • d˜ ql, dvl, dkl and dλl, the gradients of the inputs of step l,• dMMl 
+
+> l−1
+
+and dPl−1, which are passed on to step l − 1 (for l > 0). Since step l computes ul = vl − Ml−1kl, Ml = Ml−1 + ulκ⊤ 
+
+> l
+
+and rl = Ml ˜ql (Equations (7) and (8)), these gradients are 
+
+d˜ ql = M⊤ 
+
+> l
+
+drl, dvl = d ul = d MMl+1  
+
+> l
+
+κl + ( κ⊤ 
+
+> l
+
+˜ql) d rl,
+
+dκMl 
+
+> l
+
+= (d MMl+1  
+
+> l
+
+)⊤ul + ( u⊤ 
+
+> l
+
+drl) ˜ ql, dkl = −M⊤
+
+> l−1
+
+dvl + d kPl 
+
+> l
+
+,
+
+dMMl 
+
+> l−1
+
+= d MMl+1  
+
+> l
+
++ d rl ˜q⊤ 
+
+> l
+
+− dvlk⊤ 
+
+> l
+
+, (13) where dkPl 
+
+> l
+
+is obtained by backpropagating dκMl 
+
+> l
+
+and dPl through Equations (7) and (8) (which also produces dλl and dPl−1). Note that these need the inverse covariance Pl−1 but do not depend on the state. 
+
+Unwinding the state. The only states in Equation (13) are Ml, in d˜ ql, and Ml−1, in dkl. Instead of saving them, the backward pass starts from the final state ML of the forward pass and unwinds it in place. When it reaches step l, it holds Ml and recovers the previous state from the saved pseudo-value and gain of the step by unwinding (Equation (9)), 
+
+Ml−1 = Ml − ulκ⊤ 
+
+> l
+
+,
+
+32 Preprint which it uses for the gradients of step l and then for step l −1. It is therefore enough to save, for each step, ul, κl, kl, ˜ql, λl and Pl−1 (which we refer to as “context” in Section 3.3), and a single state per token is kept in memory. The inverse covariance is saved (instead of unwound). Note that Pl−1
+
+has only Dk(Dk + 1) /2 entries per group (we only save the nonredundant part, which corresponds to a triangle given it is symmetric). F.2 WINDOWING 
+
+We group steps into windows W = {b+1 , . . . , e } of at most E steps, with b = −1, E −1, 2E−1, . . . 
+
+and e = min( b+E, L ). Inside a window, Mi = Mb +P 
+
+> b<m ≤i
+
+umκ⊤
+
+> m
+
+, and hence every product of a state with a vector can be computed from the state Mb before the window and the pseudo-values and gains of the window (Equation (10)), 
+
+Mix = Mbx + X
+
+> b<m ≤i
+
+um (κ⊤
+
+> m
+
+x), M⊤ 
+
+> i
+
+y = M⊤ 
+
+> b
+
+y + X
+
+> b<m ≤i
+
+κm (u⊤
+
+> m
+
+y). (14) 
+
+Forward. For step l, the Write needs the pseudo-value ul = vl − Ml−1kl for the update Ml =
+
+Ml−1 + ulκ⊤ 
+
+> l
+
+, and the Read is rl = Ml ˜ql. Hence, it needs the products Ml−1kl and Ml ˜ql, which, as shown in Equation (14), can be computed from Mb. In particular, the states inside the window are never formed, and only the last step of the window writes the new state, Me = Mb +P 
+
+> b<i ≤e
+
+uiκ⊤ 
+
+> i
+
+.
+
+Backward. The windows are naturally processed in reverse order. A single unwinding, Mb =
+
+Me − P 
+
+> b<i ≤e
+
+uiκ⊤ 
+
+> i
+
+, can recover the state before the window. After recovering it, M⊤ 
+
+> i
+
+dri and 
+
+M⊤
+
+> i−1
+
+dvi of Equation (13) are computed from it by Equation (14). Note that the intermediate state gradients inside the window are not needed either. Unrolling the recursion for dMMl 
+
+> l−1
+
+in Equation (13) over the window gives 
+
+dMMi+1  
+
+> i
+
+= d MMe+1  
+
+> e
+
++
+
+> e
+
+X
+
+> j=i+1
+
+ drj ˜q⊤ 
+
+> j
+
+− dvj k⊤
+
+> j
+
+, b ≤ i ≤ e, (15) and substituting it into dvi and dκMi 
+
+> i
+
+of Equation (13) gives 
+
+dvi = d ui = d MMe+1  
+
+> e
+
+κi + X
+
+> j≥i
+
+(κ⊤ 
+
+> i
+
+˜qj ) d rj − X
+
+> j>i
+
+(κ⊤ 
+
+> i
+
+kj ) d vj ,
+
+dκMi 
+
+> i
+
+= (d MMe+1  
+
+> e
+
+)⊤ui + X
+
+> j≥i
+
+(u⊤ 
+
+> i
+
+drj ) ˜ qj − X
+
+> j>i
+
+(u⊤ 
+
+> i
+
+dvj ) kj , (16) where the sums are over the steps of the given window. These are computed for i = e, e −1, . . . , b +1 
+
+and use dMMe+1  
+
+> e
+
+only through dMMe+1  
+
+> e
+
+κi and (d MMe+1  
+
+> e
+
+)⊤ui. In particular, the only state gradient that is formed for a window is its dMMe+1  
+
+> e
+
+. For the last window, it is dMML+1  
+
+> L
+
+= 0. The other windows form it at their start, from the state gradients of their later windows {e + 1 , . . . , e ′}, where 
+
+e′ = min( e + E, L ), by Equation (15): 
+
+dMMe+1  
+
+> e
+
+= d MMe′+1  
+
+> e′
+
++
+
+> e′
+
+X
+
+> j=e+1
+
+ drj ˜q⊤ 
+
+> j
+
+− dvj k⊤
+
+> j
+
+.
+
+Both the state and dMMe+1  
+
+> e
+
+are then updated only once per window. This reduces state-sized traffic at the cost of accessing more vector-sized values. We use E = 4 in our main experiments. 33 Preprint 
+
+Algorithm 1 Forward and backward pass with unwinding and windowing (fixing one token and one group). M, P, dM and dP are buffers updated in place. 
+
+Forward 
+
+1: M ← 0, P ← αI
+
+2: for each window W = {b + 1 , . . . , e } do ▷ M = Mb
+
+3: for l = b + 1 , . . . , e do 
+
+4: vl ← δl (v0 ← e), and kl, √ωl, ˜ql from the address networks 5: kl ← √ωl kl, vl ← √ωl vl
+
+6: κl by Equation (7), save Pl−1 = P, P ← Pl by Equation (8) 7: ul and rl by Equation (14) 8: save ul, κl, kl, ˜ql, λl
+
+9: if l = e then 
+
+10: M ← M + P 
+
+> b<i ≤e
+
+uiκ⊤ 
+
+> i
+
+▷ M = Me
+
+Backward 
+
+11: dM ← 0, dP ← 0, drL from the LM head ▷ M = ML
+
+12: for each window W = {b + 1 , . . . , e }, in reverse do 
+
+13: if e < L then ▷ e ′ = min( e + E, L )
+
+14: dM ← dM + P
+
+> e<j ≤e′
+
+ drj ˜q⊤ 
+
+> j
+
+− dvj k⊤
+
+> j
+
+
+
+15: M ← M − P 
+
+> b<i ≤e
+
+uiκ⊤ 
+
+> i
+
+▷ M = Mb, dM = d MMe+1 
+
+> e
+
+16: for i = e, . . . , b + 1 do 
+
+17: dvi and dκMi 
+
+> i
+
+by Equation (16) 18: dkPi 
+
+> i
+
+, dλi and dP ← dPi−1 by backpropagating through Equations (7) and (8) 19: d˜ qi and dki by Equations (13) and (14) 20: dri−1 (i > 0) by backpropagating through the address networks and layer i
+
+## G AI U SE STATEMENT 
+
+We used generative AI tools for L ATEX formatting and implementation of figures, to help draft parts of the text that we edited afterward, to polish text, and, through discussions with them, to refine ideas, methodology, and hypotheses. We also used them for some mathematical calculations and derivations, and for code editing and experiment execution (at the direction of the authors). Addi-tionally, they were used to assist with literature search. A particularly relevant use of AI was kernel development. With substantial human involvement, we used AI to explore possible algorithmic im-plementations and, within the resulting algorithmic framework, to search the space of kernels and to write and tune them. We validated the kernels extensively with a wide range of synthetic tests and real training runs. We have reviewed all AI-assisted work and take responsibility for the final content of this paper. 34
