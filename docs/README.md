@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-18</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-19</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 18 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 16 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>4</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>14</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-18 21:52:09 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-19 23:15:53 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>2026-10-18 日报精选 18 篇论文，精读 4 篇、速读 14 篇。最值得关注的是图 Transformer 用于神经网络表征学习（DTA-GT，8.0 分），以及平均场随机最优控制中 MP 与 DPP 的关联（8.0 分）。普通读者可先精读这两篇高分论文，再浏览人形机器人导航与重定向方向的速读论文。</p>
+<p>今日共处理16篇，精读2篇、速读14篇，重点看强化学习收敛保证与人形机器人世界模型。最值得关注V-SHARE的advantage算法可证明收敛（8.0/10）和BeJEPA无监督RL人形行为世界模型（8.0/10）；速读中SGQN、KODA、CoViG均7.0/10。建议普通读者先读两篇精读，再按需选读速读。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">4 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="DTA-GT: Direction- and Topology-Aware Graph Transformer for Neural Network Representation Learning">DTA-GT: Direction- and Topology-Aware Graph Transformer for Neural Network Representation Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Connection between MP and DPP for Mean-Field Stochastic Optimal Control Problems">Connection between MP and DPP for Mean-Field Stochastic Optimal Control Problems</span></li><li><span class="dpr-home-dashboard-paper-title" title="Depth Memory">Depth Memory</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="V-SHARE: Provable Convergence Guarantees for Advantage-based Algorithms">V-SHARE: Provable Convergence Guarantees for Advantage-based Algorithms</span></li><li><span class="dpr-home-dashboard-paper-title" title="BeJEPA: A Goal-Conditioned Humanoid Behavior World Model via Unsupervised RL">BeJEPA: A Goal-Conditioned Humanoid Behavior World Model via Unsupervised RL</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>1</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,9 +87,9 @@
     <strong class="dpr-home-dashboard-count">14 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Embodiment-Aware Inference-Time Search for Human Reaction Selection in Humanoid Retargeting">Embodiment-Aware Inference-Time Search for Human Reaction Selection in Humanoid Retargeting</span></li><li><span class="dpr-home-dashboard-paper-title" title="LiDAR-based Humanoid Navigation in Dynamic, Non-Convex Environments via Spatio-Temporal Safe Corridors">LiDAR-based Humanoid Navigation in Dynamic, Non-Convex Environments via Spatio-Temporal Safe Corridors</span></li><li><span class="dpr-home-dashboard-paper-title" title="PrT-Flow: Probability-Tractable Flow Matching for Reinforcement Learning">PrT-Flow: Probability-Tractable Flow Matching for Reinforcement Learning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Selective Growing Q-Networks (SGQN): An Analysis of Adaptive Action Grids in Decoupled Q-Learning">Selective Growing Q-Networks (SGQN): An Analysis of Adaptive Action Grids in Decoupled Q-Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="KODA: Kinematics--Observation Data Alignment for Humanoid Learning from Human Egocentric Demonstration">KODA: Kinematics--Observation Data Alignment for Humanoid Learning from Human Egocentric Demonstration</span></li><li><span class="dpr-home-dashboard-paper-title" title="CoViG: Coarsened Vision GNN for Image Classification">CoViG: Coarsened Vision GNN for Image Classification</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>10</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>10</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>2</strong></span></div>
 </section>
 </div>
 
