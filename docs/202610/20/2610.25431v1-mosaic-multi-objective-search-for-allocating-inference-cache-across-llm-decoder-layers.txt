@@ -1,0 +1,1228 @@
+Title: MOSAIC: Multi-Objective Search for Allocating Inference Cache Across LLM Decoder Layers
+
+URL Source: https://arxiv.org/pdf/2610.25431v1
+
+Published Time: Tue, 20 Oct 2026 01:46:40 GMT
+
+Number of Pages: 26
+
+Markdown Content:
+## MOSAIC: Multi-Objective Search for Allocating Inference Cache Across LLM Decoder Layers 
+
+Sravanth Kodavanti †‡∗ Manjunath Arveti ††Samsung Research 
+
+> ‡
+
+Georgia Institute of Technology 
+
+> ∗
+
+Corresponding author: ramasravanthkodavanti@gmail.com 
+
+Abstract 
+
+The Key-Value (KV) cache is the main mem-ory bottleneck of long-context LLM inference. Token eviction methods such as SnapKV, H2O, AdaKV and L2Norm shrink it, but they give every transformer layer the same budget, al-though layers differ in which tokens they need. We present MOSAIC, a multi-objective neural architecture search that learns per-layer KV-cache budgets for any eviction method. One search maps the trade-off between average bud-get and task score; its best allocation transfers to every target budget without further search, and an optional budget-constrained search re-fines it. Across four eviction methods on Llama-3-8B-Instruct and Mistral-7B-Instruct-v0.2, MOSAIC beats uniform allocation in 146 of 154 (task, method, budget) settings, by up to +48 points on RULER and +11.9 on Long-Bench (LCC). It reaches the score of uniform allocation with up to 4× less KV cache (75% smaller) , and with half the cache or less in 17 Llama settings. The transferred allocation alone beats uniform in 75 of 87 Llama settings, so a single 9–40 GPU-hour search serves every budget . Against EvolKV, MOSAIC explores a ∼10 40 × larger search space with 
+
+4× fewer evaluations and 18% fewer GPU-hours per budget, and scores higher in 5 of 6 
+
+settings. The learned allocations consistently favour a small set of middle layers. 
+
+1 Introduction 
+
+Long-context inference with large language models (LLMs) is limited by the memory of the key-value (KV) cache, which grows linearly with sequence length and batch size (Kwon et al., 2023): a 30B-parameter model with batch size 128 and sequence length 1024 already needs 180 GB of KV cache (Zhang et al., 2023). Token eviction methods like H2O (Zhang et al., 2023), SnapKV (Li et al., 2024) and L2Norm (Devoto et al., 2024) address this by selectively dropping cache entries based on token importance, and AdaKV (Feng et al., 2025) builds on them by distributing a layer’s budget adaptively across its attention heads. However, these meth-ods apply the same memory budget to every trans-former layer. Layer-wise allocation schemes exist, but they either fix the shape of the allocation in advance (Cai et al., 2025), derive it from atten-tion statistics (Qin et al., 2025), or optimize layer budgets one group at a time at one budget and rescale the result to others (Yu and Chai, 2025). These schemes already exploit layer differences; MOSAIC instead searches all layers jointly once and transfers the result to every budget. In our searches, a few middle layers consistently receive more than their uniform share, so a uniform alloca-tion spends cache on layers that need little while starving the ones that need more. This paper introduces MOSAIC, a method that automatically optimizes per-layer KV-cache bud-gets under a target memory constraint using multi-objective neural architecture search. Rather than hand-tuning layer-specific heuristics or optimizing layers group by group, MOSAIC searches the per-layer budget space jointly, one budget per decoder layer (32 for Llama-3-8B, up to 10 27 configurations on its search grid), using Bayesian optimization guided by a surrogate MLP (Figure 1). MOSAIC is to KV-cache allocation what static quantization is to model quantization: just as post-training quan-tization calibrates offline on a small calibration set (Frantar et al., 2023; Xiao et al., 2023), MO-SAIC fixes each layer’s budget offline on calibra-tion data, so inference adds no per-prompt alloca-tion step. Methods such as CAKE and Ada-KV in-stead adapt the budget to each prompt at inference time, as dynamic quantization computes its ranges at run time. We evaluate MOSAIC across four evic-tion methods (SnapKV, H2O, AdaKV, L2Norm) on Llama-3-8B-Instruct and Mistral-7B-Instruct-v0.2 (all four methods; on LongBench Summa-rization, SnapKV, H2O and AdaKV ran Stage 1 1arXiv:2610.25431v1 [cs.LG] 18 Oct 2026 Input: frozen LLM ( L decoder layers) · eviction policy · calibration subset (search) · full task data (selection) Stage 1 Explore             
+
+> Unconstrained BO over per-layer budgets, trading average budget against calibration score. Stage 2 Select
+> Re-evaluate the Pareto front on full data and keep the best allocation. Stage 3 Transfer
+> Rescale the winner to every target budget with no new search .Stage 4 Refine
+> BO at a fixed average budget, seeded with the winner; candidates are re-checked on full data.
+> average budget score Pareto front calibration full data
+> winner 1st 5th
+> B3
+> B2
+> B1
+> same shape, scaled avg. =B
+> seed refined
+> Once per (task, eviction policy) – reused at every budget Per target budget
+
+Figure 1: The MOSAIC pipeline. Stages 1–3 run once per (task, eviction policy): an unconstrained search on a calibration subset yields a Pareto front of per-layer allocations, full-data re-evaluation selects a winner, and the winner is rescaled to every target budget without further search. Stage 4 optionally refines each budget with constrained BO seeded by the rescaled winner. Bar profiles are schematic. 
+
+only), on two benchmarks: LongBench (4 task categories) and RULER (11 in-context retrieval subtasks). On RULER, per-layer allocation yields large gains over uniform (+2.3 to +47.9 points), concentrated on the hardest needle-retrieval sub-tasks. On LongBench, MOSAIC improves ev-ery Code setting, with dataset-level gains of up to +11.9 points on LCC (L2Norm), +3.5 on LCC for SnapKV, and +3.0 on MultiFieldQA-en (H2O) and Qasper (AdaKV) (Section 4.2). 
+
+MOSAIC versus EvolKV. The closest prior work, EvolKV (Yu and Chai, 2025), searches per-layer budgets with CMA-ES (Hansen and Oster-meier, 2001) group by group, eight layers at a time, at a target budget fixed in advance. MO-SAIC instead searches all layer budgets jointly, so one search spans about 10 40 times more allocations than one EvolKV group search, across a budget– score Pareto front, selects a reusable anchor, and optionally refines it at each deployment budget; on Code it beats EvolKV at every budget, both searching once ( +1 .3 to +2 .1) and per budget at EvolKV’s compute ( +0 .8 to +1 .7, Appendix D), and even searched once, MOSAIC’s winner out-performs EvolKV’s per-budget searches at every budget where both ran (Section 6). Our contributions are: (i) MOSAIC, a four-stage workflow (joint per-layer search, budget–score ex-ploration, winner rescaling, optional per-budget refinement) whose single search yields a winner that transfers across budgets without further search; (ii) an evaluation across four eviction methods, two models and two benchmarks, where MOSAIC im-proves over uniform allocation for every method, with gains of up to +48 points on RULER; and (iii) an analysis of the learned allocations, which favour a small set of middle layers. 
+
+2 Related Work 
+
+Token eviction. Eviction methods reduce KV-cache memory by retaining only the tokens judged important. H2O (Zhang et al., 2023) keeps “heavy hitters”, tokens with high accumulated attention, together with a window of recent tokens, as do StreamingLLM (Xiao et al., 2024), Scissorhands (Liu et al., 2023) and FastGen (Ge et al., 2024) with sink, persistent and per-head criteria. SnapKV (Li et al., 2024) selects, for each attention head, the prompt positions that receive the most atten-tion from an observation window at the end of the prompt. L2Norm (Devoto et al., 2024) keeps the tokens whose keys have the lowest L2 norm, which correlates with high attention, without com-puting attention scores. KeyDiff (Park et al., 2025) also avoids attention scores, keeping keys that are geometrically distinctive from the others, which makes it compatible with FlashAttention (Dao, 2024). QUOKA (Jones et al., 2026) selects key-value pairs for prefill from the keys aligned with a subset of representative queries. These methods decide which tokens to keep; how much cache each layer should receive is a separate question, which MOSAIC addresses. 
+
+Static and dynamic budget allocation. A sec-ond line of work allocates a fixed total budget non-uniformly instead of changing how tokens are scored. Dynamic methods recompute the allocation for every prompt, as dynamic quantization com-2putes its ranges at run time: Ada-KV (Feng et al., 2025) allocates budget adaptively across the heads of a layer, CAKE (Qin et al., 2025) derives per-layer budgets from layer preferences measured on each prompt’s attention patterns, and SqueezeAt-tention (Wang et al., 2025) shifts budget between two layer groups. Static methods fix the allocation before inference: PyramidKV (Cai et al., 2025) assigns layer budgets following a hand-designed pyramidal shape, larger in lower layers and smaller in higher ones; PyramidInfer (Yang et al., 2024) keeps per layer the context attention consistently selects, less with depth; HeadKV (Fu et al., 2025) and DuoAttention (Xiao et al., 2025) fix head-level allocations offline. MOSAIC is static in the sense of static quantization, calibrating the allocation of-fline for each model and eviction method. Closest to our work, EvolKV (Yu and Chai, 2025) treats per-layer budgets as optimization variables, par-titions layers into groups, and runs evolutionary search on one group at a time against downstream task score at one target budget; its main results then extend that allocation to larger budgets by pro-portional rescaling, without further optimization. MOSAIC shares this rescaling step but finds the allocation to rescale differently, searching all lay-ers jointly across budgets rather than at one target budget (Section 6). 
+
+Neural architecture search. Multi-objective NAS trades off competing goals such as accuracy and latency along a Pareto front (Elsken et al., 2019) (more related work in Appendix G). MO-SAIC adopts this multi-objective formulation for KV-cache allocation but uses its own search proce-dure (Section 3): a classifier-guided optimizer built for this problem, which needs only a few hundred evaluations per search. 
+
+3 Method 
+
+3.1 Problem Formulation 
+
+Given an eviction method M , a model with L
+
+decoder layers ( L = 32 for Llama-3-8B) and a target budget B (average tokens per layer), we seek a vector b = ( b1, . . . , b L) ∈ [bmin , b max ]L
+
+that maximizes task performance while maintain-ing 1 
+
+> L
+> PLi=1
+
+bi = B. We use a per-layer floor 
+
+bmin = 64 (Appendix E) and cap bmax = 4096 .Each configuration is encoded as x ∈ [0 , 1] L. The unconstrained search is multi-objective: it mini-mizes the mean per-layer budget f1(b) = 1 
+
+> L
+> P
+> i
+
+bi
+
+and maximizes the task score f2(b) on a calibration subsample. The budget-constrained variant (Stage 4) instead fixes f1 = B by rescaling the per-layer weights so that their mean equals B exactly. 
+
+Search space. Stage 1’s grid of |G| levels per layer holds |G|L configurations ( 532 ≈ 2.3 × 10 22 
+
+or 732 ≈ 1.1×10 27 for L = 32 ) spanning every av-erage budget from 64 to the grid cap, and at a fixed budget B the integer allocations in [64 , 4096] L
+
+with mean B number about 10 69 at B128 and 10 105 
+
+at B1024. One EvolKV search varies only eight layers with the other L − 8 fixed: even ignoring its budget penalty, that is at most 4033 8 ≈ 10 29 allo-cations, about 10 40 times fewer than one MOSAIC search at B128 (Appendix H). A search evaluates at most 200 of them in Stage 1 and 150 in Stage 4 (Ap-pendix H), so every layer budget must be chosen jointly from a vanishing fraction of the space. 
+
+Search step. All stages share one classifier-guided Bayesian optimization procedure (cf. Tiao et al., 2021). After each evaluation, the archive is non-dominated sorted (Deb et al., 2002), an MLP classifier (two hidden layers of 32 units) is trained to separate the rank-1 configurations from the rest, and differential evolution (Storn and Price, 1997) maximizes the classifier’s probability of rank 1 over 
+
+[0 , 1] L to propose the next configuration, one eval-uation per iteration. We call these BO proposals; stopping rules are in Appendix H. 
+
+3.2 Search Procedure (MOSAIC — Four-Stage Pipeline) Why four stages. An unconstrained search returns configurations at arbitrary average budgets, so a configuration it finds cannot be compared directly with uniform allocation at a fixed budget B. MO-SAIC therefore selects one winner shape from the search (Stages 1–2) and rescales it to each target budget (Stage 3). This already gives a configura-tion at every budget without further search, and the pipeline can stop here. Stage 4 is optional: it searches at a fixed budget for a configuration better than the rescaled winner (Figure 1). 
+
+Tasks. MOSAIC searches separately for each task and eviction method. LongBench has four English task categories, each a group of datasets: Single-Doc QA (NarrativeQA, Qasper, MultiFieldQA-en), Multi-Doc QA (HotpotQA, 2WikiMultihopQA, MuSiQue), Summarization (GovReport, QMSum, MultiNews) and Code (LCC, RepoBench-P); a category’s score is the mean over its datasets. We search each LongBench category separately because their tasks and metrics 330 32 34 36                  
+
+> SnapKV Single-Doc QA
+> 34 35 36
+> Multi-Doc QA
+> 52 54 56 58
+> Code
+> 20 22 24
+> Summarization
+> 40 60 80 100
+> RULER
+> 26 28 30 32 34
+> H2O
+> 31 32 33 34 45 50 55 60 22 24 050 100 32 34 36
+> AdaKV
+> 33 34 35 36 56 58 60 20 22 24 40 60 80 100 64 256 1k 4k 10 20 30
+> L2Norm
+> 64 256 1k 4k 10 20 30 64 256 1k 4k 20 30 40 50 64 256 1k 4k 15 20 25 64 256 1k 4k 050 100
+> uniform allocation Stage 2 configuration (full data) winner carried to Stages 3–4 average per-layer KV budget (tokens, log scale) full-data score
+
+Figure 2: Budget–score trade-off found by the unconstrained search (full data). Rows: eviction method; columns: task. Dashed: uniform allocation. Dots: configurations on the Stage 1 Pareto front, re-evaluated on full data in Stage 2. Ring: the winner carried to Stages 3 and 4. 
+
+differ (F1 for QA, ROUGE-L for summarization, edit similarity for code). RULER’s 11 retrieval subtasks at 4K context share one metric (string-match accuracy), so a single search covers all of them. Stages 1–2 run once per (task, method) and Stages 3–4 once per target budget; we call each (task, method, budget) a cell .
+
+Stage 1 (Unconstrained Multi-Budget NAS): 
+
+Search a discrete per-layer grid of powers of two with no budget constraint, from 64 up to 4096 on RULER and up to 1024 or 4096 on LongBench (Appendix H). The initial design has 64 points: the uniform allocation at every grid level plus Latin Hypercube samples (McKay et al., 1979). Guided iterations then trace out the budget–score Pareto front. Because this search must rank allocations across the whole budget range, and runs only once per (task, method), it uses a larger calibration sub-sample on LongBench (30%; case study in Ap-pendix B); on RULER it uses 10%, which already ranks faithfully (Appendix B). 
+
+Stage 2 (Winner Selection via Full-Data Eval): 
+
+Re-evaluate every configuration on the Stage 1 Pareto front (typically 10–20 configurations) on the full test data, and keep the winner shape :the shaped configuration with the highest full-data score. This winner becomes a universal anchor for all subsequent budget-constrained searches. 
+
+Stage 3 (Winner Rescaling to Fixed Budgets): 
+
+Take the winner shape discovered in Stage 2 and rescale it to match fixed target budgets: B128– B1024 on LongBench and B64–B2048 on RULER (B64 only where the floor of 16 allows realloca-tion). Evaluate each rescaled configuration on full test data. These Stage 3 results ( Winner-Rescaled )require no further search, and they already beat uniform in 75 of 87 (category, method, budget) cells, including shapes found at an average budget of ∼2400 transferred down to 128. Table 1 summa-rizes the transfer; all 87 cells are in Appendix A. 
+
+Stage 4 (Budget-Constrained Adaptive Search): For each target budget B, Stage 4 solves max x∈[0 ,1] L f2(DB (x)) , where the decoder 
+
+DB maps x to budgets with 1
+
+> L
+
+P 
+
+> i
+
+bi = B and 
+
+bmin ≤ bi ≤ bmax : it sets bi ∝ xi scaled to the total LB , clamps layers that cross a bound and redistributes the remainder in proportion to 
+
+xi, then rounds so that the total is exactly LB 
+
+(Appendix H). Every candidate thus meets the budget by construction, and with f1 fixed at B
+
+the search maximizes f2 alone. Seed this search with: (i) the Stage 2 winner rescaled to budget B
+
+(from Stage 3), (ii) six heuristic shapes (uniform, ascending and descending ramps, middle- and edge-heavy triangles, and an alternating low/high pattern), and (iii) 57 Latin Hypercube (LHS) seed points, all drawn inside the constrained per-layer space (continuous weights rescaled to mean B). Guided BO iterations then extend this pool; run lengths varied across methods and cells, up to a cap of 180/150 evaluations (stopping rules in Appendix H). Stage 4 runs once for every target 4Stage 3 Stage 4 MOSAIC                                                                                                                                                         
+
+> (Winner) (NAS-refined) (best of both)
+> Task Method Wins ∆Wins ∆Wins ∆
+> Code H2O 3/4 +0 .54 4/4 +1 .00 4/4 +1 .07
+> Code SnapKV 4/4 +1 .66 4/4 +1 .77 4/4 +1 .81
+> MultiDoc H2O 3/4 +0 .55 3/4 +0 .46 3/4 +0 .70
+> MultiDoc SnapKV 3/4 +0 .31 3/4 +0 .06 3/4 +0 .32
+> SingleDoc H2O 3/4 +0 .66 4/4 +0 .64 4/4 +0 .99
+> SingleDoc SnapKV 3/4 +0 .04 2/4 +0 .04 3/4 +0 .22
+> Summ H2O 4/4 +0 .11 4/4 +0 .27 4/4 +0 .28
+> Summ SnapKV 4/4 +0 .19 0/1 −0.08 1/1 +0 .12
+> RULER H2O 6/7 +7 .86 4/4 +21 .84 4/4 +21 .84
+> RULER SnapKV 7/7 +6 .57 5/5 +5 .83 5/5 +6 .97
+> Code AdaKV 2/3 +0 .38 3/3 +1 .47 3/3 +1 .47
+> MultiDoc AdaKV 2/3 +0 .22 3/3 +0 .59 3/3 +0 .62
+> SingleDoc AdaKV 2/3 +0 .12 2/3 +0 .84 2/3 +0 .84
+> Summ AdaKV 1/3 −0.02 3/3 +0 .36 3/3 +0 .36
+> RULER AdaKV 7/7 +2 .16 6/6 +5 .90 6/6 +5 .90
+> Code L2Norm 4/4 +6 .87 4/4 +6 .87 4/4 +7 .33
+> MultiDoc L2Norm 3/4 +2 .19 4/4 +3 .29 4/4 +3 .29
+> SingleDoc L2Norm 4/4 +1 .90 4/4 +1 .75 4/4 +2 .10
+> Summ L2Norm 4/4 +0 .38 4/4 +0 .44 4/4 +0 .59
+> RULER L2Norm 6/6 +5 .49 6/6 +23 .54 6/6 +23 .54
+> Total 75/87 72/78 74/78
+
+Table 1: One search, many budgets. Stage 3: the Stage 2 winner, found once at its natural average budget and rescaled to every target budget with no further search. Stage 4: NAS-refined, the best configuration of the budget-constrained search, available only at budgets where it ran. MOSAIC: its final configuration, the better of Winner and NAS-refined (chosen per budget), at the same budgets as Stage 4. Wins: budgets where the configuration beats uniform on full data; ∆: mean gain over uniform. Llama-3-8B-Instruct; Mistral-7B-Instruct-v0.2 is in Table 9. 
+
+budget and evaluates many configurations each time, so it uses a smaller subsample (10% on both benchmarks) to keep each per-budget search affordable. Its best candidates are re-evaluated on full data, and the best of them is reported as 
+
+NAS-refined (candidate selection in Appendix H; calibration fidelity in Appendix B). For each budget we thus report uniform, the rescaled Stage 2 winner ( Winner ), and NAS-refined; MOSAIC’s final configuration is the better of Winner and NAS-refined on full data (Section 4.2). Stage 4 does not always improve on the Winner: of the 78 cells, NAS-refined matches or beats the Winner in 54, and the Winner remains better in 24 (Figure 4). 
+
+Selection and evaluation data. The full data 
+
+of a cell are all examples of its task’s datasets (150–500 per LongBench dataset, 500 per RULER subtask); the calibration subset is a fixed random fraction of each dataset (30% or 10%, as above). Search uses the calibration subset; selection in Stages 2 and 4 and all reported scores use the full data. LongBench and RULER have no validation split, so configurations are selected and scored on the same examples: our results show gains on the evaluated examples, not generalization to unseen ones. 
+
+4 Experiments 
+
+4.1 Setup Models: Meta-Llama-3-8B-Instruct (Grattafiori et al., 2024) (all four methods) and Mistral-7B-Instruct-v0.2 (Jiang et al., 2023) (all four methods; on LongBench Summarization, SnapKV, H2O and AdaKV ran Stage 1 only). Benchmarks: Long-Bench (Bai et al., 2024) and RULER (Hsieh et al., 2024) (tasks and data in Section 3.2). Methods: 
+
+SnapKV, H2O, AdaKV, L2Norm. Budgets: aver-age per-layer budgets of 128–1024 on LongBench and 64–2048 on RULER; each layer receives be-tween 64 and 4096 tokens (16 in some earlier RULER runs; Section 4.3). Search signal: search-time scores use a calibration subsample drawn with a fixed seed: on LongBench 30% of each dataset in Stage 1 and 10% in Stage 4, and on RULER 10% of each subtask in both stages, for all four meth-ods on Llama; all Mistral LongBench and L2Norm searches use 30% in every stage (Mistral H2O trun-cates prompts at 7.5K tokens, Appendix A). Hard-ware is listed in Appendix H. 
+
+4.2 Key Findings — LongBench 
+
+Figure 2 shows, for every eviction method and task, the budget–score trade-off that the uncon-strained search finds. The dots are the configu-rations on the Stage 1 Pareto front, which spans a wide range of average budgets within a single search, re-evaluated on full data in Stage 2; the ring marks the Stage 2 winner. Among the strongest Stage 1/2 results, SnapKV’s Code winner (58.26 at average budget 430) beats uniform at every budget up to 1024 (at most 56.73), and its Multi-Doc QA winner (36.14 at 274) beats uniform-1024 (35.87) with 27% of its cache. 
+
+Where MOSAIC loses. Table 2 gives the full LongBench results. Across all evaluated cells, MO-SAIC beats uniform in 74 of 78 (SnapKV and H2O: 35/38; AdaKV: 17/18; L2Norm: 22/22), including every CODE, Summarization and RULER cell. On Mistral-7B-Instruct-v0.2, MOSAIC beats uniform in 72 of 76 cells and loses the other four by at most 0.33 points (Tables 2, 3 and 9). The four losses are small and all on LongBench QA: Multi-Doc QA for H2O at B128 ( −0.41 ) and SnapKV at B512 (−0.04 ), and Single-Doc QA for SnapKV at B256 (−0.74 ) and AdaKV at B512 ( −0.20 ). Per-dataset 5(a) Stage 2 winners (natural average budget)                            
+
+> Code 430 Multi-Doc 274 Single-Doc 506 Summ. 732 RULER 1756 Code 2456 Multi-Doc 448 Single-Doc 518 Summ. 552 RULER 2180
+> SnapKV H2O
+> (b) MOSAIC’s final configuration per cell (target budget)
+> 128 256 512 1024 128 256 512 1024 128 256 512 1024 128 128 256 1024 1536 2048 128 256 512 1024 128 256 512 1024 128 256 512 1024 128 256 512 1024 128 1024 1536 2048 Code Multi-Doc Single-Doc Summ. RULER Code Multi-Doc Single-Doc Summ. RULER
+> SnapKV H2O
+> Winner (Stage 3) NAS-refined (Stage 4) 04812 16 20 24 28 31
+> (c) Share of the allocations in (a) and (b) that give each layer more than its uniform share
+> 050 100% 04812 16 20 24 28 31
+> layer index
+> 1/8×
+> 1/4×
+> 1/2×
+> uniform 2×
+> 4×
+> 8×
+> layer budget / row mean
+
+Figure 3: Learned per-layer allocations, SnapKV and H2O. (a) Stage 2 winners at their natural average budget (left). (b) MOSAIC’s final configuration for every cell (the better of Winner and NAS-refined), with the target budget on the left and a marker on the right for which of the two it is. (c) For each layer, the share of the 48 allocations in (a) and (b) that give it more than its uniform share; navy bars exceed 50%. Colour: each layer’s budget divided by the row mean, on a log 2 scale (blue: more than the uniform share; red: less). 
+
+results, including small dataset-level regressions, are in Appendix I.2. 
+
+Winner and NAS-refined. Figure 4 (Long-Bench columns) shows uniform, Stage 3 and Stage 4 at every budget; Table 1 summarizes them per task and method. In the 78 cells that also have a Stage 4 search, the rescaled winner already beats uniform in 67 (75 of 87 over all cells, Table 1); NAS-refined beats uniform in 72 and matches or beats the winner in 54 (Table 1). Refinement adds most on RULER and least on LongBench for SnapKV and H2O (Appendix A). The two stages complement each other across models: on Llama the rescaled winner already captures most of the gain, while on Mistral-7B-Instruct-v0.2 the budget-constrained search does, lifting the cells that beat uniform from 51 of 75 for the rescaled winner to 71 of 76 for NAS-refined (72 of 76 for MOSAIC; Table 9, Figure 5). MOSAIC’s final configuration takes the better of the two, so it holds up on both models. 
+
+4.3 Key Findings — RULER 
+
+Table 3 lists the results, and Figure 4 (RULER col-umn) shows them per budget. MOSAIC improves on uniform in every RULER cell with a Stage 4 search, for all four methods, by up to +9 .7 for SnapKV, +8 .3 for AdaKV, +33 .3 for H2O and 
+
++47 .9 for L2Norm; the largest gains come where uniform allocation is weakest. Gains concentrate on the hardest needle subtasks: for SnapKV and H2O (floor-clean cells), MOSAIC adds +31 .9 on niah_multikey_3 and +28 .0 on niah_single_3, versus +0 .8, +3 .5 and +5 .6 on CWE, FWE and VT. MOSAIC also recovers most of the needle subtasks that L2Norm’s uniform allo-cation fails (Appendix I.1). 
+
+5 Analysis 
+
+5.1 Shared Layer Structure A few middle layers get more cache. The al-locations MOSAIC finds share a common shape (Figure 3). For SnapKV and H2O, five middle lay-ers (10, 14–16 and 20) receive more than an equal 6Code Multi-Doc QA Single-Doc QA Summarization Model Method Budget Uniform MOSAIC Uniform MOSAIC Uniform MOSAIC Uniform MOSAIC 
+
+> Llama-3-8B
+
+SnapKV 128 54.81 56.09 34.82 35.02 32.97 33.67 21.03 21.15 
+
+256 55.67 57.33 35.60 36.31 35.25 34.51 22.30 22.41 
+
+512 56.73 58.16 35.77 35.73 35.97 36.33 23.44 23.71 
+
+1024 56.02 58.91 35.87 36.26 36.44 37.01 24.85 25.10 
+
+H2O 128 45.96 47.13 32.57 32.16 28.21 29.72 21.88 22.31 
+
+256 49.49 50.59 32.45 32.92 29.96 30.92 23.13 23.33 
+
+512 52.81 54.51 32.98 34.33 32.41 32.80 24.22 24.35 
+
+1024 56.92 57.23 33.54 34.93 33.60 34.69 24.97 25.32 
+
+AdaKV 128 57.30 58.28 34.99 35.96 32.83 34.64 21.72 22.05 
+
+256 58.19 59.62 35.42 36.14 35.08 35.98 22.72 23.00 
+
+512 58.70 60.68 36.14 36.33 36.68 36.49 23.62 24.08 
+
+L2Norm 128 22.54 27.48 9.09 9.23 10.20 10.63 17.73 18.69 
+
+256 23.57 30.69 13.23 18.64 13.91 14.76 19.79 19.98 
+
+512 28.14 35.90 22.06 25.49 18.48 21.13 21.30 21.95 
+
+1024 34.95 44.47 28.72 32.90 24.75 29.21 23.01 23.57 Mistral-7B 
+
+SnapKV 128 49.76 49.61 23.86 25.68 29.61 29.50 21.55 –256 52.09 53.14 25.62 27.14 31.74 33.53 23.21 –512 53.77 55.05 26.47 28.53 33.91 34.39 24.34 –1024 55.23 55.38 28.80 29.60 34.99 35.62 25.72 –H2O 128 39.59 40.28 21.10 22.29 26.20 27.02 23.50 –256 43.09 44.33 23.70 25.16 27.92 29.25 24.55 –512 46.43 47.68 25.18 26.43 30.52 31.80 25.14 –1024 49.65 50.30 26.58 27.52 32.14 33.50 25.92 –AdaKV 128 51.08 51.42 25.27 27.78 30.91 30.57 22.06 –256 52.66 53.42 26.66 28.80 33.14 34.12 22.82 –512 54.65 55.27 27.62 29.05 34.42 34.21 23.90 –1024 55.08 55.75 28.86 30.29 34.97 35.15 24.97 –L2Norm 128 22.45 24.89 4.96 5.84 5.03 6.04 18.02 18.81 
+
+256 25.58 28.18 5.73 7.29 7.27 8.88 19.61 20.40 
+
+512 28.68 32.12 7.55 12.96 9.83 14.66 20.89 21.72 
+
+1024 33.22 38.18 11.01 17.45 16.27 23.46 22.48 23.41 
+
+Table 2: LongBench results (full data). Uniform allocation vs. MOSAIC’s final configuration (the better of Winner and NAS-refined) at the same average per-layer budget B; each score is the mean of the category’s datasets (official metrics); the better of the two is in bold. Llama-3-8B: Llama-3-8B-Instruct; Mistral-7B: Mistral-7B-Instruct-v0.2, whose SnapKV, H2O and AdaKV Summarization rows are uniform only (no budget search). 
+
+Model Method 64 128 256 512 1024 1536 2048 Llama-3-8B  SnapKV Uniform 34.64 51.56 68.06 78.62 85.67 88.62 92.93 MOSAIC 44.99 58.37 72.28 81.76 93.80 98.35 98.91 
+
+H2O Uniform 7.23 12.19 20.02 29.64 44.35 53.39 62.82 MOSAIC 7.60 15.39 19.61 32.61 62.52 86.05 96.14 
+
+AdaKV Uniform 35.80 50.87 68.02 78.22 86.87 89.75 93.90 MOSAIC 35.97 57.40 72.10 83.08 93.78 97.99 98.65 
+
+L2Norm Uniform – 4.63 17.74 27.17 35.59 42.28 49.70 MOSAIC – 13.68 20.83 29.42 67.03 90.19 97.21 Mistral-7B  SnapKV Uniform – 40.89 51.74 62.83 77.13 84.66 90.22 MOSAIC – 47.38 65.24 71.28 91.06 95.71 96.66 
+
+H2O Uniform – 10.14 14.09 19.21 27.68 33.96 41.05 MOSAIC – 10.67 14.75 43.01 68.02 85.31 88.63 
+
+AdaKV Uniform – 36.33 49.02 60.93 76.71 83.60 87.56 MOSAIC – 52.61 60.28 73.94 77.08 88.32 91.71 
+
+L2Norm Uniform – 0.64 4.25 11.06 22.86 27.59 30.73 MOSAIC – 3.32 10.29 19.43 29.65 43.23 64.58 
+
+Table 3: RULER results (full data, string-match accuracy averaged over 11 subtasks). Uniform allocation vs. MOSAIC’s final configuration (the better of Winner and NAS-refined) at the same average per-layer budget; the better is in bold. Llama-3-8B: Llama-3-8B-Instruct, of which SnapKV and H2O at B1024 and above used an earlier 3–4-candidate selection; Mistral-7B: Mistral-7B-Instruct-v0.2. 
+
+share of the budget in 65–85% of the 48 allocations, while early (0–9) and late (21–29) layers do so in a median of only 32% and 31% (Figure 3c). The pat-tern does not come from counting the same shape several times: without the 16 rescaled Winners, which reuse their anchor’s shape at other budgets, layers 10 and 14–16 still receive more than an equal share in 66–84% of allocations (medians 38% and 34% for early and late layers). AdaKV favours the same layers, more weakly (Appendix F). 
+
+Shapes depend on the task more than on the method. A winner found for one task does not carry over to another: SnapKV’s Code winner ap-plied to Single-Doc QA, and the reverse, scores below uniform at every budget tested (by 0.33–1.22 points). Across eviction methods on the same task, 734 36             
+
+> SnapKV Single-Doc QA
+> 35 36 36
+> Multi-Doc QA
+> 56 58
+> Code
+> 22 24
+> Summarization
+> 40 60 80 100
+> RULER
+> 28 30 32 34
+> H2O
+> 32 33 34 35 45 50 55 22 23 24 25 050 100 34 36
+> AdaKV
+> 35 36 36 57 58 59 60 61 22 23 24 40 60 80 100 64 256 1k 10 20 30
+> L2Norm
+> 64 256 1k 10 20 30 64 256 1k 30 40 64 256 1k 18 20 22 24 64 256 1k 050 100
+> uniform allocation Stage 3 (rescaled winner) Stage 4 (NAS-refined) target average per-layer KV budget (tokens, log scale) full-data score
+
+Figure 4: Uniform vs. Stage 3 and Stage 4 at every target budget (full data). Rows: eviction method (Llama); columns: task. Stage 3: rescaled Stage 2 winner, no further search; Stage 4: NAS-refined, only at budgets where it ran. 
+
+shapes transfer well: H2O’s Code winner used un-der SnapKV, and SnapKV’s under H2O, beat uni-form at every budget ( +0 .06 to +1 .66 ), although not the receiving method’s own MOSAIC configu-ration (Appendix C). Each task therefore needs its own search, while a shape found for one eviction method is a good starting point for another. 
+
+5.2 Task and Method Patterns 
+
+Gains are largest on RULER. Within LongBench they are largest on Code, smaller on the two QA cat-egories and smallest on Summarization, an order-ing that holds for every method (Table 1). Across methods, H2O shows the largest RULER gains (+18 to +33 at B1024–B2048). AdaKV, which already allocates budget adaptively across heads within a layer, still gains from reallocation across layers: +4 .1 to +8 .3 on RULER and up to +1 .98 
+
+on LongBench. L2Norm shows the largest Long-Bench gains (Code +4 .9 to +9 .5), but from a weak baseline: at B128 its uniform Single-Doc QA score is 10.2, against 33.0 for SnapKV. 
+
+6 Comparison with EvolKV 
+
+We reproduce EvolKV (Yu and Chai, 2025) in its 
+
+direct setting (a search at each budget) and its main 
+
+expanded protocol (one B128 search, rescaled), with SnapKV on Code and Single-Doc QA, all re-evaluated on full data (Table 4). 
+
+How the protocols differ. Both rescale one allocation or search at each budget, but find that allocation differently. EvolKV fixes the target bud-get before searching and returns one allocation; MOSAIC’s Stage 1 treats average budget and task score as separate objectives, and Stage 2 selects one anchor from the Pareto front. EvolKV runs CMA-                                             
+
+> Task Protocol 128 256 512 1024
+> Code Uniform 54.81 55.67 56.73 56.02 EvolKV direct 54.92 –57.02 57.20 EvolKV expanded 54.92 55.99 56.82 56.42 MOSAIC Winner 55.86 57.33 58.16 58.52 MOSAIC (final) 56.09 57.33 58.16 58.91
+> Single-Doc QA Uniform 32.97 35.25 35.97 36.44 EvolKV direct 33.50 –36.28 36.40 EvolKV expanded 33.50 35.43 36.14 36.38 MOSAIC Winner 33.51 34.51 36.33 36.46 MOSAIC (final) 33.67 34.51 36.33 37.01
+
+Table 4: EvolKV vs. MOSAIC (SnapKV, full data). 
+
+Direct: an EvolKV search at each budget (none at B256). Expanded: EvolKV’s main protocol, its B128 allocation rescaled. Winner: MOSAIC’s Stage 2 winner, searched once and rescaled. MOSAIC (final): the better of Win-ner and NAS-refined. Bold: best in each column. 
+
+ES on one 8-layer group at a time (earlier groups frozen), starting from uniform, so each search varies 8 layers at one budget (at most ∼10 29 al-locations). MOSAIC searches all L budgets jointly, about 10 69 allocations at B128 ( ∼10 40 × more per search) and in Stage 1 up to 10 27 configurations across all budgets (§3.1). Searching once, MOSAIC’s Winner beats ex-panded EvolKV in 5 of 6 transferred cells (B256– B1024; Code +1 .34 to +2 .10 , Single-Doc QA 
+
+−0.92 to +0 .19 ). It also beats direct EvolKV ,a search at each budget, in all 6 cells where both ran (Code +0 .94 to +1 .32 , Single-Doc QA +0 .01 
+
+to +0 .06 ), with no per-budget search. Search costs and a compute-matched per-budget comparison are in Appendix D. 
+
+7 Conclusion 
+
+One MOSAIC search per task learns per-layer KV-cache budgets that transfer to every budget, beating uniform allocation in 146 of 154 settings with up to 4× less KV cache. 8Limitations and Future Work 
+
+• Scope: we evaluate two dense decoder mod-els; on Mistral-7B-Instruct-v0.2, LongBench Summarization has only Stage 1 for SnapKV, H2O and AdaKV, and we will add Stages 2–4 for it in a future version of this paper. • Future work: we plan to extend MOSAIC to other model families, such as mixture-of-experts models and hybrid architectures that combine attention with convolutional or state-space layers (e.g., LFM and Mamba-based models), and to more recent eviction meth-ods such as KeyDiff (Park et al., 2025) and QUOKA (Jones et al., 2026). 
+
+References 
+
+Yushi Bai, Xin Lv, Jiajie Zhang, Hongchang Lyu, Jiankai Tang, Zhidian Huang, Zhengxiao Du, Xiao Liu, Aohan Zeng, Lei Hou, Yuxiao Dong, Jie Tang, and Juanzi Li. 2024. Longbench: A bilingual, multi-task benchmark for long context understanding. In 
+
+Proceedings of the 62nd Annual Meeting of the As-sociation for Computational Linguistics (Volume 1: Long Papers) , pages 3119–3137. Han Cai, Chuang Gan, Tianzhe Wang, Zhekai Zhang, and Song Han. 2020. Once-for-all: Train one net-work and specialize it for efficient deployment. In 
+
+International Conference on Learning Representa-tions .Zefan Cai, Yichi Zhang, Bofei Gao, Yuliang Liu, Yucheng Li, Tianyu Liu, Keming Lu, Wayne Xiong, Yue Dong, Junjie Hu, and Wen Xiao. 2025. Pyra-midKV: Dynamic KV cache compression based on pyramidal information funneling. In Conference on Language Modeling .Tri Dao. 2024. Flashattention-2: Faster attention with better parallelism and work partitioning. In The Twelfth International Conference on Learning Repre-sentations .Kalyanmoy Deb, Amrit Pratap, Sameer Agarwal, and T. Meyarivan. 2002. A fast and elitist multiobjective genetic algorithm: NSGA-II. IEEE Transactions on Evolutionary Computation , 6(2):182–197. Alessio Devoto, Yu Zhao, Simone Scardapane, and Pasquale Minervini. 2024. A simple and effective 
+
+L2 norm-based strategy for KV cache compression. In Proceedings of the 2024 Conference on Empiri-cal Methods in Natural Language Processing , pages 18476–18499. Thomas Elsken, Jan Hendrik Metzen, and Frank Hutter. 2019. Neural architecture search: A survey. The Journal of Machine Learning Research , 20:1–21. Yuan Feng, Junlin Lv, Yukun Cao, Xike Xie, and S. Kevin Zhou. 2025. Ada-KV: Optimizing KV cache eviction by adaptive budget allocation for effi-cient LLM inference. In Advances in Neural Infor-mation Processing Systems .Elias Frantar, Saleh Ashkboos, Torsten Hoefler, and Dan Alistarh. 2023. Gptq: Accurate post-training quan-tization for generative pre-trained transformers. In 
+
+The Eleventh International Conference on Learning Representations .Yu Fu, Zefan Cai, Abedelkadir Asi, Wayne Xiong, Yue Dong, and Wen Xiao. 2025. Not all heads matter: A head-level kv cache compression method with in-tegrated retrieval and reasoning. In The Thirteenth International Conference on Learning Representa-tions .Suyu Ge, Yunan Zhang, Liyuan Liu, Minjia Zhang, Jiawei Han, and Jianfeng Gao. 2024. Model tells you what to discard: Adaptive kv cache compression for llms. In The Twelfth International Conference on Learning Representations .Aaron Grattafiori et al. 2024. The llama 3 herd of mod-els. arXiv preprint arXiv:2407.21783 .Nikolaus Hansen and Andreas Ostermeier. 2001. Com-pletely derandomized self-adaptation in evolution strategies. Evolutionary Computation , 9(2):159–195. Coleman Hooper, Sehoon Kim, Hiva Mohammadzadeh, Michael W. Mahoney, Yakun Sophia Shao, Kurt Keutzer, and Amir Gholami. 2024. Kvquant: To-wards 10 million context length llm inference with kv cache quantization. In Advances in Neural Infor-mation Processing Systems , volume 37. Cheng-Ping Hsieh, Simeng Sun, Samuel Kriman, Shan-tanu Acharya, Dima Rekesh, Fei Jia, Yang Zhang, and Boris Ginsburg. 2024. Ruler: What’s the real context size of your long-context language models? In First Conference on Language Modeling .Albert Q. Jiang, Alexandre Sablayrolles, Arthur Men-sch, Chris Bamford, Devendra Singh Chaplot, Diego de las Casas, Florian Bressand, Gianna Lengyel, Guil-laume Lample, Lucile Saulnier, Lélio Renard Lavaud, Marie-Anne Lachaux, Pierre Stock, Teven Le Scao, Thibaut Lavril, Thomas Wang, Timothée Lacroix, and William El Sayed. 2023. Mistral 7b. arXiv preprint arXiv:2310.06825 .Dalton Jones, Junyoung Park, Matthew Morse, Mingu Lee, Chris Lott, and Harper Langston. 2026. QUOKA: Query-oriented KV selection for efficient LLM prefill. arXiv preprint arXiv:2602.08722 .Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph E. Gon-zalez, Hao Zhang, and Ion Stoica. 2023. Efficient memory management for large language model serv-ing with pagedattention. In Proceedings of the 29th Symposium on Operating Systems Principles , pages 611–626. 
+
+9Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Locatelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen. 2024. SnapKV: LLM knows what you are looking for before genera-tion. In Advances in Neural Information Processing Systems .Akide Liu, Jing Liu, Zizheng Pan, Yefei He, Gholam-reza Haffari, and Bohan Zhuang. 2024a. Minicache: Kv cache compression in depth dimension for large language models. In Advances in Neural Information Processing Systems , volume 37. Hanxiao Liu, Karen Simonyan, and Yiming Yang. 2019. Darts: Differentiable architecture search. In Interna-tional Conference on Learning Representations .Zichang Liu, Aditya Desai, Fangshuo Liao, Weitao Wang, Victor Xie, Zhaozhuo Xu, Anastasios Kyril-lidis, and Anshumali Shrivastava. 2023. Scis-sorhands: Exploiting the persistence of importance hypothesis for llm kv cache compression at test time. In Advances in Neural Information Processing Sys-tems , volume 36. Zirui Liu, Jiayi Yuan, Hongye Jin, Shaochen Zhong, Zhaozhuo Xu, Vladimir Braverman, Beidi Chen, and Xia Hu. 2024b. Kivi: A tuning-free asymmetric 2bit quantization for kv cache. In Proceedings of the 41st International Conference on Machine Learning .Michael D. McKay, Richard J. Beckman, and William J. Conover. 1979. A comparison of three methods for selecting values of input variables in the analysis of output from a computer code. Technometrics ,21(2):239–245. Junyoung Park, Dalton Jones, Matthew J. Morse, Raghavv Goel, Mingu Lee, and Chris Lott. 2025. KeyDiff: Key similarity-based KV cache eviction for long-context LLM inference in resource-constrained environments. In Advances in Neural Information Processing Systems .Ziran Qin, Yuchen Cao, Mingbao Lin, Wen Hu, Shixuan Fan, Ke Cheng, Weiyao Lin, and Jianguo Li. 2025. CAKE: Cascading and adaptive KV cache eviction with layer preferences. In International Conference on Learning Representations .Rainer Storn and Kenneth Price. 1997. Differential evo-lution – a simple and efficient heuristic for global op-timization over continuous spaces. Journal of Global Optimization , 11(4):341–359. Jiaming Tang, Yilong Zhao, Kan Zhu, Guangxuan Xiao, Baris Kasikci, and Song Han. 2024. Quest: Query-aware sparsity for efficient long-context llm inference. In Proceedings of the 41st International Conference on Machine Learning .Louis C. Tiao, Aaron Klein, Matthias Seeger, Edwin V. Bonilla, Cedric Archambeau, and Fabio Ramos. 2021. Bore: Bayesian optimization by density-ratio esti-mation. In Proceedings of the 38th International Conference on Machine Learning , volume 139 of 
+
+Proceedings of Machine Learning Research , pages 10289–10300. Zihao Wang, Bin Cui, and Shaoduo Gan. 2025. Squeezeattention: 2d management of kv-cache in llm inference via layer-wise optimal budget. In The Thir-teenth International Conference on Learning Repre-sentations .Guangxuan Xiao, Ji Lin, Mickael Seznec, Hao Wu, Julien Demouth, and Song Han. 2023. Smoothquant: Accurate and efficient post-training quantization for large language models. In Proceedings of the 40th International Conference on Machine Learning .Guangxuan Xiao, Jiaming Tang, Jingwei Zuo, Junxian Guo, Shang Yang, Haotian Tang, Yao Fu, and Song Han. 2025. Duoattention: Efficient long-context llm inference with retrieval and streaming heads. In 
+
+The Thirteenth International Conference on Learning Representations .Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. 2024. Efficient streaming lan-guage models with attention sinks. In The Twelfth International Conference on Learning Representa-tions .Dongjie Yang, XiaoDong Han, Yan Gao, Yao Hu, Shilin Zhang, and Hai Zhao. 2024. Pyramidinfer: Pyra-mid kv cache compression for high-throughput llm inference. In Findings of the Association for Compu-tational Linguistics: ACL 2024 , pages 3258–3270. Bohan Yu and Yekun Chai. 2025. EvolKV: Evolution-ary KV cache compression for LLM inference. In 
+
+Findings of the Association for Computational Lin-guistics: EMNLP 2025 .Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuan-dong Tian, Christopher Ré, Clark Barrett, Zhangyang Wang, and Beidi Chen. 2023. H2O: Heavy-hitter oracle for efficient generative inference of large lan-guage models. In Advances in Neural Information Processing Systems .
+
+10 A Per-Cell Results 
+
+LongBench categories: Single-Doc QA (Narra-tiveQA, Qasper, MultiFieldQA-en), Multi-Doc QA (HotpotQA, 2WikiMQA, MuSiQue), Summa-rization (GovReport, QMSum, Multi-News) and Code (LCC, RepoBench-P); a category’s score is the mean over its datasets, each scored on all of its 150–500 samples. RULER uses its 11 sub-tasks (NIAH-Single-1/2/3, NIAH-MultiKey-1/2/3, NIAH-MultiQuery, NIAH-MultiValue, Common-Words Extraction, Frequent-Words Extraction and Variable Tracking) at 4K context, 500 samples each; the RULER score is the mean over the 11 subtasks. Tables 5 and 6 (Llama-3-8B-Instruct, Long-Bench and RULER) and Tables 7 and 8(Mistral-7B-Instruct-v0.2) list every evaluated (task, method, budget) cell on full data. For each task they give three rows: uniform allocation, the rescaled Stage 2 winner (Winner, Stage 3) and NAS-refined, the best configuration of the Stage 4 search. MOSAIC’s final configuration is the bet-ter of Winner and NAS-refined. Winner rows also cover budgets where Stage 4 did not run, so they give the full winner transfer of Appendix C. Ap-pendix I breaks these cells down into RULER sub-tasks and LongBench datasets. 
+
+B Calibration Scores vs. Full-Data Scores 
+
+MOSAIC scores configurations on a calibration subsample while it searches and on the full data when it selects. Figure 6 shows why both are needed: calibration orders configurations broadly like the full data, but the configuration it ranks first is often not the full-data best, and selection keeps only the first. The Stage 4 searches analysed here use a 10% subsample for all four methods on both benchmarks; Stage 1 uses 30% on LongBench and 10% on RULER. 
+
+Stage 4 (Figure 6a, b). All candidates of a Stage 4 cell share one average budget, so their ranking tests calibration directly. Panel (a) gives Kendall’s 
+
+τ between the calibration and full-data rankings of each cell’s re-evaluated candidates, and panel (b) the regret, the full-data points lost by taking the calibration-best candidate instead of the best re-evaluated one. On LongBench the median τ per method is 0.00 to 0.55, and calibration picks the full-data best in only 4 of 13 cells for SnapKV, 2 of 16 for H2O, 2 of 9 for AdaKV and 10 of 16 for                                                                                                                                                                                                     
+
+> Task 128 256 512 1024 SnapKV
+> Code (430) Uniform 54.81 55.67 56.73 56.02 Winner 55.86 57.33 58.16 58.52 NAS-ref. 56.09 57.31 58.01 58.91
+> Multi-Doc QA (274) Uniform 34.82 35.60 35.77 35.87 Winner 35.02 36.31 35.73 36.26
+> NAS-ref. 34.94 35.68 35.55 36.14 Single-Doc QA (506) Uniform 32.97 35.25 35.97 36.44 Winner 33.51 34.51 36.33 36.46 NAS-ref. 33.67 34.51 35.61 37.01
+> Summarization (732) Uniform 21.03 22.30 23.44 24.85 Winner 21.15 22.41 23.71 25.10
+> NAS-ref. 20.95 –––
+> H2O
+> Code (2456) Uniform 45.96 49.49 52.81 56.92 Winner 46.59 50.59 54.03 56.15 NAS-ref. 47.13 50.31 54.51 57.23
+> Multi-Doc QA (448) Uniform 32.57 32.45 32.98 33.54 Winner 32.16 32.86 34.33 34.38 NAS-ref. 32.01 32.92 33.50 34.93
+> Single-Doc QA (518) Uniform 28.21 29.96 32.41 33.60 Winner 29.72 30.70 32.21 34.20 NAS-ref. 28.32 30.92 32.80 34.69
+> Summarization (552) Uniform 21.88 23.13 24.22 24.97 Winner 22.02 23.17 24.35 25.11 NAS-ref. 22.31 23.33 24.32 25.32 AdaKV
+> Code (482) Uniform 57.30 58.19 58.70 –Winner 56.94 58.77 59.61 –NAS-ref. 58.28 59.62 60.68 –Multi-Doc QA (188) Uniform 34.99 35.42 36.14 –Winner 35.38 36.14 35.69 –NAS-ref. 35.96 36.05 36.33 –Single-Doc QA (464) Uniform 32.83 35.08 36.68 –Winner 33.16 35.33 36.45 –NAS-ref. 34.64 35.98 36.49 –Summarization (548) Uniform 21.72 22.72 23.62 –Winner 21.47 22.68 23.85 –NAS-ref. 22.05 23.00 24.08 –
+> L2Norm
+> Code (1410) Uniform 22.54 23.57 28.14 34.95 Winner 26.20 30.46 35.55 44.47
+> NAS-ref. 27.48 30.69 35.90 42.61 Multi-Doc QA (2236) Uniform 9.09 13.23 22.06 28.72 Winner 8.18 18.41 23.91 31.37 NAS-ref. 9.23 18.64 25.49 32.90
+> Single-Doc QA (2120) Uniform 10.20 13.91 18.48 24.75 Winner 10.52 14.76 20.43 29.21
+> NAS-ref. 10.63 14.02 21.13 28.57 Summarization (2518) Uniform 17.73 19.79 21.30 23.01 Winner 17.86 19.98 21.95 23.57
+> NAS-ref. 18.69 19.82 21.74 23.33
+
+Table 5: Full-data results for every evaluated Long-Bench cell, Llama-3-8B-Instruct. Per task: uniform, the rescaled Stage 2 winner (Winner) and NAS-refined (best of the Stage 4 search); bold: best in each column. The number under each task is the winner’s natural av-erage budget, at which Stage 1 found it. MOSAIC’s final configuration beats uniform in 53 of 57 cells with a Stage 4 search, and the Winner alone in 49 of 60. 
+
+11 Method 64 128 256 512 1024 1536 2048 
+
+SnapKV (1756) Uniform 34.64 51.56 68.06 78.62 85.67 88.62 92.93 Winner 44.99 58.37 72.28 81.76 91.46 98.35 98.91 
+
+NAS-ref. – 55.91 71.07 – 93.80 96.86 98.35 H2O (2180) Uniform 7.23 12.19 20.02 29.64 44.35 53.39 62.82 Winner 7.60 12.22 19.61 32.61 53.42 70.88 88.31 NAS-ref. – 15.39 – – 62.52 86.05 96.14 
+
+AdaKV (2536) Uniform 35.80 50.87 68.02 78.22 86.87 89.75 93.90 Winner 35.97 55.32 68.74 78.50 87.09 94.76 98.17 NAS-ref. – 57.40 72.10 83.08 93.78 97.99 98.65 
+
+L2Norm (2354) Uniform – 4.63 17.74 27.17 35.59 42.28 49.70 Winner – 10.85 20.50 28.48 37.76 51.33 61.16 NAS-ref. – 13.68 20.83 29.42 67.03 90.19 97.21 
+
+Table 6: Full-data results for every evaluated RULER cell, Llama-3-8B-Instruct. Layout as in Table 5; the number under each method is its winner’s natural average budget. AdaKV at B64: only the rescaled winner was run, compared with Stage 2’s uniform-64 configuration. MOSAIC’s final configuration beats uniform in 21 of 21 cells with a Stage 4 search, and the Winner alone in 26 of 27. 
+
+Task 128 256 512 1024 L2Norm 
+
+Code Uniform 22.45 25.58 28.68 33.22 Winner 24.40 27.93 31.70 37.87 NAS-ref. 24.89 28.18 32.12 38.18 
+
+Multi-Doc QA Uniform 4.96 5.73 7.55 11.01 Winner 5.11 6.10 8.96 16.18 NAS-ref. 5.84 7.29 12.96 17.45 
+
+Single-Doc QA Uniform 5.03 7.27 9.83 16.27 Winner 6.04 8.81 14.55 23.15 NAS-ref. 5.88 8.88 14.66 23.46 
+
+Summarization Uniform 18.02 19.61 20.89 22.48 Winner 18.16 19.73 21.42 23.00 NAS-ref. 18.81 20.40 21.72 23.41 SnapKV 
+
+Code Uniform 49.76 52.09 53.77 55.23 Winner 48.99 52.52 53.69 55.02 NAS-ref. 49.61 53.14 55.05 55.38 
+
+Multi-Doc QA Uniform 23.86 25.62 26.47 28.80 Winner 25.68 27.14 28.53 28.73 NAS-ref. 25.63 27.11 28.35 29.60 
+
+Single-Doc QA Uniform 29.61 31.74 33.91 34.99 Winner 29.50 33.34 34.39 35.62 
+
+NAS-ref. 29.13 33.53 34.14 35.42 
+
+Task 128 256 512 1024 H2O 
+
+Code Uniform 39.59 43.09 46.43 49.65 Winner 40.28 43.98 47.11 49.70 NAS-ref. 40.25 44.33 47.68 50.30 
+
+Multi-Doc QA Uniform 21.10 23.70 25.18 26.58 Winner 22.16 25.16 26.42 26.87 NAS-ref. 22.29 25.07 26.43 27.52 
+
+Single-Doc QA Uniform 26.20 27.92 30.52 32.14 Winner 27.02 29.25 31.79 32.77 NAS-ref. 26.15 28.96 31.80 33.50 AdaKV 
+
+Code Uniform 51.08 52.66 54.65 55.08 Winner 46.64 51.19 53.90 54.89 NAS-ref. 51.42 53.42 55.27 55.75 
+
+Multi-Doc QA Uniform 25.27 26.66 27.62 28.86 Winner 27.78 28.57 28.66 29.22 NAS-ref. 27.43 28.80 29.05 30.29 
+
+Single-Doc QA Uniform 30.91 33.14 34.42 34.97 Winner 28.89 32.23 33.82 35.15 
+
+NAS-ref. 30.57 34.12 34.21 35.07 
+
+Table 7: Full-data results for every evaluated LongBench cell, Mistral-7B-Instruct-v0.2. Layout as in Table 5. SnapKV, H2O and AdaKV were searched with 30% calibration and have no Summarization cells (only its Stage 1 search ran); H2O truncates prompts at 7.5K tokens, SnapKV and AdaKV at 31.5K. MOSAIC’s final configuration beats uniform in 48 of 52 cells, and the Winner alone in 40 of 52. 
+
+L2Norm; on RULER it picks the full-data best in 20 of 21 cells (Table 10). 
+
+Stage 1 fronts (Figure 6c, d). Panels (c) and (d) compare each Stage 1 Pareto front’s calibration scores with its Stage 2 full-data re-evaluation. On a front both scores rise with budget, so the front’s overall order agrees ( τ 0.78 to 1.00; in 15 of 17 fronts τ equals that between average budget and full-data score). Stage 2, however, keeps only the top configuration. The calibration-top configura-tion is the most expensive on the front in 15 of 17 fronts, and full data prefers a cheaper one in 6 of 17 (by up to 0.73 points; none of L2Norm’s 4 LongBench fronts). For AdaKV, the Single- and 12 Method 128 256 512 1024 1536 2048 
+
+L2Norm Uniform 0.64 4.25 11.06 22.86 27.59 30.73 Winner 2.74 8.78 19.43 25.62 37.30 62.71 NAS-ref. 3.32 10.29 17.90 29.65 43.23 64.58 
+
+SnapKV Uniform 40.89 51.74 62.83 77.13 84.66 90.22 Winner 38.69 50.64 62.27 77.15 84.40 88.07 NAS-ref. 47.38 65.24 71.28 91.06 95.71 96.66 
+
+H2O Uniform 10.14 14.09 19.21 27.68 33.96 41.05 Winner 9.61 13.67 18.57 37.13 54.44 82.93 NAS-ref. 10.67 14.75 43.01 68.02 85.31 88.63 
+
+AdaKV Uniform 36.33 49.02 60.93 76.71 83.60 87.56 Winner 34.23 47.67 61.48 – 83.12 86.43 NAS-ref. 52.61 60.28 73.94 77.08 88.32 91.71 
+
+Table 8: Full-data results for every evaluated RULER cell, Mistral-7B-Instruct-v0.2. Layout as in Table 6. MOSAIC’s final configuration beats uniform in 24 of 24 cells, and the Winner alone in 11 of 23. 30 32 34 36           
+
+> SnapKV Single-Doc QA
+> 24 26 28 30
+> Multi-Doc QA
+> 50 52 54 56
+> Code
+> 40 60 80 100
+> RULER
+> 26 28 30 32 34
+> H2O
+> 22 24 26 28 40 45 50 20 40 60 80 30 32 34
+> AdaKV
+> 26 28 30 50 55 40 60 80 64 256 1k 510 15 20 25
+> L2Norm
+> 64 256 1k 510 15 64 256 1k 25 30 35 64 256 1k 020 40 60
+> uniform allocation Stage 3 (rescaled winner) Stage 4 (NAS-refined) target average per-layer KV budget (tokens, log scale) full-data score
+
+Figure 5: Uniform vs. Stage 3 and Stage 4 at every target budget, Mistral-7B-Instruct-v0.2 (full data), drawn as Figure 4. Rows: eviction method; columns: task. Stage 3: rescaled Stage 2 winner, no further search; Stage 4: NAS-refined, only at budgets where it ran. 
+
+Multi-Doc QA fronts are shown. Re-scoring a front costs only its 4 to 19 configurations. 
+
+Calibration ratio: a case study. Table 11 rescores the 24 configurations of one SnapKV Stage 4 search (Code, B512) on a 30% subsam-ple and compares both subsamples with the full data. In this cell the larger subsample reduces the optimism (+1.37 against +5.10 points), ranks the configurations closer to the full data ( τ 0.75 against 0.51), and picks the full-data best, which the 10% subsample does not. This is a single cell, chosen be-cause its guided proposal scored below uniform, so it illustrates rather than establishes the effect; a 30% subsample also costs about three times as much per evaluation. A larger subsample reduces the noise but does not remove it: on the Stage 1 fronts, which use 30% on LongBench, full data prefers a different configuration from the calibration-top one in 4 of 15 SnapKV, H2O and L2Norm fronts (by up to 0.73 points; Figure 6d). MOSAIC therefore re-evaluates its candidates on full data at either ratio. 
+
+C Shape Transfer Across Tasks and Methods 
+
+Figure 7 applies a Stage 2 winner shape to a dif-ferent task or eviction method, rescaled with the same mapping as Stage 3, and compares it with the receiving cell’s uniform allocation, its own rescaled Winner and its final configuration. The tests cover SnapKV and H2O on Code and Single-Doc QA at B128, B512 and B1024. 
+
+Across tasks, shapes do not transfer. 
+
+SnapKV’s Code shape applied to Single-Doc QA, and its Single-Doc QA shape applied to Code, score below uniform at every budget (by 0.33 to 1.08 and 0.63 to 1.22 points), while each task’s own Winner beats uniform in the same six cells. The layers that need more cache differ between the 13 SnapKV H2O AdaKV L2Norm           
+
+> −1
+> −0.5 00.5 1Kendall’s  τ
+> (a) Stage 4: ranking agreement
+> SnapKV H2O AdaKV L2Norm 012full-data points lost
+> (b) Stage 4: selection regret
+> SnapKV H2O AdaKV L2Norm
+> −1
+> −0.5 00.5 1Kendall’s  τ
+> (c) Stage 1 fronts vs. Stage 2: ranking agreement
+> SnapKV H2O AdaKV L2Norm 012full-data points lost
+> (d) Stage 1 fronts vs. Stage 2: selection regret
+> LongBench RULER
+
+Figure 6: Calibration vs. full-data scores, Llama-3-8B-Instruct. Circles: LongBench; triangles: RULER; bars: medians. Top: Stage 4 (10% subset on both benchmarks), one marker per evaluated (task, budget) cell, whose candidates share one budget. Bottom: Stage 1 Pareto fronts (30% on LongBench, 10% on RULER) against their Stage 2 full-data re-evaluation, one marker per front (AdaKV: Single- and Multi-Doc QA). (a, c) Kendall’s τ
+
+between the calibration and full-data rankings. On a front both scores rise with budget, so (c) is high and in 15 of 17 fronts equals τ between average budget and full-data score: it reflects the budget trend, not whether calibration finds the top configuration. (b, d) Regret: full-data points lost by taking the calibration-top configuration instead of the best re-evaluated one. In (d), full data prefers a cheaper configuration than the calibration-top one in 6 of 17 fronts (up to 0.73 points). “Best” refers to the re-evaluated pool only, and a zero median regret does not mean calibration always picks correctly (Table 10 gives the Stage 4 counts). 
+
+two tasks, so a shape found for one task is worse than uniform allocation on the other. 
+
+Across eviction methods, shapes do trans-fer. On Code, H2O’s shape under SnapKV and SnapKV’s shape under H2O beat uniform in all six cells ( +0 .06 to +1 .66 ). They stay below the receiving method’s own final configuration in ev-ery cell (by 0.18 to 1.23 points) and below its own Winner in 4 of 6; SnapKV’s shape under H2O beats H2O’s own Winner at B128 and B1024 ( +0 .16 and 
+
++0 .90 ). Which layers need more cache therefore depends mainly on the task, so a shape found with one eviction method is a useful starting point for another, while a search with the receiving method still adds up to 1.23 points. 
+
+D Search Cost 
+
+Table 15 compares one budget-constrained search per cell with our EvolKV reproduction (SnapKV, LongBench), on the same A100-40GB machine and evaluation harness. EvolKV runs 60 genera-tions × population 10, 600 evaluations on 30 cali-bration samples each. MOSAIC’s Stage 4 runs at most 150 evaluations on a 10% calibration subset (55–100 samples): we keep each run’s evaluations 
+
+≤150 in the order they were run, and add the full-data re-evaluation of the three NAS-refined candi-dates. Both searches process a sample equally fast (about 2.5 s on Code and 1.0 s on Single-Doc QA), so cost is evaluations times samples, and MOSAIC spends it on fewer evaluations of larger samples. It costs no more than EvolKV in any cell (43.8 GPU-hours against 53.7 in total) and beats it in 5 of 6 cells ( +0 .17 to +1 .71 ); it loses Single-Doc QA B512 by 0.67 points. MOSAIC has four stages. Stages 1–2 run once per (task, method) and produce the Winner; Stages 3–4 rescale it to each budget and refine it there. Users can stop after Stages 1–2 and deploy the rescaled Winner, which beats direct EvolKV in all 14 128 512 1024           
+
+> −10123budget B
+> gain over uniform (points)
+> (a) SnapKV: Code shape on Single-Doc QA
+> 128 512 1024 budget B
+> (b) SnapKV: Single-Doc QA shape on Code
+> 128 512 1024 budget B
+> (c) Code: H2O shape under SnapKV
+> 128 512 1024 budget B
+> (d) Code: SnapKV shape under H2O
+
+Across tasks Across eviction methods   
+
+> Transferred shape Receiving cell’s own Winner Receiving cell’s own final
+
+Figure 7: Transferring winner shapes across tasks (a, b) and eviction methods (c, d) , LongBench, full data. Each point is a gain over the receiving cell’s uniform allocation at the same budget (dashed line): the transferred shape, rescaled as in Stage 3; the receiving cell’s own rescaled Winner; and its own final configuration (the better of Winner and NAS-refined).                                                                                                                                      
+
+> Stage 3 Stage 4 MOSAIC
+> (Winner) (NAS-refined) (best of both)
+> Task Method Wins ∆Wins ∆Wins ∆
+> Code H2O 4/4 +0 .58 4/4 +0 .95 4/4 +0 .96
+> Code SnapKV 1/4 −0.16 3/4 +0 .59 3/4 +0 .59
+> MultiDoc H2O 4/4 +1 .01 4/4 +1 .19 4/4 +1 .21
+> MultiDoc SnapKV 3/4 +1 .33 4/4 +1 .48 4/4 +1 .55
+> SingleDoc H2O 4/4 +1 .01 3/4 +0 .91 4/4 +1 .19
+> SingleDoc SnapKV 3/4 +0 .65 3/4 +0 .49 3/4 +0 .70
+> RULER H2O 3/6 +11 .71 6/6 +27 .38 6/6 +27 .38
+> RULER SnapKV 1/6 −1.04 6/6 +9 .98 6/6 +9 .98
+> Code AdaKV 0/4 −1.71 4/4 +0 .60 4/4 +0 .60
+> MultiDoc AdaKV 4/4 +1 .45 4/4 +1 .79 4/4 +1 .88
+> SingleDoc AdaKV 1/4 −0.83 2/4 +0 .14 2/4 +0 .16
+> RULER AdaKV 1/5 −0.90 6/6 +8 .30 6/6 +8 .30
+> Code L2Norm 4/4 +2 .99 4/4 +3 .36 4/4 +3 .36
+> MultiDoc L2Norm 4/4 +1 .78 4/4 +3 .57 4/4 +3 .57
+> SingleDoc L2Norm 4/4 +3 .54 4/4 +3 .62 4/4 +3 .66
+> Summ L2Norm 4/4 +0 .33 4/4 +0 .83 4/4 +0 .83
+> RULER L2Norm 6/6 +9 .91 6/6 +11 .98 6/6 +12 .23
+> Total 51/75 71/76 72/76
+
+Table 9: One search, many budgets, Mistral-7B-Instruct-v0.2 (Table 1 for Llama-3-8B-Instruct; columns as there). SnapKV, H2O and AdaKV have no LongBench Summarization cells. 
+
+6 cells (Section 6), or also run Stage 4 at the bud-gets they need. Stage 2 re-evaluates the Stage 1 front on full data: 3.6 GPU-hours on Single-Doc QA (20 configurations) and 8.0 on Code (11 con-figurations). Table 12 gives the cost of the 180-evaluation Stage 1 for each task and method. With Stages 1–2 added, running all four stages costs more than EvolKV’s direct searches at these three budgets (at least 43.1 vs. 38.3 GPU-hours on Code, 21.2 vs. 15.4 on Single-Doc QA). 
+
+Bench. Method Cells Gap τ Picks Regret 
+
+LongBench H2O 16 +3 .77 −0.00 2/16 0.71 LongBench SnapKV 13 +5 .23 +0 .03 4/13 0.60 RULER H2O 4 +0 .09 +0 .82 4/4 0.00 RULER SnapKV 5 −0.16 +1 .00 5/5 0.00 LongBench AdaKV 9 +1 .14 +0 .47 2/9 0.40 RULER AdaKV 6 −0.20 +0 .77 5/6 0.02 LongBench L2Norm 16 +2 .58 +0 .49 10/16 0.30 RULER L2Norm 6 +0 .13 +0 .93 6/6 0.00 
+
+Table 10: Stage 4 calibration (10% subset) vs. full-data scores, summary. Cells: (task, budget) pairs. Gap: mean calibration minus full-data score. τ : mean Kendall correlation between the two rankings of each cell’s re-evaluated configurations. Picks: cells where the calibration-best candidate is also full-data best. Regret: mean full-data points lost by trusting calibration. 
+
+Subsample Gap τ Picks best Regret 10% +5.10 +0.51 no 2.87 30% +1.37 +0.75 yes 0.00 
+
+Table 11: Calibration ratio, one cell (SnapKV, Code B512, 24 configurations, full data as reference). Gap: mean calibration minus full-data score. 
+
+Category Method GPU-h SingleDoc SnapKV 9.0 SingleDoc H2O 26.0 MultiDoc H2O 29.4 RULER SnapKV 22.9 RULER H2O 39.7 
+
+Table 12: MOSAIC Stage 1 cost 
+
+15 E Choice of the Per-Layer Floor 
+
+SnapKV and H2O always retain an 8-token recent window, so a layer with budget b selects only b − 8
+
+tokens by attention. At a floor of 16, only 8 tokens are chosen from contexts of thousands. Table 13 shows how often MOSAIC’s final configuration in each cell places layers exactly at the floor. At B128, 8 to 24 of the 32 layers sit at the floor, so the floor matters most at low budgets, which is where the controlled comparison below finds its differences.                                                    
+
+> Task Method 128 256 512 1024 Code SnapKV 16 15 01H2O 18 821MultiDoc SnapKV 24 000H2O 17 4017 SingleDoc SnapKV 8301H2O 9310Summ SnapKV 8600H2O 13 600RULER SnapKV 14 11 010 H2O 19 0021
+> Table 13: Layers at the per-layer floor (out of 32) in MOSAIC’s final configuration of each cell.
+
+Controlled comparison. Table 14 decodes the same rescaled SnapKV winner under both floors and evaluates both on full data. Floor 64 is better in three cells, all at B128 (by 0.37–1.10 points), the two are tied in two cells, and floor 16 is better in one (by 0.26). The differences concentrate at the lowest budget, where the floor binds most often.                                 
+
+> Cell Uniform Floor 64 Floor 16 ∆(16 −64) Code B128 54.81 55.86 54.76 −1.10
+> Code B256 55.67 57.33 57.30 −0.02
+> SingleDoc B128 32.97 33.51 33.14 −0.37
+> SingleDoc B256 35.25 34.51 34.77 +0.26 MultiDoc B128 34.82 35.02 34.32 −0.70
+> MultiDoc B256 35.60 36.31 36.31 +0.00
+> Table 14: Same rescaled winner under floor 64 and floor 16 (SnapKV, LongBench, full data). Negative ∆
+> (bold): floor 64 is better.
+
+F AdaKV and L2Norm Per-Layer Allocations 
+
+Figure 8 is the AdaKV counterpart of Figure 3, drawn in the same way. AdaKV shows a weaker version of the middle-layer preference: layer 10 receives more than its uniform share in 95% of the 19 AdaKV allocations and layers 13–16 in 68–89%, but over the whole middle block (layers 10 and 14– 20) the share is 55%, against 65% for SnapKV and H2O. Figure 9 does the same for L2Norm. Its allocations favour layers 14–18, which receive more than their uniform share in 56–70% of the 27 L2Norm allocations, and layer 27 (70%); over the whole middle block the share is 51%. 
+
+G Further Related Work 
+
+Complementary cache compression. Other tech-niques shrink the KV cache along axes that per-layer allocation leaves untouched and can be com-bined with it: Quest (Tang et al., 2024) keeps the full cache but loads only the pages relevant to each query, KIVI (Liu et al., 2024b) and KVQuant (Hooper et al., 2024) quantize keys and values to a few bits, and MiniCache (Liu et al., 2024a) merges the caches of adjacent layers. 
+
+Searching once for many budgets. Once-for-All (Cai et al., 2020) trains one network and spe-cializes it to many hardware budgets; MOSAIC similarly searches once and rescales the result to many cache budgets. Gradient-based NAS such as DARTS (Liu et al., 2019) does not apply here, because the task score is not differentiable in the per-layer token budgets. 
+
+H Reproducibility Details 
+
+Algorithm 1 summarizes the MOSAIC pipeline for one (task, eviction method); the paragraphs below give its settings. 
+
+Budget decoding. Stage 1 maps each coordinate 
+
+xi ∈ [0 , 1] of a configuration to a discrete per-layer budget by equal-width bins over a grid G:seven levels from 64 to 4096 on RULER and in some LongBench runs, and five levels from 64 to 1024 in the other LongBench runs. The grid limits only Stage 1: Stages 3 and 4 decode continuously between the floor and 4096, scaling the weights 
+
+xi to the total T = 32 B, clamping layers at the cap and the floor and redistributing the remainder in proportion to xi, then rounding so that P 
+
+> i
+
+bi =
+
+T exactly. Search-space size. The Stage 1 grid holds |G|32 configurations ( 532 ≈ 2.3 × 10 22 or 
+
+732 ≈ 1.1×10 27 ) across all average budgets. Stage 4 searches integer allocations in [64 , 4096] 32 at a fixed budget B: about 7 × 10 68 at B128, and 10 84 ,
+
+10 95 , 10 105 and 10 111 at B256, B512, B1024 and B2048. One EvolKV search varies a single 8-layer group with the others fixed, so even ignoring its budget penalty it covers at most 4033 8 ≈ 7 ×
+
+16 (a) Stage 2 winners (natural average budget)      
+
+> Code 396 Multi-Doc 174 Single-Doc 244 Summ. 548 RULER 2536
+> AdaKV
+
+(b) MOSAIC’s final configuration per cell (target budget)          
+
+> 128 256 512 128 256 512 128 256 512 128 256 512 128 256 512 1024 1536 2048 Code Multi-Doc Single-Doc Summ. RULER
+> AdaKV
+> Winner (Stage 3) NAS-refined (Stage 4) 04812 16 20 24 28 31
+
+(c) Share of the allocations in (a) and (b) that give each layer more than its uniform share         
+
+> 050 100% 04812 16 20 24 28 31
+
+layer index 
+
+> 1
+
+/8×
+
+> 1
+
+/4×
+
+> 1
+
+/2×
+
+> uniform 2
+
+×
+
+> 4
+
+×
+
+> 8
+
+×
+
+> layer budget / row mean
+
+Figure 8: AdaKV per-layer allocations , drawn as Figure 3. (a) Stage 2 winners at their natural average budget (left). (b) MOSAIC’s final configuration for every cell (the better of Winner and NAS-refined), with the target budget on the left and a marker on the right for which of the two it is. (c) For each layer, the share of the 19 allocations in (a) and (b) that give it more than its uniform share; navy bars exceed 50%. Colour: each layer’s budget divided by the row mean, on a log 2 scale (blue: more than the uniform share; red: less). (a) Stage 2 winners (natural average budget)      
+
+> Code 1410 Multi-Doc 2236 Single-Doc 2120 Summ. 2518 RULER 2354
+> L2Norm
+
+(b) MOSAIC’s final configuration per cell (target budget)          
+
+> 128 256 512 1024 128 256 512 1024 128 256 512 1024 128 256 512 1024 128 256 512 1024 1536 2048 Code Multi-Doc Single-Doc Summ. RULER
+> L2Norm
+> Winner (Stage 3) NAS-refined (Stage 4) 04812 16 20 24 28 31
+
+(c) Share of the allocations in (a) and (b) that give each layer more than its uniform share         
+
+> 050 100% 04812 16 20 24 28 31
+
+layer index 
+
+> 1
+
+/8×
+
+> 1
+
+/4×
+
+> 1
+
+/2×
+
+> uniform 2
+
+×
+
+> 4
+
+×
+
+> 8
+
+×
+
+> layer budget / row mean
+
+Figure 9: L2Norm per-layer allocations , drawn as Figure 3. (a) Stage 2 winners at their natural average budget (left). (b) MOSAIC’s final configuration for every cell (the better of Winner and NAS-refined), with the target budget on the left and a marker on the right for which of the two it is. (c) For each layer, the share of the 27 allocations in (a) and (b) that give it more than its uniform share; navy bars exceed 50%. Colour: each layer’s budget divided by the row mean, on a log 2 scale (blue: more than the uniform share; red: less). 
+
+17 (a) Stage 2 winners (natural average budget)         
+
+> Code 448 Multi-Doc 302 Single-Doc 384 RULER 2048 Code 620 Multi-Doc 486 Single-Doc 344 RULER 2044
+> SnapKV H2O
+
+(b) MOSAIC’s final configuration per cell (target budget)          
+
+> 128 256 512 1024 128 256 512 1024 128 256 512 1024 128 256 512 1024 1536 2048 128 256 512 1024 128 256 512 1024 128 256 512 1024 128 256 512 1024 1536 2048 Code Multi-Doc Single-Doc RULER Code Multi-Doc Single-Doc RULER
+> SnapKV H2O
+> Winner (Stage 3) NAS-refined (Stage 4) 04812 16 20 24 28 31
+
+(c) Share of the allocations in (a) and (b) that give each layer more than its uniform share         
+
+> 050 100% 04812 16 20 24 28 31
+
+layer index 
+
+> 1
+
+/8×
+
+> 1
+
+/4×
+
+> 1
+
+/2×
+
+> uniform 2
+
+×
+
+> 4
+
+×
+
+> 8
+
+×
+
+> layer budget / row mean
+
+Figure 10: SnapKV and H2O per-layer allocations, Mistral-7B-Instruct-v0.2 , drawn as Figure 3. (a) Stage 2 winners at their natural average budget (left). (b) MOSAIC’s final configuration for every cell (the better of Winner and NAS-refined), with the target budget on the left and a marker on the right for which of the two it is. (c) For each layer, the share of the 44 allocations in (a) and (b) that give it more than its uniform share; navy bars exceed 50%. Colour: each layer’s budget divided by the row mean, on a log 2 scale (blue: more than the uniform share; red: less). (a) Stage 2 winners (natural average budget)     
+
+> Code 1408 Multi-Doc 794 Single-Doc 1648 RULER 2048
+> AdaKV
+
+(b) MOSAIC’s final configuration per cell (target budget)          
+
+> 128 256 512 1024 128 256 512 1024 128 256 512 1024 128 256 512 1024 1536 2048 Code Multi-Doc Single-Doc RULER
+> AdaKV
+> Winner (Stage 3) NAS-refined (Stage 4) 04812 16 20 24 28 31
+
+(c) Share of the allocations in (a) and (b) that give each layer more than its uniform share         
+
+> 050 100% 04812 16 20 24 28 31
+
+layer index 
+
+> 1
+
+/8×
+
+> 1
+
+/4×
+
+> 1
+
+/2×
+
+> uniform 2
+
+×
+
+> 4
+
+×
+
+> 8
+
+×
+
+> layer budget / row mean
+
+Figure 11: AdaKV per-layer allocations, Mistral-7B-Instruct-v0.2 , drawn as Figure 3. (a) Stage 2 winners at their natural average budget (left). (b) MOSAIC’s final configuration for every cell (the better of Winner and NAS-refined), with the target budget on the left and a marker on the right for which of the two it is. (c) For each layer, the share of the 22 allocations in (a) and (b) that give it more than its uniform share; navy bars exceed 50%. Colour: each layer’s budget divided by the row mean, on a log 2 scale (blue: more than the uniform share; red: less). 
+
+18 EvolKV, direct MOSAIC Stage 4, NAS-refined Category Budget Evals Samples GPU-h Score Evals Samples GPU-h Score ∆
+
+Code 128 601 30 12.7 54.92 150 100 12.6 55.73 +0.81 Code 512 601 30 12.9 57.02 148 100 12.0 58.01 +0.99 Code 1024 601 30 12.7 57.20 125 100 10.6 58.91 +1.71 SingleDoc 128 601 30 5.2 33.50 150 55 2.8 33.67 +0.17 SingleDoc 512 601 30 5.1 36.28 150 55 3.0 35.61 −0.67 
+
+SingleDoc 1024 601 30 5.1 36.40 150 55 2.8 37.01 +0.61 
+
+Total 53.7 43.8 5/6 
+
+Table 15: Per-budget search cost and score, EvolKV direct vs. MOSAIC Stage 4 (SnapKV, LongBench, full-data scores, A100). EvolKV: 600 evaluations plus one final evaluation. MOSAIC: ≤150 evaluations of each Stage 4 run; its GPU-hours include the full-data re-evaluation of three candidates but exclude the one-time Stages 1–2. ∆:NAS-refined minus EvolKV; losses in bold. (a) Stage 2 winners (natural average budget)                       
+
+> Code 1926 Multi-Doc 1810 Single-Doc 1692 Summ. 2992 RULER 1498
+> L2Norm
+> (b) MOSAIC’s final configuration per cell (target budget)
+> 128 256 512 1024 128 256 512 1024 128 256 512 1024 128 256 512 1024 128 256 512 1024 1536 2048 Code Multi-Doc Single-Doc Summ. RULER
+> L2Norm
+> Winner (Stage 3) NAS-refined (Stage 4) 04812 16 20 24 28 31
+> (c) Share of the allocations in (a) and (b) that give each layer more than its uniform share
+> 050 100% 04812 16 20 24 28 31
+> layer index
+> 1/8×
+> 1/4×
+> 1/2×
+> uniform 2×
+> 4×
+> 8×
+> layer budget / row mean
+
+Figure 12: L2Norm per-layer allocations, Mistral-7B-Instruct-v0.2 , drawn as Figure 3. (a) Stage 2 winners at their natural average budget (left). (b) MOSAIC’s final configuration for every cell (the better of Winner and NAS-refined), with the target budget on the left and a marker on the right for which of the two it is. (c) For each layer, the share of the 27 allocations in (a) and (b) that give it more than its uniform share; navy bars exceed 50%. Colour: each layer’s budget divided by the row mean, on a log 2 scale (blue: more than the uniform share; red: less). 
+
+10 28 allocations, about 10 40 times fewer than one MOSAIC search at B128. This compares single searches: the allocations of both methods lie in the same space [64 , 4096] 32 .
+
+Rescaling the Stage 2 winner. A winner with per-layer budgets wi is mapped to xi = 0 .05 + 0.9 wi/ max j wj and decoded at each target B as above; this keeps the order of the layers and the shape of the allocation but compresses the ratios be-tween layers. The same mapping seeds the winner into the Stage 4 search. 
+
+Per-layer floor and cap. The per-layer cap is 4096. Stage 1’s grid maximum is 1024 for most LongBench runs and 4096 for RULER; Stages 3 and 4 decode continuously between the floor (64 or 16) and the cap (4096). Table 13 reports how often the floor binds. 
+
+Stopping rules. Searches were capped at 180 evaluations in Stage 1, 150 evaluations in Stage 4 and were stopped earlier, by hand or when the best calibration score stopped improving, so run lengths vary across methods and cells. 
+
+Candidate provenance. Stage 2 re-evaluates configurations from the Stage 1 Pareto front on full data and takes the best non-uniform one as the Winner. Stage 4 re-evaluates on full data uni-19 Algorithm 1 MOSAIC for one (task, eviction method).                                                                                                           
+
+> Require: calibration subset Dcal , full data Dfull , target bud-gets B, Stage 1 grid G, evaluation cap N
+> 1: Stage 1: A←uniform allocation at every level of G∪
+> Latin Hypercube points ▷64 points 2: A←GUIDED SEARCH (A, minimize average budget, maximize score on Dcal )
+> 3: P←Pareto front of A
+> 4: Stage 2: w←the non-uniform p∈Pwith the highest score on Dfull
+> 5: for each target budget B∈ B do
+> 6: Stage 3: bW←RESCALE (w, B )▷Winner 7: Stage 4 (optional): AB← { uniform, 5 heuristic shapes, bW, 57 LHS points }, all with mean budget B
+> 8: AB←GUIDED SEARCH (AB, maximize score on
+> Dcal )
+> 9: C←the calibration-best candidates of AB\{ uniform,
+> bW}
+> 10: bN←the c∈Cwith the highest score on Dfull ▷
+> NAS-refined 11: final configuration at B←the better of bWand bN
+> on Dfull
+> 12: end for
+> 13: procedure GUIDED SEARCH (A, objectives) 14: repeat
+> 15: rank Aby non-dominated sorting on the objec-tives 16: train an MLP classifier to separate rank-1 configu-rations from the rest 17: x∗←arg max xP(rank 1 |x), by differential evolution 18: evaluate x∗on Dcal ;A←A∪ { x∗}
+> 19: until the search stops improving or |A|=N
+> 20: return A
+> 21: end procedure
+
+form, the Winner and the calibration-best of the search’s other candidates (heuristic shapes, LHS points and guided proposals). NAS-refined is the best of these other candidates, so it excludes uni-form and the Winner and can score below the Win-ner; MOSAIC’s final configuration is the better of the two. 
+
+Stage 4 initial design. Each Stage 4 search starts from 64 configurations at the target budget: uni-form, five heuristic shapes (ascending and descend-ing ramps, a middle-heavy triangle, its inverse, and alternating low/high layers), the Winner, and 57 Latin hypercube points, which serve as a random-allocation control. Every later evaluation is one configuration proposed by G UIDED SEARCH .
+
+EvolKV baseline (expanded). To reproduce EvolKV’s main protocol, the allocation ki that our EvolKV run finds at B128 is expanded to each target B with EvolKV’s budget completion rule (Yu and Chai, 2025), bi = ki T / P 
+
+> j
+
+kj , rounded so that the mean is exactly B and clipped to [64 , 4096] 
+
+(neither bound binds for B256–B1024). 
+
+Hardware. Experiments ran on NVIDIA A100 GPUs, with FlashAttention-2 (Dao, 2024) as the attention implementation for every method. 
+
+I Subtask and Dataset Breakdown 
+
+This section breaks the per-cell results of Ap-pendix A into RULER subtasks and LongBench datasets, comparing uniform allocation with MO-SAIC’s final configuration (the better of Winner and NAS-refined) in every cell; bold marks the better of the two in each column. 
+
+I.1 RULER Subtask Breakdown 
+
+Tables 16 (Llama-3-8B-Instruct) and 17 (Mistral-7B-Instruct-v0.2) break each RULER cell into its 11 subtasks (S1–3: niah_single; MK1–3: niah_multikey; MQ: multiquery; MV: multivalue; CWE/FWE: common/frequent-word extraction; VT: variable tracking; NIAH: mean of the eight needle subtasks; All: mean of all 11), comparing uniform with MOSAIC’s final configuration; Fig-ures 13 and 14 show the same gains as heatmaps. Averaged over floor-clean cells (floor 64, plus B1536/B2048), NAS gains concentrate on the hardest needle subtasks: MK3 +31.9, S3 +28.0, S1 +23.8, versus CWE +0.8, FWE +3.5 and VT +5.6. The floor-16 H2O B1024 configuration trades CWE accuracy (98.3 →21.5) for needle retrieval. For AdaKV the pattern matches SnapKV and H2O: the largest gains are on niah_multikey_3 at B1024 and above. 
+
+I.2 LongBench Dataset Breakdown 
+
+LongBench scores are category means over two or three datasets. Tables 18 (Llama-3-8B-Instruct) and 19 (Mistral-7B-Instruct-v0.2) break each Long-Bench cell into its datasets, comparing uniform with MOSAIC’s final configuration (the better of Winner and NAS-refined on the category mean); Figures 15 and 16 show the per-dataset gains as heatmaps. On Llama, the final configuration falls below uniform on at least one dataset in 23 of 60 cells, and in 19 of them the category mean is still above uniform; on Mistral this happens in 12 of 52 cells. 20 Budget S1 S2 S3 MK1 MK2 MK3 MQ MV CWE FWE VT NIAH All SnapKV 
+
+64 Uniform 99.8 93.4 0.0 91.2 48.0 0.0 7.9 17.0 1.8 1.3 20.6 44.7 34.6 MOSAIC 100.0 97.2 0.0 96.6 76.4 0.0 23.4 36.0 2.9 34.9 27.4 53.7 45.0 
+
+128 Uniform 100.0 98.6 0.2 98.0 72.8 0.0 36.2 53.1 8.2 49.5 50.6 57.4 51.6 MOSAIC 100.0 98.4 0.2 98.4 91.4 0.0 57.8 64.0 9.3 56.4 66.1 63.8 58.4 
+
+256 Uniform 100.0 99.8 1.4 99.4 93.0 0.0 82.5 84.5 30.8 68.0 89.3 70.1 68.1 MOSAIC 100.0 99.6 10.2 99.4 98.0 0.0 90.2 92.3 38.0 72.5 94.7 73.7 72.3 
+
+512 Uniform 100.0 100.0 23.4 99.4 99.6 0.0 97.8 96.5 73.4 78.7 96.2 77.1 78.6 MOSAIC 100.0 100.0 49.6 99.4 99.6 0.6 98.5 97.5 77.1 81.3 95.8 80.6 81.8 
+
+1024 Uniform 100.0 100.0 64.8 99.4 99.8 0.6 99.8 98.8 96.1 84.7 98.4 82.9 85.7 MOSAIC 100.0 100.0 94.2 99.2 99.6 67.8 99.3 97.8 88.2 89.8 95.9 94.7 93.8 
+
+1536 Uniform 100.0 100.0 83.8 99.4 100.0 6.8 100.0 98.8 99.0 88.1 98.9 86.1 88.6 MOSAIC 100.0 100.0 99.4 99.4 99.8 97.2 99.8 98.8 98.3 90.9 98.4 99.3 98.4 
+
+2048 Uniform 100.0 100.0 92.8 99.4 100.0 43.0 99.9 98.9 99.6 89.4 99.2 91.8 92.9 MOSAIC 100.0 100.0 100.0 99.6 100.0 98.6 99.9 98.8 99.6 92.6 98.9 99.6 98.9 H2O 
+
+64 Uniform 0.2 0.6 0.0 0.4 1.4 0.0 0.1 0.3 11.3 58.9 6.2 0.4 7.2 MOSAIC 1.0 0.8 0.0 1.6 1.0 0.0 0.8 0.6 8.5 67.2 2.2 0.7 7.6 
+
+128 Uniform 2.8 2.8 0.0 4.8 4.6 0.0 1.8 1.8 30.3 78.9 6.4 2.3 12.2 MOSAIC 13.6 2.8 0.0 7.4 10.8 0.0 3.7 5.9 29.6 86.1 9.4 5.5 15.4 
+
+256 Uniform 9.2 11.6 0.0 13.4 16.2 0.2 6.6 7.1 58.1 88.2 9.6 8.0 20.0 
+
+MOSAIC 2.4 6.8 0.0 14.6 24.0 0.2 6.7 6.6 54.0 89.9 10.5 7.7 19.6 512 Uniform 6.4 25.0 0.0 24.2 35.2 1.4 14.4 14.3 86.1 94.3 24.6 15.1 29.6 MOSAIC 8.4 14.4 0.0 27.6 48.6 1.6 12.8 16.6 85.3 93.4 50.1 16.2 32.6 
+
+1024 Uniform 10.2 44.2 0.0 47.0 57.6 7.6 24.8 30.4 98.3 96.3 71.6 27.7 44.4 MOSAIC 96.6 92.0 63.0 80.2 75.8 1.0 62.4 63.7 21.5 77.5 54.1 66.8 62.5 
+
+1536 Uniform 16.2 58.8 0.0 61.0 71.8 24.6 35.6 44.4 99.3 95.1 80.4 39.0 53.4 MOSAIC 96.2 96.8 65.0 98.0 99.4 51.6 80.8 77.6 98.5 95.7 86.9 83.2 86.0 
+
+2048 Uniform 24.0 79.4 0.0 70.4 83.2 48.6 47.6 58.0 99.6 95.1 85.0 51.4 62.8 MOSAIC 100.0 100.0 99.4 99.6 99.0 98.6 90.7 82.3 98.8 94.7 94.5 96.2 96.1 AdaKV 
+
+64 Uniform 99.6 92.0 0.0 91.6 51.6 0.0 8.2 26.7 4.0 0.7 19.4 46.2 35.8 MOSAIC 99.6 92.4 0.0 91.4 37.8 0.0 13.9 31.4 4.9 0.2 24.0 45.8 36.0 
+
+128 Uniform 99.8 97.8 0.0 97.4 68.2 0.0 44.2 65.8 15.3 16.8 54.2 59.1 50.9 MOSAIC 100.0 98.6 0.6 98.4 80.0 0.0 59.0 75.5 14.7 43.2 61.5 64.0 57.4 
+
+256 Uniform 100.0 99.8 4.2 98.8 84.8 0.0 89.5 90.4 28.9 68.1 83.7 70.9 68.0 MOSAIC 100.0 100.0 10.8 99.4 94.8 0.0 93.5 96.0 39.7 70.4 88.4 74.3 72.1 
+
+512 Uniform 100.0 100.0 32.6 99.6 97.4 0.0 98.5 97.3 59.0 81.9 94.2 78.2 78.2 MOSAIC 100.0 100.0 58.8 99.4 98.2 0.0 99.6 97.8 81.0 82.4 96.6 81.7 83.1 
+
+1024 Uniform 100.0 100.0 77.4 99.6 99.2 1.6 99.8 98.0 93.6 87.3 98.9 84.5 86.9 MOSAIC 100.0 100.0 96.6 99.6 99.4 74.6 97.0 96.5 86.4 86.9 94.6 95.5 93.8 
+
+1536 Uniform 100.0 100.0 91.2 99.6 100.0 10.6 99.9 98.3 98.7 89.7 99.1 87.5 89.7 MOSAIC 100.0 100.0 97.8 99.6 100.0 92.8 99.8 98.8 99.2 90.8 99.1 98.6 98.0 
+
+2048 Uniform 100.0 100.0 96.6 99.4 100.0 48.8 99.9 98.5 99.6 90.9 99.3 92.9 93.9 MOSAIC 100.0 100.0 99.6 99.8 100.0 97.4 99.8 98.0 99.3 91.9 99.2 99.3 98.6 L2Norm 
+
+128 Uniform 28.2 0.0 0.0 0.0 0.0 0.0 0.0 0.0 7.1 15.0 0.6 3.5 4.6 MOSAIC 90.8 0.0 0.0 0.0 0.0 0.0 0.0 0.0 9.0 39.2 11.6 11.3 13.7 
+
+256 Uniform 99.6 1.0 0.0 0.0 0.0 0.0 0.0 0.0 18.5 44.9 31.0 12.6 17.7 MOSAIC 99.0 0.4 0.0 0.0 0.0 0.0 0.0 0.1 16.0 52.9 60.8 12.4 20.8 
+
+512 Uniform 100.0 5.6 0.0 0.4 0.2 0.0 0.1 0.1 35.9 64.2 92.4 13.3 27.2 MOSAIC 100.0 20.2 0.0 1.4 0.4 0.0 0.0 0.0 44.8 63.2 93.6 15.2 29.4 
+
+1024 Uniform 100.0 32.0 0.2 5.4 1.4 0.4 0.2 0.2 73.6 79.1 99.0 17.5 35.6 MOSAIC 100.0 91.2 40.2 82.0 40.4 2.2 64.2 70.8 70.8 78.1 97.4 61.4 67.0 
+
+1536 Uniform 100.0 64.0 0.0 16.4 2.0 1.4 2.1 2.8 92.8 84.4 99.2 23.6 42.3 MOSAIC 100.0 99.6 97.2 97.4 92.4 42.4 88.6 95.2 95.7 85.1 98.4 89.1 90.2 
+
+2048 Uniform 100.0 87.0 1.4 38.4 3.8 5.8 12.1 13.2 97.9 87.8 99.2 32.7 49.7 MOSAIC 100.0 99.8 100.0 99.0 98.2 95.2 96.6 96.5 97.3 87.3 99.3 98.2 97.2 
+
+Table 16: RULER subtask accuracy (string match, %), uniform vs. MOSAIC per cell, Llama-3-8B-Instruct. 
+
+AdaKV B64 has only the rescaled winner, compared with uniform-64 from Stage 2. 
+
+21 B64 B128 B256 B512 B1024 B1536 B2048 niah_single_1 niah_single_2 niah_single_3 niah_multikey_1 niah_multikey_2 niah_multikey_3 niah_multiquery niah_multivalue cwe fwe vt mean (11 tasks) 
+
++0.2 +0.0 +0.0 +0.0 +0.0 +0.0 +0.0 +3.8 -0.2 -0.2 +0.0 +0.0 +0.0 +0.0 +0.0 +0.0 +8.8 +26.2 +29.4 +15.6 +7.2 +5.4 +0.4 +0.0 +0.0 -0.2 +0.0 +0.2 +28.4 +18.6 +5.0 +0.0 -0.2 -0.2 +0.0 +0.0 +0.0 +0.0 +0.6 +67.2 +90.4 +55.6 +15.5 +21.6 +7.7 +0.7 -0.4 -0.2 +0.0 +19.0 +10.9 +7.8 +1.0 -1.0 -0.1 -0.1 +1.1 +1.0 +7.3 +3.7 -8.0 -0.7 +0.0 +33.6 +6.9 +4.5 +2.6 +5.1 +2.7 +3.2 +6.8 +15.6 +5.4 -0.3 -2.5 -0.4 -0.4 +10.4 +6.8 +4.2 +3.1 +8.1 +9.7 +6.0 
+
+SnapKV 
+
+B64 B128 B256 B512 B1024 B1536 B2048 
+
++0.8 +10.8 -6.8 +2.0 +86.4 +80.0 +76.0 +0.2 +0.0 -4.8 -10.6 +47.8 +38.0 +20.6 +0.0 +0.0 +0.0 +0.0 +63.0 +65.0 +99.4 +1.2 +2.6 +1.2 +3.4 +33.2 +37.0 +29.2 -0.4 +6.2 +7.8 +13.4 +18.2 +27.6 +15.8 +0.0 +0.0 +0.0 +0.2 -6.6 +27.0 +50.0 +0.6 +1.9 +0.1 -1.7 +37.6 +45.1 +43.0 +0.3 +4.2 -0.5 +2.3 +33.4 +33.2 +24.3 -2.8 -0.7 -4.1 -0.8 -76.8 -0.8 -0.9 +8.3 +7.2 +1.7 -0.9 -18.8 +0.6 -0.4 -4.0 +3.0 +0.9 +25.4 -17.5 +6.5 +9.4 +0.4 +3.2 -0.4 +3.0 +18.2 +32.7 +33.3 
+
+H2O 
+
+B64 B128 B256 B512 B1024 B1536 B2048 
+
++0.0 +0.2 +0.0 +0.0 +0.0 +0.0 +0.0 +0.4 +0.8 +0.2 +0.0 +0.0 +0.0 +0.0 +0.0 +0.6 +6.6 +26.2 +19.2 +6.6 +3.0 -0.2 +1.0 +0.6 -0.2 +0.0 +0.0 +0.4 -13.8 +11.8 +10.0 +0.8 +0.2 +0.0 +0.0 +0.0 +0.0 +0.0 +0.0 +73.0 +82.2 +48.6 +5.7 +14.8 +4.1 +1.1 -2.8 -0.1 -0.1 +4.7 +9.7 +5.6 +0.4 -1.5 +0.5 -0.5 +0.9 -0.6 +10.7 +22.0 -7.2 +0.4 -0.3 -0.5 +26.4 +2.3 +0.5 -0.4 +1.1 +1.1 +4.6 +7.2 +4.7 +2.5 -4.3 +0.0 -0.0 +0.2 +6.5 +4.1 +4.9 +6.9 +8.2 +4.7 
+
+AdaKV 
+
+B128 B256 B512 B1024 B1536 B2048 
+
++62.6 -0.6 +0.0 +0.0 +0.0 +0.0 +0.0 -0.6 +14.6 +59.2 +35.6 +12.8 +0.0 +0.0 +0.0 +40.0 +97.2 +98.6 +0.0 +0.0 +1.0 +76.6 +81.0 +60.6 +0.0 +0.0 +0.2 +39.0 +90.4 +94.4 +0.0 +0.0 +0.0 +1.8 +41.0 +89.4 +0.0 +0.0 -0.1 +64.0 +86.4 +84.5 +0.0 +0.1 -0.1 +70.5 +92.4 +83.3 +1.8 -2.5 +8.8 -2.8 +2.9 -0.7 +24.2 +7.9 -1.0 -0.9 +0.7 -0.5 +10.9 +29.8 +1.3 -1.6 -0.8 +0.1 +9.0 +3.1 +2.3 +31.4 +47.9 +47.5 
+
+L2Norm 
+
+75 
+
+50 
+
+25 
+
+025 50 75 
+
+> MOSAIC  uniform (points)
+
+Figure 13: RULER subtask gains of MOSAIC over uniform, Llama-3-8B-Instruct (the ∆ rows of Table 16, points). Rows: subtasks and their mean; columns: budget. Red: MOSAIC above uniform; blue: below. B128 B256 B512 B1024 B1536 B2048 niah_single_1 niah_single_2 niah_single_3 niah_multikey_1 niah_multikey_2 niah_multikey_3 niah_multiquery niah_multivalue cwe fwe vt mean (11 tasks) 
+
++2.4 -0.4 +0.0 +0.0 +0.0 +0.0 +4.8 +7.0 -0.4 +2.0 +0.8 +0.4 +0.2 +33.0 +42.0 +40.2 +18.0 +5.2 +7.4 +4.6 +2.6 +0.8 +0.4 -0.2 -2.0 +8.0 -0.2 +0.6 +0.0 +0.0 +0.0 +0.2 +0.6 +74.4 +81.8 +54.2 +16.2 +46.3 +29.6 +21.4 +10.0 +4.6 +12.2 +43.9 +36.1 +32.9 +13.2 +6.6 +4.9 -3.6 -1.3 -14.6 -3.7 -0.3 +10.6 -4.7 -11.5 -1.0 +0.8 +0.2 +14.7 +14.3 -4.5 -3.5 +0.2 +0.2 +6.5 +13.5 +8.4 +13.9 +11.1 +6.4 
+
+SnapKV 
+
+B128 B256 B512 B1024 B1536 B2048 
+
++0.0 +0.0 +54.2 +95.0 +94.2 +90.4 +0.0 +0.0 +78.6 +79.0 +86.2 +79.0 +0.0 +0.0 +0.2 +63.0 +70.4 +72.8 +0.0 +0.6 +55.2 +59.8 +71.4 +56.8 +0.2 +2.2 +55.8 +49.4 +47.4 +34.6 +0.0 +0.0 +2.8 +54.4 +75.8 +65.4 +0.0 +0.0 +19.0 +33.3 +63.8 +62.5 +0.1 +0.2 +19.3 +31.5 +51.4 +50.3 +4.7 +2.2 -18.0 -14.7 -1.3 +0.2 -1.3 -0.1 -5.1 -1.3 -0.4 +0.1 +2.2 +2.1 -0.2 -5.6 +6.0 +11.3 +0.5 +0.7 +23.8 +40.3 +51.4 +47.6 
+
+H2O 
+
+B128 B256 B512 B1024 B1536 B2048 
+
++10.0 +2.6 -0.6 +0.0 +0.0 +0.0 +13.6 +1.6 +2.0 +1.0 +0.6 -0.6 +0.4 +11.0 +65.8 -14.8 +8.4 +5.2 +20.0 +0.0 +1.0 +0.4 +0.6 +0.2 +7.6 -3.4 -0.4 +1.0 +0.8 +0.2 +0.0 +0.0 +0.2 +0.0 +17.6 +40.2 +33.0 +48.8 +47.6 +8.3 +7.1 +2.3 +34.1 +38.8 +38.5 +15.1 +7.8 +5.8 +2.1 -1.5 -10.2 -7.6 +9.0 -7.3 +20.3 +4.7 -8.4 -0.1 -0.1 -0.8 +38.1 +21.4 +7.5 +0.8 +0.1 +0.4 +16.3 +11.3 +13.0 +0.4 +4.7 +4.1 
+
+AdaKV 
+
+B128 B256 B512 B1024 B1536 B2048 
+
++0.2 +52.8 +44.0 +20.2 +1.0 +2.4 +0.0 +0.0 +0.0 +41.2 +83.4 +79.8 +0.0 +0.0 +0.0 +3.4 +6.6 +68.6 +0.0 +0.0 +0.0 +12.2 +53.0 +61.8 +0.0 +0.0 +0.2 +9.0 +6.8 +18.2 +0.0 +0.0 +0.0 +6.6 +0.8 +75.8 +0.0 +0.0 +0.0 +3.6 +23.6 +41.2 +0.0 +0.0 +0.0 +2.7 +23.6 +46.8 -0.1 -1.1 -0.5 -8.7 -5.5 -19.8 +29.5 +2.5 +3.5 -4.9 -5.8 +1.2 +0.0 +12.3 +44.8 -10.6 -15.4 -3.8 +2.7 +6.0 +8.4 +6.8 +15.6 +33.8 
+
+L2Norm 
+
+75 
+
+50 
+
+25 
+
+025 50 75 
+
+> MOSAIC  uniform (points)
+
+Figure 14: RULER subtask gains of MOSAIC over uniform, Mistral-7B-Instruct-v0.2 (the ∆ rows of Table 17, points), drawn as Figure 13. B128 B256 B512 B1024 Single-Doc QA: narrativeqa Single-Doc QA: qasper Single-Doc QA: multifieldqa_en Multi-Doc QA: hotpotqa Multi-Doc QA: 2wikimqa Multi-Doc QA: musique Summarization: gov_report Summarization: qmsum Summarization: multi_news Code: lcc Code: repobench-p 
+
++0.4 -0.8 +0.8 +0.4 +0.6 -0.1 -1.6 -0.7 +1.1 -1.3 +1.8 +2.0 +0.1 +0.1 +0.5 +0.7 -0.1 +1.1 -0.3 +0.3 +0.6 +0.9 -0.3 +0.2 -0.2 +0.5 +0.2 +0.9 +0.2 +0.0 +0.3 -0.2 +0.4 -0.2 +0.3 +0.0 +0.4 +0.8 +1.7 +3.5 +2.2 +2.5 +1.1 +2.2 
+
+SnapKV 
+
+B128 B256 B512 B1024 
+
++1.2 -0.2 +0.3 -0.4 +0.4 +2.2 -0.0 +2.2 +3.0 +0.9 +0.9 +1.5 +0.4 +0.9 +1.9 +2.2 -0.6 +0.5 +1.6 +1.4 -1.0 +0.0 +0.6 +0.6 +0.7 +0.3 -0.2 +0.6 +0.3 +0.4 +0.6 +0.2 +0.3 -0.1 +0.0 +0.3 +1.4 +0.6 +2.3 +0.3 +0.9 +1.6 +1.1 +0.3 
+
+H2O 
+
+B128 B256 B512 
+
++0.8 +0.6 -0.7 +3.0 +1.4 -0.1 +1.7 +0.7 +0.2 +2.5 +1.1 -0.0 -0.0 +0.5 +0.3 +0.4 +0.6 +0.3 +0.4 +0.9 +0.8 +0.0 -0.3 +0.1 +0.5 +0.2 +0.6 +0.6 +1.1 +1.6 +1.4 +1.7 +2.3 
+
+AdaKV 
+
+B128 B256 B512 B1024 
+
+-0.1 -0.8 +0.2 +2.5 +0.2 +1.9 +3.2 +3.7 +1.2 +1.4 +4.6 +7.2 +1.0 +8.6 +6.9 +3.3 -1.7 +3.5 +3.5 +3.3 +1.1 +4.1 -0.1 +6.0 +1.4 +0.3 +0.7 +0.9 +1.2 -0.1 +0.2 +0.7 +0.3 +0.4 +1.1 +0.1 +5.3 +4.0 +5.8 +11.9 +4.6 +10.2 +9.7 +7.1 
+
+L2Norm 
+
+10 
+
+5
+
+0510 
+
+> MOSAIC  uniform (points)
+
+Figure 15: LongBench dataset gains of MOSAIC over uniform, Llama-3-8B-Instruct (full data, points; the uniform and MOSAIC rows of Table 18). Rows: datasets grouped by category; columns: budget; grey: no cell. Red: MOSAIC above uniform; blue: below. 
+
+22 Budget S1 S2 S3 MK1 MK2 MK3 MQ MV CWE FWE VT NIAH All SnapKV 
+
+128 Uniform 96.8 83.0 0.0 80.4 69.0 0.0 4.7 5.2 8.8 61.3 40.6 42.4 40.9 MOSAIC 99.2 87.8 0.2 87.8 67.0 0.0 20.9 17.4 13.8 71.9 55.3 47.5 47.4 
+
+256 Uniform 100.0 90.4 1.4 90.6 86.6 0.0 14.8 12.9 24.1 78.9 69.3 49.6 51.7 MOSAIC 99.6 97.4 34.4 95.2 94.6 0.2 61.1 56.9 20.5 74.1 83.6 67.4 65.2 
+
+512 Uniform 100.0 95.4 16.8 94.2 94.4 0.0 38.9 25.6 50.3 85.8 89.7 58.2 62.8 MOSAIC 100.0 95.0 58.8 96.8 94.2 0.6 68.5 61.8 48.9 74.3 85.2 72.0 71.3 
+
+1024 Uniform 100.0 97.8 57.0 97.0 99.2 0.0 74.9 58.4 77.6 89.5 97.0 73.0 77.1 MOSAIC 100.0 99.8 97.2 97.8 99.8 74.4 96.3 91.2 63.0 88.5 93.6 94.6 91.1 
+
+1536 Uniform 100.0 99.0 82.0 97.2 99.6 8.8 88.5 80.8 86.7 90.3 98.2 82.0 84.7 MOSAIC 100.0 99.8 100.0 97.6 99.6 90.6 98.5 94.1 83.0 91.1 98.5 97.5 95.7 
+
+2048 Uniform 100.0 99.4 92.4 97.6 99.8 37.4 94.3 90.5 91.1 91.1 98.9 88.9 90.2 MOSAIC 100.0 99.8 97.6 97.4 99.8 91.6 98.9 97.1 90.7 91.3 99.0 97.8 96.7 H2O 
+
+128 Uniform 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 26.9 76.5 7.2 0.1 10.1 MOSAIC 0.0 0.0 0.0 0.0 1.2 0.0 0.0 0.1 31.6 75.1 9.4 0.2 10.7 
+
+256 Uniform 0.0 0.0 0.0 0.2 3.4 0.0 0.1 0.1 55.0 83.9 12.3 0.5 14.1 MOSAIC 0.0 0.0 0.0 0.8 5.6 0.0 0.1 0.3 57.2 83.9 14.4 0.8 14.8 
+
+512 Uniform 0.4 0.4 0.0 3.0 11.0 0.2 0.6 0.8 75.2 90.5 29.2 2.1 19.2 MOSAIC 54.6 79.0 0.2 58.2 66.8 3.0 19.6 20.2 57.1 85.4 28.9 37.7 43.0 
+
+1024 Uniform 2.8 2.0 0.0 9.8 27.8 3.4 4.5 6.7 88.4 92.1 67.0 7.1 27.7 MOSAIC 97.8 81.0 63.0 69.6 77.2 57.8 37.8 38.1 73.7 90.9 61.4 65.3 68.0 
+
+1536 Uniform 3.8 7.8 0.0 17.4 41.6 12.6 10.9 14.6 92.1 92.7 80.0 13.6 34.0 MOSAIC 98.0 94.0 70.4 88.8 89.0 88.4 74.8 66.0 90.8 92.3 86.0 83.7 85.3 
+
+2048 Uniform 9.6 19.4 0.0 28.0 54.0 27.4 18.8 23.4 93.7 92.9 84.4 22.6 41.1 MOSAIC 100.0 98.4 72.8 84.8 88.6 92.8 81.2 73.7 94.0 93.0 95.7 86.5 88.6 AdaKV 
+
+128 Uniform 79.8 77.2 0.0 70.8 77.2 0.0 2.4 4.2 11.4 45.4 31.3 38.9 36.3 MOSAIC 89.8 90.8 0.4 90.8 84.8 0.0 35.4 38.2 13.5 65.7 69.4 53.8 52.6 
+
+256 Uniform 97.2 90.4 0.4 91.0 91.0 0.0 8.5 12.2 19.2 76.5 52.8 48.8 49.0 MOSAIC 99.8 92.0 11.4 91.0 87.6 0.0 57.2 51.0 17.8 81.1 74.2 61.3 60.3 
+
+512 Uniform 100.0 95.2 14.2 95.2 95.6 0.0 35.5 32.2 35.3 85.9 81.1 58.5 60.9 MOSAIC 99.4 97.2 80.0 96.2 95.2 0.2 83.1 70.8 25.1 77.5 88.6 77.8 73.9 
+
+1024 Uniform 100.0 98.0 63.4 97.0 97.6 0.0 76.0 65.8 62.0 88.2 95.7 74.7 76.7 MOSAIC 100.0 99.0 48.6 97.4 98.6 0.0 84.2 80.9 54.5 88.1 96.6 76.1 77.1 
+
+1536 Uniform 100.0 99.0 84.2 97.2 98.8 1.4 89.0 83.0 79.6 89.7 97.6 81.6 83.6 MOSAIC 100.0 99.6 92.6 97.8 99.6 19.0 96.2 90.8 88.6 89.7 97.7 86.9 88.3 
+
+2048 Uniform 100.0 99.6 92.8 97.6 99.4 13.0 94.1 90.7 86.9 90.7 98.5 85.9 87.6 MOSAIC 100.0 99.0 98.0 97.8 99.6 53.2 96.4 96.5 79.6 89.9 98.9 92.6 91.7 L2Norm 
+
+128 Uniform 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.3 6.7 0.0 0.0 0.6 MOSAIC 0.2 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.2 36.1 0.0 0.0 3.3 
+
+256 Uniform 0.2 0.0 0.0 0.0 0.0 0.0 0.0 0.0 1.5 44.9 0.0 0.0 4.2 MOSAIC 53.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.5 47.4 12.4 6.6 10.3 
+
+512 Uniform 41.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 7.2 65.8 7.6 5.1 11.1 MOSAIC 85.0 0.0 0.0 0.0 0.2 0.0 0.0 0.0 6.7 69.3 52.4 10.7 19.4 
+
+1024 Uniform 79.8 0.0 0.0 0.0 0.0 0.0 0.0 0.0 18.1 77.5 76.0 10.0 22.9 MOSAIC 100.0 41.2 3.4 12.2 9.0 6.6 3.6 2.7 9.5 72.5 65.5 22.3 29.7 
+
+1536 Uniform 94.4 0.6 0.0 0.2 0.8 0.0 0.0 0.0 32.7 83.1 91.7 12.0 27.6 MOSAIC 95.4 84.0 6.6 53.2 7.6 0.8 23.6 23.6 27.1 77.3 76.3 36.9 43.2 
+
+2048 Uniform 97.6 0.8 0.0 0.0 2.0 1.0 0.0 0.0 54.8 85.9 96.0 12.7 30.7 MOSAIC 100.0 80.6 68.6 61.8 20.2 76.8 41.2 46.8 35.0 87.1 92.2 62.0 64.6 
+
+Table 17: RULER subtask accuracy (string match, %), uniform vs. MOSAIC per cell, Mistral-7B-Instruct-v0.2. 
+
+23 B128 B256 B512 B1024 Single-Doc QA: narrativeqa Single-Doc QA: qasper Single-Doc QA: multifieldqa_en Multi-Doc QA: hotpotqa Multi-Doc QA: 2wikimqa Multi-Doc QA: musique Code: lcc Code: repobench-p 
+
+-1.1 +4.2 +0.8 +0.4 +1.6 +2.0 +0.9 +2.0 -0.8 -0.8 -0.2 -0.5 +2.1 +3.0 +3.5 +0.6 +3.5 +1.0 +0.7 +1.5 -0.2 +0.6 +1.9 +0.3 -0.9 +1.4 +2.1 +0.4 +0.6 +0.7 +0.4 -0.1 
+
+SnapKV 
+
+B128 B256 B512 B1024 
+
++0.3 +0.1 +0.7 +0.8 +0.6 +2.7 +2.1 +0.7 +1.5 +1.2 +1.0 +2.6 +1.6 +1.0 +1.2 +0.9 +0.3 +1.9 +1.7 +1.4 +1.7 +1.5 +0.8 +0.6 +1.4 +1.7 +1.6 -0.1 -0.1 +0.8 +0.9 +1.4 
+
+H2O 
+
+B128 B256 B512 B1024 
+
++1.0 +1.1 +0.9 -0.0 -1.5 +1.3 -1.9 -0.2 -0.5 +0.5 +0.3 +0.8 +4.2 +3.0 +2.3 +3.3 +0.2 +2.7 +1.4 +0.2 +3.1 +0.7 +0.6 +0.8 +0.4 +0.9 +0.9 +0.9 +0.4 +0.6 +0.3 +0.4 
+
+AdaKV 
+
+10 
+
+5
+
+0510 
+
+> MOSAIC  uniform (points)
+
+B128 B256 B512 B1024 Single-Doc QA: narrativeqa Single-Doc QA: qasper Single-Doc QA: multifieldqa_en Multi-Doc QA: hotpotqa Multi-Doc QA: 2wikimqa Multi-Doc QA: musique Summarization: gov_report Summarization: qmsum Summarization: multi_news Code: lcc Code: repobench-p 
+
++1.2 +2.4 +3.7 +4.8 +0.7 +1.9 +4.1 +4.9 +1.1 +0.6 +6.8 +11.8 +0.3 +3.2 +8.4 +9.3 +2.0 +1.0 +4.8 +3.0 +0.2 +0.5 +3.0 +7.1 +0.7 +0.7 +0.9 +1.8 +0.6 +0.7 +0.8 +0.9 +1.1 +1.0 +0.9 +0.2 +3.1 +4.0 +5.3 +7.9 +1.8 +1.2 +1.6 +2.0 
+
+L2Norm 
+
+10 
+
+5
+
+0510 
+
+> MOSAIC  uniform (points)
+
+Figure 16: LongBench dataset gains of MOSAIC over uniform, Mistral-7B-Instruct-v0.2 (full data, points; the uniform and MOSAIC rows of Table 19), drawn as Figure 15; both panels share one colour scale. Top: SnapKV, H2O and AdaKV, which have no Summarization cells; bottom: L2Norm, all four tasks. 
+
+24 Single-Doc QA Multi-Doc QA Summarization Code Budget NQA Qasper MFQA Mean HQA 2Wiki MuSiQue Mean GovRep QMSum MNews Mean LCC RepoB-P Mean 
+
+SnapKV 
+
+128 Uniform 18.70 35.14 45.08 32.97 45.94 36.39 22.13 34.82 21.01 20.35 21.73 21.03 56.90 52.73 54.81 MOSAIC 19.07 35.76 46.18 33.67 46.02 36.28 22.77 35.02 20.82 20.54 22.09 21.15 57.25 54.94 56.09 
+
+256 Uniform 19.96 39.44 46.35 35.25 46.94 37.50 22.36 35.60 22.25 21.09 23.57 22.30 58.23 53.12 55.67 MOSAIC 19.21 39.32 45.01 34.51 47.05 38.58 23.30 36.31 22.77 21.09 23.37 22.41 59.05 55.61 57.33 
+
+512 Uniform 19.99 41.86 46.06 35.97 46.72 37.98 22.60 35.77 24.06 21.37 24.88 23.44 59.16 54.31 56.73 MOSAIC 20.83 40.29 47.86 36.33 47.20 37.69 22.29 35.73 24.26 21.69 25.17 23.71 60.89 55.44 58.16 
+
+1024 Uniform 20.66 42.64 46.02 36.44 47.18 38.40 22.02 35.87 25.56 22.31 26.67 24.85 58.35 53.69 56.02 MOSAIC 21.07 41.90 48.05 37.01 47.86 38.73 22.19 36.26 26.49 22.12 26.70 25.10 61.89 55.93 58.91 H2O 
+
+128 Uniform 17.70 31.10 35.84 28.21 43.42 33.38 20.91 32.57 23.02 17.79 24.82 21.88 49.92 42.00 45.96 MOSAIC 18.86 31.49 38.82 29.72 43.80 32.78 19.91 32.16 23.72 18.10 25.12 22.31 51.33 42.94 47.13 
+
+256 Uniform 18.66 32.31 38.91 29.96 44.03 33.42 19.90 32.45 24.78 18.94 25.68 23.13 53.45 45.54 49.50 MOSAIC 18.44 34.49 39.84 30.92 44.88 33.94 19.94 32.92 25.12 19.32 25.56 23.33 54.04 47.14 50.59 
+
+512 Uniform 19.20 35.71 42.32 32.41 43.90 34.29 20.75 32.98 26.95 19.43 26.28 24.22 55.97 49.65 52.81 MOSAIC 19.49 35.70 43.21 32.80 45.75 35.92 21.32 34.33 26.72 20.03 26.30 24.35 58.23 50.78 54.50 
+
+1024 Uniform 19.26 38.36 43.19 33.60 44.33 35.56 20.72 33.54 27.94 20.05 26.93 24.97 59.62 54.23 56.92 MOSAIC 18.82 40.58 44.68 34.69 46.54 36.94 21.30 34.93 28.52 20.24 27.19 25.32 59.92 54.54 57.23 AdaKV 
+
+128 Uniform 18.60 34.52 45.36 32.83 45.50 36.81 22.67 34.99 21.57 21.26 22.32 21.72 59.83 54.77 57.30 MOSAIC 19.39 37.49 47.05 34.64 47.98 36.80 23.10 35.96 22.02 21.28 22.86 22.05 60.44 56.13 58.28 
+
+256 Uniform 20.09 39.10 46.04 35.08 46.07 37.57 22.63 35.42 22.57 21.81 23.77 22.72 60.02 56.36 58.19 MOSAIC 20.69 40.46 46.78 35.98 47.18 38.03 23.21 36.14 23.48 21.53 23.99 23.00 61.17 58.08 59.62 
+
+512 Uniform 21.32 41.86 46.87 36.68 47.20 38.68 22.53 36.14 23.88 21.86 25.12 23.62 61.09 56.31 58.70 MOSAIC 20.65 41.74 47.07 36.49 47.19 39.00 22.79 36.33 24.63 21.94 25.68 24.08 62.71 58.65 60.68 L2Norm 
+
+128 Uniform 5.15 15.36 10.10 10.20 11.70 10.32 5.24 9.09 17.95 15.50 19.73 17.73 23.23 21.85 22.54 MOSAIC 5.02 15.53 11.34 10.63 12.73 8.66 6.31 9.23 19.32 16.72 20.02 18.69 28.55 26.41 27.48 
+
+256 Uniform 9.01 18.58 14.15 13.91 18.39 13.17 8.13 13.23 19.85 17.55 21.97 19.79 27.00 20.15 23.57 MOSAIC 8.24 20.50 15.54 14.76 27.00 16.69 12.22 18.64 20.11 17.49 22.33 19.98 30.99 30.39 30.69 
+
+512 Uniform 12.47 22.02 20.95 18.48 31.48 19.41 15.30 22.06 21.40 18.77 23.73 21.30 31.33 24.96 28.14 MOSAIC 12.65 25.18 25.57 21.13 38.34 22.91 15.22 25.49 22.09 18.96 24.79 21.95 37.15 34.65 35.90 
+
+1024 Uniform 16.19 29.28 28.78 24.75 40.64 29.42 16.09 28.72 22.91 19.98 26.14 23.01 37.05 32.85 34.95 MOSAIC 18.67 32.94 36.01 29.21 43.95 32.68 22.08 32.90 23.80 20.64 26.28 23.57 48.99 39.95 44.47 
+
+Table 18: LongBench dataset scores, uniform vs. MOSAIC per cell, Llama-3-8B-Instruct (full data); bold: the better of the two in each column. NQA: NarrativeQA; MFQA: MultiFieldQA-en; HQA: HotpotQA; 2Wiki: 2WikiMQA; GovRep: GovReport; MNews: Multi-News; RepoB-P: RepoBench-P. 
+
+25 Single-Doc QA Multi-Doc QA Code Budget NQA Qasper MFQA Mean HQA 2Wiki MuSiQue Mean LCC RepoB-P Mean 
+
+SnapKV 
+
+128 Uniform 21.54 21.91 45.38 29.61 33.94 22.04 15.61 23.86 52.20 47.31 49.76 
+
+MOSAIC 20.39 23.49 44.61 29.50 36.03 25.58 15.42 25.68 51.33 47.90 49.61 256 Uniform 22.03 24.99 48.20 31.74 36.62 25.11 15.14 25.62 53.88 50.30 52.09 MOSAIC 26.26 26.94 47.39 33.53 39.63 26.07 15.73 27.14 55.32 50.97 53.14 
+
+512 Uniform 24.13 28.84 48.75 33.91 38.82 25.48 15.10 26.47 55.10 52.44 53.77 MOSAIC 24.92 29.69 48.55 34.39 42.35 26.22 17.02 28.53 57.23 52.88 55.05 
+
+1024 Uniform 25.03 30.37 49.57 34.99 41.84 26.53 18.03 28.80 56.87 53.60 55.23 MOSAIC 25.40 32.34 49.11 35.62 42.45 28.01 18.33 29.60 57.30 53.46 55.38 H2O 
+
+128 Uniform 22.16 20.57 35.88 26.20 30.65 19.70 12.96 21.10 42.71 36.47 39.59 MOSAIC 22.48 21.20 37.38 27.02 32.23 19.96 14.67 22.29 44.16 36.40 40.28 
+
+256 Uniform 22.23 22.48 39.06 27.92 34.47 20.86 15.78 23.70 46.88 39.30 43.09 MOSAIC 22.36 25.14 40.26 29.25 35.48 22.77 17.24 25.16 48.59 40.06 44.33 
+
+512 Uniform 23.47 26.40 41.70 30.52 35.29 22.41 17.84 25.18 50.81 42.05 46.43 MOSAIC 24.17 28.51 42.71 31.80 36.47 24.15 18.67 26.43 52.40 42.96 47.68 
+
+1024 Uniform 23.44 29.67 43.32 32.14 36.21 25.76 17.76 26.58 54.07 45.23 49.65 MOSAIC 24.23 30.35 45.93 33.50 37.07 27.12 18.38 27.52 53.97 46.64 50.30 AdaKV 
+
+128 Uniform 21.59 24.37 46.76 30.91 35.63 25.63 14.56 25.27 53.19 48.96 51.08 MOSAIC 22.63 22.84 46.25 30.57 39.82 25.86 17.66 27.78 53.54 49.31 51.42 
+
+256 Uniform 23.87 27.15 48.40 33.14 38.35 25.21 16.41 26.66 54.67 50.64 52.66 MOSAIC 24.96 28.49 48.92 34.12 41.40 27.87 17.14 28.80 55.57 51.27 53.42 
+
+512 Uniform 24.17 30.10 49.00 34.42 39.95 25.37 17.55 27.62 56.02 53.28 54.65 MOSAIC 25.10 28.20 49.34 34.21 42.23 26.82 18.10 29.05 56.95 53.58 55.27 
+
+1024 Uniform 24.86 31.37 48.67 34.97 41.18 27.36 18.03 28.86 56.77 53.38 55.08 MOSAIC 24.85 31.13 49.48 35.15 44.48 27.61 18.79 30.29 57.68 53.83 55.75 Single-Doc QA Multi-Doc QA Summarization Code Budget NQA Qasper MFQA Mean HQA 2Wiki MuSiQue Mean GovRep QMSum MNews Mean LCC RepoB-P Mean 
+
+L2Norm 
+
+128 Uniform 3.52 4.35 7.21 5.03 7.33 5.48 2.08 4.96 20.11 15.11 18.84 18.02 24.95 19.94 22.45 MOSAIC 4.71 5.06 8.35 6.04 7.67 7.53 2.32 5.84 20.83 15.71 19.89 18.81 28.01 21.77 24.89 
+
+256 Uniform 6.65 5.71 9.44 7.27 7.64 6.76 2.79 5.73 21.55 16.37 20.90 19.61 28.00 23.16 25.58 MOSAIC 9.04 7.60 9.99 8.88 10.81 7.77 3.29 7.29 22.29 17.06 21.86 20.40 32.03 24.33 28.18 
+
+512 Uniform 9.08 8.36 12.06 9.83 10.96 7.11 4.57 7.55 22.49 17.56 22.62 20.89 31.11 26.25 28.68 MOSAIC 12.74 12.43 18.82 14.66 19.35 11.91 7.62 12.96 23.34 18.33 23.48 21.72 36.39 27.86 32.12 
+
+1024 Uniform 13.29 14.83 20.70 16.27 16.41 10.62 6.00 11.01 23.48 19.17 24.79 22.48 36.59 29.84 33.22 MOSAIC 18.11 19.76 32.51 23.46 25.67 13.58 13.10 17.45 25.23 20.04 24.95 23.41 44.53 31.83 38.18 
+
+Table 19: LongBench dataset scores, uniform vs. MOSAIC per cell, Mistral-7B-Instruct-v0.2 (full data); bold: the better of the two in each column. NQA: NarrativeQA; MFQA: MultiFieldQA-en; HQA: HotpotQA; 2Wiki: 2WikiMQA; GovRep: GovReport; MNews: Multi-News; RepoB-P: RepoBench-P. SnapKV, H2O and AdaKV (top) have no Summarization cells; L2Norm (bottom) covers all four tasks. 
+
+26
