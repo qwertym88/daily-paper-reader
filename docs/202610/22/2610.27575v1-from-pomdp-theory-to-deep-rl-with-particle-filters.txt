@@ -1,0 +1,5010 @@
+Title: From POMDP Theory to Deep RL with Particle Filters
+
+URL Source: https://arxiv.org/pdf/2610.27575v1
+
+Published Time: Wed, 21 Oct 2026 00:41:37 GMT
+
+Number of Pages: 64
+
+Markdown Content:
+# From POMDP Theory to Deep RL with Particle Filters 
+
+Kevin Tan Wharton Statistics and Data Science University of Pennsylvania 
+
+kevtan@wharton.upenn.edu 
+
+Ziping Xu School of Data and Information Sciences University of North Carolina at Chapel Hill 
+
+zipingxu@unc.edu 
+
+Abstract 
+
+Model-based reinforcement learning in partially observable environments requires inferring hidden states, learning latent dynamics, and planning under the resulting belief. Practical algorithms often solve one aspect of the above pipeline while relying on approximations for the others that are often poorly understood, while existing POMDP theory typically analyzes computationally inefficient theoretical algorithms far from modern deep RL practice. To fill this gap, we propose a practical end-to-end algorithm that approximately solves the hidden state filtering problem via sequential Monte Carlo (SMC), updates a latent dynamics model online, and performs approximate online planning for d steps before bootstrapping leaves with a state-value critic (a QMDP approximation). We analyze each approximation and prove an end-to-end regret bound decomposing the error into model estimation error, particle filter error, Monte Carlo rollout error, and a structural bias term induced by the QMDP approximation controllable by the planning depth that we further analyze in various special cases. The resulting guarantee makes explicit how statistical sample size, particle budget, rollout budget, and planning depth affect performance. We instantiate our algorithm in an MPC-based deep RL framework, demonstrating its practicality on a variety of environments. On a POMDP that satisfies our assumptions, each term of the bound decays at its predicted rate. Our results provide a practical and theoretically grounded route for bridging theory and practice within online decision-making in POMDPs. 
+
+# 1 Introduction 
+
+Partially observable Markov decision processes (POMDPs) provide a standard framework for se-quential decision making under latent state uncertainty [19]. They are a natural model for problems in robotics, healthcare, recommendation, and other settings [17, 33] where the learner must act using only indirect and noisy observations of the underlying system. In principle, optimal control in a POMDP can be reduced to planning in the belief-state MDP, where the belief is the posterior distribution over latent states given the observation history [4, 19]. This makes model-based RL especially natural in POMDPs: to act under a belief, the learner must already learn a model rich enough to perform filtering, and this same model can be used for planning. However, the belief state reduction does not remove the main computational and learning difficulties. An online model-based decision maker must simultaneously (i) learn the unknown model, (ii) maintain a posterior over latent states online, and (iii) plan over this continuous belief space. These three tasks– learning, inference, and planning –interact in a way that makes exact online control in POMDPs intractable in both computation and sample complexity in general [32] without special structure, motivating a large literature on approximate methods for each component individually. Existing methods typically make one component of the above POMDP pipeline tractable while leaving the others either computationally expensive or theoretically uncontrolled. For instance, 1arXiv:2610.27575v1 [cs.LG] 20 Oct 2026 on the planning side, Monte Carlo tree search has led to scalable online POMDP solvers such as Partially Observable Monte Carlo Planning (POMCP), sparse tree search, and progressive widening methods [26, 34, 36]. However, these are primarily planning algorithms under a known generative model, and do not natively provide end-to-end learning guarantees for unknown latent dynamics. A more aggressive approximation is QMDP, which replaces the belief-MDP continuation value by the fully observed MDP value averaged under the current belief [27]. QMDP is computationally efficient but can introduce substantial bias. Existing theory gives limited guidance on when this bias is small or how it can be mitigated. Regarding inference, particle filters, a.k.a. sequential Monte Carlo (SMC), provide a flexible approximation to Bayesian filtering in nonlinear non-Gaussian systems [8, 38], but SMC theory for POMDPs [25, 26] has not been fully integrated with approximate online planning and model learning. On learning, recent theoretical work has made significant progress on sample-efficient model estimation for POMDPs. [28, 29] develop Optimistic MLE as a generic model-based algorithm with polynomial sample complexity for a broad class of POMDPs. These results establish statistical feasibility under exact or abstract planning oracles. They do not specify how to perform approximate filtering or planning with the learned model in a computationally practical way. A separate practical line of work uses recurrent policies or differentiable planning modules. Recurrent model-free deep RL methods, such as GRU or LSTM-based PPO and Q-learning variants, can perform well empirically under partial observability, but their hidden states are difficult to interpret as beliefs and are hard to analyze theoretically. QMDP-net takes a more structured approach by embedding approximate Bayesian filtering and QMDP planning into a differentiable architecture [22]. This is closer in spirit to our goal: combine model learning, belief state inference, and planning in a way that resembles modern deep learning practice, while maintaining provable guarantees. However, the approximation error of learned variational or differentiable filtering is difficult to control. Our view is that using SMC as the filtering primitive yields a more principled bridge: it is compatible with learned latent dynamics and has well-developed stability and approximation theory [8, 38]. In summary, existing work advances planning, inference, or learning separately, but no current method provides a unified pipeline that combines all three with both computational practicality and end-to-end theoretical guarantees. This leaves open the central question 
+
+Can we design a practical model-based deep RL pipeline for POMDPs that still admits end-to-end theoretical guarantees? 
+
+1.1 Our Contributions 
+
+This paper develops a practical and analyzable route from POMDP theory to model-based deep RL. We answer the central question by developing a model-based learning-inference-planning pipeline for POMDPs called PF-MCTQ that is compatible with deep RL practice. Our contributions are: 1. A practical inference-learning-planning pipeline. We propose an online algorithm that learns a latent dynamics model, tracks the current belief with particles, and plans under this belief. Each is modular and can be instantiated with standard deep RL primitives. 2. A controlled alternative to full belief-tree planning. Instead of treating the particle belief as the planning state, we plan particle-wise and average action-values of the fully observable MDP. This gives a practical middle ground between expensive belief-tree search and cheap but potentially biased QMDP. Our analysis shows that the bias decays geometrically after d steps of belief-MDP lookahead. For cheaper state-level planners, we show that QMDP is exact for the belief-linear component of the value, with error only from an uncertainty-sensitive residual, clarifying when the approximation is small. 2Figure 1: Particle beliefs for the unobserved velocity of a double integrator LQR over the last 1000 steps. Mean, 10th and 90th quantiles visualized. Beliefs track the state when the system is stable. 3. An end-to-end regret guarantee. We prove a regret bound that decomposes performance loss into model estimation error, particle filtering error, Monte Carlo rollout error, and QMDP structural bias. The bound makes explicit how sample size, particle budget, rollout budget, and planning depth jointly control performance. 4. A bridge to deep RL practice. Compared with theoretical POMDP learning algorithms that rely on exact POMDP solvers or posterior sampling over parameters, our approach uses MPC-style online planning, approximate filtering, and critic bootstrapping. These are standard primitives in model-based deep RL, while remaining explicit enough to support theoretical analysis. We instantiate our algorithm in an MPC-based deep RL implementation and evaluate it on various POMDP environments, demonstrating its practicality. On a POMDP satisfying our assumptions, each term of the bound decays at its predicted rate (Section 5). Overall, the paper argues that particle filtering can serve as a practical bridge between POMDP theory and deep RL. It gives a belief representation that is explicit enough to analyze, flexible enough for nonlinear latent dynamics, and compatible with MPC-style planning and learned critics. This yields a route to online POMDP learning that is closer to modern model-based RL than exact belief-space planning, while providing a transparent theoretical account that lets users trace each source of approximation error and make informed design choices. Section 2 introduces the online learning problem and the regret criterion in the belief-state MDP. Section 3 presents the PF-MCTQ algorithm, describing the MCTQ planning subroutine and the full online pipeline. Section 4 develops the error analysis: we decompose the regret into four traceable terms, analyze the structural QMDP bias and its variance interpretation, bound each error source, and combine them into the end-to-end regret guarantee. We conclude with case studies on LQG, contextual MDPs, and smooth-value POMDPs that illustrate when the QMDP approximation is benign. 
+
+# 2 Problem Formulation 
+
+We study online reinforcement learning in a partially observable environment with unknown dynamics. Since the latent state is hidden, the natural state variable for control is the belief, the posterior distribution of the latent state given the history. We first introduce the POMDP model and its belief-state dynamics. Figure 1 shows a particle belief for a partially observed double integrator (Section 5). 
+
+Parameterized POMDP model. For each parameter θ ∈ Θ, let Mθ = ( S, A, O, P θ, Z θ, r, γ, b 0)
+
+be an infinite-horizon discounted POMDP, where S is the latent state space, A is the action space, 3and O is the observation space. The controlled state transition kernel is Pθ(· | s, a ) ∈ ∆( S), the observation kernel is Zθ(· | s′) ∈ ∆( O), the reward function is r : S × A → [0 , R max ], the discount factor is γ ∈ (0 , 1) , and b0 ∈ ∆( S) is the initial belief. The true environment is specified by an unknown true parameter θ⋆, and we write M⋆ := Mθ⋆ . Here, for a measurable space X , ∆( X )
+
+denotes the set of probability measures on X , and beliefs b ∈ ∆( S) are written as measures b(d s).
+
+Generative process and belief states. At each time t = 0 , 1, 2, . . . , the latent state, observation, and reward evolve according to 
+
+St+1 ∼ Pθ⋆ (· | St, A t), Ot+1 ∼ Zθ⋆ (· | St+1 ), Rt = r(St, A t). (1) The learner does not observe St. Instead, decisions are based on the entire history up to time 
+
+t denoted by Ht := ( O1: t, A 0: t−1, R 0: t−1). Here Ot is available before choosing At. A possibly randomized policy is a sequence π = {πt}t≥0 such that πt(· | Ht) ∈ ∆( A).
+
+Belief states and Bayes filtering. Fix a candidate parameter θ. The corresponding belief state at time t is the posterior distribution bθt (·) := Pθ(St ∈ · | Ht). When θ = θ⋆, we write bt := bθ⋆
+
+> t
+
+for the true belief. Given a belief b ∈ ∆( S) and action a ∈ A , define the one-step predictive state distribution and the corresponding predictive observation law respectively by 
+
+˜bθ(· | b, a ) := 
+
+Z
+
+> S
+
+Pθ(· | s, a ) b(d s), pθ(· | b, a ) := 
+
+Z
+
+> S
+
+Zθ(· | s′) ˜bθ(d s′ | b, a ). (2) After observing o ∈ O , the posterior is updated through the Bayes filter (which we later approximate) 
+
+τθ(b, a, o )(d s) := Zθ(o | s) ˜bθ(d s | b, a )
+
+R 
+
+> S
+
+Zθ(o | s′) ˜bθ(d s′ | b, a ) . (3) 
+
+Belief-MDP value functions. The reward associated with belief b and action a is r(b, a ) := 
+
+Es∼b[r(s, a )] . We assume throughout that A is finite and that |r(s, a )| ≤ Rmax for all (s, a ) ∈ S × A .For each θ, the POMDP induces a fully observed MDP on ∆( S). For any bounded measurable function V : ∆( S) → R, define the belief-MDP Bellman operator 
+
+(TθV )( b) := max 
+
+> a∈A
+
+
+
+r(b, a ) + γ
+
+Z
+
+> O
+
+V  τθ(b, a, o ) pθ(o | b, a ) d o
+
+
+
+. (4) Let V ⋆,B θ denote the unique fixed point of Tθ. The optimal belief-state action-value function is 
+
+Q⋆,B θ (b, a ) := r(b, a ) + γ
+
+Z
+
+> O
+
+V ⋆,B θ
+
+ τθ(b, a, o ) pθ(o | b, a ) d o, and V ⋆,B θ (b) = max  
+
+> a∈A
+
+Q⋆,B θ (b, a ). (5) More generally, for a policy π acting on histories, let V π,B θ (b) be its discounted value in the belief-MDP from initial belief b, and let Q⋆,S θ and V ⋆,S θ denote the value functions of the fully observable MDP. 
+
+# 3 The PF-MCTQ Algorithm 
+
+We present PF-MCTQ, a model-based online learning algorithm that integrates model learning, belief inference, and planning into a modular pipeline. We divide time into doubling epochs Ek = [2 k−1, 2k),
+
+k = 1 , . . . , ⌈log 2 T ⌉, using the standard doubling trick [3]. At the start of each epoch, the algorithm (i) updates the MLE ¯θk using all past data and freezes it for the epoch, (ii) maintains a particle approximation bJt of the current belief via sequential predict-reweight-resample, and (iii) plans under ¯θk and bJt using finite-depth Monte-Carlo belief-tree search with QMDP leaf evaluation. The doubling-epoch structure keeps the model from updating too often. 4Algorithm 1 Pf-Mctq : Particle filtering with Monte Carlo tree QMDP planning. Mctq (Algo-rithm 2) takes the particle belief bJt and returns an estimate bQt(bJt , a ) of Q¯θk ,d (bJt , a ) for every root action a ∈ A .
+
+Require: particles J; depth d; rollouts N ; horizon T ; tolerance β; model class Θ; exploration parameter η > 0. 
+
+> 1:
+
+Sample s(1) 1 , . . . , s (1)  
+
+> J
+
+∼ b0. 
+
+> 2:
+
+Set epochs Ek = [2 k−1, 2k) for k = 1 , . . . , K := ⌈log 2 T ⌉, with εk := η/ p|Ek|. 
+
+> 3:
+
+for epoch k = 1 , 2, . . . , K do  
+
+> 4:
+
+¯θk ← ModelUpdate (HTk ) via equation 6; compute bQMDP ¯θk ≈ Q⋆,S 
+
+> ¯θk
+
+. 
+
+> 5:
+
+for t ∈ Ek do  
+
+> 6:
+
+{ bQt(bJt , a )}a∈A ← Mctq  ¯θk, b Jt , d, N, bQMDP ¯θk
+
+ ▷ Algorithm 2  
+
+> 7:
+
+Play at = arg max a bQt(bJt , a ) w.p. 1 − εk; else at ∼ Unif (A). 
+
+> 8:
+
+Observe (ot+1 , r t). 
+
+> 9:
+
+Propagate, reweight, and resample particles via equation 7 under ¯θk. 
+
+> 10:
+
+end for  
+
+> 11:
+
+end for Learning oracle. Let Lt(θ) be the log-likelihood of the observed history Ht under model θ. At the start of epoch Ek, ModelUpdate returns a β-approximate maximizer on all data up to Tk:
+
+¯θk ∈ θ ∈ Θ : LTk (θ) ≥ max  
+
+> θ′∈Θ
+
+LTk (θ′) − β , (6) for a tolerance β ≥ 0. The model ¯θk is frozen throughout epoch Ek. When β = 0 this is exact MLE, but we accommodate a β-suboptimal solver. In practice, many recent gradient-based methods for the MLE in partially observed Markov process (POMP) models apply here [5, 7, 18, 30, 37]. 
+
+Filtering update. After playing at and observing ot+1 , particles are propagated and reweighted under the current epoch’s model ¯θk(t):
+
+ˆs(t+1)  
+
+> j
+
+∼ P¯θk(t) (· | s(t) 
+
+> j
+
+, a t), w(t+1)  
+
+> j
+
+∝ Z¯θk(t) (ot+1 | ˆs(t+1)  
+
+> j
+
+), (7) followed by multinomial resampling s(t+1)  
+
+> j
+
+∼ Categorical( w(t+1) 1 , . . . , w (t+1)  
+
+> J
+
+) for j = 1 , . . . , J . This is the bootstrap sampling-importance-resampling (SIR) filter; any SMC scheme satisfying the Lp
+
+error bound of Appendix D.3 can be substituted. 
+
+Approximate planning. For the current belief, MCTQ runs Monte Carlo tree search on the belief tree for the first d steps and applies the QMDP approximation at the leaves. This gives a middle ground between expensive belief-tree search and the cheap but potentially biased QMDP approximation. For a belief b ∈ ∆( S), define the QMDP leaf value and the depth-d belief tree value as 
+
+¯V ⋆,S θ (b) := max 
+
+> a∈A
+
+Z
+
+> S
+
+Q⋆,S θ (s, a ) b(d s), and ¯V ⋆,S θ,d := T dθ ¯V ⋆,S θ , d ≥ 0, (8) where Q⋆,S θ is the optimal action-value function of the fully observable MDP induced by θ, and Tθ is the Bellman operator of the belief-MDP from equation 4. The corresponding action-value function is 
+
+Qθ,d (b, a ) := r(b, a ) + γ
+
+Z
+
+> O
+
+¯V ⋆,S θ,d −1
+
+ τθ(b, a, o ) pθ(o | b, a ) d o, d ≥ 1. (9) 5When d = 0 , ¯V ⋆,S θ, 0 (b) = max a
+
+R Q⋆,S θ (s, a ) b(d s) and MCTQ reduces exactly to QMDP. As d → ∞ ,
+
+¯V ⋆,S θ,d → V ⋆,B θ (see Proposition 2 in Appendix D.1 for the proof). 
+
+Particle belief and MCTS approximation. In practice, the current belief is represented by a particle approximation bJt = 1
+
+> J
+
+PJj=1 δs(j)
+
+> t
+
+. Starting from bJt , MCTQ builds a search tree of depth d
+
+with N Monte Carlo simulations per root action, inspired by the POMCP framework [34]. Each simulation samples a particle from bJt , descends to depth d using uniform random action selection at internal nodes, expands nodes as it passes through them, and records its state in the particle set B(v)
+
+of every node v it visits. Each depth-d leaf is evaluated by the QMDP value of its pooled particles, 
+
+max a′ |B(v)|−1 P 
+
+> s∈B(v)
+
+Q⋆,S θ (s, a ′), and a bottom-up dynamic program then computes bQt(bJt , a ) for each root action. We use uniform selection for the analysis and do not claim it is the best rule in practice. The analysis only needs the internal rule to ignore the current tree’s statistics and to give every action probability at least πmin > 0, so a frozen learned proposal also qualifies, but UCB1 does not (Appendix B). 
+
+Observation discretization. With continuous O, every simulated observation is distinct, so tree nodes below the root are never revisited and a depth-d tree is not well defined. MCTQ therefore indexes children by a binned observation ϕ(o), where ϕ : O → ¯O has M := | ¯O| bins of diameter 
+
+diam( ϕ). For finite O we take ϕ = id and M = |O| , and for d = 0 no binning is needed. The resulting bias and its trade-off against N are made explicit in Theorem 1. 
+
+# 4 Error Analysis and Regret Guarantee 
+
+We measure performance by the expected cumulative regret defined as: 
+
+Reg T := E
+
+" TX
+
+> t=1
+
+regret t
+
+#
+
+:= E
+
+" TX
+
+> t=1
+
+ V ⋆,B θ⋆ (bt) − V πt,B θ⋆ (bt)#
+
+, (10) where πt is the policy deployed from round t, and the expectation is over the trajectory and algorithmic randomness. A key contribution is an end-to-end regret bound for PF-MCTQ, enabled by the following novel regret decomposition. Let k(t) be the epoch containing round t, with frozen model ¯θk(t):regret t = V ⋆,B θ⋆ (bt) − V ⋆,B 
+
+> ¯θk(t)
+
+(bt)
+
+| {z }
+
+> (A) optimal-value model error
+
++ V ⋆,B 
+
+> ¯θk(t)
+
+(bt) − V πt,B 
+
+> ¯θk(t)
+
+(bt)
+
+| {z }
+
+> (B) planning + state-id error
+
++ V πt,B 
+
+> ¯θk(t)
+
+(bt) − V πt,B θ⋆ (bt)
+
+| {z }
+
+> (C) fixed-policy model error
+
+, (11) Terms (A) and (C) capture model estimation error: the gap between ¯θk(t) and θ⋆. Term (B) captures planning approximation under the learned model, which is further decomposed into three sources: (B) ≤ V ⋆,B 
+
+> ¯θk(t)
+
+(bt) − V ⋆,B 
+
+> ¯θk(t)
+
+(bJt )
+
+| {z }
+
+> (B1) belief approx.
+
++ V ⋆,B 
+
+> ¯θk(t)
+
+(bJt ) − V πt,B 
+
+> ¯θk(t)
+
+(bJt )
+
+| {z }
+
+> (B2) planning suboptimality
+
++ V πt,B 
+
+> ¯θk(t)
+
+(bJt ) − V πt,B 
+
+> ¯θk(t)
+
+(bt)
+
+| {z }
+
+> (B1 ′) belief approx.
+
+. (12) Terms (B1) and (B1 ′) evaluate values at the particle belief bJt instead of the posterior bt, each bounded by O(1 /J 1/(2 κpf )) via particle-filter concentration. The planning gap (B2) splits into Monte Carlo error from MCTS rollouts ( O(1 /√N )) and structural error from QMDP bootstrapping at depth d.6We distinguish the belief-MDP optimum V ⋆,B θ , the deterministic planning target ¯V ⋆,S θ,d = T dθ ¯V ⋆,S θ
+
+of equation 8, and the randomized MCTQ estimate bQt(bJt , a ) from pooled particle sets. The target differs from the optimum by the structural error, which decays geometrically in d and involves no particles. The estimate differs from the target by the Monte Carlo error, which grows with d, so for fixed N the bound is U-shaped in d. Each component enters only through its guarantee (a 
+
+β-approximate MLE, an SMC filter with an Lp bound, a planner with a Monte Carlo bound), so the decomposition extends to, e.g., POMCP-style planners or variational filters. 
+
+4.1 Assumptions and main result 
+
+Modern SMC analyses [6, 9, 21] impose rather unavoidable but stringent conditions on the transition kernel and observation density. We inherit these in the form of the following Doeblin and bounded ob-servation density assumption (Assumption 1) on the latent dynamics. This choice aligns with our aim to provide an end-to-end regret bound that decomposes error across the learning–inference–planning pipeline, rather than to develop optimal exploration methods for POMDP model estimation, as Assumption 1 ensures that simple exploration strategies like ε-greedy have sufficient coverage. At the same time, the Doeblin condition resembles commonplace strong mixing assumptions within the RL literature [13, 23, 39, 40] and the α-revealing condition commonplace in the POMDP literature plays a similar role to the bounded observation density condition [28, 29]. 
+
+Assumption 1 (Uniform mixing and bounded weights) .
+
+1. Uniform Doeblin condition. There exist εmix > 0 and a probability measure ν ∈ ∆( S) such that Pθ(· | s, a ) ≥ εmix ν(·) for all (θ, s, a ) ∈ Θ × S × A .2. Bounded observation density. There exist 0 < g min ≤ gmax < ∞ such that gmin ≤ Zθ(o | s) ≤
+
+gmax for all (θ, s, o ) ∈ Θ × S × O .
+
+Let NΘ(ε) be the ε-covering number of Θ, the minimum number of ℓ1-balls of radius ε (in trajectory likelihood) needed to cover Θ. Define the effective model complexity βT := β + log NΘ(1 /T ) T /δ ,where β is the MLE tolerance from equation 6 and δ ∈ (0 , 1) is a confidence parameter. 
+
+Theorem 1 (End-to-end regret of Pf-Mctq ). Suppose Assumption 1 holds. Algorithm 1, run with exploration parameter η ≍ T 1/4(βT / log T )1/4 and observation binning ϕ with M bins of diameter 
+
+diam( ϕ) = ω−1
+
+> Z
+
+ (1 − γ)gmin /(2 γg max Vmax 
+
+√N ) (ϕ = id and M = |O| when O is finite), and, if 
+
+d ≥ 2, N above the threshold of Remark 3, and κpf := max  1, log  2g2max /g 2min 
+
+/log(1 /γ ) satisfies 
+
+Reg T ≤ eO
+
+ Cest Rmax 
+
+(1 − γ)3/2 T 3/4
+
+| {z }
+
+> model + exploration + filter
+
++ Cpf Rmax 
+
+(1 − γ)2 · TJ1/(2 κpf )
+
+| {z }
+
+> particle approx.
+
++ Cmc Rmax 
+
+(1 − γ)2 · T
+
+√N
+
+| {z }
+
+> Monte Carlo
+
++ 2γd+1 
+
+(1 − γ)2
+
+> T
+
+X
+
+> t=1
+
+Ξ¯θk(t)
+
+| {z }
+
+> QMDP structural bias
+
+,
+
+Here eO hides factors polylogarithmic in T , ωZ is the modulus of continuity of the observation likelihood ratio (Appendix D.2), M = | ¯O| is the number of observation bins, and Ξ¯θk(t) is the QMDP structural bias of equation 13. The coefficients are 
+
+Cest = Poly( |A| , g max /g min , ϵ −1mix , log(1 /γ ), log NΘ(1 /T ), β ), Cmc = O(dγ d|A| (d+3) /2M d/ 2),Cpf = eO V 2max gmax /(ε3mix gmin ) · (log J)3/2plog( NΘ(1 /T ) |A| ) (See equation 57) .
+
+Reading the bound. Theorem 1 bounds cumulative regret with four major terms. The first term captures model estimation error, exploration cost, and filter mismatch between the true 7posterior bθ⋆ 
+
+> t
+
+and the particle belief b¯θ1: K 
+
+> t
+
+. The eO(T 3/4) rate arises from the coverage transfer needed to bound the optimal-value model error (term (A) in equation 11) via ε-greedy exploration. Terms 2, 3, and 4 capture the total approximate planning errors that may scale linearly in T . They can be diminished by increasing the number of particles J, number of Monte Carlo rollouts N , and the planning depth d. The particle error decays as J−1/(2 κpf ) at cost O(J), the Monte Carlo error as 
+
+N −1/2 at cost O(N ), and the structural error as γd at a tree size of up to (|A| M )d nodes. The bound therefore implies a sample-vs.-computational efficiency trade-off through the marginal return of each budget, but a concrete allocation requires knowledge of κpf and Ξθ and is not claimed to be optimal. Section 5 gives an empirical budgeting rule on an instance where the assumptions hold. With continuous observations, the binning keeps the discretization bias at the Monte Carlo order 
+
+O(Vmax /√N ), but M grows as N do/2 for O ⊆ Rdo , so Cmc grows exponentially in d · do. Balancing bin width against N instead gives the rate eO(N −1/(d d o+2) ) (Remark 4). This cost is absent only at 
+
+d = 0 , the regime used in our deep RL experiments. 
+
+Technical challenges. Bounding each source in equation 12 under online learning raises three difficulties. First, controlling (B1) requires working with a test-function class defined directly over S,rather than only the parametric family {Q⋆,B θ }θ. This is because the belief-space value functions may lack the regularity needed for uniform particle-filter error control. In fact, the planning-induced class over multiple steps is effectively uncountable over the possible model parameters, so we control it through truncation. The required truncation level depends on the desired particle approximation accuracy: as the particle error target decreases, the tail must be made smaller, which enlarges the truncated function class. This creates a tradeoff between the complexity of the truncated class and the particle ensemble size, leading to a slower ( 1/J 1/2κpf ), essentially nonparametric, rate. Second, the filtering analysis must handle data generated online by a changing policy. Classical particle-filter stability assumes a fixed generative model, whereas here the filter receives actions from a non-stationary, improving policy. We extend time-uniform Lp bounds [9] to this setting by exploiting the Doeblin condition uniformly over actions. Third, Doeblin coverage applies to states but not actions, so we ensure action coverage via ε-greedy exploration. This lets us transfer MLE concentration across policies, controlling terms (A) and (C) and the Monte Carlo error in (B2). 
+
+Remark 1 (Relation to POMDP hardness) . POMDP sample complexity may in the worst case scale exponentially in the effective horizon 1/(1 − γ). Our bound is polynomial in 1/(1 − γ) for two reasons. First, under the Doeblin condition the Bayes filter forgets its initialization at a geometric rate ρ = 1 − εmix gmin /g max < 1 uniformly over actions, so errors add up over time rather than compound. Second, bounded observation densities play the role of the α-revealing condition [28]: they bound importance weights, so data transfer across policies without an (|A| /ε )H blow-up, and particle weights stay non-degenerate. This does not circumvent the lower bound: ε−1mix and gmax /g min can be exponential in the effective horizon for hard instances, and Cest and Cpf depend polynomially on them. Appendix F illustrates failures when gmin = 0 and when Ξθ is large. 
+
+Remark 2 (Bypassing exploration with offline coverage) . The eO(T 3/4) rate is driven by the coverage transfer for term (A), which requires ε-greedy exploration to ensure model accuracy at the optimal policy. If instead the agent has access to Noff offline trajectories from a behavior policy πb with single-policy concentrability c⋆ 
+
+> off
+
+(the worst-case ratio of trajectory ℓ1 distances between π⋆ and πb), then greedy exploitation ( εt = 0 ) achieves regret eO(√T / (1 − γ)) + O(c⋆ 
+
+> off
+
+T / (√Noff (1 − γ))) plus computational terms. When Noff ≥ (c⋆ 
+
+> off
+
+)2T , the total regret is eO(√T ) without any additional online exploration. The formal statement and proof are in Appendix D.7. 
+
+84.2 Understanding the structural bias 
+
+It remains to discuss the QMDP approximation error, which is governed by the Jensen gap 
+
+Ξθ := sup 
+
+> b∈∆( S)
+
+Z 
+
+> S
+
+V ⋆,S θ (s) b(d s) − max 
+
+> a∈A
+
+Z
+
+> S
+
+Q⋆,S θ (s, a ) b(d s)
+
+
+
+, (13) which measures the value lost by choosing a single action for all states (QMDP planning) rather than the state-dependent optimal action. We show (Proposition 2 in Appendix D.1) that the depth-d
+
+MCTQ structural error satisfies ∥ ¯V ⋆,S θ,d − V ⋆,B θ ∥∞ ≤ γd+1  
+
+> 1−γ
+
+Ξθ, decaying geometrically with depth d.The quantity Ξθ has an interpretation via the posterior variance of value-relevant features. Let 
+
+g : S → Rk be a measurable embedding, and write mg(b) := ES∼b[g(S)] and Σg(b) := Cov S∼b(g(S)) .
+
+Assumption 2 (Value-relevant embedding) . There exist twice continuously differentiable maps 
+
+F aθ : Rk → R for each a ∈ A such that Q⋆,S θ (s, a ) = F aθ (g(s)) for all (s, a ) ∈ S × A , with curvature bounds, where Fθ(x) := max a F aθ (x) and V ⋆,S θ (s) = Fθ(g(s)) , of 
+
+sup 
+
+> a∈A
+
+sup 
+
+> x∈conv( g(S))
+
+∇2F aθ (x) op ≤ Lθ and sup 
+
+> x∈conv( g(S))
+
+∇2Fθ(x) op ≤ Lθ,
+
+where ∥ · ∥ op is the spectral norm. 
+
+In practice, the condition holds when either (i) a single action is optimal throughout conv( g(S)) ,or (ii) Fθ is a single smooth function of s (as in linear-quadratic-Gaussian (LQG) systems, where it is a quadratic form and both conditions hold with the same Lθ). 
+
+Proposition 1 (Curvature bound on Ξθ). Under Assumption 2, for every belief b ∈ ∆( S),
+
+Ξθ(b) := eV ⋆θ (b) − ¯V ⋆,S θ (b) ≤ Lθ tr  Σg(b), (14) 
+
+where eV ⋆θ (b) := R 
+
+> S
+
+V ⋆,S θ (s) b(d s) is the linear QMDP surrogate. In particular, Ξθ = sup b Ξθ(b).
+
+The proof is in Appendix D.8. That QMDP is accurate once the belief concentrates is expected; Proposition 1 is sharper in two ways. First, only the posterior covariance of the value-relevant features g matters; uncertainty in directions to which the value is insensitive does not enter, so the full belief need not concentrate. Second, the curvature Lθ converts this covariance into a value gap, which enters Theorem 1 as γd+1 Ξθ/(1 − γ) and trades off against planning depth. In discounted LQG, for instance, the Kalman covariance converges to a strictly positive steady state and never vanishes, yet the QMDP policy is belief-optimal, and Ξθ = 0 when the control does not enter the dynamics (Appendix D.9). Appendix D.9 instantiates the structural analysis on linear-quadratic Gaussian systems, where 
+
+Ξθ has a closed form in terms of the Riccati solution and the steady-state Kalman covariance, and on contextual MDPs with identifiable latent context, where Ξθ,t ≤ 2Vmax ρt for a context-misidentification probability ρt, so eventual identification becomes the rate condition P 
+
+> t
+
+ρt = o(√T ).
+
+# 5 Experiments 
+
+Our experiments test whether particle filtering and model-based planning can be used as a practical layer on top of modern deep reinforcement learning under partial observability. Here, our goal is not to obtain state-of-the-art asymptotic performance. Instead, we aim to evaluate whether explicit particle beliefs can improve low-sample decision making with modest additional overhead. Table 1 9Figure 2: Cumulative reward above the baseline rollout in four HeartSteps scenarios varying the positive intervention effect and the delayed negative measurement effect or proxy Ot informativeness. Mean and 2.5%/97.5% quantiles over five seeds. Table 1: Which experiments satisfy the assumptions of Theorem 1. ✓: holds; ×: fails; ∼: approx.                                          
+
+> Environment Doeblin gmin >0Finite ABounded rRole Mixing Tiger (Sec. 5) ✓✓✓✓theory-valid Active sensing (App. F) ✓∼✓✓structural diagnostic Box search (App. F) ××✓✓gmin = 0 by design HeartSteps ∼∼✓✓not claimed Double-integrator LQR ✓×××filtering diagnostic MuJoCo ××××heuristic demonstration
+
+states which experiments fall under the theory. The deep RL experiments demonstrate that the pipeline is practical but are not evidence for the constants of Theorem 1. 
+
+Empirical validation of the regret decomposition. On a Doeblin-mixing Tiger [19] that satisfies Assumption 1 exactly ( εmix = 0 .05 , 0.15 ≤ Z ≤ 0.85 , γ = 0 .8; Appendix E), varying one budget at a time shows each term decaying at its predicted rate (Table 2). The smallest tested (J, N, d ) putting every isolated term below 0.10 , 0.05 , and 0.025 is (16 , 16 , 6) , (64 , 64 , 9) , and 
+
+(128 , 256 , 12) .
+
+Deep RL experiments. We instantiate PF-MCTQ using the pypomp [1] package for particle-filtering primitives with MOP [37] or VSMC [30] gradient estimators. This allows highly optimized JAX particle filters on GPU. We learn a neural dynamics model online, maintain a particle approxi-mation to the latent state posterior, and use an actor and a critic trained with recurrent SAC-style updates [31] in the same vein as [16]. In the experiments we use belief-tree depth d = 0 : each particle is rolled out at the state level under a learned actor and bootstrapped with a learned critic, rather than planning over a tree of particle beliefs. With continuous actions and observations a depth-d tree requires binning at a cost of up to (|A| M )d nodes, so this is the main practical gap from the theory. Rollout planning corresponds to the QMDP case d = 0 , whereas deeper belief planning reduces the structural bias. Appendix G runs the analyzed MCTQ at d > 0 on finite POMDPs. Algorithm 4 gives the practical algorithm. All experiments took about three days on two RTX 3090 GPUs. Code is available at https://github.com/pypomp/pf_control .
+
+Double-integrator LQR. We first study a partially observed double-integrator LQR. The state contains position and velocity, but the observation reveals only position. Thus the latent velocity is therefore not identifiable from the current observation alone. Different velocities induce the same observation and can only be distinguished using history. This environment isolates the filtering 10 Table 2: Fitted vs. predicted rates on mixing Tiger; Theorem 1 gives slower J−1/(2 κpf ), T 3/4.
+
+Term Error at endpoints Fitted Predicted Particle filtering, J = 8 → 512 0.144 → 0.012 J−0.59 J−1/2
+
+Monte Carlo, N = 4 → 512 0.171 → 0.015 (RMSE) N −0.50 N −1/2
+
+Structural, d = 0 → 12 0.314 → 0.0216 0.80 per level γ = 0 .80 
+
+Estimation (online MLE), P 
+
+> t≤T
+
+εopt (t) T 0.57 √T−1,600 −800 0800 
+
+> No Position Return
+
+Ant 
+
+> −600 −300 0300
+
+HalfCheetah 
+
+> 0150 300 450
+
+Hopper 
+
+> 0400 800
+
+Walker2d             
+
+> 025k 50k
+> Environment steps
+> −600 0600 1,200
+> No Velocity Return
+> 025k 50k
+> Environment steps
+> −400 0400 025k 50k
+> Environment steps
+> 0300 600 025k 50k
+> Environment steps
+> 0400 800
+> PF-MCTQ PF-MCTQ submitted cfg. (Ant) Recurrent SAC GRU-PPO Original Ant cutoff (3k)
+
+Figure 3: Partial-observation MuJoCo learning curves in the low-sample regime: smoothed means with 95% Student-t bands over five seeds (Ant: three seeds for corrected PF-MCTQ; the submitted configuration, dashed, shows its two seeds as thin lines). Ant PF-MCTQ shows the 10-episode rolling training return; others, per-episode returns. Dotted: the submitted 3k-step cutoff; none extrapolated. problem. The posterior diagnostics in Figure 1 show that particle beliefs can track the latent state without access to memory, while failures occur when the system is unstable. The GRU backbone improves this behavior relative to a memoryless MLP, suggesting that particle filtering and recurrent state representations are complementary. More details and figures can be found in Appendix C.1. 
+
+HeartSteps. We next evaluate the HeartSteps benchmark of [12] as an actively observable MDP with a latent reward state, where the learner can choose to measure the state at a cost. PF-MCTQ is run in the never-measure regime. It never directly measures the latent reward and must infer it from passive observations. The strongest benchmark is RLSVI-SMC/never-measure, which is specifically tailored to the linear-Gaussian HeartSteps structure and uses hand-specified linear features. Consequently, RLSVI-SMC performs best in most scenarios. PF-MCTQ typically improves over the baseline rollout but trails RLSVI-SMC because it must learn a deep model, actor, and critic from data. Dyna-ATMQ is not directly comparable as a no-measure method. It actively measures the latent reward roughly half the time, which gives it an informational advantage, but this advantage can be offset when measurement has delayed negative effects on future engagement. Details are in Appendix C.2. 
+
+MuJoCo partial-observation control. Finally, we evaluate Ant, HalfCheetah, Hopper, and Walker2d with position or velocity removed from the observation. We compare PF-MCTQ to Recurrent SAC and GRU-PPO baselines from the recurrent model-free POMDP benchmarking 11 literature [31]. These are strong comparators that learn a recurrent history representation directly from reward. Figure 3 shows that PF-MCTQ is competitive in the ultra-low-sample regime. On Ant, PF-MCTQ learns a high-return policy within the first few thousand steps under both ablations. We no longer stop Ant early. When run to 49 .2k steps, the submitted configuration’s policy collapses (dashed). After restoring online model updates and ordinary weight decay, a controlled reduction of the policy update-to-data ratio (one update per ten steps) is decisive and prevents this (Appendix H). Over the prespecified 40k–49.2k window, corrected PF-MCTQ averages 893 ± 177 and 822 ± 268 
+
+(position/velocity hidden; three seeds, 95% Student-t) against −396 and −518 for the submitted configuration. On Hopper and Walker2d, PF-MCTQ is broadly competitive with Recurrent SAC and usually stronger than GRU-PPO early in training. HalfCheetah is more mixed: PF-MCTQ performs well when velocity is hidden but struggles when position is hidden, suggesting that model bias and rollout error can dominate when the omitted coordinates are crucial for short-horizon prediction. On Ant, corrected PF-MCTQ needs about 30% of recurrent SAC’s training time per step plus a one-time 86.3 s model warm start, while GRU-PPO is faster still (Table 15). Overall, these results show that particle filtering and model-based planning can be implemented on top of existing deep RL algorithms and can yield sample-efficiency gains in partially observed control. The results should not be read as a claim of asymptotic dominance over recurrent model-free RL. Rather, they show that the learning–filtering–planning pipeline can be made operational in standard deep RL benchmarks. 
+
+# 6 Discussion 
+
+We presented an online model-based POMDP pipeline combining particle filtering, latent-dynamics learning, and approximate planning with an end-to-end regret bound. We decompose regret into model estimation, particle approximation, Monte Carlo planning, and QMDP structural errors, clarifying how statistical and computational budgets affect performance. The framework bridges POMDP theory and model-based deep RL. Experiments with a simplified rollout-based version show that it can be made operational and competitive in low-sample partially observed control. 
+
+Limitations. Our analysis relies on the Doeblin mixing condition and bounded observation densities, which ensure passive state coverage and obviate the need for strategic exploration. These assumptions fail in many POMDPs. In item search with exact observations, the observation density is not bounded below, and a particle set of size J misses the true location among K with probability 
+
+(1 − 1/K )J . In Light–Dark-type problems, information must be actively gathered, so Ξθ is large and shallow planning never gathers it (see Appendix F). Second, the bounded reward assumption excludes settings such as LQG. Third, the deep RL experiments use d = 0 with a learned critic and actor, which is the QMDP case of our algorithm, and our guarantees apply to non-adaptive action selection inside the tree but not to UCT-style selection. Natural extensions are strategic exploration to relax the dynamics assumptions, unbounded rewards, and guarantees for adaptive tree search. 
+
+# Acknowledgments 
+
+Ziping Xu was supported by the National Science Foundation under award DMS-2625746. 
+
+# References 
+
+[1] Aaron Abkemeier, Jun Chen, Kevin Tan, Jesse Wheeler, and Edward Ionides. pypomp: Partially observed Markov processes in Python, version 0.4.4.10. https://github.com/pypomp/pypomp ,2026. 12 [2] Ameya Anjarlekar, S. Rasoul Etesami, and R. Srikant. Scalable policy-based RL algorithms for POMDPs. In The Thirty-ninth Annual Conference on Neural Information Processing Systems ,2025. [3] Lilian Besson and Emilie Kaufmann. What doubling tricks can and can’t do for multi-armed bandits. arXiv preprint arXiv:1803.06971 , 2018. [4] Anthony R Cassandra, Leslie Pack Kaelbling, and Michael L Littman. Acting optimally in partially observable stochastic domains. In Proceedings of the Twelfth National Conference on Artificial Intelligence (AAAI) , pages 1023–1028, 1994. [5] Yuan Chen, Mathieu Gerber, Christophe Andrieu, and Randal Douc. Self-organizing state-space models with artificial dynamics. Journal of the Royal Statistical Society Series B: Statistical Methodology , page qkaf069, 2025. [6] Nicolas Chopin and Omiros Papaspiliopoulos. An Introduction to Sequential Monte Carlo .Springer Series in Statistics. Springer, 2020. [7] Adrien Corenflos, James Thornton, George Deligiannidis, and Arnaud Doucet. Differentiable particle filtering via entropy-regularized optimal transport. In Marina Meila and Tong Zhang, editors, Proceedings of the 38th International Conference on Machine Learning , volume 139 of 
+
+Proceedings of Machine Learning Research , pages 2100–2111. PMLR, 18–24 Jul 2021. [8] Dan Crisan and Arnaud Doucet. A survey of convergence results on particle filtering methods for practitioners. IEEE Transactions on signal processing , 50(3):736–746, 2002. [9] Pierre Del Moral. Feynman-Kac Formulae: Genealogical and Interacting Particle Systems with Applications . Springer, 2004. [10] Randal Douc, Eric Moulines, and Jimmy Olsson. Long-term stability of sequential Monte Carlo methods under verifiable conditions. Annals of Applied Probability , 24(5):1767–1802, 2014. [11] Simon S Du, Wei Hu, Zhiyuan Li, Ruoqi Shen, Zhao Song, and Jiajun Wu. When is particle filtering efficient for planning in partially observed linear dynamical systems? In Uncertainty in artificial intelligence , pages 728–737. PMLR, 2021. [12] Daiqi Gao, Ziping Xu, Aseel Rawashdeh, Predrag Klasnja, and Susan Murphy. Active measuring in reinforcement learning with delayed negative effects. In The 29th International Conference on Artificial Intelligence and Statistics , 2025. [13] Mudit Gaur, Amrit Singh Bedi, Di Wang, and Vaneet Aggarwal. Closing the gap: achieving global convergence (last iterate) of actor-critic under markovian sampling with neural network parametrization. In Proceedings of the 41st International Conference on Machine Learning ,pages 15153–15179, 2024. [14] Noah Golowich, Ankur Moitra, and Dhruv Rohatgi. Planning in observable pomdps in quasipoly-nomial time. arXiv preprint arXiv:2201.04735, 2022. [15] Noah Golowich, Ankur Moitra, and Dhruv Rohatgi. Planning and learning in partially observable systems via filter stability. In Proceedings of the 55th Annual ACM Symposium on Theory of Computing , pages 349–362, 2023. 13 [16] Chao Han, Stefanos Ioannou, Luca Manneschi, T. J. Hayward, Michael Mangan, Aditya Gilra, and Eleni Vasilaki. Neural ode and sde models for adaptation and planning in model-based reinforcement learning. arXiv preprint arXiv:2603.23245, 2026. [17] Milos Hauskrecht and Hamish Fraser. Planning treatment of ischemic heart disease with partially observable markov decision processes. Artificial Intelligence in Medicine , 18(3):221–244, 2000. [18] Edward L. Ionides, Dao Nguyen, Yves Atchadé, Stilian Stoev, and Aaron A. King. Inference for dynamic and latent variable models via iterated, perturbed Bayes maps. Proceedings of the National Academy of Sciences , 112(3):719–724, 2015. [19] Leslie Pack Kaelbling, Michael L Littman, and Anthony R Cassandra. Planning and acting in partially observable stochastic domains. Artificial intelligence , 101(1-2):99–134, 1998. [20] Ali Devran Kara and Serdar Yüksel. Convergence of finite memory q learning for pomdps and near optimality of learned policies under filter stability. Mathematics of Operations Research ,48(4):2066–2093, 2023. [21] Joona Karjalainen, Anthony Lee, Sumeetpal S. Singh, and Matti Vihola. On the forgetting of particle filters. arXiv preprint arXiv:2309.08517, 2026. [22] Peter Karkus, David Hsu, and Wee Sun Lee. QMDP-Net: Deep learning for planning under partial observability. In Advances in Neural Information Processing Systems , volume 30, 2017. [23] Chinmaya Kausik, Kevin Tan, and Ambuj Tewari. Learning mixtures of Markov chains and MDPs. In Andreas Krause, Emma Brunskill, Kyunghyun Cho, Barbara Engelhardt, Sivan Sabato, and Jonathan Scarlett, editors, Proceedings of the 40th International Conference on Machine Learning , volume 202 of Proceedings of Machine Learning Research , pages 15970–16017. PMLR, 23–29 Jul 2023. [24] Chinmaya Kausik, Kevin Tan, and Ambuj Tewari. Learning mixtures of markov chains and mdps. In International Conference on Machine Learning , pages 15970–16017. PMLR, 2023. [25] Michael H Lim, Tyler J Becker, Mykel J Kochenderfer, Claire J Tomlin, and Zachary N Sunberg. Optimality guarantees for particle belief approximation of pomdps. Journal of Artificial Intelligence Research , 77:1591–1636, 2023. [26] Michael H Lim, Claire J Tomlin, and Zachary N Sunberg. Sparse tree search optimality guarantees in pomdps with continuous observation spaces. In Proceedings of the Twenty-Ninth International Conference on International Joint Conferences on Artificial Intelligence , pages 4135–4142, 2021. [27] Michael L Littman, Anthony R Cassandra, and Leslie Pack Kaelbling. Learning policies for partially observable environments: Scaling up. In Machine learning proceedings 1995 , pages 362–370. Elsevier, 1995. [28] Qinghua Liu, Alan Chung, Csaba Szepesvári, and Chi Jin. When is partially observable reinforcement learning not scary? In Conference on Learning Theory , pages 5175–5220. PMLR, 2022. [29] Qinghua Liu, Praneeth Netrapalli, Csaba Szepesvari, and Chi Jin. Optimistic MLE: A generic model-based algorithm for partially observable sequential decision making. In Proceedings of the 55th Annual ACM Symposium on Theory of Computing , pages 363–376, 2023. 14 [30] Christian Naesseth, Scott Linderman, Rajesh Ranganath, and David Blei. Variational sequential monte carlo. In International conference on artificial intelligence and statistics , pages 968–977. PMLR, 2018. [31] Tianwei Ni, Benjamin Eysenbach, and Ruslan Salakhutdinov. Recurrent model-free RL is a strong baseline for many pomdps. CoRR , abs/2110.05038, 2021. [32] Christos H Papadimitriou and John N Tsitsiklis. The complexity of markov decision processes. 
+
+Mathematics of operations research , 12(3):441–450, 1987. [33] Joelle Pineau, Geoff Gordon, Sebastian Thrun, et al. Point-based value iteration: An anytime algorithm for POMDPs. In Ijcai , volume 3, pages 1025–1032, 2003. [34] David Silver and Joel Veness. Monte-carlo planning in large pomdps. Advances in neural information processing systems , 23, 2010. [35] Yuda Song, Yifei Zhou, Ayush Sekhari, J Andrew Bagnell, Akshay Krishnamurthy, and Wen Sun. Hybrid rl: Using both offline and online data can make rl efficient. In International Conference on Learning Representations , 2023. [36] Zachary Sunberg and Mykel Kochenderfer. Online algorithms for pomdps with continuous state, action, and observation spaces. In Proceedings of the International Conference on Automated Planning and Scheduling , volume 28, pages 259–263, 2018. [37] Kevin Tan, Giles Hooker, and Edward L. Ionides. Accelerated inference for partially observed markov processes using automatic differentiation. arXiv preprint arXiv:2407.03085, 2024. [38] Nick Whiteley. Stability properties of some particle filters. The Annals of Applied Probability ,pages 2500–2537, 2013. [39] Yue Frank Wu, Weitong Zhang, Pan Xu, and Quanquan Gu. A finite-time analysis of two time-scale actor-critic methods. Advances in Neural Information Processing Systems , 33:17617–17628, 2020. [40] Tengyu Xu, Zhe Wang, and Yingbin Liang. Improving sample complexity bounds for (natural) actor-critic algorithms. Advances in Neural Information Processing Systems , 33:4358–4369, 2020. 
+
+# A Further Related Work 
+
+Our work is related to research on approximate planning in POMDPs, particle-based belief represen-tations, and inference in latent-state models. 
+
+Planning in POMDPs. POMDP planning can be formulated as dynamic programming over the belief state [19], but exact planning is difficult because the belief space is continuous and must be updated online. Practical methods therefore rely on approximations. Sampling-based planners such as POMCP combine Monte-Carlo tree search with particle-based belief updates and scale to large problems without explicit belief-stateenumeration [26, 34], while progressive-widening methods extend this approach to continuous spaces [36]. Another common approximation is QMDP, which replaces belief-space continuation values with fully observed MDP values averaged under the current 15 belief [4, 27]. Our method is connected to this line of work through combining finite-depth MCTS with a QMDP-style bootstrap, but differs in that we study this approximation in an online learning setting and explicitly quantify the resulting structural error. POMCP, POWSS, and sparse PFT are online planners in that they replan from the current belief at every step. However, they are analyzed with the model given to the planner, so their analyses are not online learning results. The same holds for our planner when it is analyzed at a frozen θ. Their guarantees concern a single planning call at an exactly known θ, with no estimation error and no horizon T , so they do not directly yield a regret bound when the planner is called with a re-estimated ¯θk. Because the planner enters our decomposition only through ϵmc (t, d ), one could substitute such a planner by re-deriving that term (and term (B1), which a particle-belief MDP absorbs) under ¯θk. Planning on the particle-belief MDP also requires O(J) generative calls per node, compared with O(1) for a state-level simulation. 
+
+Particle-based inference under partial observability. A related line of work uses particle filtering to approximate the belief state. Classical particle filtering theory provides convergence and stability guarantees for approximate Bayes filtering [8, 38]. [25] studied the particle-belief MDP directly and established optimality guarantees relative to the true belief-state MDP. More recent work has studied planning with particle methods in structured partially observed systems [11] as well as joint state and parameter inference in state-space models [5]. Our paper connects these directions in a different way: rather than planning over propagated particle beliefs, we use particles to represent the current belief, perform state-level lookahead from those particles, and combine this with online model learning. This leads to an end-to-end regret analysis that separates estimation error, particle approximation error, Monte-Carlo planning error, and QMDP-style approximation bias. 
+
+Model-free approaches. Model-free alternatives instead avoid explicit filtering by giving the learner a short horizon lookback or memory [20, 31]. The latter are often effective in practice, especially with deep recurrent policies, but their hidden states are difficult to interpret as beliefs, and remain challenging to analyze. Existing sample complexity guarantees for the former often contain caveats, such as only quasipolynomial rather than polynomial sample complexity [14, 15], or non-standard assumptions [2]. We will focus on the model-based approach. 
+
+# B MCTQ Planning Subroutine 
+
+We describe the full MCTQ (Monte Carlo Tree search with QMDP leaves) planning subroutine referenced in Algorithm 1. MCTQ estimates the depth-d belief-tree action-value Qθ,d (bJ , a ) defined in equation 9 by Monte Carlo tree search on the particle belief. It is inspired by the POMCP framework [34], with three departures: internal actions are drawn uniformly at random rather than by UCB1, every simulation descends to the full depth d, and values are computed by a bottom-up dynamic programming (DP) backup after all simulations complete. 
+
+Overview. Given the current particle belief bJ = 1
+
+> J
+
+PJj=1 δsj , model θ, search depth d, simulation budget N per root action, and a precomputed fully observable Q-function Q⋆,S θ (e.g., from value iteration), MCTQ estimates Qθ,d (bJ , a ) for each root action a ∈ A separately (round-robin), so that every root action receives exactly N simulations. For each root action a, each simulation samples a particle sj from bJ , takes the fixed root action a to obtain a child state s′ ∼ Pθ(· | sj , a ) and observation o ∼ Zθ(· | s′), and then descends the search tree Ta from the child node (a, o ) down to depth d, selecting actions uniformly at random at each internal node. Nodes are created the first time a simulation passes through them, and every node on the path records the simulated state. After all 16 N simulations complete, a bottom-up DP backup computes value estimates: at each depth-d leaf, the QMDP value of its accumulated particles; at each internal node, ˆV (v) = max a′ ˆQ(v, a ′), where 
+
+ˆQ(v, a ′) is the empirical mean of r + γ ˆV (child ) over the simulations that selected a′ at v. The root estimate bQ(bJ , a ) is the same empirical mean at the root. Like POMCP [34], MCTQ indexes its search trees by action-observation histories h = ( a1, o 1, . . . , a k, o k)
+
+rather than by explicit beliefs, and represents the belief at each node implicitly by the collection of states simulated through that node. The round-robin over root actions is needed because the regret analysis (Lemma 4) requires uniformly good estimates bQ(bJ , a ) for all a ∈ A . The analysis (Proposition 3) uses two properties of the internal action-selection rule π, i.e., the rule that picks actions at nodes below the root within one planning call: (S1) Non-adaptivity. π may depend on the node’s history, on θ, on the root particle set bJ , and on fresh randomness, but not on any statistic accumulated by the current tree. (S2) Full support. π(a′ | · ) ≥ πmin > 0 for every a′ ∈ A .Uniform selection satisfies both with πmin = 1 /|A| . So does a learned proposal that is frozen during the planning call and mixed with the uniform distribution. UCB1 violates (S1), because its choice at a node depends on the visit counts and value estimates accumulated by the current tree. We therefore use uniform selection for the analysis and do not claim it is the best rule in practice. Together with the absence of an early return (every simulation descends to depth d), (S1) makes the path of each simulation a function of its own random seed alone (Lemma 5). The simulation seeds are i.i.d. given bJ , but the simulation returns are not, because the leaf evaluator pools particles across simulations and the DP backup couples them. The analysis therefore treats bQ(bJ , a ) as a bounded-difference function of the i.i.d. seeds rather than as an average of independent returns. 
+
+Tree structure and belief particles. Each search tree Ta (one per root action a) has the particle belief bJ at its root (depth 0), the root action fixed to a, internal nodes at depths 1, . . . , d − 1, and leaves at depth d. Each node v is identified with the action-observation history that leads to it from the root, so a given history always refers to the same node. A child of node v under action a′ and observation o is denoted Child (v, a ′, o ); it is created on demand when first visited. Each node v maintains a particle set B(v): the collection of all states that have been simulated through v across all simulations. The empirical distribution ˆbv := 1
+
+> |B(v)|
+
+P 
+
+> s∈B(v)
+
+δs is the particle approximation of the belief at v, and N (v) := |B(v)| is the number of simulations that have visited 
+
+v. In addition, each internal node stores: • N (v, a ′): the number of simulations that selected action a′ at v;• ¯r(v, a ′): the running mean of the immediate rewards r(s, a ′) over those simulations. These statistics are accumulated during the simulation phase and used in the post-simulation DP backup. 
+
+QMDP leaf evaluation. At depth-d leaf nodes (remaining depth ℓ = 0 ), the QMDP value of the accumulated belief is 
+
+¯V ⋆,S θ (B(v)) := max 
+
+> a′∈A
+
+1
+
+|B(v)|
+
+X
+
+> s∈B(v)
+
+Q⋆,S θ (s, a ′). (15) This takes the max outside the average over states, choosing a single action for all particles, which coincides with the QMDP approximation ¯V ⋆,S θ from equation 8. This is distinct from the per-state evaluation 1
+
+> |B(v)|
+
+P 
+
+> s
+
+max a′ Q⋆,S θ (s, a ′), which would compute the linear surrogate eV ⋆θ instead. 17 Using equation 15 ensures the algorithm matches the theoretical target ¯V ⋆,S θ,d = T dθ ¯V ⋆,S θ analyzed in Section 4. 
+
+Simulation procedure. For each root action a, each of the N simulations proceeds as follows. A particle sj is sampled uniformly from bJ , and the root transition is simulated: s′ ∼ Pθ(· | sj , a ),
+
+o ∼ Zθ(· | s′), with immediate reward r(sj , a ). Starting from the child node Child (root , a, o ) with remaining depth ℓ = d − 1, the Simulate subroutine (Algorithm 3) descends the tree recursively: 1. Record. Add the current state s to B(v).2. QMDP leaf ( ℓ = 0 ). Stop. The leaf is evaluated by equation 15 on its final particle set once all simulations are complete. 3. Expansion (new internal node). If v is not yet expanded, initialize N (v, a ′) ← 0 and ¯r(v, a ′) ← 0
+
+for all a′ ∈ A , and continue. There is no early return, so a simulation that creates a node continues to descend. 4. Uniform selection. Select 
+
+a′ ∼ Unif( A). (16) 5. Simulate and recurse. Draw s′′ ∼ Pθ(· | s, a ′) and o′ ∼ Zθ(· | s′′ ), update N (v, a ′) and ¯r(v, a ′)
+
+with the reward r(s, a ′), and recurse into Child (v, a ′, o ′) with remaining depth ℓ − 1.Every simulation therefore visits exactly one node at each depth 1, . . . , d . After all N simulations for root action a, the DP backup (Phase 2 of Algorithm 2) computes, from the leaves upward, 
+
+ˆV (v) = ¯V ⋆,S θ (B(v)) (leaf v),
+
+ˆQ(v, a ′) = ¯ r(v, a ′) + γ X
+
+> w∈Ch( v,a ′)
+
+N (w)
+
+N (v, a ′) ˆV (w) (internal v, N (v, a ′) > 0),
+
+ˆV (v) = max   
+
+> a′:N(v,a ′)>0
+
+ˆQ(v, a ′) (internal v),
+
+(17) where Ch( v, a ′) is the set of children of v under action a′. Equivalently, ˆQ(v, a ′) is the average of 
+
+r(s, a ′) + γ ˆV (child ) over the simulations that selected a′ at v. The root estimate is 
+
+bQ(bJ , a ) = 1
+
+N
+
+> N
+
+X
+
+> n=1
+
+r(sjn , a ) + γ ˆV (vn, 1),
+
+where sjn is the particle sampled by simulation n and vn, 1 is the depth-1 node it enters. When d = 0 
+
+no tree is built and bQ(bJ , a ) = 1
+
+> J
+
+PJj=1 Q⋆,S θ (sj , a ).The full procedure is given in Algorithms 2 and 3. 
+
+Convergence. As N → ∞ , the following two properties hold. First, by Lemma 5 the events “simulation n reaches v and selects a′” are i.i.d. across n with positive probability for every reachable node v and every a′, so every such node and action is visited infinitely often. Second, the states entering a node v are i.i.d. draws from the (binned) conditional belief bv at v, so ˆbv → bv by the law of large numbers. At each depth-d leaf, ¯V ⋆,S θ (B(v)) → ¯V ⋆,S θ (bv), and the DP backup then gives, level by level, ˆQ(v, a ′) → Qϕθ,ℓ (bv, a ′) and ˆV (v) → max a′ Qϕθ,ℓ (bv, a ′) = ¯V ⋆,S θ,ℓ (bv), where ℓ is the remaining 18 Algorithm 2 Mctq : Monte Carlo tree QMDP planning (uniform exploration, full-depth simulations, DP backup) 
+
+Require: model θ; particle belief bJ = 1
+
+> J
+
+PJj=1 δsj ; depth d; simulations per action N ; MDP Q-function Q⋆,S θ 
+
+> 1:
+
+if d = 0 then ▷ No tree: exact QMDP  
+
+> 2:
+
+return  1
+
+> J
+
+PJj=1 Q⋆,S θ (sj , a ) a∈A  
+
+> 3:
+
+end if  
+
+> 4:
+
+for each action a ∈ A do ▷ Round-robin: N simulations per root action  
+
+> 5:
+
+Initialize empty search tree Ta 
+
+> 6:
+
+for n = 1 , . . . , N do ▷ Phase 1: tree construction  
+
+> 7:
+
+Sample jn ∼ Unif([ J])  
+
+> 8:
+
+Sample s′ ∼ Pθ(· | sjn , a ), o ∼ Zθ(· | s′) 
+
+> 9:
+
+vn, 1 ← Child (root( Ta), a, o ) ▷ Child of root for (a, o ) 
+
+> 10:
+
+Simulate (s′, d − 1, θ, v n, 1) ▷ Alg. 3  
+
+> 11:
+
+end for  
+
+> 12:
+
+▷ Phase 2: DP backup equation 17  
+
+> 13:
+
+ˆV (v) ← max a′∈A 1
+
+> |B(v)|
+
+P 
+
+> s∈B(v)
+
+Q⋆,S θ (s, a ′) at each leaf v of Ta ▷ Pooled QMDP leaf  
+
+> 14:
+
+for each internal node v of Ta, from depth d − 1 up to depth 1 do  
+
+> 15:
+
+ˆQ(v, a ′) ← ¯r(v, a ′) + γ P   
+
+> w∈Ch( v,a ′)
+> N(w)
+> N(v,a ′)
+
+ˆV (w) for each a′ with N (v, a ′) > 0 
+
+> 16:
+
+ˆV (v) ← max a′: N (v,a ′)>0 ˆQ(v, a ′) 
+
+> 17:
+
+end for  
+
+> 18:
+
+bQ(bJ , a ) ← 1
+
+> N
+
+PNn=1 
+
+r(sjn , a ) + γ ˆV (vn, 1) 
+
+> 19:
+
+end for  
+
+> 20:
+
+return { bQ(bJ , a )}a∈A 
+
+depth at v. Since the root action is fixed and states are sampled from bJ , the backed-up estimate 
+
+bQ(bJ , a ) → Qϕθ,d (bJ , a ) for each a ∈ A . Proposition 3 quantifies the rate. When d = 0 , no tree search is performed and the planner returns max a 1
+
+> J
+
+P 
+
+> j
+
+Q⋆,S θ (sj , a ), which is the QMDP value ¯V ⋆,S θ (bJ ). When d → ∞ , the tree-search value converges to Q⋆,B θ (bJ , a ).
+
+Computational cost. For each root action, each of the N simulations traverses a path of exactly 
+
+d nodes in the tree, requiring O(d) generative model calls and O(1) work for uniform action sampling at each internal node. The post-simulation DP backup adds O(|A| ) work per node but is performed once, not per simulation. The QMDP leaf evaluation equation 15 can be maintained incrementally by storing running sums P 
+
+> s∈B(v)
+
+Q⋆,S θ (s, a ′) for each action a′, reducing the per-simulation leaf cost to O(|A| ). The total cost per planning step is |A| N d generative-model calls across all root actions. The additional |A| factor in the backup involves only arithmetic operations and no model calls. 
+
+Relation to the error analysis. The Monte Carlo error ϵmc (t, d ) = sup a | bQt(bJt , a ) − Qθ,d (bJt , a )|
+
+arises from the finite simulation budget N per root action. The simulation seeds are i.i.d. given bJt ,and under (S1) with no early return each simulation’s path is a function of its own seed (Lemma 5). The estimate bQt(bJt , a ) is then a bounded-difference function of the seeds, so the Efron–Stein and McDiarmid inequalities control its fluctuation at rate O(Λ d/√N ), while the DP-backup bias vanishes at rate O(Φ d/√N ) (Proposition 3). The simulation returns themselves are not independent, and the argument does not require them to be. The proof is written for uniform selection. For a rule 19 Algorithm 3 Simulate : Recursive uniform-exploration descent to full depth 
+
+Require: state s; remaining depth ℓ; model θ; tree node v 
+
+> 1:
+
+B(v) ← B(v) ∪ { s} ▷ Record state; N (v) = |B(v)| 
+
+> 2:
+
+if ℓ = 0 then ▷ Leaf: evaluated in Phase 2 of Alg. 2  
+
+> 3:
+
+return  
+
+> 4:
+
+end if  
+
+> 5:
+
+if v is not yet expanded then ▷ Expansion: initialize and continue (no early return)  
+
+> 6:
+
+Expand v: N (v, a ′) ← 0, ¯r(v, a ′) ← 0 for all a′ ∈ A  
+
+> 7:
+
+end if  
+
+> 8:
+
+Sample a′ ∼ Unif( A) ▷ Uniform, reads no tree statistic  
+
+> 9:
+
+Sample s′ ∼ Pθ(· | s, a ′), o ∼ Zθ(· | s′) 
+
+> 10:
+
+N (v, a ′) ← N (v, a ′) + 1 ; ¯r(v, a ′) ← ¯r(v, a ′) + r(s,a ′)−¯r(v,a ′)  
+
+> N(v,a ′)
+
+▷ Incremental mean  
+
+> 11:
+
+Simulate (s′, ℓ − 1, θ, Child (v, a ′, o )) 
+
+satisfying (S1)–(S2), the same argument applies with |A| replaced by 1/π min wherever it bounds the fraction of a node’s visits that select a given action. 20 C Figures and Additional Details for Experiments 
+
+Algorithm 4 Practical particle filtering with state-level Monte-Carlo planning 
+
+Require: number of state particles J; rollout length Hroll ; rollouts per action N ; horizon T ; initial parameter ¯θ1; model update oracle ModelUpdate (·). 
+
+> 1:
+
+Initialize: model dataset Dm, policy dataset Dp. 
+
+> 2:
+
+Sample s(1) 1 , . . . , s (1)  
+
+> J
+
+∼ b0 and set bJ 
+
+> 1
+
+= 1
+
+> J
+
+PJj=1 δs(1) 
+
+> j
+
+. 
+
+> 3:
+
+for t = 1 , 2, . . . , T do  
+
+> 4:
+
+if model update then  
+
+> 5:
+
+Dm = Dm ∪ D p. 
+
+> 6:
+
+Update ¯θt via updating the model on Dm with gradient descent.  
+
+> 7:
+
+Dp = ∅. 
+
+> 8:
+
+else  
+
+> 9:
+
+¯θt ← ¯θt−1. 
+
+> 10:
+
+end if  
+
+> 11:
+
+for each particle j = 1 , . . . , J and each action a ∈ A do  
+
+> 12:
+
+bQt(s(t) 
+
+> j
+
+, a ) ← StateMCTS  s(t) 
+
+> j
+
+, a, ¯θt, H roll , N, bQMDP ¯θt , bπMDP ¯θt
+
+, where actions are sampled by bπMDP ¯θt and not the greedy policy w.r.t. bQt. Collect ba(t) 
+
+> j
+
+, the best action sampled for particle j. 
+
+> 13:
+
+end for  
+
+> 14:
+
+bQt(bJt , a ) ← 1
+
+> J
+
+PJj=1 bQt(s(t) 
+
+> j
+
+, a ) for all a ∈ A . 
+
+> 15:
+
+Play at ∈ arg max j∈[J] bQt(bJt , ba(t) 
+
+> j
+
+). Alternatively, sample ˜s(t) ∼ bJt and play at ∼ bπMDP ¯θt (·| ˜s(t)). 
+
+> 16:
+
+Observe (ot+1 , r t) and append to Dp. 
+
+> 17:
+
+for j = 1 , . . . , J do  
+
+> 18:
+
+Sample prediction ˆs(t+1)  
+
+> j
+
+∼ P¯θt (· | s(t) 
+
+> j
+
+, a t). 
+
+> 19:
+
+Set weight w(t+1)  
+
+> j
+
+∝ Z¯θt (ot+1 | ˆs(t+1)  
+
+> j
+
+). 
+
+> 20:
+
+end for  
+
+> 21:
+
+Resample s(t+1) 1 , . . . , s (t+1)  
+
+> J
+
+∼ Categorical( w(t+1) 1 , . . . , w (t+1)  
+
+> J
+
+). 
+
+> 22:
+
+Set bJt+1 = 1
+
+> J
+
+PJj=1 δs(t+1) 
+
+> j
+
+. 
+
+> 23:
+
+Update MDP value estimate bQMDP ¯θt (s, a ) and policy bπMDP ¯θt for (S, A, P ¯θt , r, γ ) on Dp. 
+
+> 24:
+
+end for 
+
+C.1 Double Integrator LQR 
+
+We use a partially observed double-integrator LQR system. The latent state is 
+
+xt =
+
+pt
+
+vt
+
+
+
+,
+
+where pt is position and vt is velocity. The scalar control ut ∈ [−3, 3] is acceleration. With time step 
+
+∆t = 0 .05 , the dynamics are 
+
+xt+1 = Ax t + Bu t + wt, A =
+
+1 ∆t
+
+0 1
+
+
+
+, B =
+
+ 12 ∆t2
+
+∆t
+
+
+
+,
+
+with process noise 
+
+wt ∼ N (0 , σ 2
+
+> w
+
+I2), σw = 0 .01 .
+
+21 The agent observes only the position coordinate: 
+
+ot = Cx t + ϵt, C = 1 0 , ϵt ∼ N (0 , σ 2 
+
+> o
+
+), σo = 0 .05 .
+
+Thus the velocity vt is latent. It is not recoverable from the current observation alone because the observation map is not injective: 
+
+rank( C) = 1 < 2.
+
+Equivalently, for any fixed position p and any two distinct velocities v̸ = v′,
+
+C
+
+pv
+
+
+
+= p = C
+
+ pv′
+
+
+
+.
+
+Therefore, even in the noiseless observation case, a single current observation cannot distinguish states that differ only in velocity. With observation noise, the ambiguity is strictly larger. Recovering information about vt requires temporal history, e.g. past observations and actions, rather than ot
+
+alone. The reward is the negative quadratic LQR cost, 
+
+rt = −
+
+
+
+x⊤ 
+
+> t
+
+Qx t + u⊤ 
+
+> t
+
+Ru t
+
+
+
+, Q = I2, R = 0 .1I1.
+
+The discounted objective is 
+
+J(π) = Eπ
+
+"T −1X
+
+> t=0
+
+γtrt
+
+#
+
+, γ = 0 .9, T = 200 .
+
+In our experiments, the initial state is sampled as 
+
+x0 ∼ N (0 , I 2),
+
+episodes terminate after T = 200 steps or when 
+
+∥xt∥2 > 20 .
+
+We use 32 particles for belief tracking, rollout length 1, planner discount 0.9, and a maximum of 16 
+
+candidate actions. 22 Figure 4: Snapshot of belief state at select training checkpoints. State recovery improves over time. 23 Figure 5: Posterior panel over five seeds for the double integrator LQR, over the last 1000 steps. The 10th quantile and 90th quantile are visualized. In this setting, only the magnitude, but not the direction, latent state is identifiable from the current observations alone. With no access to memory, the particle belief state still exhibits the ability to tracking the belief state, as seen in seeds 2 and 4, but fails when the state rapidly diverges. This suggests that the particle belief can be used in tandem with memory for latent state recovery.. 24 Figure 6: Belief mean panel over five seeds for LQR. The MLP backbone diverges, while the GRU backbone converges. 25 C.2 Heartsteps 
+
+HeartSteps as an AOMDP. We follow the formulation of [12] in formulating HeartSteps as an actively observable Markov decision process (AOMDP). At each day t, the agent first chooses a measurement action It, 1 ∈ { 0, 1}, where It, 1 = 1 corresponds to sending a survey that reveals the latent reward/commitment state. The agent then chooses a control action At, 2 ∈ { 0, 1}, where 
+
+At, 2 = 1 corresponds to sending a walking-suggestion intervention. Let Rt denote the user’s latent commitment to being active on day t, Et denote engagement or burden, Ct, 2 denote context before the intervention decision, Mt, 2 denote the proximal physical activity outcome, and Ot denote a passive proxy emission of the latent reward. Following the AOMDP indexing, the latent state is 
+
+Ut+1 := Rt,
+
+and the observed state after the control action is 
+
+Zt+1 := ( Mt, 2, E t).
+
+The reward is the latent reward itself, 
+
+r(Zt+1 , U t+1 ) = Rt.
+
+The measurement-stage and control-stage states are 
+
+SIt, 1 = ( Et−1, R t−1), SAt, 2 = ( Et−1, R t−1, C t, 2, I t, 1).
+
+Before choosing It, 1, the agent observes Et−1 and the passive emission Ot−1, but not Rt−1. If It, 1 = 1 ,the agent observes Rt−1 before choosing At, 2; if It, 1 = 0 , Rt−1 remains latent. The HeartSteps transition model is 
+
+Ct, 2 = θC 
+
+> 0
+
++ εCt, 2,Mt, 2 = θM 
+
+> 0
+
++ θM 
+
+> 1
+
+Et−1 + θM 
+
+> 2
+
+Rt−1 + θM 
+
+> 3
+
+Ct, 2 + At, 2
+
+ θM 
+
+> 4
+
++ θM 
+
+> 5
+
+Et−1 + θM 
+
+> 6
+
+Rt−1 + θM 
+
+> 7
+
+Ct, 2
+
+ + εMt, 2,Et = θE 
+
+> 0
+
++ θE 
+
+> 1
+
+Et−1 + θEA At, 2 + θEAE At, 2Et−1 + θEI It, 1 + θEIE It, 1Et−1 + εEt ,Rt = θR 
+
+> 0
+
++ θR 
+
+> 1
+
+Mt, 2 + θR 
+
+> 2
+
+Et + θR 
+
+> 3
+
+Rt−1 + εRt ,
+
+and the passive emission model is 
+
+Ot = θO 
+
+> 0
+
++ θO 
+
+> 1
+
+Rt + εOt .
+
+The noise terms are mean-zero, with variances σ2 
+
+> C
+
+, σ 2 
+
+> M
+
+, σ 2 
+
+> E
+
+, σ 2
+
+> R
+
+, σ 2
+
+> O
+
+.The latent reward is not recoverable from the current passive observation alone. Indeed, when 
+
+It, 1 = 0 , the posterior over Rt−1 satisfies 
+
+p(Rt−1 = r | Et−1, O t−1, H t, 1) ∝ p(Ot−1 | Rt−1 = r)p(Rt−1 = r | Et−1, H t, 1),
+
+where 
+
+Ot−1 = θO 
+
+> 0
+
++ θO 
+
+> 1
+
+Rt−1 + εOt−1.
+
+Thus, unless the emission noise is degenerate and the prior is already a point mass, the posterior is not a Dirac measure. In particular, for σ2 
+
+> O
+
+> 0, multiple values of Rt−1 have positive likelihood for the same observed Ot−1. Therefore the latent reward cannot be identified from the current passive observation alone. By contrast, when It, 1 = 1 , the survey reveals Rt−1 and collapses the posterior: 
+
+p(Rt−1 | Ht, 2) = δRt−1 .
+
+The AOMDP objective is 
+
+π⋆ ∈ arg max  
+
+> π
+
+Eπ
+
+" HX
+
+> t=1
+
+γt−1Rt
+
+#
+
+.
+
+26 Implementation settings. In our HeartSteps experiments, the encoded simulator state is 
+
+xt = ( Rt, E t, t/H, C t, M t, O t) ∈ R6.
+
+The observed coordinates are 
+
+(Et, t/H, C t, M t, O t),
+
+and the only latent coordinate is Rt. We use horizon 
+
+H = 270 , γ = 0 .9,
+
+binary control actions At, 2 ∈ { 0, 1}, and binary measurement actions It, 1 ∈ { 0, 1} in the AOMDP formulation. The benchmark contains 42 user-specific environments. For PF-MCTQ, our default settings use 
+
+J = 16 
+
+particles, rollout length 1, planner discount 0.9, and at most 16 candidate actions. The model and policy are trained online over 27 epochs with 10 environment steps per epoch, for a total of 270 
+
+environment steps. 
+
+Benchmarks. RLSVI-SMC is the never-measure benchmark in our experiments. It fixes the measurement action to zero, 
+
+It, 1 = 0 for all t, 
+
+so the latent reward is not directly observed after initialization. Instead, the algorithm maintains an SMC approximation to the posterior belief over the latent reward, 
+
+bbRt =
+
+> J
+
+X
+
+> j=1
+
+w(j) 
+
+> t
+
+δ bR(j)
+
+> t
+
+,
+
+and chooses the control action using randomized least-squares value iteration with a linear value-function approximation, 
+
+QA(bt, 2, a ) ≈ ϕA(bt, 2, a )⊤βA.
+
+Thus RLSVI-SMC is a strong and intentionally tailored benchmark for this linear-function-approximation setting: the belief update uses the specified linear-Gaussian working model, and the control rule uses hand-specified linear features of the belief state, context, action, and action interactions. PF-MCTQ is also evaluated under the never-measure information pattern, 
+
+It, 1 = 0 ,
+
+so it has the same lack of direct latent-reward measurements as RLSVI-SMC. However, PF-MCTQ is less specialized to the linear benchmark structure: it must learn a dynamics model, actor, and critic, parameterized by neural networks, from the observed data. Consequently, PF-MCTQ incurs an additional estimation cost relative to RLSVI-SMC, which is already matched to the linear basis and Bayesian regression structure of the benchmark. Dyna-ATMQ differs from both no-measure methods. It is an active-measurement baseline that maintains a tabular belief over a discretized state space, learns a Dirichlet transition model and 27 Q-table, and separately decides whether to measure by comparing the estimated value of measurement to a measurement cost. Its control action is selected from the belief-weighted Q-values, 
+
+At, 2 ∈ arg max 
+
+> a
+
+X
+
+> s
+
+bt(s)Q(s, a ),
+
+while its measurement decision can reveal the latent reward and collapse the posterior uncertainty. In our experiments Dyna-ATMQ measures the environment around half the time on average, giving it an informational advantage over both RLSVI-SMC/never-measure and PF-MCTQ, which do not measure the environment. 
+
+Figure 7: Cumulative reward above the baseline rollout across the twelve HeartSteps scenarios. Panels vary the positive intervention effect (rows: minimal, small, medium) and the delayed negative measurement effect or proxy informativeness (columns: zero negative effect, minimal negative effect, small negative effect, and uninformative passive proxy Ot). Solid lines show the mean across runs and shaded bands show 2.5% and 97.5% quantiles. The never-measure RLSVI-SMC benchmark performs best in most scenarios because it is specifically matched to the linear-Gaussian HeartSteps structure and is given access to hand-specified linear features. PF-MCTQ also never measures, but must learn its model, actor, and critic from data using neural approximators, so it typically improves over baseline while trailing the tailored linear benchmark. Dyna-ATMQ often underperforms when measurement has delayed negative effects, especially when the positive intervention effect is weak, because it measures frequently and therefore gains latent-state information at the cost of worsening future engagement. Its relative performance improves when the positive effect is larger or when passive proxy information is unavailable and so direct measurements become more valuable. 28 Figure 8: Belief over the latent reward at three training checkpoints in HeartSteps. Rows show PF-MCTQ, the never-measure RLSVI-SMC benchmark, and Dyna-ATMQ; columns show days 27, 135, and 243. Each panel displays posterior particles, a kernel density estimate, the posterior interquartile range, and the posterior mean. The red vertical line marks the true latent reward. We see that Dyna-ATMQ having access to measurements of the environment gives it an informational advantage over the other two algorithms. On the other hand, the correct linear specification that RLSVI-SMC enjoys allows it to create a posterior that is close to Gaussian. PF-MCTQ, which has to estimate a dynamics model, actor, and critic, parameterized by neural networks, from the observed data, consequently has a much more expressive and multimodal posterior. 29 Figure 9: Latent-reward belief trajectories for HeartSteps scenario (a), shown separately by random seed. Columns compare PF-MCTQ, the never-measure RLSVI-SMC benchmark, and Dyna-ATMQ; rows show five independent seeds. Each panel plots the posterior median, interquartile range, and 10–90% interval for the latent reward, with the dashed red curve showing the true latent reward. All three methods track the latent reward at the level needed for control, but they express uncertainty differently. Never-measure produces comparatively narrow posteriors because it is tailored to the linear-Gaussian HeartSteps model and uses a conjugate SMC/RLSVI update. PF-MCTQ has wider and more variable posteriors because it must learn the transition model and value functions from data while never directly measuring the latent reward. Dyna-ATMQ also shows broad posterior support, but its belief remains centered near the true trajectory because it actively measures the latent reward on many days, partially collapsing uncertainty despite the coarser tabular approximation. 30 C.3 Hyperparameters 
+
+Hyperparameter Value Environment LQR double integrator Observed indices [0] 
+
+Warmup steps 256 
+
+Initial model / policy updates 100 / 100 
+
+Epochs / steps per epoch 40 / 256 
+
+Model updates per epoch 10 
+
+Particles 32 
+
+Model subsequence length 64 
+
+Network hidden dimensions [] 
+
+Recurrent lookback 5
+
+Rollout length / discount 1 / 0.9
+
+SAC actor / critic learning rate 3 × 10 −4 / 3 × 10 −4
+
+SAC batch size / entropy coefficient 32 / 0.01 
+
+Model learning rate / batch size 3 × 10 −5 / 64 
+
+Particle filter mode / α MOP / 0.8
+
+ESS threshold / rejuvenation std. 0.5 / 0.1
+
+Environment noise: transition / observation 0.01 / 0.05 
+
+Action bound / horizon 3.0 / 200 
+
+Table 3: Key hyperparameters for LQR. Hyperparameter Value Environment HeartSteps User id / horizon 0 / 270 
+
+Noise mode / observation noise sequential / 0.0
+
+Warmup steps 1024 
+
+Initial model / policy updates 10 / 30 
+
+Epochs / steps per epoch 27 / 10 
+
+Model updates per epoch 10 
+
+Particles 16 
+
+GRU backbone / recurrent BPTT false / false Hidden size / preprocessor / postprocessor 32 / 32 / 32 
+
+Rollout length / discount 1 / 0.9
+
+SAC actor / critic learning rate 10 −3 / 10 −3
+
+SAC batch size / entropy coefficient 64 / 0.003 
+
+Automatic entropy tuning false Model learning rate / batch size 3 × 10 −4 / 256 
+
+Particle filter mode / α MOP / 0.8
+
+ESS threshold / rejuvenation std. 0.5 / 0.001 
+
+Table 4: Key hyperparameters for HeartSteps. 31 Hyperparameter Value Environment HalfCheetah Observation variants no position, no velocity Observation noise / discount 0.1 / 0.99 
+
+Warmup steps 1000 
+
+Initial model / policy updates 1000 / 10 
+
+Epochs / steps per epoch 50 / 1000 
+
+Model updates per epoch 100 
+
+Early-stop patience / min updates 20 /20 no-position; 5/5 no-velocity Particles 16 
+
+Model subsequence length 32 
+
+GRU backbone / BPTT size true / 32 
+
+Hidden dimensions [256 , 256] 
+
+Rollout length / discount 10 / 0.99 
+
+SAC actor / critic learning rate 3 × 10 −4 / 3 × 10 −4
+
+SAC batch size / entropy coefficient 256 / 0.2
+
+Model learning rate / batch size 3 × 10 −4 / 256 
+
+Particle filter mode / α MOP / 0.8
+
+Table 6: Key hyperparameters for MuJoCo HalfCheetah. Hyperparameter Value Environment Ant Observation variants no position, no velocity Observation noise / discount 0.1 / 0.99 
+
+Warmup steps 1000 
+
+Initial model / policy updates 2000 / 10 
+
+Epochs / steps per epoch 164 / 300 (submitted: 10 / 300 )Model updates per epoch up to 10 , early stopping (submitted: 0)Policy update every 10 env. steps (submitted: 1)AdamW weight decay (actor, critic, model) 10 −4 (submitted: 0.1)Particles 16 
+
+Model subsequence length 32 
+
+GRU backbone / BPTT size true / 32 
+
+Hidden dimensions [256 , 256] 
+
+Rollout length / discount 10 / 0.99 
+
+SAC actor / critic learning rate 3 × 10 −4 / 3 × 10 −4
+
+SAC batch size / entropy coefficient 256 / 0.2
+
+Model learning rate / batch size 3 × 10 −4 / 256 
+
+Particle filter mode / α MOP / 0.8
+
+ESS threshold / rejuvenation std. 0.5 / 0.1
+
+Table 5: Key hyperparameters for MuJoCo Ant, using the corrected configuration of Figure 3. Values from the submitted version are given in parentheses where they differ. 32 Hyperparameter Value Environment Hopper Observation variants no position, no velocity Observation noise / discount 0.1 / 0.99 
+
+Warmup steps 1000 
+
+Initial model / policy updates 1000 / 10 
+
+Epochs / steps per epoch 50 / 1000 
+
+Model updates per epoch 100 
+
+Particles 16 
+
+Model subsequence length 32 
+
+GRU backbone / BPTT size true / 32 
+
+Hidden dimensions [256 , 256] 
+
+Rollout length / discount 10 / 0.99 
+
+SAC actor / critic learning rate 3 × 10 −4 / 3 × 10 −4
+
+SAC batch size / entropy coefficient 256 / 0.2
+
+Model learning rate / batch size 3 × 10 −4 / 256 
+
+Particle filter mode / α MOP / 0.8
+
+ESS threshold / rejuvenation std. 0.5 / 0.1
+
+Table 7: Key hyperparameters for MuJoCo Hopper. Hyperparameter Value Environment Walker2d Observation variants no position, no velocity Observation noise / discount 0.1 / 0.99 
+
+Warmup steps 1000 
+
+Initial model / policy updates 1000 / 10 
+
+Epochs / steps per epoch 50 / 1000 
+
+Model updates per epoch 100 
+
+Early-stop patience / min updates 20 /20 no-position; 5/5 no-velocity Particles 16 
+
+Model subsequence length 32 
+
+GRU backbone / BPTT size true / 32 
+
+Hidden dimensions [256 , 256] 
+
+Rollout length / discount 10 / 0.99 
+
+SAC actor / critic learning rate 3 × 10 −4 / 3 × 10 −4
+
+SAC batch size / entropy coefficient 256 / 0.2
+
+Model learning rate / batch size 3 × 10 −4 / 256 
+
+Particle filter mode / α MOP / 0.8
+
+Table 8: Key hyperparameters for MuJoCo Walker2d. 33 D Detailed Error Analysis and Proofs 
+
+Throughout, |r(s, a )| ≤ Rmax and Vmax := Rmax /(1 − γ). We define the per-round error quantities: 
+
+ϵmc (t, d ) := sup 
+
+> a∈A
+
+bQt(bJt , a ) − Qθ,d (bJt , a ) , (Monte Carlo error) 
+
+ϵstruct (t, d ) := sup 
+
+> a∈A
+
+Q⋆,B θ (bJt , a ) − Qθ,d (bJt , a ) . (structural error) 
+
+D.1 Structural Error of QMDP Bootstrapping 
+
+Define the linear QMDP surrogate 
+
+eV ⋆θ (b) := 
+
+Z
+
+> S
+
+V ⋆,S θ (s) b(d s). (18) By Jensen’s inequality, eV ⋆θ (b) ≥ ¯V ⋆,S θ (b) and the gap Ξθ := sup b[ eV ⋆θ (b) − ¯V ⋆,S θ (b)] ≥ 0.
+
+Proposition 2 (Structural error of MCTQ) . For every θ ∈ Θ and d ≥ 0,
+
+∥ ¯V ⋆,S θ,d − V ⋆,B θ ∥∞ ≤ γd+1 
+
+1 − γ Ξθ. (19) In particular, ϵstruct (u, d ) ≤ γd+1  
+
+> 1−γ
+
+Ξ¯θu .
+
+Proof of Proposition 2. Write 
+
+Q⋆,B θ (b, a ) = r(b, a ) + γ
+
+Z
+
+> O
+
+V ⋆,B θ (τθ(b, a, o )) pθ(o | b, a ) d o, Qθ, 0(b, a ) = r(b, a ) + γ
+
+Z
+
+> S
+
+V ⋆,S θ (s′) ˜bθ(d s′ | b, a ) = r(b, a ) + γ eV ⋆θ (˜bθ(· | b, a )) .
+
+By Bayes consistency and linearity of eV ⋆θ :
+
+eV ⋆θ (˜bθ(· | b, a )) = 
+
+Z
+
+> O
+
+eV ⋆θ (τθ(b, a, o )) pθ(o | b, a ) d o. 
+
+Subtracting and using eV ⋆θ = ¯V ⋆,S θ + ( eV ⋆θ − ¯V ⋆,S θ ) with 0 ≤ eV ⋆θ − ¯V ⋆,S θ ≤ Ξθ:
+
+∥Q⋆,B θ − Qθ, 0∥∞ ≤ γ∥V ⋆,B θ − ¯V ⋆,S θ ∥∞ + γ Ξθ.
+
+Since ∥V ⋆,B θ − ¯V ⋆,S θ ∥∞ = sup b | max a Q⋆,B θ (b, a ) − max a Qθ, 0(b, a )| ≤ ∥ Q⋆,B θ − Qθ, 0∥∞ (using | max f −
+
+max g| ≤ max |f − g|), rearranging gives ∥V ⋆,B θ − ¯V ⋆,S θ ∥∞ ≤ γ 
+
+> 1−γ
+
+Ξθ (the d = 0 case). For general 
+
+d ≥ 0: ¯V ⋆,S θ,d = T dθ ¯V ⋆,S θ and V ⋆,B θ = TθV ⋆,B θ (fixed point), so 
+
+∥ ¯V ⋆,S θ,d − V ⋆,B θ ∥∞ = ∥T dθ ¯V ⋆,S θ − T dθ V ⋆,B θ ∥∞ ≤ γd∥ ¯V ⋆,S θ − V ⋆,B θ ∥∞ ≤ γd+1 
+
+1 − γ Ξθ.
+
+34 D.2 Planning and State-Identification Error 
+
+Definition 1 (Q-belief distance) . For b, b ′ ∈ ∆( S), define dQ(b, b ′) := sup θ∈Θ, a ∈A |Q⋆,B θ (b, a ) −
+
+Q⋆,B θ (b′, a )|.
+
+Lemma 1 (Q⋆,B -difference via test functions) . Fix θ ∈ Θ, a ∈ A , and truncation depth H ≥ 1.Recall the Bayesian update τ (b, a, o ) ∈ ∆( S), the observation marginal p(o | b, a ) = R Zθ(o | s′)Pθ(s′ |
+
+s, a ) b(ds ) ds ′, and define 
+
+ψo,a (s) := 
+
+Z
+
+Zθ(o | s′)Pθ(s′ | s, a ) ds ′, ˜fo,a (s) := 
+
+Z
+
+f (s′)Zθ(o | s′)Pθ(s′ | s, a ) ds ′, (20) 
+
+so that p(o | b, a ) = b(ψo,a ) and τ (b, a, o )( f ) = b( ˜fo,a )/b (ψo,a ).Under Assumption 1, for all b, b ′ ∈ ∆( S):
+
+|Q⋆,B θ (b, a ) − Q⋆,B θ (b′, a )| ≤ 
+
+> H−1
+
+X
+
+> ℓ=0
+
+γℓ Cℓ 
+
+> BU
+
+sup  
+
+> f∈F ℓ(θ,a )
+
+|b(f ) − b′(f )| + 2 γH Vmax , (21) 
+
+where CBU := 2 gmax /g 2min and Fℓ(θ, a ) is a class of functions S → [−gℓ
+
+> max
+
+Vmax , g ℓ
+
+> max
+
+Vmax ] with 
+
+N[] (Fℓ, ϵ ) ≤ |A| ℓNΘ(ϵ/ (ℓV max )) , defined recursively: 
+
+• F0(θ, a ) = {r(·, a ′) : a′ ∈ A} ∪ { Q⋆,S θ (·, a ′) : a′ ∈ A} ,
+
+• Fℓ+1 (θ, a ) =  ˜fo,a ′′ : f ∈ F ℓ(θ, a ′′ ), a ′′ ∈ A ∪ ψo,a ′′ : a′′ ∈ A .Proof. We prove by induction on h: for any Φ( b) = Eπθ [Ph−1 
+
+> u=0
+
+γuru | b0 = b] with h ≤ H, |Φ( b)−Φ( b′)|
+
+admits the decomposition equation 21. Taking Φ = Q⋆,B θ (·, a ) with h = H and bounding the tail by 
+
+2γH Vmax yields the result. 
+
+Base case ( h = 1 ). |Φ( b) − Φ( b′)| = | sup a[b(ra) − b′(ra)] | ≤ sup f ∈F 0 |b(f ) − b′(f )|.
+
+Inductive step ( h → h + 1 ). For a fixed action a, write 
+
+Φ( b) = b(ra) + γ
+
+Z
+
+> O
+
+Φh−1
+
+ τ (b, a, o ) p(o | b, a ) do, 
+
+where Φh−1 is the (h − 1) -step continuation. The continuation difference decomposes as: 
+
+Z
+
+Φh−1(τ (b, a, o )) p(o|b, a ) do −
+
+Z
+
+Φh−1(τ (b′, a, o )) p(o|b′, a ) do 
+
+≤ ∥ Φh−1∥∞
+
+Z
+
+|(b − b′)( ψo,a )| do 
+
+| {z }
+
+> (I) obs. distribution shift
+
++
+
+Z
+
+|Φh−1(τ (b, a, o )) − Φh−1(τ (b′, a, o )) | p(o|b′, a ) do 
+
+| {z }
+
+> (II) belief propagation
+
+, (22) using p(o | b, a ) − p(o | b′, a ) = ( b − b′)( ψo,a ).
+
+Term (I) contributes ψo,a ∈ F ℓ+1 .
+
+Term (II) requires bounding |τ (b, a, o )( f ) − τ (b′, a, o )( f )| for ∥f ∥∞ ≤ 1. Since τ (b, a, o )( f ) = 
+
+b( ˜fo,a )/b (ψo,a ), the quotient rule gives 
+
+b( ˜fo,a )
+
+b(ψo,a ) − b′( ˜fo,a )
+
+b′(ψo,a ) = (b − b′)( ˜fo,a )
+
+b(ψo,a ) − b′( ˜fo,a )
+
+b(ψo,a ) b′(ψo,a ) (b − b′)( ψo,a ). (23) 35 Since b(ψo,a ), b ′(ψo,a ) ≥ gmin and |b′( ˜fo,a )| ≤ gmax :
+
+|τ (b, a, o )( f ) − τ (b′, a, o )( f )| ≤ |(b − b′)( ˜fo,a )|
+
+gmin 
+
++ gmax 
+
+g2min 
+
+|(b − b′)( ψo,a )|. (24) Both ˜fo,a and ψo,a are in Fℓ+1 , with per-update amplification 
+
+CBU = 1
+
+gmin 
+
++ gmax 
+
+g2min 
+
+≤ 2 gmax 
+
+g2min 
+
+,
+
+By the inductive hypothesis, |Φh−1(τ (b, a, o )) − Φh−1(τ (b′, a, o )) | decomposes into evaluations of 
+
+τ (b, a, o ) vs. τ (b′, a, o ) on Fℓ. Substituting equation 24 reduces each to evaluations of b vs. b′ on 
+
+Fℓ+1 , with one factor of CBU per level. Taking sup a over the action set and iterating across H levels yields equation 21. 
+
+Lemma 2 (Q⋆,B is Lipschitz in TV) . For any θ ∈ Θ, a ∈ A , and b, b ′ ∈ ∆( S),
+
+|Q⋆,B θ (b, a ) − Q⋆,B θ (b′, a )| ≤ 2Vmax ∥b − b′∥TV .
+
+Proof. |r(b, a ) − r(b′, a )| ≤ 2Rmax ∥b − b′∥TV . The trajectory law under b and b′ differs in TV by at most ∥b − b′∥TV (data processing), so the Vmax -bounded continuation differs by at most 
+
+2Vmax ∥b − b′∥TV . Using Rmax + γV max = Vmax gives the result. 
+
+Lemma 3 (Performance decomposition) . Fix θ ∈ Θ. Let πt denote the stationary policy induced by the planner with frozen parameters (model ¯θk(t), belief bJt ) at time t, and let δu := V ⋆,B θ (bu) −
+
+Q⋆,B θ (bu, A u) where Au ∼ πt(· | Hu). Then 
+
+V ⋆,B θ (bt) − V πt,B θ (bt) ≤ E
+
+" ∞X
+
+> u=t
+
+γu−tδu Ht
+
+#
+
+.
+
+Proof. Unroll the Bellman recursion V ⋆,B θ (bu) − V πt,B θ (bu) = δu + γ E[V ⋆,B θ (bu+1 ) − V πt,B θ (bu+1 ) | Hu]
+
+from u = t to u = t + n, using |V ⋆,B θ − V πt,B θ | ≤ 2Vmax as the tail bound, and send n → ∞ .
+
+Lemma 4 (Per-step bound on δu). For every u and any d ≥ 0,
+
+δu ≤ 2 dQ(bu, b Ju ) + 2 ϵmc (u, d ) + 2 ϵstruct (u, d ).
+
+Proof. Let a⋆u ∈ arg max a Q⋆,B θ (bu, a ) and ˆau ∈ arg max a bQu(bJu , a ). Then 
+
+δu = Q⋆,B θ (bu, a ⋆u) − Q⋆,B θ (bu, ˆau)
+
+≤ | Q⋆,B θ (bu, a ⋆u) − Q⋆,B θ (bJu , a ⋆u)| + |Q⋆,B θ (bJu , ˆau) − Q⋆,B θ (bu, ˆau)|
+
+| {z }    
+
+> ≤2dQ(bu,b Ju)by Definition 1
+
++ Q⋆,B θ (bJu , a ⋆u) − Q⋆,B θ (bJu , ˆau).
+
+For the last line, add and subtract Qθ,d and bQu, using optimality of ˆau for bQu:
+
+Qθ,d (bJu , a ⋆u) ≤ bQu(bJu , a ⋆u) + ϵmc ≤ bQu(bJu , ˆau) + ϵmc ≤ Qθ,d (bJu , ˆau) + 2 ϵmc ,
+
+so Q⋆,B θ (bJu , a ⋆u) − Q⋆,B θ (bJu , ˆau) ≤ 2ϵstruct + 2 ϵmc .
+
+Theorem 2 (Round-t planning + state-identification bound) . For each t ≥ 1 and any depth d,
+
+V ⋆,B 
+
+> ¯θk(t)
+
+(bt) − V πt,B 
+
+> ¯θk(t)
+
+(bt) ≤ E
+
+" ∞X
+
+> u=t
+
+γu−t 2 dQ(bu, b Ju ) + 2 ϵmc (u, d ) + 2 ϵstruct (u, d ) Ht
+
+#
+
+.
+
+Proof. Substitute the per-step bound of Lemma 4 into Lemma 3. 36 Observation discretization. For continuous O, the tree never revisits observation-children (each sampled o is unique), so every node below the root holds a single particle. At d = 1 each leaf value equation 15 then reduces to max a′ Q⋆,S θ (s′, a ′) at a single state, which targets the linear surrogate rather than Qθ, 1, and for d ≥ 2 the tree cannot build depth beyond 1. We therefore discretize the observations. Let ϕ : O → ¯O with | ¯O| = M and bin diameter diam( ϕ) := max ¯o sup o,o ′∈ϕ−1(¯ o) ∥o − o′∥.Algorithms 2 and 3 are modified so that Child (v, a ′, ϕ (o′)) replaces Child (v, a ′, o ′). The bin-averaged posterior is τ ϕθ (b, a, ¯o) := R 
+
+> ϕ−1(¯ o)
+
+τθ(b, a, o ) pθ(o | b, a ) d o R  
+
+> ϕ−1(¯ o)
+
+pθ(o | b, a ) d o, and we write Qϕθ,d for the target equation 9 with τθ(b, a, o ) replaced by τ ϕθ (b, a, ϕ (o)) at every level. When |O| < ∞, take 
+
+ϕ = id , M = |O| , diam( ϕ) = 0 . When d = 0 , no tree is built and no discretization is needed. 
+
+Seeds and the estimator. Fix a round t and a root action a, and write θ := ¯θk(t) and bJ := bJt .All probabilities and expectations below are conditional on bJt , and we take d ≥ 1. Simulation 
+
+n ∈ [N ] is driven by a seed 
+
+ξn :=  jn, u n, 0, (a′
+
+> n,ℓ
+
+, u n,ℓ )d−1
+
+> ℓ=1
+
+, (25) where jn ∼ Unif([ J]) is the sampled particle index, a′ 
+
+> n,ℓ
+
+∼ Unif( A) is the action drawn at depth ℓ,and un,ℓ is the noise that generates the next state and observation at depth ℓ from Pθ and Zθ. The seeds ξ1, . . . , ξ N are i.i.d. Running Algorithm 2 on them produces the tree Ta, and we write the root estimate as a deterministic function of all seeds, 
+
+bQ(bJ , a ) = fa(ξ1, . . . , ξ N ) := 1
+
+N
+
+> N
+
+X
+
+> n=1
+
+r(sjn , a ) + γ ˆV (vn, 1), (26) where vn,ℓ is the depth-ℓ node on the path of simulation n and ˆV is the DP backup equation 17. The function fa is not an average of independent terms, since ˆV (vn, 1) depends on every simulation that passes through vn, 1. For S ⊆ [N ], let f (−S) 
+
+> a
+
+be the same expression computed from the seeds 
+
+(ξm)m / ∈S alone, with the sum running over n / ∈ S and the normalizer 1/N retained. 
+
+Balancedness. For ρ ≥ 1, let Eρ be the event that every internal node v of Ta satisfies 
+
+N (v) ≤ ρ |A| N (v, a ′) for all a′ ∈ A , (27) so that every action receives at least a 1/(ρ|A| ) fraction of the visits of every internal node. Define the depth factor 
+
+Λd := 
+
+> d−1
+
+X
+
+> ℓ=0
+
+(ργ |A| )ℓ, (28) so that Λ0 = 0 and Λ1 = 1 . Let pρ := max a∈A Pr( Ecρ | bJt ), where the event refers to the tree Ta, and let 
+
+qmin := inf   
+
+> s∈S , a ′′ ∈A ,¯o∈¯O
+
+Z
+
+> S
+
+Zθ
+
+ ϕ−1(¯ o) | s′ Pθ(d s′ | s, a ′′ )
+
+be the smallest one-step bin probability. Under the bounded observation density of Assumption 1, 
+
+qmin ≥ gmin min ¯o λ(ϕ−1(¯ o)) , where λ is the reference measure of Zθ; for finite O with the counting measure, qmin ≥ gmin .
+
+Proposition 3 (Monte Carlo error) . Run Algorithm 2 with uniform internal selection equation 16, 
+
+N simulations per root action, observation discretization ϕ (| ¯O| = M ), and returns in [−Vmax , V max ],and let ρ ≥ 1. Let 
+
+bias( N, d ) := sup 
+
+> a
+
+E[ bQ(bJ , a ) | bJt ] − Q¯θk(t),d (bJ , a ) (29) 37 and Bd := 2 Vmax 
+
+ 1 + 2(1 + γ)Λ d
+
+. For every δ ∈ (0 , 1) , with probability at least 1 − δ − |A| pρ
+
+conditionally on bJt ,
+
+ϵmc (t, d ) ≤ 2(1 + γ)Vmax Λd
+
+r 2 log(2 |A| /δ )
+
+N| {z }
+
+> fluctuation
+
++ bias( N, d ) + Bd pρ, (30) 
+
+and, in second moment, 
+
+Eϵmc (t, d )2 bJt
+
+ ≤ 8(1 + γ)2 |A| V 2max Λ2
+
+> d
+
+N + 2 |A| bias( N, d )2 + 3 |A| B2 
+
+> d
+
+pρ. (31) 
+
+The bias satisfies 
+
+bias( N, d ) ≤ c0 Φd Vmax 
+
+p|A| √N
+
+| {z }
+
+> DP backup estimation error
+
++ 2γ(1 − γd)1 − γ · gmax 
+
+gmin 
+
+Vmax ωZ (diam( ϕ)) 
+
+| {z }
+
+> discretization error
+
+, (32) 
+
+where c0 > 0 is a constant independent of N , M and δ,
+
+Φd := 
+
+> d
+
+X
+
+> ℓ=1
+
+(γp|A| M )ℓ, (33) 
+
+and ωZ (δ) := sup θ,s sup ∥o−o′∥≤ δ |Zθ(o | s)/Z θ(o′ | s) − 1|. If d ≤ 1, then pρ = 0 . If d ≥ 2, qmin > 0
+
+and |A| M ≥ 2, then p2 ≤ 2|A| (|A| M )d exp  −N (qmin /|A| )d−1/32 . When d = 0 , bQ(bJ , a ) = 
+
+> 1
+> J
+
+P 
+
+> j
+
+Q⋆,S θ (sj , a ) is exact and every term vanishes ( Λ0 = Φ 0 = 0 ). When ϕ = id (M = |O| ,
+
+diam( ϕ) = 0 ), the discretization error vanishes. 
+
+No stationarity assumption on the rewards at internal nodes is required, and the simulation returns need not be independent. The proof uses only that the seeds are i.i.d., that the path of each simulation depends on its own seed alone, and that the estimator has bounded differences on Eρ. It rests on the following four results; throughout, we fix a root action a and d ≥ 1.
+
+Lemma 5 (Path decoupling) . There is a deterministic map ν such that, whatever the other seeds are, the path of simulation m (its states, actions, binned observations, and nodes vm, 1, . . . , v m,d )equals ν(ξm).Proof. We induct on depth. Simulation m starts from sjm with the root action a, and um, 0 generates its next state and observation, so vm, 1 = ( a, ϕ (o)) is a function of ξm. Suppose the state sm,ℓ and the node vm,ℓ at depth ℓ < d are functions of ξm. Whether or not an earlier simulation expanded 
+
+vm,ℓ , Algorithm 3 only initializes statistics and continues, and it selects the action a′
+
+> m,ℓ
+
+, a component of ξm that does not depend on any tree statistic. The next state and observation are generated from (sm,ℓ , a ′
+
+> m,ℓ
+
+, u m,ℓ ), and vm,ℓ +1 is the history of vm,ℓ extended by a′ 
+
+> m,ℓ
+
+and the binned observation. Hence sm,ℓ +1 and vm,ℓ +1 are functions of ξm, and the simulation stops at depth d regardless of the other seeds. Both hypotheses of the lemma are needed. Under UCB1, the action at vm,ℓ depends on the statistics left by simulations 1, . . . , m − 1. Under a POMCP-style early return (“if v is not yet expanded, expand it and return”), simulation m stops at the first node that no earlier simulation created, so its depth depends on ξ1, . . . , ξ m−1.38 Corollary 1 (Localized influence) . Let S ⊆ [N ] and let PS be the set of nodes on the paths ν(ξm),
+
+m ∈ S. Every node v / ∈ PS has the same particle set B(v), counts N (v) and N (v, a ′), mean rewards 
+
+¯r(v, a ′), and DP value ˆV (v) in the runs on (ξm)m∈[N ] and on (ξm)m / ∈S . In particular, replacing one seed ξn by ξ′ 
+
+> n
+
+changes these quantities only at nodes on the two root-to-leaf paths ν(ξn) and ν(ξ′
+
+> n
+
+).Proof. By Lemma 5, in either run the simulations through v are those m with v ∈ ν(ξm) among the seeds present. For v / ∈ PS no m ∈ S is among them, so B(v), N (v), N (v, a ′) and ¯r(v, a ′) coincide. A descendant of v lies on a path in PS only if v does, so the whole subtree of v avoids PS , and backward induction on depth with equation 17 gives the same ˆV (v). For the last claim, compare both runs with the run on (ξm)m̸=n.
+
+Lemma 6 (Bounded difference) . On Eρ, for every S ⊆ [N ],
+
+fa(ξ1, . . . , ξ N ) − f (−S) 
+
+> a
+
+≤ | S| · 2(1 + γ)Vmax Λd
+
+N . (34) 
+
+Consequently, if two seed vectors ξ, ξ ′ differ in k coordinates and both of their runs lie in Eρ, then 
+
+|fa(ξ) − fa(ξ′)| ≤ k c , where 
+
+c := 4(1 + γ)Vmax Λd
+
+N . (35) 
+
+Proof. Write K(v) := N (v) in the full run, k(v) for the number of simulations m ∈ S whose path passes through v, and ∆( v) := | ˆV (v) − ˆV (−S)(v)|, where ˆV (−S) is the DP value in the reduced run. If k(v) = K(v), node v is absent from the reduced run, and we set ˆV (−S)(v) := 0 . By Corollary 1, 
+
+∆( v) = 0 unless k(v) ≥ 1. Define the weighted influence I(v) := ( K(v) − k(v)) ∆( v) and the sequence 
+
+yd := 1 , yℓ := ρ|A| (1 + γy ℓ+1 ) (1 ≤ ℓ ≤ d − 1) .
+
+We show by backward induction on depth that every node v at depth ℓ ∈ [1 , d ] satisfies 
+
+I(v) ≤ 2Vmax yℓ k(v). (36) 
+
+Leaves ( ℓ = d). If k(v) = K(v), then I(v) = 0 . Otherwise, for each a′, removing k(v) of the K(v)
+
+states in B(v) moves the average of Q⋆,S θ (·, a ′) by 
+
+k(v)
+
+K(v) mean over removed states − mean over remaining states ≤ 2Vmax k(v)
+
+K(v) .
+
+The maximum over a′ in equation 15 is 1-Lipschitz in the sup norm, so ∆( v) ≤ 2Vmax k(v)/K (v) and 
+
+I(v) ≤ 2Vmax k(v).
+
+Internal nodes ( 1 ≤ ℓ ≤ d − 1). Fix a′, and write K′ := N (v, a ′) and k′ for the number of simulations in S that select a′ at v. If k′ = 0 , then ˆQ(v, a ′) is unchanged, since no simulation of S
+
+passes through a child of v under a′. If 1 ≤ k′ < K ′, let Σ and Σ′ be the sums of r(s, a ′) + γ ˆV (child )
+
+over the simulations that select a′ at v in the full and in the reduced run. Each removed simulation contributes a term of absolute value at most Vmax , because |r| ≤ (1 − γ)Vmax and | ˆV | ≤ Vmax . Each of the K(w) − k(w) remaining simulations entering a child w changes by γ∆( w). Hence 
+
+|Σ − Σ′| ≤ k′Vmax + γ X
+
+> w∈Ch( v,a ′)
+
+I(w).
+
+Since ˆQ(v, a ′) = Σ /K ′, the reduced-run value is Σ′/(K′ − k′), and |Σ′| ≤ (K′ − k′)Vmax ,
+
+Σ
+
+K′ − Σ′
+
+K′ − k′ ≤ |Σ − Σ′|
+
+K′ + k′ |Σ′|
+
+K′(K′ − k′) ≤ 1
+
+K′
+
+
+
+2k′Vmax + γ X
+
+> w∈Ch( v,a ′)
+
+I(w)
+
+
+
+.
+
+39 If k′ = K′, action a′ is unvisited in the reduced run and drops out of the maximum in equation 17. A maximum of values in [−Vmax , V max ] changes by at most the largest change of its retained arguments, or by at most 2Vmax = 2 k′Vmax /K ′ if its maximizer drops out. Writing k′ 
+
+> a′
+
+for the k′ of action a′, in every case 
+
+∆( v) ≤ max 
+
+> a′∈A
+
+1
+
+N (v, a ′)
+
+
+
+2k′ 
+
+> a′
+
+Vmax + γ X
+
+> w∈Ch( v,a ′)
+
+I(w)
+
+
+
+.
+
+Multiplying by K(v), using equation 27, and bounding the maximum by the sum, 
+
+I(v) ≤ K(v) ∆( v) ≤ ρ|A| X
+
+> a′∈A
+
+
+
+2k′ 
+
+> a′
+
+Vmax + γ X
+
+> w∈Ch( v,a ′)
+
+I(w)
+
+
+
+.
+
+By the induction hypothesis equation 36 at depth ℓ + 1 and P 
+
+> a′
+
+k′ 
+
+> a′
+
+= P
+
+> a′
+
+P 
+
+> w∈Ch( v,a ′)
+
+k(w) = k(v),
+
+I(v) ≤ ρ|A|  2Vmax + 2 γV max yℓ+1 
+
+ k(v) = 2 Vmax yℓ k(v).
+
+Root. Each simulation enters exactly one depth-1 node, and the normalizer 1/N is the same in both runs, so 
+
+fa − f (−S) 
+
+> a
+
+≤ 1
+
+N
+
+X
+
+> m∈S
+
+r(sjm , a ) + γ ˆV (vm, 1) + γN
+
+X  
+
+> w:depth 1
+
+I(w) ≤ |S|
+
+N Vmax (1 + 2 γy 1).
+
+Unrolling the recursion, 
+
+y1 = ρ|A| 
+
+> d−2
+
+X
+
+> i=0
+
+(ργ |A| )i + ( ργ |A| )d−1.
+
+By equation 28 and (ργ |A| )d−1 ≤ Λd,
+
+1 + 2 γy 1 = 2Λ d − 1 + 2 γ(ργ |A| )d−1 ≤ 2(1 + γ)Λ d.
+
+This proves equation 34. For the second claim, let S be the set of coordinates where ξ and ξ′ differ. Both runs have the same reduced run on (ξm)m / ∈S , so equation 34 applied to each and the triangle inequality give |fa(ξ) − fa(ξ′)| ≤ 2k · 2(1 + γ)Vmax Λd/N = kc .
+
+Lemma 7 (Fluctuation up to a bad event) . Let p := Pr( Ecρ | bJt ) for the tree Ta, and let Bd := 2Vmax + cN with c from equation 35. For every δ ∈ (0 , 1) , with probability at least 1 − δ − p,
+
+fa − Efa ≤ 2(1 + γ)Vmax Λd
+
+r 2 log(2 /δ )
+
+N + Bd p, 
+
+and for every q ∈ [−Vmax , V max ],
+
+E(fa − q)2 ≤ 8(1 + γ)2V 2max Λ2
+
+> d
+
+N + 2 ( Efa − q)2 + 3 B2 
+
+> d
+
+p. 
+
+Proof. Let G be the set of seed vectors whose run lies in Eρ. If Pr( G) = 0 , both claims are trivial, so assume otherwise. Let H denote the Hamming distance and define the extension 
+
+g(ξ) := inf 
+
+> η∈G
+
+fa(η) + c H (ξ, η ) .
+
+40 First, g = fa on G: for ξ ∈ G, Lemma 6 gives fa(η) + cH (ξ, η ) ≥ fa(ξ) for every η ∈ G, with equality at η = ξ. Second, g changes by at most c when one coordinate of ξ changes, because each H(·, η )
+
+does. Third, −Vmax ≤ g ≤ Vmax + cN , so |fa − g| ≤ Bd everywhere and 
+
+|Efa − Eg| ≤ E|fa − g| 1Gc
+
+ ≤ Bd p. 
+
+The seeds are independent, so McDiarmid’s bounded-differences inequality applies to g:
+
+Pr  |g − Eg| ≥ s ≤ 2 exp 
+
+
+
+− 2s2
+
+N c 2
+
+
+
+.
+
+Setting the right-hand side to δ gives s = cpN log(2 /δ )/2 = 2(1 + γ)Vmax Λd
+
+p2 log(2 /δ )/N . On 
+
+G ∩ {| g − Eg| < s }, an event of probability at least 1 − δ − p,
+
+|fa − Efa| ≤ | g − Eg| + |Eg − Efa| < s + Bd p. 
+
+For the second moment, the Efron–Stein inequality gives Var( g) ≤ N c 2/2 = 8(1 + γ)2V 2max Λ2
+
+> d
+
+/N .Since fa = g on G and |fa − q| ≤ 2Vmax ,
+
+E(fa − q)2 ≤ E(g − q)2 + 4 V 2max p = Var( g) + ( Eg − q)2 + 4 V 2max p. 
+
+Finally, (Eg − q)2 ≤ 2( Efa − q)2 + 2 B2 
+
+> d
+
+p2, and 2B2 
+
+> d
+
+p2 + 4 V 2max p ≤ 3B2 
+
+> d
+
+p. The infimum defining g is universally measurable, which suffices for both inequalities. 
+
+Lemma 8 (Balancedness under uniform selection) . If d ≤ 1, then Eρ holds surely. If d ≥ 2, qmin > 0
+
+and |A| M ≥ 2, then 
+
+Pr( Ec 
+
+> 2
+
+| bJt ) ≤ 2|A| (|A| M )d exp 
+
+
+
+− N
+
+32 
+
+ qmin 
+
+|A| 
+
+d−1
+
+.
+
+Proof. For d ≤ 1 the tree has no internal node. Let d ≥ 2 and fix a potential internal node v of 
+
+Ta at depth ℓ ∈ [1 , d − 1] , i.e., a history with ℓ binned observations and ℓ − 1 internal actions. By Lemma 5, the indicators that simulation m reaches v, and that it reaches v and selects a′ there, are functions of ξm. They are therefore i.i.d. Bernoulli across m, with parameters pv and pv/|A| .Each binned observation along the history has conditional probability at least qmin and each internal action has probability 1/|A| , so 
+
+pv
+
+|A| ≥
+
+ qmin 
+
+|A| 
+
+ℓ
+
+≥ π := 
+
+ qmin 
+
+|A| 
+
+d−1
+
+.
+
+The multiplicative Chernoff bounds give 
+
+Pr  N (v) ≥ 32 N p v
+
+ ≤ e−N p v /12 ≤ e−N π/ 32 ,
+
+Pr  N (v, a ′) ≤ 34 N p v/|A|  ≤ e−N p v /(32 |A| ) ≤ e−N π/ 32 .
+
+Outside these events, N (v) < 32 N p v = 2 |A| · 34 N p v/|A| < 2|A| N (v, a ′), which is equation 27 with 
+
+ρ = 2 . A union bound over the |A| actions and over the at most Pd−1 
+
+> ℓ=1
+
+M ℓ|A| ℓ−1 ≤ (|A| M )d potential internal nodes gives the claim, since 1 + |A| ≤ 2|A| .
+
+Proof of Proposition 3. When d = 0 the planner is exact, so let d ≥ 1 and write qa := Qθ,d (bJ , a ) ∈
+
+[−Vmax , V max ].41 Step 1: Fluctuation. Apply Lemma 7 to each root action with δ/ |A| in place of δ, and take a union bound over a ∈ A . With probability at least 1 − δ − |A| pρ, every a satisfies 
+
+| bQ(bJ , a ) − qa| ≤ | bQ(bJ , a ) − E bQ(bJ , a )| + |E bQ(bJ , a ) − qa|≤ 2(1 + γ)Vmax Λd
+
+r 2 log(2 |A| /δ )
+
+N + Bd pρ + bias( N, d ),
+
+and taking the supremum over a gives equation 30. For the second moment, Lemma 7 with q = qa
+
+gives 
+
+E( bQ(bJ , a ) − qa)2 ≤ 8(1 + γ)2V 2max Λ2
+
+> d
+
+N + 2 bias( N, d )2 + 3 B2 
+
+> d
+
+pρ.
+
+Summing over a ∈ A through ϵmc (t, d )2 ≤ P
+
+> a
+
+( bQ(bJ , a ) − qa)2 gives equation 31. The bounds on pρ
+
+are Lemma 8. 
+
+Step 2: DP backup estimation error. The simulations follow the uniform policy at internal nodes, and the DP backup ˆV (v) = max a′ ˆQ(v, a ′) recovers the optimal internal actions. We bound the bias 
+
+bias DP (N, d ) := sup a |E bQ(bJ , a ) − Qϕθ,d (bJ , a )| of the resulting estimate by backward induction on depth, at the level of orders of magnitude, without any independence assumption on the returns. Fix a node v at depth ℓ ∈ [1 , d ] with nv := N (v) visits, and condition on the set of simulations that reach v and on their states there. By Lemma 5, the continuation of each such simulation below v is driven by the components of its own seed at depths ≥ ℓ, which are independent across simulations and independent of the conditioning. Conditionally, the states in B(v) are therefore independent draws from the binned belief bv at v, and each ˆQ(v, a ′) is formed from nv,a ′ := N (v, a ′) independent continuations, with nv,a ′ ≥ nv/(ρ|A| ) on Eρ. Concentration of these conditional averages gives 
+
+ˆQ(v, a ′) − Qϕθ,d −ℓ(bv, a ′) ≤ O
+
+ Vmax 
+
+√nv,a ′
+
+
+
+≤ O Vmax 
+
+p|A| √nv
+
+!
+
+.
+
+At a leaf ( ℓ = d) the same bound holds for the pooled averages 1
+
+> |B(v)|
+
+P 
+
+> s∈B(v)
+
+Q⋆,S θ (s, a ′) around 
+
+R Q⋆,S θ (s, a ′) bv(d s). This level must be included, because the maximum over a′ in equation 15 is biased upward at every finite |B(v)|. Under the branching structure, a depth-ℓ node receives 
+
+nv = Ω( N/ (|A| M )ℓ) visits in expectation when the bins have comparable probabilities. Tak-ing the maximum over estimated Q-values, the backup error at depth ℓ contributes at most 
+
+O(Vmax 
+
+p|A| ℓ+1 M ℓ/N ), discounted by γℓ. The complement of Eρ changes the conditional mean by at most 2Vmax pρ, which is absorbed into the constant once pρ ≤ N −1/2 (Remark 3). Summing over depths, leaves included, 
+
+bias DP (N, d ) ≤
+
+> d
+
+X
+
+> ℓ=1
+
+γℓ · c1Vmax 
+
+p|A| 
+
+pN/ (|A| M )ℓ = c0 Φd Vmax 
+
+p|A| √N . (37) 
+
+Step 3: Discretization error. For o, o ′ in the same bin, the Bayes update sensitivity [10, Section 4.3] gives 
+
+∥τθ(b, a, o ) − τθ(b, a, o ′)∥TV ≤ gmax 
+
+gmin 
+
+ωZ (diam( ϕ)) .
+
+Since τ ϕθ is a convex combination of {τθ(b, a, o ′)}o′∈ϕ−1(¯ o), the same bound holds for ∥τ ϕθ (b, a, ¯o) −
+
+τθ(b, a, o )∥TV . By Lipschitz continuity of ¯V ⋆,S θ,d −1 in TV (constant 2Vmax , cf. Lemma 2), each of the d
+
+tree levels contributes 2gmax  
+
+> gmin
+
+Vmax ωZ (diam( ϕ)) discounted by γ:
+
+sup 
+
+> b,a
+
+Qϕθ,d (b, a ) − Qθ,d (b, a ) ≤ 2γ(1 − γd)1 − γ · gmax 
+
+gmin 
+
+Vmax ωZ (diam( ϕ)) . (38) 42 Combining Steps 2 and 3 gives bias( N, d ) ≤ bias DP (N, d ) + bias disc (d), yielding equation 32. 
+
+Remark 3 (Constants, a verification-free variant, and the choice of depth) . (a) Order of the constants. Compared with an analysis that treats the simulation returns as i.i.d., the only changes are the depth factor (1 + γ)Λ d in the fluctuation term and the exponentially small remainder in pρ. Since 
+
+Λd ≤ d max(1 , ργ |A| )d−1 and Φd ≥ (γp|A| M )d, the fluctuation term of equation 31 is at most of the same exponential-in-d order as the DP-backup term whenever M = Ω( ρ2|A| ). Taking square roots in equation 31, with diam( ϕ) chosen as in Remark 4, then gives E[ϵmc (t, d ) | bJt ] ≤ Cmc Vmax /√N
+
+with Cmc of the order stated in Theorem 1, whose order is therefore unchanged. For coarse binning, 
+
+M ≪ |A| , the fluctuation dominates and Cmc ∝ p|A| Λd. By Lemma 8, the remainder 3|A| B2 
+
+> d
+
+p2 is at most V 2max /N as soon as N ≥ 32( |A| /q min )d−1 log  24 N |A| 2(|A| M )d(1 + 4Λ d)2, and it vanishes for d ≤ 1. At d = 0 , Λ0 = 0 and the fluctuation vanishes identically. For an internal rule satisfying (S1)–(S2) in place of uniform selection, the same proof applies with |A| replaced by 1/π min 
+
+in equation 27, equation 28 and Lemma 8. 
+
+(b) A verification-free variant. Sample splitting restores exactly conditionally i.i.d. returns. Use 
+
+N/ 2 seeds to build the tree, populate the particle sets, and run the DP backup, then freeze the leaf values and the greedy internal actions arg max a′ ˆQ(v, a ′). Value each root action with N/ 2 fresh seeds that follow the frozen greedy actions and stop at the frozen leaf values; a simulation that leaves the frozen tree stops and is evaluated by max a′ Q⋆,S θ (s, a ′) at its current state s. Conditionally on the first half, the second-half returns are i.i.d. and bounded by Vmax , so Hoeffding’s inequality applies to them directly, at the cost of a factor 2 in N , and the bias analysis of Step 2 applies to the first half. Evaluating each leaf at its single incoming state instead of equation 15 removes the pooling but not the coupling through the maximum in the DP backup, so it restores independent returns only at 
+
+d = 1 , where it also changes the leaf target to the linear surrogate eV ⋆θ .
+
+(c) Choice of depth. Propositions 2 and 3 concern different objects. The former bounds the planning target, ∥ ¯V ⋆,S θ,d − V ⋆,B θ ∥∞ ≤ γd+1 Ξθ/(1 − γ), which involves no particles and de-cays geometrically in d. The latter bounds the estimator bQ around Qθ,d , and its fluctuation 
+
+2(1 + γ)Vmax Λd
+
+p2 log(2 |A| /δ )/N and DP-backup bias c0ΦdVmax 
+
+p|A| /N grow geometrically in 
+
+d. Because increasing the depth reduces the structural bias but increases the Monte Carlo error, their sum is U-shaped in d, and each budget N has a finite optimal depth. 
+
+Remark 4 (Optimal discretization resolution) . The discretization error in equation 32 is a fixed bias O(ωZ (diam( ϕ))) , while the DP backup estimation error vanishes as N → ∞ at rate Φd/√N . To make the discretization bias O(1 /√N ), set diam( ϕ) = ω−1
+
+> Z
+
+ (1 − γ)gmin /(2 γg max Vmax 
+
+√N ). When 
+
+Zθ(o | s) is LZ -Lipschitz in o uniformly (so ωZ (δ) ≤ LZ δ/g min ) and O ⊆ Rdo with a uniform grid: 
+
+M =
+
+
+
+2γ L Z gmax Vmax diam( O)√N
+
+(1 − γ) g2min 
+
+!do
+
+ . (39) 
+
+With this choice, M grows as N do/2, and the simulation budget threshold for the DP backup error to be O(1 /√N ) is N ≥ c20|A| Φ2
+
+> d
+
+, which is exponential in d · do via the dependence of Φd on M .Balancing the two bias terms instead gives an explicit rate. Take O ⊆ [0 , D ]do with a cubic grid of mesh h, so that M = ( D/h )do and diam( ϕ) = √do h, and assume ωZ (δ) ≤ LZ δ/g min as above. For γp|A| M ≥ 2 we have Φd ≤ 2( γp|A| M )d, so the DP-backup and discretization terms of equation 32 are of order h−d d o/2N −1/2 and h, respectively, with constants depending on d, γ, |A| ,
+
+D, LZ , gmax /g min and Vmax . Balancing them gives 
+
+h⋆ ≍ N −1/(d d o+2) , ϵmc (t, d ) = eO N −1/(d d o+2) , (40) 43 since the fluctuation term of equation 30 does not depend on h and is of lower order. The N −1/2
+
+rate is recovered exactly when d d o = 0 , i.e., at d = 0 . At d = 1 , equation 40 is the familiar rate 
+
+N −1/(do+2) of a histogram estimate, here of the leaf value as a function of the observation. The balancedness condition of Lemma 8 holds at this mesh for large N : with the Lebesgue reference measure qmin ≥ gmin hdo , so N (qmin /|A| )d−1 = Ω( N (do+2) /(d d o+2) ) → ∞ . The computational cost is 
+
+N |A| simulations over at most (|A| M )d nodes. When d = 0 or |O| < ∞, this issue does not arise: set ϕ = id and M = |O| .
+
+D.3 Particle Filter Stability 
+
+We work under Assumption 1 throughout. Write bt := bθ⋆ 
+
+> t
+
+for the true posterior and bJt := bJ, (¯θk(s))s≤t
+
+> t
+
+for the particle belief filtered under the epoch-frozen model sequence. Since the model sequence is determined by the algorithm, we abbreviate the latter as bJt .
+
+Proposition 4 (Particle filter stability in dQ). Under Assumption 1, there exist constants Cpf , C filt <
+
+∞ and a forgetting rate ρ := 1 − εmix (gmin /g max ) ∈ (0 , 1) such that for all t ≥ 1,
+
+EdQ(bt, b Jt ) ≤ Cpf · J− 12κpf 
+
+| {z }
+
+> particle approx.
+
++ 2 Vmax Cfilt 
+
+> t
+
+X
+
+> s=1
+
+ρt−s das
+
+> model
+
+(¯θs, θ ⋆)
+
+| {z }
+
+> filter mismatch
+
+, (41) 
+
+where da
+
+> model
+
+(θ, θ ′) := sup s′ ∥Pθ(· | s′, a ) − Pθ′ (· | s′, a )∥TV + sup s′,o |Zθ(o | s′)/Z θ′ (o | s′) − 1|,
+
+Cfilt := gmax /g min , and κpf is the particle filter exponent :
+
+κpf := max 
+
+
+
+1, log(2 g2max /g 2min )log(1 /γ )
+
+
+
+. (42) 
+
+The truncation depth Hpf in Lemma 1 is chosen to balance the sum and tail: 
+
+Hpf := 
+
+&
+
+log(4 Vmax 
+
+√J)
+
+κpf log(1 /γ )
+
+'
+
+=
+
+&
+
+log(4 Vmax 
+
+√J)log max(1 /γ, 2g2max /g 2min )
+
+'
+
+, (43) 
+
+and Cpf depends polynomially on Vmax , gmax /g min , 1/ε mix , log NΘ(1 /T ), and Hpf . When κpf = 1 
+
+(i.e., 2γg 2max /g 2min ≤ 1), the rate recovers J−1/2. This Hpf is distinct from the trajectory truncation horizon H in Section D.4. Proof of Proposition 4. By the triangle inequality and Lemma 2: 
+
+dQ(bθ⋆ 
+
+> t
+
+, b J, ¯θ1: t 
+
+> t
+
+) ≤ dQ(bθ⋆ 
+
+> t
+
+, b ¯θ1: t 
+
+> t
+
+)
+
+| {z }
+
+> (I) filter mismatch
+
++ dQ(b¯θ1: t 
+
+> t
+
+, b J, ¯θ1: t 
+
+> t
+
+)
+
+| {z }
+
+> (II) particle approx.
+
+. (44) Term (I) involves two exact (continuous) posteriors, so the TV bound of Lemma 2 gives dQ ≤
+
+2Vmax ∥bθ⋆ 
+
+> t
+
+− b¯θ1: t 
+
+> t
+
+∥TV , which is bounded by the filter mismatch analysis below. 
+
+Term (II): test-function bound via Feynman-Kac. Conditional on (a1: T , o 1: T ), the particle filter is a Feynman-Kac system with kernels Ms(· | s′) := P¯θs (· | s′, a s) and potentials Gs(s′) := 
+
+Z¯θs (os | s′). Under Assumption 1, the kernels satisfy Ms(s′ | x) ≥ εmix ν(s′) and the potentials satisfy gmin ≤ Gs(x) ≤ gmax uniformly. We invoke the following time-uniform particle-filter bound. 44 Lemma 9 ([21, Lemma 2.3]; see also [9, Theorem 7.4.4]) . Let (ηn)n≥0 and (ηNn )n≥0 be the exact and 
+
+N -particle Feynman-Kac measures on a measurable space E. Suppose the Markov kernels (Mℓ)ℓ≥1
+
+admit densities w.r.t. a common measure λ satisfying M ≤ Mℓ(x, y ) ≤ M for all ℓ, x, y , and the potentials satisfy G ≤ Gℓ(x) ≤ G for all ℓ, x . Then for all n ≥ 0, N ≥ 2, p ≥ 1, and φ with 
+
+osc( φ) ≤ 1:
+
+ E|ηNn (φ) − ηn(φ)|p 1/p ≤ 2 d(p)1/p 
+
+√N
+
+(M /M )3 GG , (45) 
+
+where d(p)1/p = O(√p). The bound is uniform over n.
+
+Our Assumption 1 implies the conditions of Lemma 9 with M = εmix , M = 1 , G = gmin ,
+
+G = gmax .
+
+Proposition 5 (Particle filter Lp bound under Assumption 1) . Under Assumption 1, for every measurable f : S → R with ∥f ∥∞ ≤ M , all p ≥ 1, and all t ≥ 0:
+
+ E|ηJt (f ) − ηt(f )|p 1/p ≤ 4 d(p)1/p M g max 
+
+ε3mix gmin 
+
+√J , (46) 
+
+where d(p)1/p = O(√p), so ηJt (f )−ηt(f ) is sub-Gaussian with parameter σ2 = O(M 2g2max /(ε6mix g2min J)) .The bound is uniform over t.Proof. By Lemma 9 with M = εmix , M = 1 , G = gmin , G = gmax , for any φ with osc( φ) ≤ 1:
+
+ E|ηJt (φ) − ηt(φ)|p 1/p ≤ 2 d(p)1/p gmax 
+
+ε3mix gmin 
+
+√J ,
+
+uniformly over t. For f with ∥f ∥∞ ≤ M , applying this to φ := f / (2 M ) (which has osc( φ) ≤ 1)and rescaling by 2M yields equation 46. Sub-Gaussianity follows from the standard moment-to-tail conversion. 
+
+Lemma 10 (Unconditional bound under adaptive actions) . Let (as, o s)s≥1 be an adapted action-observation process where as = as(bJs ) may depend on the particle system. Under Assumption 1, for every measurable f : S → R with ∥f ∥∞ ≤ M , all p ≥ 1, and all t ≥ 0:
+
+ E|bJ, ¯θ1: t 
+
+> t
+
+(f ) − b¯θ1: t 
+
+> t
+
+(f )|p 1/p ≤ 4 d(p)1/p M g max 
+
+ε3mix gmin 
+
+√J . (47) 
+
+Proof. Let HT := ( a1: T , o 1: T , ¯θ1: T ). Conditional on HT , the Feynman-Kac kernels and potentials are deterministic, so Proposition 5 gives 
+
+E|bJt (f ) − bt(f )|p HT
+
+ ≤ 4 d(p)1/p M g max 
+
+ε3mix gmin 
+
+√J
+
+!p
+
+=: Cpp .
+
+Since Cp is independent of HT , the tower property yields E[|bJt (f ) − bt(f )|p] ≤ Cpp .By Lemma 1 with truncation depth Hpf :
+
+dQ(b¯θ1: t 
+
+> t
+
+, b J, ¯θ1: t 
+
+> t
+
+) ≤ sup  
+
+> θ,a Hpf −1
+
+X
+
+> ℓ=0
+
+γℓCℓ 
+
+> BU
+
+sup  
+
+> f∈F ℓ(θ,a )
+
+|bt(f ) − bJt (f )| + 2 γHpf Vmax . (48) 45 We optimize Hpf to balance the sum and tail below. 
+
+Pointwise bound. For f ∈ F ℓ(θ, a ) with ∥f ∥∞ ≤ gℓ
+
+> max
+
+Vmax , Lemma 10 gives 
+
+ E|bJt (f ) − bt(f )|p 1/p ≤ 4 d(p)1/p gℓ+1 max Vmax 
+
+ε3mix gmin 
+
+√J =: σℓ d(p)1/p . (49) Since d(p)1/p ≤ C0
+
+√p (Corollary 5), bJt (f ) − bt(f ) is sub-Gaussian with parameter σ2 
+
+> ℓ
+
+.
+
+Covering-number argument. For N sub-Gaussian random variables with common parameter σ2:
+
+Emax  
+
+> i≤N
+
+|Xi| ≤ σp2 log(2 N ). (50) At depth ℓ, S 
+
+> θ,a
+
+Fℓ(θ, a ) is covered by Nℓ := NΘ(1 /T ) · |A| ℓ functions after discretizing Θ at resolution 1/T , with approximation error O(1 /T ). Applying equation 50 and summing over depths with weights γℓCℓ
+
+> BU
+
+:
+
+EdQ(b¯θ1: t 
+
+> t
+
+, b J, ¯θ1: t 
+
+> t
+
+) ≤ 
+
+> Hpf −1
+
+X
+
+> ℓ=0
+
+γℓCℓ 
+
+> BU
+
+σℓ
+
+p2 log(2 Nℓ) + 2 γHpf Vmax + O(1 /T ) (51) Define α := 2 γg 2max /g 2min , r := α/γ = 2 g2max /g 2min , and c1 := 4 gmax Vmax /(ε3mix gmin ), so that 
+
+σℓ = c1 gℓ
+
+> max
+
+/√J and the ℓ-th term equals 
+
+c1
+
+√J αℓ
+
+q
+
+2 log  2NΘ(1 /T ) |A| ℓ.
+
+Since plog( ab ) ≤ √log a + √log b, the sum in equation 51 is bounded by 
+
+Ed(II) 
+
+> Q
+
+ ≤ c1
+
+√2
+
+√J
+
+plog(2 NΘ(1 /T ))  
+
+> Hpf −1
+
+X
+
+> ℓ=0
+
+αℓ + plog |A|  
+
+> Hpf −1
+
+X
+
+> ℓ=0
+
+αℓ√ℓ
+
+!
+
++ 2 γHpf Vmax . (52) We bound the two sums in two cases. 
+
+Case 1: α ≥ 1. Choose 
+
+Hpf =
+
+&
+
+log(4 Vmax 
+
+√J)log r
+
+'
+
+=
+
+&
+
+log(4 Vmax 
+
+√J)log(2 g2max /g 2min )
+
+'
+
+.
+
+Using PH−1 
+
+> ℓ=0
+
+αℓ ≤ Hα H−1 and PH−1 
+
+> ℓ=0
+
+αℓ√ℓ ≤ H3/2αH−1 (since α ≥ 1): sum ≤ c1
+
+√2 H3/2pf αHpf −1
+
+√J ·
+
+q
+
+log  2NΘ(1 /T ) |A| Hpf 
+
+. (53) Writing αHpf −1 = αHpf /α = γHpf rHpf /α and substituting rHpf = 4 Vmax 
+
+√J:sum ≤ 4√2 c1 Vmax H3/2pf 
+
+α ·
+
+q
+
+log  2NΘ(1 /T ) |A| Hpf 
+
+ · γHpf . (54) For the tail: 
+
+γHpf = γlog(4 Vmax    
+
+> √J)/log r
+
+= (4 Vmax 
+
+√J)− log(1 /γ )/ log r = (4 Vmax )−1/κ pf · J− 12κpf , (55) 46 where κpf = log r/ log(1 /γ ) > 1. Substituting c1 = 4 gmax Vmax /(ε3mix gmin ), Hpf = ⌈log(4 Vmax 
+
+√J)/ log r⌉,and using log(2 NΘ(1 /T ) |A| Hpf ) ≤ log(2 NΘ(1 /T )) + Hpf log |A| , the total (sum + tail) is 
+
+Ed(II) 
+
+> Q
+
+ ≤ 16 √2 gmax V 2max 
+
+α ε 3mix gmin 
+
+· log(4 Vmax 
+
+√J)log r
+
+!3/2 s
+
+log  2NΘ(1 /T ) + log(4 Vmax 
+
+√J)log r log |A| 
+
++ 2 Vmax 
+
+!
+
+· (4 Vmax )−1/κ pf · J− 12κpf . (56) 
+
+Case 2: α < 1. Choose 
+
+Hpf =
+
+&
+
+log(4 Vmax 
+
+√J)log(1 /γ )
+
+'
+
+.
+
+The geometric series converges: P 
+
+> ℓ≥0
+
+αℓ = 1 /(1 − α) and P 
+
+> ℓ≥0
+
+αℓ√ℓ ≤ c2/(1 − α)3/2 for a universal 
+
+c2 > 0. Hence sum ≤ c1 c2
+
+√2(1 − α)3/2 √J ·
+
+q
+
+log  2NΘ(1 /T ) + log |A| = O
+
+
+
+J−1/2
+
+.
+
+For the tail: γHpf = (4 Vmax 
+
+√J)−1 = O(J−1/2). Here κpf = 1 , and both terms are O(J−1/2).
+
+Unified bound. The choice equation 43, Hpf = ⌈log(4 Vmax 
+
+√J)/ log max(1 /γ, r )⌉, covers both cases and yields 
+
+Ed(II) 
+
+> Q
+
+ ≤ Cpf · J− 12κpf , κpf = max 
+
+
+
+1, log r
+
+log(1 /γ )
+
+
+
+,
+
+where 
+
+Cpf := c3 Vmax gmax H3/2pf 
+
+ε3mix gmin 
+
+·
+
+q
+
+log  2NΘ(1 /T ) |A| Hpf 
+
+, (57) with c3 depending on α and gmax /g min . In particular, the |A| dependence enters through pHpf log |A| .
+
+Term (I): filter mismatch. By Lemma 2, 
+
+dQ(bθ⋆ 
+
+> t
+
+, b ¯θ1: t 
+
+> t
+
+) ≤ 2Vmax ∥bθ⋆ 
+
+> t
+
+− b¯θ1: t 
+
+> t
+
+∥TV .
+
+Define δs := sup s′ ∥P¯θs (· | s′, a s) − Pθ⋆ (· | s′, a s)∥TV + sup s′ |Z¯θs (os | s′)/Z θ⋆ (os | s′) − 1| and the predict-update kernel 
+
+Ka,o θ (s, ds ′) := Zθ(o | s′)Pθ(s′ | s, a )
+
+R Zθ(o | s′′ )Pθ(s′′ | s, a ) ds ′′ ds ′.
+
+Under Assumption 1, bounding the numerator below and denominator above: 
+
+Ka,o θ (s, ds ′) ≥ gmin εmix 
+
+gmax 
+
+ν(s′) ds ′ ∀ s ∈ S , (58) giving Dobrushin coefficient ρ := 1 − εmix gmin /g max . Standard Dobrushin contraction [10, Theo-rem 4.3.1] under different models θ⋆, ¯θs yields 
+
+∥bθ⋆ 
+
+> s
+
+− b¯θ1: s 
+
+> s
+
+∥TV ≤ ρ ∥bθ⋆ 
+
+> s−1
+
+− b¯θ1: s−1 
+
+> s−1
+
+∥TV + Cfilt δs, Cfilt := gmax /g min . (59) Unrolling and using δs ≤ das
+
+> model
+
+(¯θs, θ ⋆):
+
+∥bθ⋆ 
+
+> t
+
+− b¯θ1: t 
+
+> t
+
+∥TV ≤ Cfilt 
+
+> t
+
+X
+
+> s=1
+
+ρt−s das
+
+> model
+
+(¯θs, θ ⋆).
+
+47 Combining. Substituting into equation 44: 
+
+E dQ(bt, b Jt ) ≤ C′
+
+> pf
+
+√J + 2 Vmax Cfilt 
+
+> t
+
+X
+
+> s=1
+
+ρt−s das
+
+> model
+
+(¯θs, θ ⋆).
+
+When summed over t, exchanging summation order gives PTt=1 
+
+Pts=1 ρt−s das 
+
+> model
+
+≤ 11−ρ
+
+PTs=1 das
+
+> model
+
+.
+
+D.4 Model Estimation Error (Terms A + C) and Filter Mismatch 
+
+Truncation. Define V π,B,H θ (b) := Eπθ [PH−1 
+
+> u=0
+
+γuru | b0 = b]. Since |V π,B θ − V π,B,H θ | ≤ γH Vmax :(A) t + (C) t ≤ | V ⋆,B,H θ⋆ (bt) − V ⋆,B,H 
+
+> ¯θk(t)
+
+(bt)| + |V πt,B,H 
+
+> ¯θk(t)
+
+(bt) − V πt,B,H θ⋆ (bt)| + 4γH Rmax 
+
+1 − γ . (60) Choose H = ⌈log(2 Rmax T / (1 − γ)) / log(1 /γ )⌉ so the tail contributes O(1) .
+
+Confidence sets. Let Pr πθ,H denote the length-H trajectory distribution under (θ, π ). Define 
+
+Ck := θ ∈ Θ : LTk (θ) ≥ L Tk (¯θk) − β , (61) where LTk is the log-likelihood over epochs 1, . . . , k − 1. By construction ¯θk ∈ C k, and θ⋆ ∈ C k for all 
+
+k w.h.p. when β ≥ c0 log[ NΘ(1 /T )T /δ opt ] [29, Prop. B.1]. 
+
+Proposition 6 (Likelihood-to-ℓ1 concentration) . There exists c > 0 such that w.p. ≥ 1 − δ,simultaneously for all n ∈ [T ] and all θ ∈ Θ with Ln(θ) ≥ L n(θ⋆) − β:
+
+> n
+
+X
+
+> i=1
+
+Pr πi 
+
+> θ,H
+
+− Pr πi 
+
+> θ⋆,H
+> 21
+
+≤ c β T , βT := β + log[ NΘ(1 /T ) T /δ ]. (62) 
+
+Proof. The episodic version is [29, Prop. B.2]. We transfer to the online setting via a blocking argument: partition the trajectory into ⌊T / (2 H)⌋ blocks of length 2H, each split into a burn-in half and a data half. Choose H so that 
+
+ρH = (1 − εmix gmin /g max )H ≤ 1/T 2, i.e., H ≥ 2 log T
+
+log(1 /ρ ) .
+
+Our choice H = O(log T / log(1 /γ )) satisfies this when εmix gmin /g max = Ω(1 − γ); otherwise, increase 
+
+H by a constant factor. With ρH ≤ 1/T 2, the data halves are approximately independent, with a joint TV perturbation of O(1 /T ). Applying the episodic bound to the data halves gives equation 62 up to a constant factor. 
+
+Corollary 2 (Epoch-level MLE concentration) . Under the same conditions as Proposition 6, w.p. 
+
+≥ 1 − δ, simultaneously for all epochs k ∈ [K]:
+
+> Tk+1 −1
+
+X
+
+> i=1
+
+Pr πi  
+
+> ¯θk,H
+
+− Pr πi 
+
+> θ⋆,H
+> 21
+
+≤ c β T , (63) 
+
+where c > 0 is a universal constant (at most twice the constant in Proposition 6). 
+
+48 Proof. Fix k ∈ [K] and write ∥ Pr πθ ∥1 := ∥ Pr πθ,H − Pr πθ⋆,H ∥1.
+
+Historical data ( i ≤ Tk). By MLE optimality, ¯θk lies in Ck, so Proposition 6 at n = Tk gives 
+
+> Tk
+
+X
+
+> i=1
+
+Pr πi 
+
+> ¯θk
+> 21
+
+≤ c β T . (64) 
+
+Within-epoch data ( i ∈ Ek). Since ¯θk is FTk -measurable, we use a self-normalized argument for the fixed hypothesis ¯θk. Define 
+
+L(k) 
+
+> n
+
+:=  
+
+> Tk+n
+
+X 
+
+> i=Tk+1
+
+ℓi(θ⋆) − ℓi(¯θk), M (k) 
+
+> n
+
+:=  
+
+> Tk+n
+
+X 
+
+> i=Tk+1
+
+KL(Pr πi 
+
+> θ⋆
+
+∥ Pr πi 
+
+> ¯θk
+
+) −  ℓi(θ⋆) − ℓi(¯θk) ,
+
+where ℓi(θ) := log pθ(oi | si, a i). By Pinsker’s inequality and blocking: 
+
+12
+
+X
+
+> i∈Ek
+
+Pr πi 
+
+> ¯θk
+> 21
+
+≤ L(k)  
+
+> |Ek|
+
++ M (k) 
+
+> |Ek|
+
+. (65) 
+
+M (k) 
+
+> n
+
+is a supermartingale (each increment has non-positive conditional expectation). The maximal inequality and a covering-number union bound give 
+
+Pr sup  
+
+> n≤| Ek|
+
+M (k) 
+
+> n
+
+≥ c1 log NΘ(1 /T )/δ !
+
+≤ δ/K. 
+
+For L(k) 
+
+> |Ek|
+
+: each |ℓi(θ⋆) − ℓi(¯θk)| ≤ log( gmax /g min ) and E[ℓi(θ⋆) − ℓi(¯θk) | F i−1] ≥ 0. By Azuma-Hoeffding: 
+
+Pr 
+
+
+
+L(k)  
+
+> |Ek|
+
+≥ c2
+
+p|Ek| log(1 /δ ) log( gmax /g min )
+
+
+
+≤ δ/K. 
+
+Since √T log( gmax /g min ) is absorbed into βT :
+
+X
+
+> i∈Ek
+
+Pr πi 
+
+> ¯θk
+> 21
+
+≤ c β T . (66) 
+
+Combining. Summing equation 64 and equation 66, redefining c ← 2c, and taking a union bound over k ∈ [K] gives equation 63. Transferring model error from historical to arbitrary policies requires action-space coverage via 
+
+ε-greedy exploration. 
+
+Lemma 11 (Trajectory coverage under Doeblin mixing and ε-greedy) . Under Assumption 1, for any two models θ, θ ′ ∈ Θ, any policy π, and any policy πε satisfying πε(a | h) ≥ ε/ |A| for all a, h 
+
+(with ε ∈ (0 , 1] ), 
+
+Pr πθ,H − Pr πθ′,H 1 ≤ Ccov Pr πε 
+
+> θ,H
+
+− Pr πε 
+
+> θ′,H 1
+
+, Ccov := H |A| 
+
+ε · g2max 
+
+εmix g2min 
+
+. (67) 
+
+Proof. Step 1: Telescoping. Let Pr (k) be the hybrid using θ for steps 1, . . . , k and θ′ for steps 
+
+k + 1 , . . . , H , under policy π. Let ∆k(s, a ) := ∥Pθ(· | s, a ) − Pθ′ (· | s, a )∥TV and ∆Z (s) := sup o |Zθ(o |
+
+s)/Z θ′ (o | s) − 1|. Then 
+
+∥ Pr πθ,H − Pr πθ′,H ∥1 ≤
+
+> H−1
+
+X
+
+> k=0
+
+∥ Pr (k+1) − Pr (k) ∥1, (68) 49 ∥ Pr (k+1) − Pr (k) ∥1 ≤ Eμπk
+
+sup 
+
+> a
+
+∆k(Sk, a ) + ∆ Z (Sk), (69) where μπk is the state marginal at step k under the hybrid. 
+
+Step 2: State-marginal ratio. By the Doeblin decomposition ˜μπk ≥ εmix ν and ˜μπ′ 
+
+> k
+
+≥ εmix ν, for any h : S → [0 , 1] :
+
+E˜μπk [h] ≤ εmix Eν [h] + (1 − εmix ) ≤ 1
+
+εmix 
+
+E˜μπ′
+
+> k
+
+[h].
+
+Accounting for the factor gmax /g min from the Bayes update normalization gives 
+
+Eμπk [h] ≤ gmax 
+
+gmin εmix 
+
+Eμπ′
+
+> k
+
+[h].
+
+Step 3: Action coverage. Since πε(a | h) ≥ ε/ |A| :
+
+sup 
+
+> a
+
+∆k(s, a ) ≤ |A| 
+
+ε EA∼πε [∆ k(s, A )] .
+
+Step 4: Assembly. Combining Steps 1–3 term-by-term: 
+
+∥ Pr (k+1) − Pr (k) ∥1 ≤ |A| 
+
+ε · g2max 
+
+εmix g2min 
+
+· ∥ Pr (k+1)  
+
+> πε
+
+− Pr (k) 
+
+> πε
+
+∥1.
+
+Summing over k = 0 , . . . , H − 1 yields equation 67. 
+
+Lemma 12 (Simulation lemma) . For any θ, θ ′ ∈ Θ, π, and b:
+
+V π,B,H θ (b) − V π,B,H θ′ (b) ≤ Rmax 
+
+1 − γ Pr πθ,H − Pr πθ′,H 1.
+
+Proof. Telescope the H-truncated value difference into one-step terms, each bounded by Rmax .
+
+Proposition 7 (Control of (A) + (C) + filter mismatch) . Under Assumption 1, consider the doubling-epoch variant of Algorithm 1 in which time is partitioned into epochs Ek = [ Tk, T k+1 ) with 
+
+Tk = 2 k−1, k = 1 , . . . , K := ⌈log 2 T ⌉. Within each epoch Ek, the model ¯θk is frozen (computed from data in epochs 1, . . . , k − 1) and the agent uses εk-greedy exploration with a constant rate εk. Let 
+
+Kcov := H|A| g2max /(εmix g2min ). Then with probability ≥ 1 − δopt ,
+
+> T
+
+X
+
+> t=1
+
+(C) t ≤ Rmax 
+
+1 − γ
+
+pc β TKX
+
+> k=1
+
+p|Ek| + 2γH Rmax T
+
+1 − γ , (70) 
+
+> T
+
+X
+
+> t=1
+
+(A) t ≤ Rmax Kcov 
+
+1 − γ
+
+pc β TKX
+
+> k=2
+
+|Ek|
+
+qPk−1 
+
+> j=1
+
+ε2 
+
+> j
+
+|Ej |
+
++ 2γH Rmax T
+
+1 − γ , (71) 
+
+> T
+
+X
+
+> t=1
+
+dat
+
+> model
+
+(¯θk(t), θ ⋆) ≤ Cmix 
+
+pc β TKX
+
+> k=1
+
+p|Ek|, (72) 
+
+where da
+
+> model
+
+(θ, θ ′) := sup s∈S ∥Pθ(· | s, a ) − Pθ′ (· | s, a )∥TV + sup s∈S ,o ∈O Zθ(o | s)/Z θ′ (o | s) − 1 is the per-action model discrepancy, and Cmix depends on εmix , g min , g max , H .
+
+50 Proof. By Corollary 2, equation equation 63 holds for all k ≤ K. For brevity, write ∥ Pr πθ ∥1 := 
+
+∥ Pr πθ,H − Pr πθ⋆,H ∥1 throughout this proof. 
+
+Term (C). By Lemma 12, (C) t ≤ Rmax 
+
+1 − γ Pr πt  
+
+> ¯θk(t)1
+
++ 2γH Rmax 
+
+1 − γ .
+
+Since ¯θk is fixed within Ek, Cauchy-Schwarz and equation 63 give 
+
+X
+
+> t∈Ek
+
+Pr πt  
+
+> ¯θk1
+
+≤
+
+s
+
+|Ek| X
+
+> t∈Ek
+
+Pr πt 
+
+> ¯θk
+> 21
+
+≤ p|Ek| · c β T .
+
+Summing across epochs: PKk=1 
+
+p|Ek| · cβ T = √cβ T
+
+P 
+
+> k
+
+2(k−1) /2 = O(√T β T ).
+
+Term (A). By Lemmas 12 and 11: (A) t ≤ Rmax 
+
+1 − γ sup 
+
+> π
+
+Pr π  
+
+> ¯θk(t)1
+
++ 2γH Rmax 
+
+1 − γ , Pr π  
+
+> ¯θk1
+
+≤ Kcov 
+
+εj
+
+Pr πj  
+
+> ¯θk1
+
+∀ j < k. 
+
+Squaring, multiplying by ε2 
+
+> j
+
+, and summing over prior epochs using equation 63: 
+
+Pr π
+
+> ¯θk
+> 21
+
+X
+
+> j<k
+
+ε2 
+
+> j
+
+|Ej | ≤ K2cov 
+
+X
+
+> j<k
+
+X
+
+> t∈Ej
+
+Pr πt 
+
+> ¯θk
+> 21
+
+≤ K2cov c β T =⇒ sup 
+
+> π
+
+Pr π  
+
+> ¯θk1
+
+≤ Kcov 
+
+√cβ T
+
+qP 
+
+> j<k
+
+ε2 
+
+> j
+
+|Ej |
+
+.
+
+Multiplying by |Ek| and summing gives equation 71. 
+
+Filter mismatch. By the telescoping argument of Lemma 11, using only Steps 1–2 and hence without the |A| /ε action-coverage factor, since we evaluate at the executed action at,
+
+dat
+
+> model
+
+(¯θk(t), θ ⋆) ≤ Cmix Pr πt 
+
+> ¯θk(t)1
+
+, Cmix := H g 2max 
+
+εmix g2min 
+
+.
+
+Cauchy-Schwarz and equation 63 give P 
+
+> t∈Ek
+
+∥ Pr πt 
+
+> ¯θk
+
+∥1 ≤ p|Ek| · c β T . Summing across epochs yields equation 72. 
+
+D.5 Proof of the Main Regret Bound (Theorem 1) 
+
+Proof of Theorem 1. Use doubling epochs Ek = [ Tk, T k+1 ), Tk = 2 k−1, K = ⌈log 2 T ⌉, with εk-greedy exploration within each epoch. Decompose: 
+
+Reg T ≤ 2Rmax 
+
+1 − γ
+
+X
+
+> k
+
+|Ek|εk
+
+| {z }
+
+> exploration
+
++E
+
+> T
+
+X
+
+> t=1
+
+(A) t + (B) t + (C) t
+
+.
+
+Term (C). By equation 70 (choosing δopt = 1 /T ): 
+
+E X
+
+> t
+
+(C) t ≤ Rmax 
+
+√cβ T
+
+1 − γ
+
+> K
+
+X
+
+> k=1
+
+p|Ek| + O(1) = eO
+
+√T
+
+1 − γ
+
+!
+
+.
+
+Term (A). By equation 71 with εk = η/ p|Ek| (so ε2
+
+> k
+
+|Ek| = η2): 
+
+E X
+
+> t
+
+(A) t ≤ Rmax Kcov 
+
+√cβ T
+
+(1 − γ)η
+
+> K
+
+X
+
+> k=2
+
+|Ek|√k − 1 + O(1) .
+
+51 Since PKk=2 2k−1/√k − 1 = Θ( T / √log T ), this scales as Kcov 
+
+√βT · T / (η√log T (1 − γ)) .
+
+Term (B). By Theorem 2, Propositions 2, 3, 4: 
+
+E X
+
+> t
+
+(B) t ≤ 2Cpf T
+
+(1 − γ) · J− 12κpf + Cmc Vmax T
+
+(1 − γ)√N + 2γd+1 
+
+(1 − γ)2
+
+X
+
+> t
+
+Ξ¯θk(t) + O(pT β T ).
+
+The O(√T β T ) absorbs the filter mismatch via equation 72. 
+
+Optimization. The exploration cost is O(η√T R max /(1 − γ)) . Balancing it with term (A) gives 
+
+η⋆ ∼ K1/2cov T 1/4(βT / log T )1/4 and a total of eO(K1/2cov T 3/4/(1 − γ)3/2). Term (C) is eO(√T ), and the 
+
+T 3/4 rate comes from the coverage transfer for term (A). 
+
+D.6 Optimal Exploration Schedule 
+
+Set εk = η/ p|Ek| so that ε2
+
+> k
+
+|Ek| = η2 and P 
+
+> j<k
+
+ε2 
+
+> j
+
+|Ej | = ( k − 1) η2. The exploration-dependent terms scale as: Exploration cost: P 
+
+> k
+
+|Ek|εk = η P
+
+> k
+
+p|Ek| = O(η√T ),
+
+Term (A): O Kcov 
+
+pβT · T / (ηplog T (1 − γ)) ,
+
+Term (C): O p T β T /(1 − γ), independent of η. 
+
+Balancing term (A) against the exploration cost gives 
+
+η⋆ ∼
+
+ Kcov 
+
+√T β T
+
+√log T
+
+1/2
+
+, (A) + exploration = eO K1/2cov T 3/4
+
+(1 − γ)
+
+!
+
+.
+
+The total regret is: 
+
+Reg T = eO K1/2cov Rmax T 3/4
+
+(1 − γ)3/2
+
+!
+
++ Cpf Rmax T
+
+(1 − γ)2 · J− 12κpf + Cmc Rmax T
+
+(1 − γ)2√N + 2γd+1 
+
+(1 − γ)2
+
+X
+
+> t
+
+Ξ¯θk(t) . (73) The T 3/4 rate is driven by the 1/ε coverage transfer for term (A). Using optimistic model selection (˜θt := arg max θ∈C t V ⋆,B θ ) eliminates term (A) and recovers eO(√T ) from term (C) alone, at the cost of solving an optimistic planning problem [29]. A constant ε gives the same eO(T 3/4) rate after optimization and may be preferable when T is unknown. 
+
+D.7 Greedy Exploitation with Offline Coverage 
+
+The T 3/4 rate in Theorem 1 arises from the coverage transfer for term (A), which requires ε-greedy exploration to ensure the MLE concentrates at all policies. An alternative is to replace online exploration with an offline dataset that already provides coverage of the optimal policy. This mirrors the hybrid RL framework [35], where offline data with sufficient coverage enables greedy online exploitation. 
+
+Setting. Suppose the agent has access to an offline dataset Doff of N i.i.d. length-H trajectories collected by a behavior policy πb in the true POMDP (model θ⋆). The agent then runs PF-MCTQ for T online steps with greedy exploitation ( εt = 0 , no exploration). The MLE is computed from the union Doff ∪ D on .52 Definition 2 (Single-policy concentrability) . The single-policy concentrability coefficient of the behavior policy πb with respect to the optimal policy π⋆ := arg max π V π,B θ⋆ is 
+
+c⋆ 
+
+> off
+
+:= sup 
+
+> θ,θ ′∈Θ
+
+∥ Pr π⋆ 
+
+> θ,H
+
+− Pr π⋆ 
+
+> θ′,H
+
+∥1
+
+∥ Pr πb 
+
+> θ,H
+
+− Pr πb 
+
+> θ′,H
+
+∥1
+
+. (74) Under Assumption 1, if πb(a | h) ≥ αb/|A| for all a, h , Lemma 11 gives c⋆ 
+
+> off
+
+≤ Kcov /α b = 
+
+> H|A|
+> αb
+
+· g2max  
+
+> εmix g2min
+
+. Unlike the all-policy concentrability provided by ε-greedy exploration, which takes a supremum over all policies, c⋆ 
+
+> off
+
+involves only the optimal policy. 
+
+Proposition 8 (Regret with offline coverage) . Under Assumption 1, suppose the agent has N offline trajectories from πb and runs the doubling-epoch PF-MCTQ with greedy exploitation ( εk = 0 ) for T
+
+online steps. Let βT,N := β + log[ NΘ(1 /(T + N ))( T + N )/δ ]. Then w.p. ≥ 1 − δ:
+
+Reg T ≤ eO Rmax 
+
+√T
+
+1 − γ
+
+!| {z }
+
+> term (C)
+
++ c⋆ 
+
+> off
+
+Rmax 
+
+pcβ T,N 
+
+1 − γ · T
+
+√N
+
+| {z }
+
+> term (A)
+
++ computational terms , (75) 
+
+where the computational terms are the same as in Theorem 1 (particle, MC, structural). In particular, when N ≥ (c⋆ 
+
+> off
+
+)2 T , the total regret is eO √T / (1 − γ) plus computational terms, so √T regret is achieved without any online exploration. Proof. The regret decomposition equation 11 gives 
+
+Reg T = E
+
+> T
+
+X
+
+> t=1
+
+(A) t + (B) t + (C) t
+
+.
+
+There is no exploration cost since εk = 0 .
+
+MLE concentration with offline data. The MLE is fit on Doff ∪ D on . The offline trajectories are i.i.d. under (θ⋆, π b), so the episodic MLE concentration [29, Prop. B.2] applies directly to the offline portion. Combined with the blocking argument for the online portion (Proposition 6): 
+
+N Pr πb 
+
+> ¯θk
+> 21
+
++
+
+> Tk+1 −1
+
+X
+
+> t=1
+
+Pr πt 
+
+> ¯θk
+> 21
+
+≤ c β T,N ∀ k ≤ K, (76) using the shorthand ∥ Pr πθ ∥1 := ∥ Pr πθ,H − Pr πθ⋆,H ∥1.
+
+Term (C). As in the proof of Proposition 7, since ¯θk is fixed within Ek, applying Cauchy-Schwarz within each epoch to the online terms in equation 76 gives 
+
+> T
+
+X
+
+> t=1
+
+(C) t ≤ Rmax 
+
+1 − γ
+
+pcβ T,N KX
+
+> k=1
+
+p|Ek| + O(γH T ) = eO Rmax 
+
+√T
+
+1 − γ
+
+!
+
+.
+
+Term (A). We use a tighter decomposition that avoids sup π:(A) t = V ⋆,B θ⋆ (bt) − V ⋆,B 
+
+> ¯θk(t)
+
+(bt) ≤ V π⋆,B θ⋆ (bt) − V π⋆,B 
+
+> ¯θk(t)
+
+(bt) ≤ Rmax 
+
+1 − γ Pr π⋆ 
+
+> ¯θk(t)1
+
+, (77) where the first inequality uses V ⋆,B 
+
+> ¯θk(t)
+
+≥ V π⋆,B 
+
+> ¯θk(t)
+
+(optimality under ¯θk(t)) and the second is the simulation lemma (Lemma 12). 53 By Definition 2: 
+
+Pr π⋆  
+
+> ¯θk1
+
+≤ c⋆ 
+
+> off
+
+Pr πb 
+
+> ¯θk1
+
+.
+
+From the offline portion of equation 76: 
+
+Pr πb  
+
+> ¯θk1
+
+≤
+
+r c β T,N 
+
+N .
+
+Since ¯θk is frozen within Ek, this bound is constant across the epoch: 
+
+X
+
+> t∈Ek
+
+(A) t ≤ Rmax 
+
+1 − γ · c⋆
+
+> off
+
+r c β T,N 
+
+N · | Ek|.
+
+Summing across epochs: TX
+
+> t=1
+
+(A) t ≤ c⋆ 
+
+> off
+
+Rmax 
+
+1 − γ
+
+r c β T,N 
+
+N · T. 
+
+Term (B) and filter mismatch. Identical to the proof of Theorem 1. The filter mismatch P 
+
+> t
+
+dat
+
+> model
+
+is bounded by Cmix 
+
+pcβ T,N 
+
+P
+
+> k
+
+p|Ek| = eO(√T ) via equation 72 (the online diagonal bound, which does not require coverage). 
+
+Combining. 
+
+Reg T ≤ Rmax 
+
+1 − γ eO(√T )+ c⋆ 
+
+> off
+
+Rmax 
+
+pcβ T,N 
+
+1 − γ · T
+
+√N + C′ 
+
+> pf
+
+Rmax T
+
+(1 − γ)2√J + Cmc Rmax T
+
+(1 − γ)2√Nmc 
+
++ 2γd+1 
+
+(1 − γ)2
+
+X
+
+> t
+
+Ξ¯θk(t) .
+
+When N ≥ (c⋆ 
+
+> off
+
+)2 T , the second term is O(pT β T,N /(1 − γ)) = eO(√T / (1 − γ)) , and the leading rate is eO(√T ).
+
+D.8 Variance Perspective on the QMDP Bias 
+
+We provide a variance-based interpretation of the Jensen gap Ξθ defined in equation 13. We show that Ξθ is controlled by the curvature of the value function along a sufficient embedding and the posterior variance of the embedded features. 
+
+Value-relevant embedding. Let g : S → Rk be a measurable embedding, and write 
+
+mg(b) := ES∼b[g(S)] , Σg(b) := Cov S∼b
+
+ g(S).
+
+Assumption 3 (Value-relevant embedding) . There exist twice continuously differentiable maps 
+
+F aθ : Rk → R for each a ∈ A such that Q⋆,S θ (s, a ) = F aθ (g(s)) for all (s, a ) ∈ S × A , with curvature bounds 
+
+sup 
+
+> a∈A
+
+sup 
+
+> x∈conv( g(S))
+
+∇2F aθ (x) op ≤ Lθ and sup 
+
+> x∈conv( g(S))
+
+∇2Fθ(x) op ≤ Lθ,
+
+where Fθ(x) := max a F aθ (x) and V ⋆,S θ (s) = Fθ(g(s)) .
+
+The second curvature condition on Fθ = max a F aθ does not hold automatically, since Fθ is not 
+
+C2 at switching boundaries where the maximizing action changes. The bound equation 83 uses 
+
+∥∇ 2Fθ∥op ≤ Lθ only for the upper bound on eV ⋆θ (b); the lower bound on ¯V ⋆,S θ (b) uses only the per-action bounds ∥∇ 2F aθ ∥op ≤ Lθ.We first state an auxiliary lemma used in the proof of Proposition 9. 54 Lemma 13 (Mean-belief value approximation) . Under Assumption 3, for every belief b ∈ ∆( S),
+
+¯V ⋆,S θ (b) − Fθ(mg(b)) ≤ Lθ
+
+2 tr  Σg(b). (78) 
+
+Proof. By Jensen’s inequality applied to the pointwise maximum, 
+
+¯V ⋆,S θ (b) = max 
+
+> a∈A
+
+Z
+
+> S
+
+Q⋆,S θ (s, a ) b(d s) ≤
+
+Z
+
+> S
+
+V ⋆,S θ (s) b(d s).
+
+By Assumption 3, V ⋆,S θ (s) = Fθ(g(s)) , so 
+
+¯V ⋆,S θ (b) ≤
+
+Z
+
+> S
+
+Fθ(g(s)) b(d s). (79) Expand Fθ in a second-order Taylor expansion around mg(b). For each s, there exists ξs ∈ conv( g(S)) 
+
+on the segment between mg(b) and g(s) such that 
+
+Fθ(g(s)) = Fθ(mg(b)) + ∇Fθ(mg(b)) ⊤ g(s) − mg(b) + 12
+
+ g(s) − mg(b)⊤∇2Fθ(ξs)  g(s) − mg(b).
+
+Integrating against b and using R 
+
+> S
+
+(g(s) − mg(b)) b(d s) = 0 ,
+
+Z
+
+> S
+
+Fθ(g(s)) b(d s) − Fθ(mg(b)) = 12
+
+Z
+
+> S
+
+ g(s) − mg(b)⊤∇2Fθ(ξs)  g(s) − mg(b) b(d s). (80) Since ∥∇ 2Fθ(ξs)∥op ≤ Lθ, each integrand is bounded in absolute value by Lθ ∥g(s) − mg(b)∥2, so equation 80 lies in [− Lθ 
+
+> 2
+
+tr (Σ g(b)) , Lθ 
+
+> 2
+
+tr (Σ g(b))] . Combined with equation 79, we obtain the upper bound ¯V ⋆,S θ (b) ≤ Fθ(mg(b)) + Lθ 
+
+> 2
+
+tr  Σg(b). (81) For the lower bound, fix any a ∈ A . By Assumption 3, Q⋆,S θ (s, a ) = F aθ (g(s)) with ∥∇ 2F aθ ∥op ≤ Lθ.The same Taylor expansion gives 
+
+Z
+
+F aθ (g(s)) b(d s) ≥ F aθ (mg(b)) − Lθ 
+
+> 2
+
+tr (Σ g(b)) .
+
+Taking max a:
+
+¯V ⋆,S θ (b) = max 
+
+> a
+
+Z
+
+F aθ (g(s)) b(d s) ≥ max  
+
+> a
+
+F aθ (mg(b)) − Lθ 
+
+> 2
+
+tr (Σ g(b)) = Fθ(mg(b)) − Lθ 
+
+> 2
+
+tr (Σ g(b)) . (82) 
+
+Remark 5. The upper half equation 81 follows from Jensen’s inequality alone and is used to verify the hypothesis of Proposition 9 in concrete settings. 
+
+Proposition 9 (Curvature bound on Ξθ). Under Assumption 3, for every belief b ∈ ∆( S),
+
+Ξθ(b) := eV ⋆θ (b) − ¯V ⋆,S θ (b) ≤ Lθ tr  Σg(b). (83) 
+
+In particular, Ξθ = sup b Ξθ(b) ≤ Lθ sup b tr (Σ g(b)) .Proof. We bound Ξθ(b) = eV ⋆θ (b) − ¯V ⋆,S θ (b) for each belief b.
+
+Upper bound on eV ⋆θ (b). By Assumption 3, V ⋆,S θ (s) = Fθ(g(s)) where Fθ = max a F aθ has curvature 
+
+≤ Lθ. Applying the standard Taylor upper bound (as in Lemma 13) to Fθ:
+
+eV ⋆θ (b) = 
+
+Z
+
+Fθ(g(s)) b(d s) ≤ Fθ(mg(b)) + Lθ
+
+2 tr (Σ g(b)) . (84) 55 Since Fθ(mg(b)) = max a F aθ (mg(b)) , this gives eV ⋆θ (b) ≤ max a F aθ (mg(b)) + Lθ 
+
+> 2
+
+tr (Σ g(b)) .
+
+Lower bound on ¯V ⋆,S θ (b). By Assumption 3, Q⋆,S θ (s, a ) = F aθ (g(s)) for each a. For any fixed a,
+
+Z
+
+Q⋆,S θ (s, a ) b(d s) = 
+
+Z
+
+F aθ (g(s)) b(d s) ≥ F aθ (mg(b)) − Lθ
+
+2 tr (Σ g(b)) ,
+
+where the inequality is the Taylor lower bound (each F aθ has curvature ≤ Lθ). Taking the maximum over a:
+
+¯V ⋆,S θ (b) = max 
+
+> a
+
+Z
+
+F aθ (g(s)) b(d s) ≥ max 
+
+> a
+
+h
+
+F aθ (mg(b)) − Lθ
+
+2 tr (Σ g(b)) 
+
+i
+
+= max  
+
+> a
+
+F aθ (mg(b)) − Lθ
+
+2 tr (Σ g(b)) .
+
+Combining. 
+
+Ξθ(b) = eV ⋆θ (b)− ¯V ⋆,S θ (b) ≤ max  
+
+> a
+
+F aθ (mg(b))+ Lθ
+
+2 tr (Σ g(b)) −max  
+
+> a
+
+F aθ (mg(b)) − Lθ
+
+2 tr (Σ g(b))  = Lθ tr (Σ g(b)) .
+
+D.9 Case Studies 
+
+Case 1: Discounted partially observed LQG. Consider linear-Gaussian dynamics St+1 =ΦSt + Γ At + Wt, Ot = HS t + ηt, with Wt ∼ N (0 , ΣW ), ηt ∼ N (0 , Ση) i.i.d., quadratic reward 
+
+r(s, a ) = −(s⊤Qcs + a⊤Ra ), Qc ⪰ 0, R ≻ 0. Assume (Φ , Γ) is stabilizable and (Φ , H ) is detectable. For LQG, we obtain the closed-form expression Ξθ = tr  (M − P ) ¯Σ, where P solve the Riccati equation, M = Qc + γΦ⊤P Φ, and ¯Σ is the steady-state Kalman predictive covariance. When Γ = 0 ,we have M = P and Ξθ = 0 . Note that for LQG, the QMDP policy is always optimal. 
+
+Corollary 3 (LQG) . Let M := Qc + γΦ⊤P Φ where P ⪰ 0 solves the discounted algebraic Riccati equation, and let ¯Σpost be the steady-state Kalman posterior (filtered) covariance satisfying ¯Σpost =¯Σ− ¯ΣH⊤(H ¯ΣH⊤ +Σ η)−1H ¯Σ with ¯Σ := Φ ¯Σpost Φ⊤ +Σ W the steady-state predictive covariance. Then 
+
+Ξθ = tr  (M − P ) ¯Σ and the QMDP policy is belief-MDP optimal: sup b
+
+V ⋆,B θ (b) − V πQ,B θ (b) = 0 .
+
+The QMDP action equals the certainty-equivalent LQR control a = Km , which is belief-MDP optimal by the separation principle. When Γ = 0 , the DARE gives M = P , so Ξθ = 0 and the QMDP value and the belief-MDP value coincide. When Γ̸ = 0 , M − P ⪰ 0 is generically nonzero, so 
+
+Ξθ > 0. In that case the QMDP policy remains optimal, but the QMDP value underestimates the belief-MDP value by tr (( M − P ) ¯Σ) .
+
+Remark. LQG has unbounded reward and Vmax = ∞, so it lies outside the standing assumption 
+
+|r(s, a )| ≤ Rmax of Theorem 1. The corollary illustrates the structural analysis (Jensen gap and policy optimality) but does not directly instantiate the regret bound. 
+
+Case 2: Identifiable contextual MDP. Consider an episodic contextual MDP [24] with a fixed latent context C ∈ C sampled once per episode and Markov dynamics St+1 ∼ Pc(· | St, A t),
+
+rt = rc(St, A t) given C = c. Assume (i) there exists an estimator bCt = bCt(Ht) with Pr( bCt̸ = C) ≤ ρt,
+
+ρt ↓ 0; and (ii) sup c∈C ∥V ⋆,S c ∥∞ ≤ Vmax . Then Ξθ,t ≤ 2Vmax ρt and sup b
+
+V ⋆,B θ (b) − V πQ,B θ (b) ≤
+
+4γ V max ρt/(1 − γ)2. As the context becomes identifiable ( ρt → 0), both the structural residual and the QMDP policy suboptimality vanish. For the structural bias term P 
+
+> t
+
+Ξt ≤ 2Vmax 
+
+P 
+
+> t
+
+ρt to be 
+
+o(√T ), we need PTt=1 ρt = o(√T ). This result also suggests a schedule for the planning depth d that decays with t, reflecting diminishing structural bias. 56 Proofs. The fully observed value function is V ⋆,S θ (s) = −s⊤P s − c0, where P ⪰ 0 solves the discounted algebraic Riccati equation (DARE). The constant c0 is determined by substituting into the Bellman equation: 
+
+−s⊤P s − c0 = max  
+
+> a
+
+{r(s, a ) + γE[V ⋆,S (s′)] },
+
+which gives c0 = γ[tr (P ΣW ) + c0] from the noise covariance term, yielding c0 = γtr (P ΣW )/(1 − γ).Hence 
+
+Q⋆,S θ (s, a ) = −(s⊤Qcs + a⊤Ra ) − γ(Φ s + Γ a)⊤P (Φ s + Γ a) − γtr (P ΣW ) − γc 0.
+
+For belief b = N (m, Σ) ,
+
+Z
+
+Q⋆,S θ (s, a ) b(d s) = −m⊤Qcm − a⊤Ra − γ(Φ m + Γ a)⊤P (Φ m + Γ a) − tr (M Σ) − γtr (P ΣW ) − γc 0,
+
+where M := Qc + γΦ⊤P Φ. All Σ-dependent terms are independent of a, so the QMDP action is 
+
+arg max 
+
+> a
+
+Z
+
+Q⋆,S θ (s, a ) b(d s) = arg max 
+
+> a
+
+−a⊤Ra − γ(Φ m + Γ a)⊤P (Φ m + Γ a) = Km, 
+
+with 
+
+K = −γ(R + γΓ⊤P Γ) −1Γ⊤P Φ.
+
+By the separation principle for discounted LQG (stabilizable/detectable), the belief-MDP optimal action is also Km , so QMDP and belief-optimal policies coincide. This gives part 2. 
+
+Structural residual. We compute Ξθ(b) = eV ⋆θ (b) − ¯V ⋆,S θ (b) directly. From the expansion above, 
+
+¯V ⋆,S θ (b) = −m⊤P m − tr (M Σ) − c0.
+
+Meanwhile, 
+
+eV ⋆θ (b) = 
+
+Z
+
+V ⋆,S θ (s) b(d s) = 
+
+Z
+
+(−s⊤P s − c0) b(d s) = −m⊤P m − tr (P Σ) − c0.
+
+Therefore Ξθ(b) = tr (( M − P )Σ) . Since 
+
+M − P = γ2Φ⊤P Γ( R + γΓ⊤P Γ) −1Γ⊤P Φ ⪰ 0,
+
+this is nonnegative. Taking the supremum over beliefs generated by the stationary Kalman filter yields 
+
+Ξθ ≤ tr (( M − P ) ¯Σ) ,
+
+where ¯Σ is the steady-state Kalman predictive covariance. When Γ = 0 , the DARE gives M = P , so Ξθ = 0 .
+
+Structural residual (part 1). Let μt(·) := Pr( C = · | Ht) be the posterior on context and c⋆ the true context. By the definition of the Bayes classifier 
+
+ˆCMAP  
+
+> t
+
+= arg max  
+
+> c
+
+μt(c),
+
+we have that 
+
+E[1 − max  
+
+> c
+
+μt(c)] ≤ Pr( bCt̸ = C) ≤ ρt.
+
+57 For any bounded f : C → [−Vmax , V max ], let cMAP  
+
+> t
+
+= arg max c μt(c). Then 
+
+X
+
+> c
+
+μt(c)f (c) − f (cMAP  
+
+> t
+
+) ≤ 2Vmax (1 − max  
+
+> c
+
+μt(c)) ,
+
+since the total posterior mass on contexts other than cMAP  
+
+> t
+
+is 1 − max c μt(c). The structural residual is bounded directly (without the triangle inequality): 
+
+Ξθ,t (b) = X
+
+> c
+
+μt(c) max  
+
+> a
+
+Q⋆,S c (s, a ) − max 
+
+> a
+
+X
+
+> c
+
+μt(c)Q⋆,S c (s, a )
+
+≤ X
+
+> c
+
+μt(c) max  
+
+> a
+
+Q⋆,S c (s, a ) − X
+
+> c
+
+μt(c)Q⋆,S c (s, a ⋆cMAP 
+
+> t
+
+)= X
+
+> c̸=cMAP
+> t
+
+μt(c)max  
+
+> a
+
+Q⋆,S c (s, a ) − Q⋆,S c (s, a ⋆cMAP 
+
+> t
+
+)
+
+≤ X
+
+> c̸=cMAP
+> t
+
+μt(c) · 2Vmax = 2 Vmax (1 − max  
+
+> c
+
+μt(c)) ,
+
+where a⋆cMAP 
+
+> t
+
+:= arg max a Q⋆,S cMAP 
+
+> t
+
+(s, a ) and the first inequality uses 
+
+max 
+
+> a
+
+X
+
+> c
+
+μt(c)Qc(s, a ) ≥ X
+
+> c
+
+μt(c)Qc(s, a ⋆cMAP 
+
+> t
+
+),
+
+Taking expectations yields 
+
+E[Ξ θ,t ] ≤ 2Vmax E[1 − max  
+
+> c
+
+μt(c)] ≤ 2Vmax ρt.
+
+Policy suboptimality (part 2). From Proposition 2, 
+
+∥Q⋆,B θ − Qθ, 0∥∞ ≤ γ
+
+1 − γ Ξθ,t .
+
+For any belief b, let 
+
+a⋆ = arg max  
+
+> a
+
+Q⋆,B θ (b, a ), aQ = πQ(b).
+
+Then 
+
+Q⋆,B θ (b, a ⋆) − Q⋆,B θ (b, a Q) ≤ 2∥Q⋆,B θ − Qθ, 0∥∞ ≤ 2γ
+
+1 − γ Ξθ,t ,
+
+where the first inequality uses 
+
+aQ = arg max  
+
+> a
+
+Qθ, 0(b, a ).
+
+By standard policy-loss arguments (telescoping the per-step suboptimality), 
+
+sup 
+
+> b
+
+[V ⋆,B θ (b) − V πQ,B θ (b)] ≤ 11 − γ · 2γ
+
+1 − γ Ξθ,t ≤ 4γV max 
+
+(1 − γ)2 ρt.
+
+# E Empirical Validation of the Regret Decomposition 
+
+Instance. The mixing Tiger of Section 5 is a variant of Tiger [19] that we constructed for diagnostic purposes, and it is not a standard benchmark. It has two latent states, three actions (listen, open-left, open-right), and two observations that report the state correctly with probability 0.85 under every action. Listening mixes the state, P (· | s, listen ) = 0 .95 δs + 0 .05 Unif , opening a door resets it uniformly, and the standard Tiger rewards (−1, +10 , −100) are mapped affinely to (0 .9, 1, 0) . Relative to the uniform measure every transition density lies in [0 .05 , 1.95] , so Assumption 1 holds with 
+
+εmix = 0 .05 , gmin = 0 .15 , and gmax = 0 .85 . The rewards lie in [0 , 1] , the discount factor is γ = 0 .8,and Ξθ = 0 .10 .58 Isolating each term. Except in the estimation run, the planner and filter use the true model, so each experiment contains a single source of error. Belief-MDP quantities are computed by value iteration on a grid of 4001 belief points with linear interpolation. Particle filtering: a bootstrap SIR filter with J particles tracks the belief for 40 listening steps, and the error is the absolute error of its estimate of Pr( S = 1) against the exact filter, averaged over steps ( 2000 replications). Monte Carlo: 
+
+the root value Qθ, 3(b, a ) is estimated from N sampled first transitions, r(s, a ) + γ ¯V ⋆,S θ, 2 (τ (b, a, o )) ,with the depth-2 continuation computed exactly and fixed before sampling, so the N returns are conditionally i.i.d. The error is the root-mean-squared error over five beliefs and all three actions, computed from 2000 replications. This design isolates the N −1/2 fluctuation of Proposition 3. It does not include the pooling of leaf particles across simulations or the DP-backup bias of the full estimator, for which that proposition does not require independent returns. Structural: ∥T dθ ¯V ⋆,S θ − V ⋆,B θ ∥∞ is computed exactly for d = 0 , . . . , 12 and compared with the envelope γd+1 Ξθ/(1 − γ) of Proposition 2. Rates are least-squares slopes of the log mean error against the log budget, and the structural contraction is the fitted per-level ratio. Figure 10 shows all three terms. The budgeting rule of Section 5 reads off, for each threshold, the smallest tested J, N , and d whose isolated error falls below it. 10 1 10 2                  
+
+> Particles J
+> 10 1
+> Mean | b b|
+> fitted slope -0.59
+> (a) Filtering term
+> Bootstrap PF
+> J1/2
+> 10 110 2
+> Independent returns N
+> 10 1
+> Root-Q RMSE
+> fitted slope -0.50
+> (b) Monte Carlo term
+> Frozen-leaf MC
+> N1/2
+> 0246810 12
+> Belief lookahead depth d
+> 10 1
+> Vd V *
+> (c) QMDP structural term
+> Exact structural error
+> d+ 1 /(1 )
+
+Figure 10: The three computational terms on the mixing Tiger. (a) Filtering error versus particles 
+
+J (fitted slope −0.59 ). (b) Root-Q RMSE of the frozen-leaf estimator versus returns N (fitted slope 
+
+−0.50 ). (c) Exact structural error versus belief lookahead depth d. The error contracts by a factor 
+
+0.80 = γ per level and stays below γd+1 Ξθ/(1 − γ). Means over 2000 replications in (a, b). 
+
+Estimation term. Here the model is learned online by maximum likelihood. In Figure 11(a), the optimization error εopt decays as n−0.59 and the model’s total-variation error as n−0.55 in the number of model-estimation samples n. In panel (b), the cumulative estimation term P 
+
+> t≤T
+
+εopt (t)
+
+grows as T 0.57 , close to √T . With the known model, the same pipeline accumulates about 1.3 · 10 −4
+
+per round. 
+
+Structural term across instances. In Figure 11(c), the structural error of 32 instances stays below the envelope γd+1 Ξ/(1 − γ) and contracts by a factor of about γ per level, with fitted ratios of 0.798 –0.800 .59 10 2 10 3 10 4             
+
+> Model-estimation samples nt
+> 10 −2
+> 10 −1
+> 10 0
+> Error
+> fitted slopes -0.59 ( εopt ), -0.55 (TV)
+> (a) Estimation error
+> εopt
+> model TV error
+> n−1/2
+> 10 110 210 3
+> Rounds T
+> 10 0
+> 10 1
+> Cumulative estimation term  fi tted slope 0.57
+> (b) Estimation term in the regret
+> Σtεopt (t)
+> T1/2
+> 02468
+> Belief lookahead depth d
+> 10 −1
+> 3 × 10 −2
+> 4 × 10 −2
+> 6 × 10 −2
+> 2 × 10 −1
+> 3 × 10 −1
+> 4 × 10 −1
+> ‖Vd − V * ‖∞
+> per-level contraction 0.798 –0.800
+> (c) Structural term across instances
+> 32 instances
+> γd+ 1 Ξ/(1 −γ)
+
+Figure 11: Estimation and structural terms. (a) εopt and the model’s total-variation error versus model-estimation samples nt, with an n−1/2 reference (fitted slopes −0.59 and −0.55 ). (b) Cumulative estimation term P
+
+t εopt (t) versus rounds T , with a T 1/2 reference (fitted slope 0.57 ). (c) Structural error ∥ ¯Vd − V ⋆∥∞ of 32 instances versus belief lookahead depth d, below the envelope γd+1 Ξ/(1 − γ)
+
+(per-level contraction 0.798 –0.800 ). 
+
+# F Assumption Stress Tests 
+
+The two diagnostics below are intended to illustrate the mechanisms behind Assumption 1 and the structural term, and are not meant as benchmarks. Figure 12 plots both. 
+
+QMDP information bias (active sensing). In this Light–Dark-type problem, information can be obtained only by giving up immediate reward. Two latent contexts persist with mixing rate 
+
+0.02 . Two exploit actions give reward 1 when they match the context and reveal nothing, while a sense action gives no reward and reveals the context with accuracy q. The discount factor is 
+
+γ = 0 .9. Table 9 reports the normalized return (1 − γ)V πd,B (b0) at the uniform belief of the greedy depth-d policy, computed exactly on the belief grid. Because sensing has no immediate reward and the QMDP leaf values the state as if it will be revealed, depths 0 and 1 never sense and attain a normalized return of 0.5. Depth 3 comes within 0.006 of the optimum for q ≥ 0.75 , and depth 2
+
+does so for q ≥ 0.85 . At q = 0 .65 , even depth 3 does not sense. Table 9: Active sensing: normalized return of the depth-d policy (exact computation). 
+
+Sensing accuracy q QMDP ( d = 0 ) d = 1 d = 2 d = 3 Optimum 0.55 0.500 0.500 0.500 0.500 0.500 0.65 0.500 0.500 0.500 0.500 0.565 0.75 0.500 0.500 0.500 0.641 0.643 0.85 0.500 0.500 0.717 0.717 0.722 0.95 0.500 0.500 0.793 0.794 0.798 
+
+Bounded-density violation (item search). An item lies in one of K = 32 boxes under a uniform prior, and the observation reveals the box exactly, so gmin = 0 . A particle set of size J drawn from the prior has all weights zero whenever no particle lies in the revealed box, which happens with probability (1 − 1/K )J . In that case the particle policy chooses the wrong box, so this is also the decision-failure probability. Table 10 compares the empirical collapse rate over 10 ,000 replications 60 with this formula. The effective sample size does not detect this failure. At gmin = 0 the mean ESS /J is about 1/K for every J. With a small floor gmin = 10 −6, a particle set that misses the revealed box has equal weights and ESS /J = 1 , so the mean ESS /J is 0.81 at J = 8 , even though 
+
+77% of the runs miss. Table 10: Item search with K = 32 and gmin = 0 : weight collapse versus particles J.
+
+J 8 16 32 64 128 Empirical collapse rate .773 .602 .360 .128 .017 Analytic (1 − 1/K )J .776 .602 .362 .131 .017 Mean ESS /J .032 .031 .031 .032 .031 0.6 0.7 0.8 0.9                 
+
+> Sensing accuracy
+> 0.50 0.55 0.60 0.65 0.70 0.75 0.80
+> Normalized return (1  )V
+> (a) Information-gathering bias
+> depth 0 depth 1 depth 2 depth 3 optimal 222324252627
+> Number of boxes K
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> One-step filtering TV error
+> (b) Exact-observation stress test
+> J= 16
+> J= 32
+> J= 64 2324252627
+> Particles J
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> Collapse / decision-failure probability  (c) Exact observations ( gmin = 0)
+> simulation (1 1/ K)J
+
+Figure 12: Stress tests illustrating the two mechanisms. (a) In active sensing, depths 0–1 never sense, while depths 2–3 approach the belief-optimal return when sensing is informative. (b) With exact observations over K boxes, the one-step filtering error grows when the particle set is too small to cover the observed box. (c) At gmin = 0 , weight collapse matches (1 − 1/K )J (K = 32 ), which is also the decision-failure probability. Means over 10 ,000 replications in (b, c). 
+
+# G Planner Comparison at Depth d > 0
+
+Here we run the analyzed MCTQ at d > 0 on two finite POMDPs and compare it with POMCP [34] and a sparse particle-belief tree (Sparse-PFT) [26]. 
+
+Setup. The environments are the active-sensing problem of Appendix F with γ = 0 .9 and the mixing Tiger of Appendix E. The agent tracks the exact belief, and all planners share the same 
+
+256 -particle root sample, with common random numbers. We report the mean ± s.e. over 3 seeds of 
+
+40 episodes each. Calls per decision are counted in generative-model steps, of which MCTQ uses 
+
+|A| N d .
+
+Results. Depth roughly determines the value, as predicted by Proposition 2. At a fixed budget, performance is U-shaped in d. On the mixing Tiger, QMDP achieves the belief optimum (both 
+
+4.586 ), with every planner landing within 0.06 of it. 61 Table 11: Active sensing ( γ = 0 .9): return, mean ± s.e. over three seeds of 40 episodes. The belief optimum scores 7.45 ± 0.20 and the exact QMDP policy 5.54 ± 0.32 .                                              
+
+> Planner dCalls per decision Return MCTQ, uniform 005.04 ±0.11
+> MCTQ, uniform ( =UCB1) 1768 5.06 ±0.13
+> POMCP –768 / 3072 5.47 /5.52
+> MCTQ, uniform 21536 6.37 ±0.27
+> MCTQ, UCB1 21536 6.96 ±0.11
+> Sparse-PFT, J= 64 22688 7.18 ±0.08
+> MCTQ, uniform 26144 7.30 ±0.12
+> MCTQ, uniform / UCB1 32304 5.69 /6.74
+
+# H Ant: Correction Screen, Full-Horizon Runs, and Runtime 
+
+Correction screen. Unlike in the submitted version, Ant training is no longer stopped early, and Figure 3 shows the full Ant horizon. Training the released configuration over the full horizon revealed a systematic late collapse in both observation ablations. We report this result here and examined three choices in the released Ant configuration: it freezes the model after its random-data warm start, although the main text describes online updates; it uses AdamW weight decay 0.1; and it performs one policy update per environment step. At learning rate 3 · 10 −4, weight decay alone multiplies the parameters by about 0.22 over 50 ,000 optimizer steps. The controls in Table 12 show that the first two corrections are not sufficient and that the collapse is prevented by reducing the update-to-data ratio (UTD). We screened corrections on position-hidden Ant (seed 0) using a fixed 
+
+15 k– 20 k selection window (Figure 13). Neither online updates nor corrected decay alone prevents collapse. We selected UTD 1/10 before launching the final multi-seed comparison. Table 5 lists the corrected configuration. Table 12: Correction screen on position-hidden Ant (seed 0): mean 10 -episode rolling return over 
+
+15 k– 20 k steps and at 20 .1k steps.                                  
+
+> Variant Online model Decay UTD 15 k– 20 k mean At 20 .1kSubmitted No 0.11−279 −563
+> Online model only Yes 0.11−378 −834
+> Online model + corrected decay Yes 10 −41−259 −505
+> Corrected + UTD 1/4Yes 10 −41/4902 881
+> Corrected + UTD 1/10 Yes 10 −41/10 980 975
+
+Full horizon. All six corrected runs reach 49 ,200 steps. In the prespecified 40 k– 49 .2k late window, corrected PF-MCTQ scores 893 ± 177 with position hidden and 822 ± 268 with velocity hidden (mean and 95% Student-t interval over three seeds). The submitted configuration, run with two seeds, scores −396 and −518 , respectively. Independent final 10 -episode evaluations are 862 ± 178 
+
+and 767 ± 323 for the corrected method, compared with means of −751 and −625 for the submitted configuration. Table 13 also reports the five-seed recurrent-SAC and GRU-PPO comparisons, and Table 14 gives PF-MCTQ at fixed checkpoints. All reported values are measured, and no curve or table entry is extrapolated or forward-filled. The submitted configuration is not asymptotically stable, while the targeted update-ratio correction prevents catastrophic collapse across the tested seeds. 62 0 2500 5000 7500 10000 12500 15000 17500 20000 Environment steps 1000 
+
+> 500
+> 0500 1000 10-episode rolling return
+
+Ant, position hidden (seed 0) 
+
+> Submitted config Online model Online model + corrected decay Corrected + UTD 1/4 Corrected + UTD 1/10
+
+Figure 13: Correction screen on position-hidden Ant (seed 0). “Corrected” denotes online model updates with weight decay 10 −4; UTD 1/k means one policy update per k environment steps. The shaded region is the 15 k– 20 k selection window, and the dotted line marks the original 3k cutoff. Table 13: Ant return over the prespecified 40 k– 49 .2k window. Values with ± are means and 95% Student-t intervals. For the submitted configuration’s two complete seeds, parentheses show both seed values. Recurrent baselines have five seeds. 
+
+Hidden variable Method Seeds Late return Final evaluation Position PF-MCTQ, corrected 3 893 ± 177 862 ± 178 
+
+Position PF-MCTQ, submitted 2 −396 (−506 , −287 ) −751 (−1055 , −448 )Position Recurrent SAC 5 −123 ± 47 not recorded Position GRU-PPO 5 599 ± 147 not recorded Velocity PF-MCTQ, corrected 3 822 ± 268 767 ± 323 
+
+Velocity PF-MCTQ, submitted 2 −518 (−513 , −522 ) −625 (−511 , −739 )Velocity Recurrent SAC 5 593 ± 154 not recorded Velocity GRU-PPO 5 669 ± 37 not recorded 
+
+The checkpoint values below are the logged 10 -episode rolling training return at epoch ends, so every value is measured. 
+
+Runtime. Table 15 reports wall-clock cost on one RTX 3090 with position hidden. Training time is end-to-end (data collection and all updates, excluding the final evaluation). PF-MCTQ rates come from full 49 .2k-step runs and the baseline rates from 3k-step runs with the same 300 -step epochs. Initialization is the one-time cost before the first environment step, and for PF-MCTQ it is dominated by the 2000 model warm-start updates. 63 Table 14: Ant checkpoints. Corrected: mean and 95% Student-t half-width over three seeds (t2,0.975 = 4 .30 ). Submitted: mean of the two complete seeds, with both seed values in parentheses. The last two rows are the mean over the prespecified 40 k– 49 .2k window and a final 10 -episode evaluation. 
+
+Corrected (3 seeds) Submitted (2 seeds) Env. steps Pos. hidden Vel. hidden Pos. hidden Vel. hidden 3k 825 ± 146 882 ± 60 908 (945 , 871 ) 897 (925 , 870 )10.2k 931 ± 61 934 ± 11 600 (659 , 541 ) 435 (606 , 264 )20.1k 959 ± 36 962 ± 15 −911 (−563 , −1260 ) −620 (−697 , −542 )49.2k 868 ± 249 816 ± 241 −448 (−678 , −217 ) −648 (−708 , −589 )40k–49.2k mean 893 ± 177 822 ± 268 −396 (−506 , −287 ) −518 (−513 , −522 )Final evaluation 862 ± 178 767 ± 323 −751 (−1055 , −448 ) −625 (−511 , −739 )
+
+Table 15: Wall-clock cost on Ant with the released code (position hidden, one RTX 3090). 
+
+Method Initialization (s) Training s / 1k steps Steps / s PF-MCTQ (corrected) 86.3 15.8 63.4 PF-MCTQ (submitted cfg.) 92.9 41.7 24.0 Recurrent SAC 21.0 53.6 18.6 GRU-PPO 2.8 5.5 181.8 
+
+64

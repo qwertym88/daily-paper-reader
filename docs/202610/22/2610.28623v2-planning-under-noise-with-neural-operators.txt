@@ -1,0 +1,1379 @@
+Title: Planning under Noise with Neural Operators
+
+URL Source: https://arxiv.org/pdf/2610.28623v2
+
+Published Time: Thu, 22 Oct 2026 00:39:43 GMT
+
+Number of Pages: 28
+
+Markdown Content:
+# Planning under Noise with Neural Operators 
+
+## Michael Chen 1,* , Hong Chul Nam 2,* , Xi Deng 1,* , Anima Anandkumar 1
+
+> 1
+
+Computing and Mathematical Sciences, California Institute of Technology 
+
+> 2
+
+Center for Data Science, New York University 
+
+> *
+
+Equal contribution 
+
+Abstract 
+
+Planning under uncertain control execution noise requires reliable feedback policies across diverse en-vironments. We introduce Planning Under Noise (PUN) , a neural operator that learns noise-aware value fields for planning in unseen geometries. Building on an established screened-Poisson formulation of stochastic optimal control, we address two challenges: specifying boundary conditions that support navigation across varying geometries and efficiently computing fields with reliable gradients. Zero-Dirichlet obstacle boundaries terminate sampled paths at walls, weakening the goal signal along long routes and making it harder to estimate reliably. We instead impose reflecting Neumann conditions on obstacles and a Dirichlet condition at the goal, allowing sampled paths to continue exploring free space until they reach the target. To solve the resulting PDE without a configuration-space mesh, we extend a Monte Carlo (MC) solver, Walk on Stars (WoSt) , to higher dimensions. However, local MC fluctuations can reverse estimated gradient directions and cause planning failures, making direct planning require costly sampling. PUN amortizes this computation by learning geometry-to-field mappings from noisy, partially converged Monte Carlo labels, avoiding expensive convergence for every training example. At inference, test-time scaling uses bounded local search guided by the predicted global field. We evaluate PUN on planning tasks across dimensions. Across four noise levels, PUN matches or outperforms all compared planners, achieving 95–100% success on the 4D replanning benchmark while maintaining the lowest runtime. At the highest tested noise level in 4D ( λ = 4), PUN achieves 10.7–60.6% relative gains in success rate over other methods while running 3.29–32.15 × faster. 
+
+# 1 Introduction 
+
+Planning (Latombe, 1991) is one of the most fundamental problems in robotics. Given a robot’s configuration space (LaValle, 2006), planning computes a path from the current configuration to a goal that is optimal under a given cost function. Real robots do not execute a commanded motion exactly (Thrun, 2002). These errors accumulate along a motion, so a route planned with a few centimetres of clearance can be executed into a wall. Sampling-based planners such as PRM (Kavraki et al., 1996) and RRT (LaValle & Kuffner, 2001), and graph search such as A ⋆ (Hart et al., 1968), plan for a nominal system that executes commands exactly and leave the noise to a tracking controller. Sampling-based methods such as MPPI (Williams et al., 2017a) and PI 2-CMA (Stulp & Sigaud, 2012) optimize control sequences or policy parameters using sampled trajectory costs. Optimal feedback under execution noise can be derived from a value function, which gives the minimum expected cost of reaching the goal from each configuration and satisfies the nonlinear Hamilton–Jacobi–Bellman (HJB) equation (Fleming & Soner, 2006). Solving this equation on a grid scales exponentially with the dimension of the configuration space (Bellman, 1957; Han et al., 2018). While the problem can be converted into a linear screened Poisson equation (Theodorou et al., 2010) under control–noise matching (Assumption 1), a central difficulty in Poisson-based planning is specifying boundary conditions that produce a reliable value field across varying geometries. Conventional mesh-based numerical methods can solve the screened Poisson equation efficiently in two and three dimensions. However, a robot with d degrees of freedom (DoF) induces a d-dimensional configuration space, making volumetric discretizations and numerical PDE solution increasingly expensive. Planning must also accommodate complex and previously unseen obstacle geometries, for which constructing a new mesh and solving the PDE from scratch can be costly. Mesh-free Monte Carlo methods (Muller, 1956; Sawhney & Crane, 2020; Sawhney et al., 2023; Jambon et al., 2026) support PDE solution on complex geometries, motivating their use for planning in higher-dimensional configuration spaces. Among these, Walk-on-Spheres (WoS) (Muller, 1956) estimates the solution at a point by jumping repeatedly to a uniformly sampled point on the largest ball fitting in free space, until it reaches a boundary of known value, which requires every reachable boundary to be Dirichlet. Walk-on-Stars (WoSt) (Sawhney et al., 2023) accommodates reflecting obstacles by replacing that ball with a star-shaped region that may contain part of the obstacle boundary, keeping every boundary point visible from the center so that one ray continues the walk 1arXiv:2610.28623v2 [cs.LG] 21 Oct 2026 256 512 1024 2048 4096 Grid resolution 025 50 75 100 Success rate (%)                
+
+> FNO U-NO U-Net GINO LocalNO DISCO UPT Transolver
+> 10 100 1,000 Mean runtime (ms/start) PUN RRT Dijkstra A* PI 2-CMA MPPI 10.8 32.8 40.2 43.6 362.4 387.1 00.5 1
+> ψ
+> (a) Replanning runtime (b) Resolution transfer (c) Dirichlet (d) Mixed boundary
+> Start Goal Absorbed 1
+> Dirichlet Neumann
+> 00.25 0.5 0.75 1
+> ψ
+> Start Goal Absorbed
+> Dirichlet Neumann
+> 00.25 0.5 0.75 1
+> ψ
+> Start Goal Absorbed
+> Neumann
+> 00.25 0.5 0.75 1
+> ψ
+> Absorbed
+
+Fig. 1: (a) Fast replanning. PUN has the lowest mean runtime on unseen 4D maps: 10.8 ms/start, compared with 32.8–387.1 ms/start for the baselines. Runtimes are averaged equally over the four execution-noise levels in Table 5 and plotted on a logarithmic axis. (b) Resolution transfer. FNO maintains over 90% local-search success across all five resolutions without retraining, reaching 92.50% at 4096 × 4096 after training at 256 × 256. Missing points indicate out-of-memory failures. (c, d) Continued goal seeking. In the illustrated geometry, the solution induced by the Dirichlet boundary cannot propagate goal information further since most trajectories are absorbed by obstacles. Consequently, it is more difficult for planners to find the target than with the mixed boundary condition. 
+
+instead of branching at each contact. The screened kernels for Walk-on-Stars have been derived only in two and three dimensions (Sawhney et al., 2023). Moreover, directly planning with Monte Carlo estimates is unreliable: trajectories depend on local value gradients, and even modest estimator noise can corrupt or reverse the estimated direction, leading to planning failure. Neural operators (Kovachki et al., 2023) can amortize expensive PDE solves by learning mappings from input geometries directly to solution fields. Moreover, prior work has shown that fully converged labels are unnecessary when training from Monte Carlo simulations: neural operators can recover accurate predictions from noisy, partially converged estimates (Viswanath et al., 2026). This enables training of neural operators with inexpensive Monte Carlo supervision while providing fast, smooth value-field predictions at inference time. We propose Planning Under Noise (PUN), shown in Fig. 2, an operator-learning framework that maps environment geometry to value fields that account for control noise. Boundary conditions can be understood through a heat analogy. With unit desirability at the goal and zero desirability on obstacle boundaries, the goal acts like a hot source, while the obstacle walls act like cold sinks. The zero-Dirichlet condition fixes the field to zero along each obstacle surface, making the entire obstacle boundary a heat sink. In a long or narrow passage, heat spreading from the goal therefore leaks into the walls along the route. The farther the goal’s influence must travel, the more it is attenuated, leaving a weak signal in distant parts of free space that discretization, sampling, or learning errors can obscure. Narrow passages make this particularly pronounced because the absorbing walls remain close on both sides. This attenuation is visible in Fig. 1(c), where the weak goal signal provides insufficient directional guidance for starting points far from the goal, making it difficult to navigate toward the target. Moreover, the screened Poisson equation already includes decay throughout free space through its screening term; absorbing obstacle boundaries introduce an additional source of attenuation. We therefore keep a Dirichlet condition at the goal but impose homogeneous Neumann (zero-flux) conditions on obstacle boundaries. The walls now act like insulation: they prevent heat from escaping through the boundary without forcing the desirability itself to vanish there. Heat can spread along a corridor without continually draining into its walls, allowing the goal’s influence to reach farther into free space. Screening still causes decay, but the additional loss through obstacles is removed. This is precisely the effect illustrated in Fig. 1(d): compared with the absorbing Dirichlet field in Fig. 1(c), the mixed-boundary field extends the goal’s influence much farther through the environment, preserving a stronger signal for planning along long routes. The Neumann condition also makes the value gradient parallel to smooth obstacle boundaries; therefore, gradient-based planning directs motion along walls rather than into them. This permits guidance along walls in narrow passages without the strong repulsion induced by zero-Dirichlet conditions. Under our regularity assumptions, the value field and control remain bounded at obstacles, whereas zero-Dirichlet desirability makes both diverge there (Appendix C.4). We first derive dimension-general Poisson kernels and Monte Carlo weights, extending mesh-free supervision beyond three dimensions for scalability. This enables supervision generation without a volumetric configuration-space mesh. We then train PUN using noisy, partially converged Monte Carlo estimates in the weak supervision paradigm. By amortizing the PDE solution across geometries, PUN produces spatially coherent value fields that guide gradient following and local search without requiring a fully converged Monte Carlo solve for every environment. We evaluate PUN across 2D–4D environments and compare its planning success and runtime with nominal planners and stochastic controllers under execution noise. In the experiments varying the execution 2(A) Planning Planning inputs a    
+
+> Goal: Dirichlet BC Walls: Neumann BC
+> a= ( 1S,1G, c, λ )
+> Geometry, BCs, and control noise
+> Poisson-based Planning
+
+# Tθ   
+
+> Neural operator
+> a
+> Value field ˆϕ
+> Path extraction
+> Start states
+> Planned paths
+> ˆϕ(x)
+> △Start Goal
+
+(B) Training: Monte Carlo supervision      
+
+> Same PDE inputs
+> a= ( 1S,1G, c, λ )
+> Geometry, BCs, and control noise
+> WoSt solver Noisy field estimates
+
+# L        
+
+> Symbol Meaning
+> aPDE input tuple
+> 1SObstacle occupancy
+> 1GGoal indicator
+> c, λ Control Noise
+> TθNeural operator
+> ˆϕPredicted value field
+> LTraining loss
+
+Notation 
+
+Fig. 2: Planning Under Noise: (A) Planning: a neural operator maps geometry, goal, cost, and noise inputs to a desirability field. Grid-based local search selects feasible routes with high endpoint desirability, executes a short prefix, and replans. (B) Training: Walk-on-Stars (WoSt) estimates provide pointwise supervision; neural caching supplies learned continuation at the walk horizon. 
+
+noise level λ, we plan a path from the current state at each control step, follow it briefly, and repeat from the updated state; we refer to this as replanning. Our contributions can be summarized as follows: 
+
+• We formulate Poisson-based path planning as a mixed boundary-value problem, imposing a Dirichlet condition at the goal and homogeneous Neumann conditions on obstacle boundaries. 
+
+• We introduce an operator-learning framework that maps environment geometry to noise-aware value fields, enabling zero-shot planning in unseen complex geometries without per-instance retraining or numerical PDE solves. 
+
+• We generalize the mesh-free Monte Carlo solver WoSt beyond three dimensions by deriving the dimension-dependent Green’s function and step weights for the screened Poisson equation. 
+
+• We introduce a test-time scaling strategy that evaluates reachable candidate states on a local lattice using a fixed global learned field, without retraining, improving planning success over direct gradient following in the reported 2D–4D evaluations (Tables 1 and 11). On 2D application benchmarks, zero-shot WoSt-supervised FNO reaches 93.62% local-search success, up from 83.87% with gradient following on the same fields (Table 1). With the same local-search, FNO-based PUN achieves approximately 941 × and 58 × speedups over direct WoSt on the 2D zero-shot application benchmarks and 4D manipulator test set, respectively (Table 12). In 4D replanning, PUN achieves 95.00–100% success at 10.51–11.66 ms/start across the tested noise levels (Table 5; Fig. 1(a)). At λ = 4, PUN is 3 .29 × faster than RRT and 5 .09–32 .15 × faster than A ⋆, Dijkstra, MPPI, and PI 2-CMA. FNO also maintains over 90% local-search success across resolutions up to 4096 × 4096 (256 × as many grid points as used in training) without retraining (Fig. 1(b)). 
+
+# 2 Preliminaries 
+
+In this section we derive the elliptic boundary value problem that our operator learns, and fix the notation used throughout. 
+
+## 2.1 Stochastic Formulation of Path Planning 
+
+Control problem. Let Ω ⊂ Rd and let ξ ∈ Ω be the starting point. The controlled process Xξ, u = ( Xξ, u 
+
+> t
+
+)t≥0
+
+has interior dynamics dXξ, u 
+
+> t
+
+=  b(Xξ, u 
+
+> t
+
+) + G(Xξ, u 
+
+> t
+
+) ut
+
+ dt + Σ 1/2(Xξ, u 
+
+> t
+
+) d Wt, Xξ, u 
+
+> 0
+
+= ξ, (1) 3Algorithm 1 Walk (ξ, Ψθ− ), constant κ, max step 
+
+K                                            
+
+> 1: In: start point ξ; EMA target Ψ θ−
+> 2: w←13: for j= 1 to Kdo
+> 4: break if ξ∈ΓD
+> 5: r←r(ξ)▷Eq. 6 6: Sample ( v, ρ ) as in Section 4.1 7: w←w Q κd(ρ, r ); ξ←ξ+ρv
+> 8: end for
+> 9: if ξ∈ΓDthen
+> 10: return w g (ξ)11: end if
+> 12: return wsg[Ψ θ−(ξ)]
+
+Algorithm 2 Training with m queries and N ≥ 2 walks per query                                                  
+
+> 1: In: environments E;m, N, K , loss weights, learning and EMA rates 2: Initialize θand θ−←θ
+> 3: repeat
+> 4: Sample a∼ E , queries xi, and goal points 5: Evaluate Tθ[a] and detached Tθ−[a]6: ˆΨi,n ←Walk (ξi,Ψθ−), independently 7: bΨi←N−1P
+> nˆΨi,n ▷Eq. 10 8: θ←θ−αlr ∇θL(θ)9: θ−←(1 −αema )θ−+αema θ
+> 10: until training ends 11: Inference: control from Eq. 11
+
+with control ut ∈ Rk and standard Brownian motion W; the process reflects normally at obstacles and workspace boundaries (Γ N ) and stops at the goal (Γ D ). We minimize 
+
+J(x, u) = E
+
+"Z τ u
+
+> D
+> 0
+
+
+
+q(Xξ, u 
+
+> t
+
+) + 12 u⊤ 
+
+> t
+
+R ut
+
+
+
+dt + ϕ(Xξ, u 
+
+> τu
+> D
+
+) ξ = x
+
+#
+
+, (2) where τ u 
+
+> D
+
+:= inf {t ≥ 0 : Xξ, u 
+
+> t
+
+∈ ΓD } is the first goal hit, q ≥ 0, R ≻ 0, and ϕ ≥ 0 is the terminal cost. Write 
+
+g = e−ϕ/λ for the Dirichlet desirability; operator learning fixes ϕ ≡ 0, hence g ≡ 1, while the PDE identities retain general positive g. Where the value V (x) = inf u J(x, u) is C2 it satisfies the stationary HJB equation, which is nonlinear: eliminating the optimal control leaves a term quadratic in ∇V (Appendix C.2, Eq. 29). 
+
+Assumption 1 (Control–noise matching) . There exists λ > 0 with Σ( x) = λ G (x)R−1G(x)⊤ for all x ∈ Ω.
+
+This is the standard condition of linearly solvable stochastic optimal control (Kappen, 2005; Todorov, 2006; 2009; Theodorou et al., 2010): a direction that is cheap to actuate is also one along which the system is uncertain, and λ sets the exchange rate between the two. This matching condition enables the exact linearization of the HJB equation used here. The Cole–Hopf change of variable Ψ( x) ≜ exp( −V (x)/λ ) (Hopf, 1950; Cole, 1951; Fleming, 1977) cancels the quadratic term and turns the HJB equation into a linear elliptic equation for Ψ, as shown in Appendix C.2. 
+
+Path-planning specialization. For a fully actuated, passive system we take b = 0, G = I, and R = I, so Assumption 1 forces Σ = λI . Writing the state cost as q(x) = 12 c(x)2 with c > 0, the linearized equation becomes the screened Poisson equation: ∆Ψ − κ2(x) Ψ = 0 , κ(x) ≜ c(x)
+
+λ . (3) Throughout, we take c constant within each environment, so κ is constant. 
+
+Boundary conditions. Let D be the workspace, S the obstacle interiors, and G an open goal region. The free domain is Ω = D \ (S ∪ G ), assumed connected, with boundary partitioned into Γ D = ∂G and Γ N = ∂S ∪ ∂D .We impose Ψ = g on Γ D (absorbing goal) , ∂nΨ = 0 on Γ N (reflecting) . (4) The goal is the only Dirichlet set; obstacles and the outer domain boundary are reflecting in the PDE model. Under Assumption 2 the mixed problem has a unique solution with Ψ ∈ (0 , 1] and inf Ω Ψ > 0, so log Ψ is bounded and the log parameterization is well defined (Proposition 3). See Appendix C.4 for a detailed analysis. 
+
+## 2.2 Neural Operator 
+
+A neural operator learns a map from problem data to a solution field (Li et al., 2021). Here we learn the desirability operator 
+
+T :   1S
+
+|{z} 
+
+> obstacles
+
+, 1G
+
+|{z} 
+
+> goal
+
+, c|{z} 
+
+> cost
+
+, λ|{z} 
+
+> noise
+
+ 7 −→ Ψ, (5) Both geometric inputs are masks on the workspace: 1S is the occupancy map of the obstacles and 1G marks the goal region; goal data g ≡ 1 is fixed. A single trained model Tθ predicts the field for new environments. Its spatial gradients provide control through Eq. 11, and its values support local search (Section 4.4). 4Fig. 3: Replanning trajectories on the same 4D manipulator, start, and goal at λ = 0 .25 (top) and λ = 2 (bottom). Columns show successive execution states; PUN’s trajectory is orange. PUN reaches the goal in both illustrated rollouts. Aggregate success and runtime are reported in Table 5. 
+
+# 3 Related Works 
+
+Path Planning. Classical planners divide into two families. Sampling-based methods such as PRM (Kavraki et al., 1996), RRT (LaValle & Kuffner, 2001), and RRT ⋆ (Karaman & Frazzoli, 2011) build a graph of collision-free motions, while search-based methods such as A ⋆ (Hart et al., 1968), Dijkstra (Dijkstra, 1959), and fast marching (Sethian, 1996) compute a cost-to-go over a discretization; both plan for a deterministic system and defer execution noise to tracking and replanning. Sampling-based methods such as MPPI (Williams et al., 2017a;b) and PI 2-CMA (Stulp & Sigaud, 2012) optimize control sequences or policy parameters using sampled trajectory costs. Our implementations and their treatment of execution noise are described in Appendix D.1. We compare against these planners in Table 5. Planning Neural Operator (PNO) (Matada et al., 2025) learns the solution operator of the Eikonal equation from labels produced by a deterministic solver, but it is limited to deterministic systems. NTFields (Ni & Qureshi, 2023) and EikoNet (Smith et al., 2021) train a physics-informed network on the Eikonal residual, which fits a single geometry per model and must be retrained for each new environment. In contrast, PUN is trained over a family of geometry classes with approximate Monte Carlo supervision across diverse noise ranges to support planning with different noise spectra while achieving reliable stability. 
+
+Monte Carlo Methods. Monte Carlo estimators for PDEs can be categorized depending on the type of PDE, include Walk-on-Spheres (Sawhney & Crane, 2020), Walk-on-Boundaries (Sugimoto et al., 2023), and Backward Stochastic Differential Equations (BSDE) (Zhang, 2017). Recent works combine Monte Carlo methods with neural networks to further reduce variance (Nam et al., 2024; Li et al., 2023a), which train a network by regressing on noisy Monte Carlo targets and thereby amortize repeated pointwise Monte Carlo estimation into a forward pass. Two of their ingredients we adopt directly: a deterministic cap on the number of walk steps, and evaluation of the partially trained model when a walk exceeds that cap. The diffusion loss (N¨ usken & Richter, 2021) truncates an SDE simulation and supplements it with a boundary physics loss. 
+
+Neural Operator. Neural operators parameterize maps between function spaces and can be evaluated on different discretizations, with numerical accuracy depending on the representation (Kovachki et al., 2023). The architectures we compare differ in how they propagate information: FNO (Li et al., 2021), UNO (Rahman et al., 2023), LocalNO (Liu-Schiaffini et al., 2024), DISCO (Ocampo et al., 2023), GINO (Li et al., 2023b), UPT (Alkin et al., 2024) and Transolver (Wu et al., 2024). We include U-Net (Ronneberger et al., 2015) as a fixed-resolution 5reference. Physics-informed operators such as PINO (Li et al., 2024) add a PDE residual to the objective; we use walk labels as the primary signal with regularization on gradient terms. 
+
+# 4 Planning under Noise (PUN) with Neural Operator 
+
+PUN learns a desirability field from Walk-on-Stars supervision and uses the predicted field to guide local search. Labels are constructed directly in Ψ-space using finite-horizon walks, with learned continuation for unfinished trajectories. The neural operator is trained online on these labels. Algorithms 1 and 2 describe a single walk and the training loop, respectively; walks and terminal evaluations are batched. 
+
+## 4.1 The Walk-on-Stars Chain 
+
+Geometry and stopping. Let σ = inf {k : ξk ∈ ΓD } be the first exact goal-boundary hit, possibly infinite. The ideal chain stops at an exact hit, where the terminal value is g(ξσ ); practical walks stop in a goal shell or at a finite horizon. For a spatial location x, the star radius is 
+
+r(x) = min {dD (x), d sil (x)},
+
+St( x) = the adjacent component of B(x, r (x)) ∩ Ω. (6) Here dsil is the distance to the closest visibility silhouette of Γ N . An admissible star step additionally requires that this component be star-shaped about x and that its boundary consist only of the sphere and Γ N . Appendix D.1 describes the shell stopping rule and radius floor used in place of exact absorption. Write ξk for the WoSt position after k steps, with ξ0 = ξ the starting point and ξk random for k ≥ 1. Given 
+
+ξk, construct St( ξk) with radius rk = r(ξk). Draw a direction uniformly on the sphere in the interior or on the inward hemisphere at a smooth reflecting boundary point, then move to the first positive hit of the sphere or an obstacle/domain boundary: 
+
+vk ∼ Unif( Sd−1), ρk = first-hit distance , ξk+1 = ξk + ρkvk. (7) The hemisphere restriction replaces the first distribution at ξk ∈ ΓN . We assume measurable geometry queries and positive hit distances almost surely. On an admissible star, the direction law has surface density 
+
+p(x, dz) = nz · (z − x)
+
+α(x)ωd∥z − x∥d dS(z),
+
+Z
+
+> ∂St( x)
+
+p(x, dz) = 1 , (8) where ωd = 2 πd/ 2/Γ( d/ 2) and α = 1 in the interior or 1 /2 at a smooth boundary pole. Tangencies have zero density. Where a step is not admissible, Eq. 7 still defines a law on first hits, but Eq. 8 no longer describes it. 
+
+The estimator. Screening discounts each step by Wk = Qκd (ρk, r k) ∈ (0 , 1), given in closed form for every d in Appendix C.5. For constant κ, Green’s identity on each admissible active star gives 
+
+E[WkΨ( ξk+1 ) | F k] = Ψ( ξk), k < σ. (9) Multiplying by the preceding weights makes Mk = ( Q 
+
+> j<k ∧σ
+
+Wj )Ψ( ξk∧σ ) a bounded martingale. This gives the finite-horizon identity below without requiring an exact goal hit in finitely many steps. The identity concerns the weighted ray sampler; its steps need not follow Brownian exit distributions. 
+
+## 4.2 Label Construction 
+
+For a finite walk cap K, write τ = σ ∧ K. Repeated conditional expectation in Eq. 9, keeping the chain fixed after a goal hit, gives 
+
+Ex
+
+ Y 
+
+> j<τ
+
+Wj
+
+
+
+Ψ( ξτ ) ξ0 = x
+
+ = Ψ( x). (10) The terminal factor is g(ξσ ) on a goal hit and the true continuation Ψ( ξK ) otherwise. With true continuation and admissible steps, averaging N independent replicas gives an unbiased label. Training substitutes learned continuation as described below. See Appendix C.6 for the log-space alternative and its bias correction. Practical walks stop within a goal shell of width ε and use a radius floor. Under the smooth-domain and admissibility assumptions, shell stopping with true continuation changes the mean by at most CΨε, where 
+
+CΨ = sup Ω ∥∇ Ψ∥. The radius floor can violate admissibility and introduces an additional error of unknown sign (Sawhney et al., 2023). Appendix D.1 gives the implementation and the finite-horizon shell bound. 6Bootstrapping. At the horizon Ψ is not available, so training substitutes a detached EMA copy of the model. The resulting bias is that copy’s own error at the endpoint, weighted by the product of the step weights over the 
+
+K steps, so it is discounted wherever steps are long compared with the screening length. 
+
+## 4.3 Operator Parameterization and Objective 
+
+For λ > 0 and a positive differentiable prediction, the desirability field defines the feedback control through its logarithm: 1
+
+Ψθ = Tθ [a], Vθ = −λ log Ψ θ , uθ = λR −1G⊤∇ log Ψ θ . (11) For a coordinate-differentiable decoder, the gradient is obtained by automatic differentiation. A grid-output backbone requires a specified differentiable interpolant or a spatial differentiation rule. The input a is defined in Eq. 5, with g ≡ 1 fixed. We combine value and goal supervision with gradient loss to train fields for downstream planning: 
+
+Lval = E(Ψ θ − bΨ) 2, LG = E(Ψ θ − g)2, Lgrad = E∥∇ Ψθ − ∇ bΨ∥2
+
+sg E∥∇ bΨ∥2 . (12) The target gradient ∇ bΨ is computed by finite differences of the label field. The displayed gradient loss normalization assumes positive target gradient energy. The objective is their weighted sum, 
+
+L(θ) = Lval + βG LG + βgrad Lgrad . (13) The goal loss carries the exact boundary value g rather than a walk label. The gradient term is included because a small value error need not give a small gradient error, and the control in Eq. 11 is computed from the gradient: 
+
+Lgrad normalizes gradient error by target gradient energy, treating the denominator as fixed during differentiation. Direct-Ψ supervision avoids log-transform bias and weights absolute field error, giving small absolute errors in low-desirability regions less weight than log-space supervision. Appendix C.6 reports the log-space alternative, in which errors are measured on a relative scale. 
+
+## 4.4 Grid-Based Local Search 
+
+PUN supports test-time scaling by increasing the local search budget without modifying the learned global field. More depth lets the search evaluate more reachable endpoints, while using the field for guidance. The same endpoint search can be run on other fields; in PUN, it is run on a global noise-aware field that is reused across replans. Paths are extracted from Ψ θ on a lattice. Let Xh be the free cells at spacing h. The feasible neighbors of x
+
+are N (x) = {x′ ∈ X h : ∥x′ − x∥2 = h}, the axis-adjacent free cells. Write Rk(x) for the states reachable from x
+
+in at most k such moves, including x itself. A plan is a feasible lattice path π = ( x0, . . . , x ℓ) with ℓ ≤ L, scored by the predicted desirability Ψ θ(xℓ) at its endpoint. For λ > 0 and Ψ θ > 0, maximizing this score is equivalent to minimizing Vθ = −λ log Ψ θ at the endpoint. The score itself is well defined for any finite prediction. A controller is specified by a depth L and commit length e ≤ L. With one edge committed per replan, the next move is 
+
+x1 ∈ arg max  
+
+> y∈N (x0)
+
+max  
+
+> z∈R L−1(y)
+
+Ψθ (z), (14) a step towards the largest desirability reachable through a candidate neighbor. For e > 1, a path maximizing endpoint desirability is constructed, its first min( e, ℓ ) edges are executed, and the search is repeated from the new state. Execution stops early upon reaching the goal. See Appendix D.1 for further details. A key idea is that evaluating reachable endpoints permits an intermediate decrease in desirability when it leads to a better state, so local fluctuations need not determine the next move. This might happen when the field is not smooth and there are local valleys, so local search allows jumps over imperfect predictions. Appendix C.8 derives the graph-search rule and its large-depth limit, and Section 5 evaluates planning performance. Optionally, local search can include a soft wall penalty, 
+
+Cr (π) = 
+
+> ℓ
+
+X
+
+> j=1
+
+"   ar (xj ) − dwall (xj )/h 
+
+> +
+
+r
+
+#2
+
+,               
+
+> 1With our choice R=G=I, the feedback reduces to uθ= ( λ/ Ψθ)∇Ψθ. For a positive differentiable field, ∇log Ψ θ=∇Ψθ/Ψθ:the gradients differ only by a positive, state-dependent scalar and have identical normalized directions wherever the gradient is nonzero.
+
+7Table 1: 2D application-benchmark evaluation of neural backbones trained with WoSt supervision and direct WoSt inference: planning success and relative L2 error against the FEM ground-truth field. Model Gradient (%) Local search (4) (%) Local search (10) (%) Relative L2                                                                          
+
+> UPT 2.48 2.78 3.57 0.5533 Transolver 3.26 5.34 15.30 0.5158 WoSt 2.71 6.30 36.45 0.1852 GINO 46.56 51.24 53.11 0.2628 U-Net 74.21 84.22 88.98 0.1605 DISCO 82.49 87.60 91.08 0.1041 LocalNO 80.34 86.63 91.35 0.0915 U-NO 78.08 86.11 91.68 0.0792
+> FNO 83.87 91.25 93.62 0.0615 Table 2: FNO supervision on 2D application benchmarks: success and relative error.
+> Source Grad. (%) LS (%) Rel. err. WoSt 83.87 93.62 0.0615 Deep Ritz 81.41 91.46 0.0608
+> PINO 32.50 59.69 0.5644
+> Table 3: Walk-horizon ablation on the generated 2D test set: planning success (%).
+> Steps Grad. (%) LS (%) 10 32.18 51.89 100 40.55 66.80 400 38.06 69.69
+> 800 37.84 69.66
+> Table 4: FNO loss ablations on 2D application benchmarks: planning success (%).
+> Model Grad. (%) LS (%) Full model 83.87 93.62
+> −value loss 67.71 83.26
+> −goal loss 82.93 93.11
+> −gradient loss 80.17 92.04
+
+where ( u)+ = max( u, 0), r is the preferred clearance in cells, and dwall measures distance to obstacles or the outer boundary. Normally ar = r; near a goal reachable within the local depth, it decreases with the remaining free-edge distance to that goal. Among paths retaining at least half the best positive local field gain, we prefer the smallest penalty. Narrow passages and starts or goals near walls are still possible. 
+
+# 5 Experiments 
+
+We evaluate how backbone, supervision, training objective, and controller affect planning, then test transfer across grid resolutions and replanning under execution noise. Table 1 compares controllers on the same fields, while Table 5 compares complete planners under common execution rules. Models are pretrained on generated environments and evaluated on unseen maps without fine-tuning. The main 2D application suite contains 592 maps and 37,888 starts across robotics, terrain, marine, urban, and game environments (Appendix E). Success measures goal-reaching rate; relative L2 measures field error against FEM references. Unless specified, local search (LS) denotes local search (10). Bold marks the best value in each comparison, including ties. Experiments use NVIDIA B300 and B200 GPUs; training and evaluation protocols are in Appendix D.1. 
+
+Backbone and amortization. Table 1 compares FNO (Li et al., 2021), U-NO (Rahman et al., 2023), U-Net 2 (Ronneberger et al., 2015), GINO (Li et al., 2023b), LocalNO (Liu-Schiaffini et al., 2024), DISCO (Ocampo et al., 2023), UPT (Alkin et al., 2024), and Transolver (Wu et al., 2024), all trained with WoSt supervision. FNO has the highest success under all three controllers and the lowest relative L2 error (0.0615); its local-search (10) success is 93.62%, compared with 91.68% for the next-best U-NO. These rankings apply to the tested implementations under the training-compute policy in Appendix D.1. Direct WoSt inference reaches only 2.71% gradient and 36.45% local-search (10) success, versus 83.87% and 93.62% for FNO. Thus, at the reported solver settings, learning from approximate WoSt targets yields more useful planning fields than direct inference. We use FNO in the remaining ablations. 
+
+Supervision. With FNO fixed, Table 2 compares WoSt targets, Deep Ritz training (E & Yu, 2018), and PDE-residual training with PINO (Li et al., 2024). WoSt achieves 93.62% local-search success, versus 91.46% for Deep Ritz and 59.69% for PINO; gradient success follows the same ordering (83.87%, 81.41%, and 32.50%). Deep Ritz has slightly lower field error than WoSt (0.0608 versus 0.0615), but lower planning success. Field error is therefore not a reliable indicator of how useful these learned fields are for control. 
+
+Walk horizon and learned continuation. In Table 3, we vary the walk cap using a smaller training budget of 16 maps, eight goals per map, four trajectories per query, and 40 epochs, evaluated on generated 2D maps. Local-search success increases from 51.89% at 10 steps to 69.69% at 400 steps, but is 69.66% at 800 steps. Gradient success instead peaks at 40.55% with 100 steps. Longer walks therefore do not uniformly improve planning: the horizon changes both sampled propagation and reliance on the learned continuation (Section 4.2). 
+
+> 2U-Net inputs are rescaled to its fixed resolution.
+
+8Table 5: Replanning under execution noise on 2D and 3D application benchmarks and 4D manipulators. Each entry reports success (%) / runtime (ms/start). Bold marks the highest success and lowest runtime within each dimension and noise level, including ties.                                                                                                            
+
+> Dim. Method λ= 0 .25 λ= 1 λ= 2 λ= 4
+> 2D
+> A* 59.00 / 43.63 42.33 / 47.09 35.00 / 51.18 23.67 / 53.76 Dijkstra 59.00 / 154.94 42.33 / 174.95 35.00 / 203.41 23.67 / 239.97 RRT 82.00 / 98.45 68.67 / 103.87 52.33 / 112.27 36.67 / 124.71 MPPI 84.00 / 1734.11 61.00 / 1773.31 45.67 / 1838.73 31.67 / 2126.12 PI 2-CMA 78.33 / 1330.76 60.00 / 1484.91 48.00 / 1524.70 35.00 / 1606.82 PUN (zero-shot) 91.67 /9.55 74.00 /11.14 62.33 /14.07 45.67 /14.51 3D
+> A* 36.67 / 73.40 23.33 / 60.47 12.00 / 73.85 6.00 / 65.25 Dijkstra 37.33 / 73.46 22.67 / 63.04 12.00 / 76.99 6.00 / 67.73 RRT 53.33 / 238.31 35.33 / 169.90 25.33 / 122.85 12.00 / 126.23 MPPI 62.67 / 532.31 34.67 / 577.84 18.67 / 554.11 7.33 / 704.31 PI 2-CMA 47.33 / 452.25 22.00 / 435.01 21.33 / 475.98 8.67 / 606.55 PUN (zero-shot) 92.00 /15.64 68.67 /15.34 40.00 /14.30 16.00 /14.43 4D
+> A* 100.00 / 16.81 96.67 / 17.08 72.50 / 78.02 59.17 / 62.44 Dijkstra 100.00 / 17.17 96.67 / 17.34 72.50 / 66.75 59.17 / 59.39 RRT 98.33 / 24.20 95.83 / 25.80 90.00 / 43.00 85.83 / 38.31 MPPI 95.00 / 411.24 92.50 / 398.18 81.67 / 364.22 71.67 / 374.83 PI 2-CMA 96.67 / 379.79 92.50 / 357.69 86.67 / 355.44 78.33 / 356.72 PUN 100.00 /10.63 100.00 /10.51 100.00 /10.55 95.00 /11.66
+
+Further details of this study are in Appendix D.2. These success rates should not be compared directly with the full-budget application results. 
+
+Training objective. In Table 4, we remove one loss term at a time from Eq. 13. Removing value supervision causes the largest decrease: gradient success falls from 83.87% to 67.71%, and local-search success from 93.62% to 83.26%. Removing goal or gradient supervision gives smaller local-search decreases, to 93.11% and 92.04%, respectively. All three terms help in this setting, with value supervision making the largest measured contribution. These ablations use direct desirability supervision. 
+
+Path extraction. On the same learned FNO fields, Table 1 shows success rising from 83.87% with gradient following to 91.25% with local search (4) and 93.62% with local search (10), a total gain of 9.75 percentage points. This test-time refinement requires no retraining. In 2D, the two local-search variants use ( L, e ) = (5 , 1) and (10 , 3), so both depth and committed prefix length change. Local search (10) also exceeds gradient success for every other backbone, although it reaches only 36.45% on direct WoSt fields. Looking beyond immediate neighbors can therefore recover useful routes, but does not eliminate dependence on field quality. Figure 7 illustrates the two search neighborhoods on one fixed field; controller details are in Appendix D.1. 
+
+Transfer across discretizations. In Fig. 1(b), we test models trained at 256 × 256 on grids up to 4096 × 4096, without retraining. FNO maintains 90.62–96.25% local-search (10) success across the five resolutions and reaches 92.50% at 4096 × 4096, compared with 71.25% for U-NO and 57.81% for U-Net. U-NO leads at 512 × 512 (95.31% versus 94.06% for FNO); FNO leads at the other four resolutions. GINO runs out of memory above 256 × 256. The quantitative comparison supports FNO’s transfer across these discretizations; Fig. 4 separately illustrates predicted fields and paths at three resolutions. 
+
+Replanning under execution noise. Table 5 compares PUN with A ⋆ (Hart et al., 1968), Dijkstra (Dijkstra, 1959), RRT (LaValle & Kuffner, 2001), MPPI (Williams et al., 2017a), and PI 2-CMA (Stulp & Sigaud, 2012) on 2D and 3D application benchmarks and 4D manipulators. Obstacle hits count as failures (Appendix D.1). PUN has the highest reported success in all 12 dimension–noise settings, tying A ⋆ and Dijkstra at λ = 0 .25 in 4D. At λ = 4, PUN exceeds the strongest baseline, RRT, by 9.00 percentage points in 2D (45.67% versus 36.67%), 4.00 in 3D (16.00% versus 12.00%), and 9.17 in 4D (95.00% versus 85.83%). PUN also has the lowest reported runtime throughout: 9.55–14.51 ms/start in 2D, 14.30–15.64 in 3D, and 10.51–11.66 in 4D. At λ = 4 in 4D, its 11.66 ms/start is 3.29 times faster than the fastest baseline, RRT (38.31 ms/start); Fig. 1(a) summarizes mean 4D runtimes. The advantage is relative: PUN’s 3D success still falls from 92.00% to 16.00% as noise increases. These comparisons concern the reported implementations and settings. Figure 3 shows PUN reaching the goal in two illustrative 4D rollouts at λ = 0 .25 and 2. 
+
+# 6 Discussion 
+
+Extensions. Several extensions are possible. A spatially varying cost c(x) is the most useful: with constant 
+
+c, the state-cost term penalizes elapsed time and the objective also penalizes control effort. Reflection carries 9no additional contact cost; choosing c(x) as a function of obstacle clearance would add a clearance-dependent running cost. Transient problems replace the stationary equation by its time-dependent counterpart, giving a finite-horizon value function rather than a first-exit one, which suits tasks with deadlines or moving goals. Partial information is the most direct use of our amortization: since the operator maps geometry to a field in one forward pass, replanning as a robot discovers obstacles requires only a forward pass on the updated geometry instead of a new solve. The open question is how to condition the operator on a partially observed occupancy map. 
+
+Limitations. The value field is derived for reflecting boundaries. Local search allows its use in collision-failure tasks, but nominal graph feasibility does not guarantee collision-free execution under noise. Deriving the exact value function for that execution model would require a corresponding boundary condition. Assumption 1 is a further restriction. The control–noise matching assumption enables exact HJB linearization and is standard in classical path-integral control (Kappen, 2005; Theodorou et al., 2010). Our experiments are also limited to settings where this assumption is reasonable: we test geometric planning problems in up to four dimensions and do not include full robot models with contact. Evaluating on humanoid robots with contact would test both the assumption and the capacity of the operator. Finally, adversarial geometries such as mazes remain challenging, since long corridors can lead to weak or poorly resolved learned gradients. 
+
+# 7 Conclusion 
+
+We introduced Planning Under Noise (PUN), a neural operator framework that learns noise-aware planning fields from approximate Walk-on-Stars supervision. Dimension-general screening kernels support mesh-free supervision beyond three dimensions, and local search converts predicted fields into paths on unseen geometries. Experiments across 2D–4D environments demonstrate zero-shot planning and effective learning from stochastic labels. In replanning comparisons under execution noise, PUN achieves the lowest reported runtime among the tested methods, while matching or exceeding the success of every compared planner at each tested noise level across 2D–4D. 
+
+## AI use statement 
+
+In this work, we used generative AI tools to assist with parts of method implementation. Additionally, we used generative AI tools to polish writing and proofs and identify relevant literature. We did not use generative AI tools for other applicable tasks requiring disclosure. All AI-assisted work was reviewed and verified by the authors. We take responsibility for the final content of this work, including text, claims, and artifacts produced with the aid of generative AI. 
+
+# Acknowledgements 
+
+Anima Anandkumar and Xi Deng are both supported in part by the Bren endowed chair and the AI2050 senior fellow program at Schmidt Sciences. Hong Chul Nam is supported by a PhD fellowship for the Center for Data Science at NYU. 
+
+# References           
+
+> Benedikt Alkin, Andreas F¨ urst, Simon Schmid, Lukas Gruber, Markus Holzleitner, and Johannes Brandstetter. Universal physics transformers: A framework for efficiently scaling neural operators. In Advances in Neural Information Processing Systems (NeurIPS) , 2024. Richard Bellman. Dynamic Programming . Princeton University Press, Princeton, NJ, 1957. Julian D. Cole. On a quasi-linear parabolic equation occurring in aerodynamics. Quarterly of Applied Mathematics , 9(3): 225–236, 1951. Edsger W Dijkstra. A note on two problems in connexion with graphs. Numerische Mathematik , 1(1):269–271, 1959. Weinan E and Bing Yu. The Deep Ritz method: A deep learning-based numerical algorithm for solving variational problems. Communications in Mathematics and Statistics , 6(1):1–12, 2018. doi: 10.1007/s40304-018-0127-z. Wendell H. Fleming. Exit probabilities and optimal stochastic control. Applied Mathematics and Optimization , 4(1): 329–346, 1977. Wendell H. Fleming and H. Mete Soner. Controlled Markov Processes and Viscosity Solutions , volume 25 of Stochastic Modelling and Applied Probability . Springer, New York, 2 edition, 2006. David Gilbarg and Neil S. Trudinger. Elliptic Partial Differential Equations of Second Order . Springer, 2nd edition, 2001. Jiequn Han, Arnulf Jentzen, and Weinan E. Solving high-dimensional partial differential equations using deep learning.
+> Proceedings of the National Academy of Sciences , 115(34):8505–8510, 2018.
+
+10 Peter E Hart, Nils J Nilsson, and Bertram Raphael. A formal basis for the heuristic determination of minimum cost paths. 
+
+IEEE Transactions on Systems Science and Cybernetics , 4(2):100–107, 1968. Eberhard Hopf. The partial differential equation ut + uu x = μu xx . Communications on Pure and Applied Mathematics , 3 (3):201–230, 1950. doi: 10.1002/cpa.3160030302. Cl´ ement Jambon, Mohammad Sina Nabizadeh, and Mina Konakovi´ c Lukovi´ c. Walk on decomposed subdomains: A hybrid monte carlo–deterministic solver for elliptic pdes. ACM Transactions on Graphics (TOG) , 45(4):132:1–132:22, 2026. Hilbert J. Kappen. Path integrals and symmetry breaking for optimal control theory. Journal of Statistical Mechanics: Theory and Experiment , 2005(11):P11011, 2005. Sertac Karaman and Emilio Frazzoli. Sampling-based algorithms for optimal motion planning. The International Journal of Robotics Research , 30(7):846–894, 2011. Lydia E Kavraki, Petr Svestka, Jean-Claude Latombe, and Mark H Overmars. Probabilistic roadmaps for path planning in high-dimensional configuration spaces. IEEE Transactions on Robotics and Automation , 12(4):566–580, 1996. Nikola Kovachki, Zongyi Li, Burigede Liu, Kamyar Azizzadenesheli, Kaushik Bhattacharya, Andrew Stuart, and Anima Anandkumar. Neural operator: Learning maps between function spaces with applications to pdes. Journal of Machine Learning Research , 24(89):1–97, 2023. Jean-Claude Latombe. Robot motion planning , volume 124 of The Kluwer International Series in Engineering and Computer Science . Kluwer Academic Publishers, 1991. Steven M. LaValle. Planning Algorithms . Cambridge University Press, Cambridge, UK, 2006. Steven M LaValle and James J Kuffner. Randomized kinodynamic planning. The International Journal of Robotics Research , 20(5):378–400, 2001. Zilu Li, Guandao Yang, Xi Deng, Christopher De Sa, Bharath Hariharan, and Steve Marschner. Neural caches for monte carlo partial differential equation solvers. In SIGGRAPH Asia 2023 Conference Papers , pp. 1–10, 2023a. Zongyi Li, Nikola Kovachki, Kamyar Azizzadenesheli, Burigede Liu, Kaushik Bhattacharya, Andrew Stuart, and Anima Anandkumar. Fourier neural operator for parametric partial differential equations. In International Conference on Learning Representations (ICLR) , 2021. Zongyi Li, Nikola Kovachki, Chris Choy, Boyi Li, Jean Kossaifi, Shourya Otta, Mohammad Amin Nabian, Maximilian Stadler, Christian Hundt, Kamyar Azizzadenesheli, and Anima Anandkumar. Geometry-informed neural operator for large-scale 3d pdes. In Advances in Neural Information Processing Systems (NeurIPS) , 2023b. Zongyi Li, Hongkai Zheng, Nikola Kovachki, David Jin, Haoxuan Chen, Burigede Liu, Kamyar Azizzadenesheli, and Anima Anandkumar. Physics-informed neural operator for learning partial differential equations. ACM / IMS Journal of Data Science , 1(3):1–27, 2024. Miguel Liu-Schiaffini, Julius Berner, Boris Bonev, Thorsten Kurth, Kamyar Azizzadenesheli, and Anima Anandkumar. Neural operators with localized integral and differential kernels. In International Conference on Machine Learning (ICML) , 2024. Sharath Matada, Luke Bhan, Yuanyuan Shi, and Nikolay Atanasov. Generalizable motion planning via operator learning. In International Conference on Learning Representations (ICLR) , 2025. Mervin E Muller. Some continuous monte carlo methods for the dirichlet problem. The Annals of Mathematical Statistics ,27(3):569–589, 1956. Hong Chul Nam, Julius Berner, and Anima Anandkumar. Solving poisson equations using neural walk-on-spheres. In 
+
+Proceedings of the 41st International Conference on Machine Learning , volume 235 of Proceedings of Machine Learning Research . PMLR, 2024. Ruiqi Ni and Ahmed H. Qureshi. Ntfields: Neural time fields for physics-informed robot motion planning. In International Conference on Learning Representations (ICLR) , 2023. Nikolas N¨ usken and Lorenz Richter. Interpolating between BSDEs and PINNs: Deep learning for elliptic and parabolic boundary value problems. arXiv preprint arXiv:2112.03749, 2021. Jeremy Ocampo, Matthew A. Price, and Jason D. McEwen. Scalable and equivariant spherical cnns by discrete-continuous (disco) convolutions. In International Conference on Learning Representations (ICLR) , 2023. Md Ashiqur Rahman, Zachary E. Ross, and Kamyar Azizzadenesheli. U-no: U-shaped neural operators. Transactions on Machine Learning Research , 2023. Olaf Ronneberger, Philipp Fischer, and Thomas Brox. U-net: Convolutional networks for biomedical image segmentation. In Medical Image Computing and Computer-Assisted Intervention (MICCAI) , pp. 234–241, 2015. Rohan Sawhney and Keenan Crane. Monte carlo geometry processing: A grid-free approach to pde-based methods on volumetric domains. ACM Transactions on Graphics , 39(4), 2020. Rohan Sawhney, Bailey Miller, Ioannis Gkioulekas, and Keenan Crane. Walk on stars: A grid-free monte carlo method for pdes with neumann boundary conditions. ACM Transactions on Graphics , 42(4), 2023. James A Sethian. A fast marching level set method for monotonically advancing fronts. Proceedings of the National Academy of Sciences , 93(4):1591–1595, 1996. Jonathan D. Smith, Kamyar Azizzadenesheli, and Zachary E. Ross. Eikonet: Solving the eikonal equation with deep neural networks. IEEE Transactions on Geoscience and Remote Sensing , 59(12):10685–10696, 2021. Freek Stulp and Olivier Sigaud. Path integral policy improvement with covariance matrix adaptation. In International Conference on Machine Learning , 2012. 
+
+11 Ryusuke Sugimoto, Terry Chen, Yiti Jiang, Christopher Batty, and Toshiya Hachisuka. A practical walk-on-boundary method for boundary value problems. ACM Transactions on Graphics , 42(4), 2023. Evangelos Theodorou, Jonas Buchli, and Stefan Schaal. A generalized path integral control approach to reinforcement learning. The Journal of Machine Learning Research , 11:3137–3181, 2010. Sebastian Thrun. Probabilistic robotics. Communications of the ACM , 45(3):52–57, 2002. Emanuel Todorov. Linearly-solvable Markov decision problems. In Advances in Neural Information Processing Systems (NIPS) , volume 19, pp. 1369–1376, 2006. Emanuel Todorov. Efficient computation of optimal actions. Proceedings of the National Academy of Sciences , 106(28): 11478–11483, 2009. Hrishikesh Viswanath, Hong Chul Nam, Xi Deng, Julius Berner, Anima Anandkumar, and Aniket Bera. Operator learning using weak supervision from walk-on-spheres. arXiv preprint arXiv:2603.01193 , 2026. Grady Williams, Andrew Aldrich, and Evangelos A. Theodorou. Model predictive path integral control: From theory to parallel computation. Journal of Guidance, Control, and Dynamics , 40(2):344–357, 2017a. Grady Williams, Nolan Wagener, Brian Goldfain, Paul Drews, James M. Rehg, Byron Boots, and Evangelos A. Theodorou. Information theoretic MPC for model-based reinforcement learning. In IEEE International Conference on Robotics and Automation (ICRA) , pp. 1714–1721, 2017b. Haixu Wu, Huakun Luo, Haowen Wang, Jianmin Wang, and Mingsheng Long. Transolver: A fast transformer solver for pdes on general geometries. In International Conference on Machine Learning (ICML) , 2024. Jianfeng Zhang. Backward stochastic differential equations. In Backward Stochastic Differential Equations: From Linear to Fully Nonlinear Theory , pp. 79–99. Springer, 2017. 
+
+12 A Notation Table 
+
+Table 6 collects the shared symbols used across the paper. 
+
+Table 6: Notation, with the equation, assumption, or section where each symbol is defined. Symbol Definition Meaning 
+
+Control problem 
+
+ξ, x §2.1 starting point of the process or walk; conditioned as | ξ = x
+
+where the start is not otherwise fixed 
+
+Xξ, u 
+
+> t
+
+Eq. 1 controlled process at time t, from the prescribed start ξ under control ub Eq. 1 drift of the controlled system ( b = 0 in the specialization) 
+
+G, R Eq. 1, Eq. 2 control matrix and control penalty ( G = R = I in the special-ization) Σ Eq. 1 diffusion tensor; Σ = λI when G = R = I under matching 
+
+q, c Eq. 2, Eq. 3 state cost q = 12 c2, with c > 0 the local slowness 
+
+ϕ, g Eq. 2, §2.1 terminal cost and its transform g = e−ϕ/λ ∈ (0 , 1]; g ≡ 1 by default 
+
+λ Ass. 1 temperature; sets the noise–control exchange rate 
+
+V, Ψ Eq. 2, §2.1 value function and desirability Ψ = e−V /λ 
+
+Geometry and the elliptic problem 
+
+G, ΓD Eq. 4 open goal region and its absorbing boundary Γ D = ∂G
+
+ΓN Eq. 4 obstacles ∂S and outer boundary, reflecting 
+
+κ Eq. 3 screening coefficient κ = c/λ ωd Eq. 15 total solid angle, 2 πd/ 2/Γ( d/ 2) 
+
+α(x) Eq. 8 fraction of solid angle subtended by Ω at x; 1 inside, 12 on Γ N
+
+The walk 
+
+ξk Eq. 7 WoSt point after k steps, from ξ0 = ξ; random for k ≥ 1
+
+r(x), St( x) Eq. 6 radius and star centered at the current spatial location x; rk =
+
+r(ξk )
+
+dD , d sil Eq. 6 distance to Γ D ; distance to the nearest visibility silhouette 
+
+ρk Eq. 7 distance travelled by step k; ρk ≤ rk
+
+σ §4.1 first exact goal-hit step inf {k : ξk ∈ ΓD }, possibly infinite; practical walks use shell stopping and a horizon 
+
+Wk Eq. 25 step weight Qκd (ρk , r k )
+
+γd Eq. 22 full-sphere weight Qκd (r, r )
+
+Labels and early stopping 
+
+bΨ Eq. 10 Monte Carlo estimate 
+
+K, N, m §4.2, Alg. 2 step budget; walks per query point; query points per gradient step 
+
+Planning lattice 
+
+h, Xh §4.4 lattice spacing and free grid cells 
+
+L, e §4.4 depth and number of edges committed per replan 
+
+N , Rk §4.4 feasible neighbors of a state; states reachable in at most k moves 
+
+Bk Eq. 37 largest desirability reachable within k moves 
+
+Operator and training 
+
+T Eq. 5 exact solution operator a 7 → Ψ, which Tθ approximates 
+
+Tθ , θ − Eq. 11, Alg. 2 the learned operator a 7 → Ψθ ; its EMA target parameters 
+
+L Eq. 13 training objective 
+
+Kernels 
+
+ν Eq. 25 Bessel order d 
+
+> 2
+
+− 1
+
+Gκ,B Eq. 18 screened Green’s function of the ball 
+
+P Rd
+
+Eq. 24 unscreened free-space Poisson kernel, the sampling density 
+
+13 B Screened Poisson Kernels in d Dimensions 
+
+This appendix derives the kernels used by the estimator of Section 4.1 in general dimension. Throughout, d ≥ 2, 
+
+κ > 0, and 
+
+ν := d
+
+2 − 1, r := ∥x − y∥, ωd = 2πd/ 2
+
+Γ( d/ 2) . (15) In Appendix B.1 the radial variable is the source separation r = ∥x − y∥; from Appendix B.2 onward r is the radius of the ball or star and ρ := ∥x − y∥ denotes the source separation. We seek Green’s functions for the screened Laplacian 
+
+Lκ := −∆ + κ2, Lκ G(x, y) = δ(x − y).
+
+Away from the pole every case below solves the same radial ODE, 
+
+u′′ (r) + d − 1
+
+r u′(r) − κ2u(r) = 0 , basis  r−ν Iν (κr ), r−ν Kν (κr ) , (16) with Iν regular at the origin and Kν singular. Cases differ only in which combination the outer boundary condition selects; the overall constant is fixed once and for all by the flux jump at r = 0. 
+
+## B.1 Free Space 
+
+In free space the radial solution of Eq. 16 that decays at infinity is the Kν branch, and the flux jump at the pole fixes its constant: 
+
+GRd (r) = κν
+
+(2 π)d/ 2
+
+Kν (κr )
+
+rν (17) As a check, for d = 2 ( ν = 0) this gives G = K0(κr )/2π, and for d = 3 ( ν = 12 ), using K1/2(z) = pπ/ 2z e −z
+
+gives the Yukawa potential G = e−κr /4πr .
+
+Radial derivative. The Neumann part of ∂St requires the normal derivative of Eq. 17. Using ddz 
+
+z−ν Kν (z) =
+
+−z−ν Kν+1 (z), 
+
+∂r GRd (r) = − κν+1 
+
+(2 π)d/ 2
+
+Kν+1 (κr )
+
+rν < 0which is strictly negative for all r > 0, so the kernel is monotonically decreasing in every dimension. 
+
+## B.2 The Ball: Dirichlet, Neumann, and Robin 
+
+Let BR = {∥ x∥ < R } with the pole at the center, as in every walk step. The solution is radial and takes the form 
+
+GBR (r) = κν
+
+(2 π)d/ 2
+
+1
+
+rν
+
+h
+
+Kν (κr ) − A I ν (κr )
+
+i
+
+, 0 < r < R, (18) with the same prefactor as Eq. 17, since the flux jump at the origin is unchanged by the boundary. Only A
+
+depends on the boundary condition. Writing z = κr and using the scaled-derivative identities ddz
+
+z−ν Iν (z) = z−ν Iν+1 (z), ddz
+
+z−ν Kν (z) = −z−ν Kν+1 (z), (19) the radial derivative of Eq. 18 is proportional to −Kν+1 (z) − A I ν+1 (z). The two cases we use follow: Dirichlet G(R) = 0 : AD = Kν (κR )
+
+Iν (κR ) , (20) Neumann ∂r G(R) = 0 : AN = − Kν+1 (κR )
+
+Iν+1 (κR ) . (21) Note the order shift in AN : since ddz [z−ν Kν ] = −z−ν Kν+1 and likewise for Iν , imposing ∂r G(R) = 0 on 
+
+r−ν [Kν − AI ν ] produces the order-( ν + 1) ratio rather than the naive K′ 
+
+> ν
+
+/I ′ 
+
+> ν
+
+, for which the derivative vanishes only when ν = 0. 14 B.3 The Screened Poisson Kernel and the Step Weight 
+
+The walk uses the Poisson kernel, P κBR (0, z) = −∂nz GDBR for z ∈ ∂B R, which by radial symmetry is constant on the sphere. Its total mass has a closed form, and it is exactly the factor γd appearing in Eq. 22. 
+
+Proposition 1 (Total mass of the screened Poisson kernel) . Let u solve ∆u − κ2u = 0 in BR with u ≡ 1 on 
+
+∂B R. Then 
+
+u(r) = 
+
+ Rr
+
+ν Iν (κr )
+
+Iν (κR ) ,
+
+Z
+
+> ∂B R
+
+P κBR (0, z) d S(z) = u(0) = γd(κR ),
+
+where the full-sphere weight is 
+
+γd(z) := (z/ 2) ν
+
+Γ( ν + 1) Iν (z) = Qκd (r, r ) z=κr . (22) 
+
+Consequently 
+
+P κBR (0, z) = γd(κR )
+
+ωd Rd−1 = Γ( d/ 2) γd(κR )2πd/ 2Rd−1 . (23) 
+
+Proof. Regularity at the origin selects the Iν branch of Eq. 16, and the stated normalization gives u(R) = 1. Taking r → 0 with Iν (z) ∼ (z/ 2) ν /Γ( ν + 1), 
+
+u(0) = Rν (κ/ 2) ν
+
+Γ( ν + 1) Iν (κR ) = (κR/ 2) ν
+
+Γ( ν + 1) Iν (κR ) = γd(κR ).
+
+The mass identity follows since u(0) = R P κ u dS with u ≡ 1 on the boundary, and Eq. 23 follows from constancy on the sphere. Proposition 1 is the ρ = r case of the star-step weight Eq. 25, and Appendix C.5 shows the general weight reduces to it. It also gives the two asymptotic regimes. Expanding Iν and using 4( ν + 1) = 2 d,
+
+γd(z) = 
+
+h
+
+1 + z2
+
+2d + O(z4)
+
+i−1
+
+= 1 − z2
+
+2d + O(z4), γd(z) ∼ (z/ 2) ν √2πz 
+
+Γ( ν + 1) e−z (z → ∞ ),
+
+so a short step is nearly weight-preserving with deficit κ2R2/2d, while a step much longer than the screening length is damped exponentially; hence steps beyond a few screening lengths contribute negligibly. 
+
+## B.4 The Screened Ball Poisson Kernel and the Star-Step Weight 
+
+Appendix B.3 treated the Poisson kernel at the center of a ball, which corresponds to a full-length sphere step. A star step may instead terminate against Γ N at a distance ρ < r , so we need the kernel at interior points of the ball. Following Sawhney et al. (2023), the screened ball Green’s functions are 
+
+Gκ,B  
+
+> 2
+
+(x, y) = 12π
+
+h
+
+K0(κρ ) − I0(κρ ) K0(κr )
+
+> I0(κr )
+
+i
+
+, Gκ,B  
+
+> 3
+
+(x, y) = 14π
+
+sinh  (r − ρ)κ
+
+ρ sinh( κr ) ,
+
+with ρ = ∥y − x∥, which agree with the general-d expression Eq. 18 at d = 2 , 3. Both vanish at ρ = r, which is the cancellation that removes the unknown-flux term on the spherical part of the boundary. The corresponding Poisson kernels factor as a scalar times the free-space kernel, 
+
+P κ,B d (x, z) = Qκd (ρ, r ) P Rd
+
+(x, z), P Rd
+
+(x, z) = nz · (z − x)
+
+ωd ρd , (24) with Qκd given for all d by Eq. 25. 
+
+Lemma 1 (General-dimension step weight) . For every d ≥ 2 and 0 < ρ ≤ r,
+
+Qκd (ρ, r ) := ∂ρGκ,B 
+
+∂ρGB = 2Γ( ν + 1) 
+
+ κρ 
+
+2
+
+ν+1 
+
+Kν+1 (κρ ) + Kν (κr )
+
+Iν (κr ) Iν+1 (κρ )
+
+
+
+, ν = d 
+
+> 2
+
+− 1, (25) 
+
+and Qκd (r, r ) = γd(κr ).Proof. Write z = κρ and α = Kν (κr )/I ν (κr ), so that by Eq. 18 and Eq. 20, 
+
+Gκ,B = κ2ν (2 π)−d/ 2z−ν Kν (z) − α z −ν Iν (z).
+
+15 The scaled-derivative identities Eq. 19 give 
+
+∂ρGκ,B = − κν+1 
+
+(2 π)d/ 2 ρ−ν Kν+1 (κρ ) + α I ν+1 (κρ ),
+
+using 2 ν + 1 − ν = ν + 1 for the power of κ. For d > 2, the denominator has GB = cd(ρ2−d − r2−d) with 
+
+cd = Γ( ν)/(4 πν+1 ), hence ∂ρGB = −2ν c d ρ−2ν−1 = −Γ( ν + 1)(2 πν+1 )−1ρ−2ν−1, where 2 νΓ( ν) = 2Γ( ν + 1). Dividing the preceding display by this and collecting the powers of 2 and π gives Eq. 25. Setting ρ = r makes the bracket Iν Kν+1 + Iν+1 Kν
+
+/I ν , and the Bessel identity Iν (z)Kν+1 (z) + Iν+1 (z)Kν (z) = 1 /z reduces it to 1/(zI ν (z)), leaving ( z/ 2) ν /(Γ( ν+1) Iν (z)) = γd(z). For d = 2, use GB (ρ) = (2 π)−1 log( r/ρ ) and ∂ρGB = −1/(2 πρ )directly; the same ratio follows. The sphere reduction follows from the standard Wronskian I0K1 + I1K0 = 1 /z .We verified Eq. 25 against the tabulated d = 2 , 3 forms and the reduction against γd at d ∈ { 2, 3, 4, 5, 7, 10 } to fourteen digits. Specializing Eq. 25 to the two dimensions tabulated by Sawhney et al. (2023), 
+
+Qκ 
+
+> 2
+
+(ρ, r ) = 
+
+h
+
+K1(κρ ) + I1(κρ ) K0(κr )
+
+> I0(κr )
+
+i
+
+κρ, (26) 
+
+Qκ 
+
+> 3
+
+(ρ, r ) = e−κρ  κρ + 1  +  κρ cosh( κρ ) − sinh( κρ ) e−κr  
+
+> sinh( κr )
+
+. (27) Table 7 gives representative values. Because of this factorization, the estimator is inexpensive: the geometric part P Rd
+
+is exactly the signed solid angle subtended by ∂St at z, so sampling directions uniformly gives unit importance weights, and screening enters only through the scalar Qκd .
+
+Table 7: Star-step weight Qκ 
+
+> 3
+
+(ρ, r ) at r = 1. The weight is 1 for a zero-length step and decreases with the realized hit distance ρ, reaching γ3(κr ) = κr/ sinh( κr ) at ρ = r. A step cut short by an obstacle loses less weight than a full sphere step. 
+
+ρ/r 0 1/6 1/3 1/2 2/3 5/6 1
+
+κr = 1 1.0000 0.9880 0.9593 0.9232 0.8880 0.8614 0.8509 
+
+κr = 4 1.0000 0.8558 0.6157 0.4086 0.2629 0.1766 0.1466 
+
+## B.5 Why a Ball Kernel Is Admissible on a Star Domain 
+
+The kernels of Appendices B.1–B.4 are constructed for free space and for a ball, yet Eq. 28 integrates them over 
+
+∂St, which is not a sphere. The following identity justifies this. 
+
+Proposition 2 (Admissibility) . Let A ⊆ Ω be a bounded Lipschitz domain with x ∈ A, let Ψ solve LκΨ = 0 on 
+
+A, and let G be any function with (−∆ + κ2)G(x, ·) = δx on a neighborhood of A, so that x is its only singularity in A. Then with P := −∂nG and n the outward normal, 
+
+Ψ( x) = 
+
+Z
+
+> ∂A
+
+h
+
+P (x, z) Ψ( z) + G(x, z) ∂nΨ( z)
+
+i
+
+dS(z). (28) 
+
+Proof. Green’s second identity on A for the pair (Ψ , G ) with the operator Lκ gives 
+
+Z
+
+> A
+
+ Ψ LκG − G LκΨ =
+
+Z
+
+> ∂A
+
+ G ∂ nΨ − Ψ ∂nG
+
+the zeroth-order terms κ2ΨG canceling identically between the two products. The second integrand on the left vanishes by hypothesis, and the first collapses to Ψ( x) by the defining property of G. Rearranging gives Eq. 28. The chain’s one-step identity is the case G = Gκ,B , the screened Dirichlet Green’s function of the ball 
+
+B = B(x, r ), applied on an admissible star A = St( x). Since Gκ,B vanishes on the spherical part of ∂A and 
+
+∂nΨ = 0 on the reflecting part, the flux term drops and Ψ( x) = R 
+
+> ∂A
+
+P κ,B (x, z)Ψ( z) d S(z) with P κ,B = −∂nGκ,B .At a smooth boundary pole x ∈ ΓN , the same steps on A minus a half-ball of radius η about x, with η → 0, give the identity with Ψ( x) replaced by 12 Ψ( x), because the small hemisphere carries half of the singular flux; this is the factor α in Eq. 8. The direction law is the solid-angle density P B dS/α with P B = −∂nGB , and the weight is the flux ratio Qκd = P κ,B /P B of Eq. 34, so E[WkΨ( ξk+1 ) | ξk = x] = α(x)−1 R 
+
+> ∂A
+
+P κ,B Ψ d S = Ψ( x), the one-step property of Section 4.1. Multiplying by the earlier weights gives the martingale property before σ; the stopped sequence is constant afterwards. 16 The hypotheses require neither that G be the Green’s function of A nor that it satisfy any boundary condition on ∂A . All that is needed is a fundamental solution whose singularity inside A is the single pole at x. Since St( x, r ) ⊆ B(x, r ), the ball kernel Gκ,B has that property, and so do the free-space kernel and the ball kernel of any radius r′ ≥ r. Each of these kernels gives a valid representation of Ψ( x), so we must choose among them. The choice is governed by the unknown flux ∂nΨ in Eq. 28. On ∂St that flux is zero on ∂St N ⊆ ΓN but unknown on ∂St B ⊆ ∂B (x, r ), which lies in the interior of Ω where no boundary condition applies. A usable identity therefore needs a kernel that vanishes on ∂St B while remaining finite on ∂St N , and that is exactly the ball’s Dirichlet kernel: Gκ,B (x, ·) ≡ 0 on ∂B (x, r ) ⊇ ∂St B , and it is finite and nonzero at the interior points constituting ∂St N . The free-space kernel is admissible but unsuitable here: Gκ, Rd
+
+> 0 on ∂St B , so the unknown flux term does not vanish. The walk nonetheless samples directions by the free-space solid angle. For the Laplace operator the two Poisson kernels agree on all of ∂St, because the boundary corrector GB − GRd
+
+for a centered pole is the constant radial homogeneous solution and so has zero normal derivative; directional sampling then importance-samples the kernel exactly and the step weight is 1. Screening replaces that constant by the Iν branch of Eq. 16, and the resulting ρ-dependent corrector is precisely the second term of Eq. 25. This explains why Qκd depends on the star radius r and not only on the hit distance ρ: the ρ-dependence comes from the free-space fundamental solution, and the r-dependence comes from the ball corrector, whose normal derivative is nonzero only when κ > 0. Proposition 2 is exact, so the ball-on-star transfer contributes no error of its own. One further term is specific to the identity: for nonzero Neumann data the second integrand of Eq. 28 requires Gκ,B at interior points of B,which is available in closed form but is estimated with a separate sample, since reusing the walk direction gives an estimator that is zero on flat boundaries and high-variance elsewhere (Sawhney et al., 2023). With h ≡ 0 that term drops entirely, which is the case throughout this paper. 
+
+## B.6 Dimension-Specific Forms and the Laplace Limit                                   
+
+> Table 8: Screened Poisson kernels by dimension. All entries follow from Eq. 17, Eq. 18, and Eqs. 20–21 with ν=d/ 2−1.
+> dGRd(r)GDBR(r)γd(z)2K0(κr )2π
+> 12π
+> 
+> K0(κr )−K0(κR )
+> I0(κR )I0(κr )
+> 1
+> I0(z)3e−κr
+> 4πr
+> 14πr
+> 
+> e−κr −e−κR sinh( κr )sinh( κR )
+> z
+> sinh z
+> general κν
+> (2 π)d/ 2
+> Kν(κr )
+> rν
+> κν
+> (2 π)d/ 2rν
+> 
+> Kν(κr )−Kν(κR )
+> Iν(κR )Iν(κr )
+> (z/ 2) ν
+> Γ( ν+ 1) Iν(z)
+
+Table 8 collects the dimension-specific forms. For d > 2, Kν (z) ∼ 2ν−1Γ( ν)z−ν gives the unscreened limit 
+
+GRd (r) −→ Γ( d/ 2 − 1) 4πd/ 2 r2−d, γd(κR ) −→ 1,
+
+which is 1 /(4 πr ) in three dimensions. In two dimensions the free-space Green’s function diverges by an additive constant as κ → 0; subtracting that constant gives −(2 π)−1 log r. In the Dirichlet ball kernel the constants cancel, giving (2 π)−1 log( R/r ). In all dimensions Qκd (ρ, r ) → 1 and γd → 1, recovering the unscreened weights. A purely Neumann unscreened problem needs a separate compatibility and normalization condition. 
+
+# C Proofs 
+
+## C.1 Standing Regularity Assumptions 
+
+Assumption 2 (Regularity) . The free domain Ω is bounded and connected with C2,α boundary, for 0 < α < 1.Its Dirichlet and Neumann sets are disjoint unions of boundary components, each with positive surface measure. Hence they are separated by a positive distance. This excludes Dirichlet–Neumann junctions, near which the solution can have singular gradients. The goal data satisfies g ∈ C2,α (Γ D) and 0 < g min ≤ g ≤ 1. The cost satisfies c ∈ Cα(Ω) and 0 < c min ≤ c ≤ cmax . The noise parameter λ > 0 is fixed for each problem. 
+
+Under Assumption 2, the mixed elliptic problem has a unique Ψ ∈ C2,α (Ω) (Gilbarg & Trudinger, 2001). These regularity statements concern the ideal smooth domain. Voxel edges and corners are not covered by this assumption; the smooth-boundary factor α = 1 /2 and global gradient bounds do not automatically extend to them. The exact PDE identities for the chain additionally require constant screening and admissible stars; regularity does not guarantee that the radius-clamped sampler is exact. Write Lκ = −∆ + κ2.17 C.2 Exact Linearization 
+
+Where V is C2 it satisfies the interior stationary HJB equation 0 = min 
+
+> u
+
+n
+
+∇V ⊤(b + Gu) + q + 12 u⊤R u
+
+o
+
++ 12 tr  Σ∇2V ,
+
+whose inner minimization is attained at u⋆ = −R−1G⊤∇V . Substituting that minimizer leaves a quadratic nonlinearity in ∇V ,0 = ∇V ⊤b − 12 ∇V ⊤GR −1G⊤∇V + q + 12 tr  Σ∇2V , (29) and this term cancels under the desirability transform. 
+
+Lemma 2 (Cole–Hopf linearization is exact precisely under matching) . Let V ∈ C2 satisfy Eq. 29 and set 
+
+Ψ = e−V /λ . Then  
+
+> 12
+
+tr(Σ ∇2Ψ) + b⊤∇Ψ − qλ Ψ = 12Ψ ∇Ψ⊤h
+
+Σ − λ GR −1G⊤i
+
+∇Ψ. (30) 
+
+In particular the right side vanishes for every Ψ with ∇Ψ̸ = 0 if and only if Σ = λGR −1G⊤ as quadratic forms, which is Assumption 1. Proof. From Ψ = e−V /λ we get ∇V = −λ∇Ψ/Ψ and ∇2V = −λ ∇2ΨΨ + λ ∇Ψ⊗∇ ΨΨ2 Substitute into Eq. 29 term by term. The diffusion term becomes  
+
+> 12
+
+tr(Σ ∇2V ) = − λ
+
+2tr(Σ ∇2Ψ) Ψ + λ
+
+2
+
+∇Ψ⊤Σ∇ΨΨ2
+
+and the quadratic control term becomes 
+
+− 12 ∇V ⊤GR −1G⊤∇V = − λ2
+
+2
+
+∇Ψ⊤GR −1G⊤∇ΨΨ2 .
+
+Adding the two quadratic contributions gives 
+
+λ
+
+2Ψ 2 ∇Ψ⊤Σ − λGR −1G⊤∇Ψ, (31) which is Eq. 30 up to the stated factor. The remaining terms are −λb⊤∇Ψ/Ψ + q and − λ 
+
+> 2
+
+tr(Σ ∇2Ψ) /Ψ; multiplying the whole equation by −Ψ/λ yields the stationary backward Kolmogorov equation  
+
+> 12
+
+tr  Σ∇2Ψ + b⊤∇Ψ − qλ Ψ = 0 (32) exactly when Eq. 31 vanishes. For universal cancellation of the transformed differential expression, put E = Σ − λGR −1G⊤. The symmetric quadratic form v⊤Ev vanishes for every v if and only if E = 0. Smooth positive test fields can have an arbitrary gradient at a point, so matching is necessary for this operator identity. For a particular solution Ψ, the residual can vanish even when matching fails. For the fully actuated reflected model under Assumption 2, let Ψ solve the mixed problem and set V = −λ log Ψ and u∗ = −∇ V . Assume admissible controls, including u∗, give well-defined dynamics with finite expected goal-hitting time and control energy. Completing the HJB square and applying Itˆ o’s formula up to τD ∧ T , then taking T → ∞ , yields 
+
+J(x, u) = V (x) + 12 Ex
+
+Z τD
+
+> 0
+
+∥ut − u∗(Xt)∥2 dt. (33) The Neumann condition removes the reflection term; bounded V and V = ϕ at the goal justify the stopped limit. Thus J(x, u) ≥ V (x), with equality for u∗, proving optimality. 
+
+## C.3 Positivity and Bounded Log-Desirability 
+
+Part (ii) below fixes the scale on which log Ψ varies. For constant c the screening length is λ/c , but additional length scales arise from the domain size, goal size, and obstacle geometry, so exponential decay with distance holds only asymptotically. 
+
+Proposition 3 (Positivity and range) . Under Assumption 2: (i) 0 < Ψ ≤ 1 on Ω, with Ψmin = min Ψ > 0;
+
+18 (ii) for the fixed annulus a < |x| < D , 0 < a < D , constant κ, Ψ( a) = 1 , and Ψ′(D) = 0 , the log range is 
+
+− log Ψ( D) = κ(D − a) + O(1) as κ → ∞ .Proof. For (i), the maximum principle excludes an interior maximum above one or a nonpositive interior minimum. At a reflecting boundary, the Hopf boundary lemma (Gilbarg & Trudinger, 2001) excludes either extremum unless the solution is constant. A constant violating the bounds contradicts the positive Dirichlet data. Continuity and compactness then give a strictly positive minimum. For (ii), put ν = d/ 2 − 1. The radial solution is Ψ( r) = r−ν [Kν (κr ) + AI ν (κr )] 
+
+a−ν [Kν (κa ) + AI ν (κa )] , A = Kν+1 (κD )
+
+Iν+1 (κD ) .
+
+Integrating ( rd−1Ψ′)′ = κ2rd−1Ψ backward from Ψ ′(D) = 0 shows Ψ ′ < 0 for a < r < D . Thus the range is − log Ψ( D). At fixed a, D , the large-argument Bessel asymptotics give Ψ( D) = 2( a/D )(d−1) /2e−κ(D−a)(1 + 
+
+O(κ−1)), which proves (ii). 
+
+## C.4 Why We Use Reflection at Obstacles 
+
+Reflection lets the process remain in the free domain and continue toward the goal after reaching an obstacle boundary. Its corresponding condition is ∂nΨ = 0, as in Eq. 4 and the reflecting walks of Sawhney et al. (2023). This choice also keeps log Ψ, and so the control, finite up to the boundary under Assumption 2. 
+
+Zero Dirichlet data produces a logarithmic singularity. Suppose instead that obstacles are absorbing, with zero terminal desirability. Denote the resulting solution by Ψ abs , retaining positive goal data and reflection at the outer workspace boundary. Then Ψabs = 0 on ∂S, log Ψ abs (x) → −∞ , Vabs (x) = −λ log Ψ abs (x) → +∞
+
+as x approaches an obstacle from the free domain. Thus zero desirability represents an infinite collision penalty. The singularity is in the logarithmic representation and value function; the linear PDE solution Ψ abs can remain smooth. The control also becomes singular at a smooth obstacle surface. With the smoothness and separation assumptions of Assumption 2, now replacing the obstacle condition by zero Dirichlet data, fix z ∈ ∂S and write x = z − sn (z), where s > 0 measures distance into the free domain. The Hopf boundary lemma gives 
+
+az = −∂nΨabs (z) > 0. Taylor expansion and u⋆ = −∇ V , for G = R = I, yield Ψabs (z − sn (z)) = az s + O(s2),Vabs (z − sn (z)) = −λ log( az s) + O(s),
+
+u⋆
+
+> abs
+
+(z − sn (z)) = − λs n(z) + O(1) , s ↓ 0.
+
+The leading control points away from the obstacle and grows as inverse distance. A bounded log-output model cannot approximate this target uniformly all the way to the obstacle surface. Clipping the desirability to a positive floor removes the divergence numerically but introduces a boundary approximation. 
+
+Reflection preserves a bounded target. For the reflected problem, Proposition 3 gives Ψ min > 0 on the closed free domain. Consequently V and log Ψ are bounded, ∂nV = 0, and ∥∇ V ∥∞ ≤ λ∥∇ Ψ∥∞/Ψmin < ∞
+
+under the stated regularity assumptions. The reflected dynamics enforce the boundary constraint; the Neumann condition does not impose a positive clearance from obstacles. We therefore use reflection because it permits continued goal seeking with a bounded log target; other formulations need not use it. Strictly positive Dirichlet obstacle data Ψ = e−ϕobs /λ with finite ϕobs avoids this logarithmic singularity, but models termination at an obstacle with a finite penalty. The singularity claim applies specifically to zero Dirichlet data for Ψ, not to Dirichlet conditions in general. 
+
+## C.5 The Chain Kernel 
+
+Throughout, GB and Gκ,B denote the unscreened and screened Dirichlet Green’s functions of B = B(x, r ) with pole at the center; both are radial in ρ = ∥y − x∥. By Lemma 1, the step weight is the flux ratio 
+
+Qκd (ρ, r ) = ∂ρGκ,B 
+
+∂ρGB . (34) 19 Both Green’s functions are radial about the center, so the outward normal derivative at z factors as ∂nG =(∂ρG)( nz · ˆeρ) and the geometric factor cancels in the ratio, which is why Eq. 34 is also the ratio of the two Poisson kernels in Eq. 24. For d ≥ 2, κ > 0 and 0 < ρ ≤ r the step weight is bounded on both sides, 
+
+γd(κr ) ≤ Qκd (ρ, r ) < 1, (35) with γd the full-sphere weight of Eq. 22. By the upper bound, the weighted chain of Section 4.1 remains bounded; the lower bound gives Qκd ≥ γd(κr max ) when the star radius is at most rmax , which yields the replica bounds used in Appendix C.7. 
+
+Bounds on Qκd . Positivity is immediate from Eq. 25, since Kν+1 , Iν+1 and Kν /I ν are all positive. For the upper bound, set D := GB − Gκ,B , which is radial and vanishes at ρ = r. Subtracting the two defining equations cancels the point sources and leaves −∆D = κ2Gκ,B in B, so in flux form, the constant vanishing because the right side is locally integrable at the origin, 
+
+−ρd−1∂ρD = κ2
+
+Z ρ
+
+> 0
+
+td−1Gκ,B (t) d t, −ρd−1∂ρGB = 1
+
+ωd
+
+.
+
+Dividing the first by the second gives the weight-deficit identity 1 − Qκd (ρ, r ) = ∂ρD∂ρGB = κ2
+
+Z
+
+> B(x,ρ )
+
+Gκ,B (x, y) d y,
+
+The integrand is strictly positive on the interior of B, so the right side is strictly positive for ρ > 0 and Qκd < 1. For the lower bound, B(x, ρ ) ⊆ B(x, r ) and the integrand is nonnegative, so the deficit is at most κ2R 
+
+> B
+
+Gκ,B ;integrating ( −∆ + κ2)Gκ,B = δx over B gives κ2R 
+
+> B
+
+Gκ,B = 1 − R 
+
+> ∂B
+
+P κB dS = 1 − γd(κr ) by Proposition 1. Hence γd(κr ) ≤ Qκd (ρ, r ) < 1, with equality on the left at ρ = r. This follows directly from B(x, ρ ) ⊆ B(x, r ); monotonicity in ρ also follows from the same identity but is not needed. 
+
+## C.6 Log-Space Variant 
+
+Alternatively, log Ψ θ can be fitted to log labels. There the weights are accumulated as Λ (n) = P 
+
+> j<σ (n)∧K
+
+log W (n)
+
+> j
+
+plus the log of the terminal value, which avoids underflow for long products, but log bΨ is a biased estimate of log ¯Ψ, since the logarithm of a sample mean is not the mean of logarithms. The correction below removes that bias to O(N −2). 
+
+Bias correction. For i.i.d. replicas with fixed bounds 0 < z min ≤ eΛ(n)
+
+≤ zmax < ∞ and variance s2,
+
+E[log bΨ] = log ¯Ψ − s2
+
+2N ¯Ψ2 + O(N −2).
+
+The constants can depend on the replica bounds. For a fixed environment, such bounds follow from a finite horizon and a bounded target log field (Appendix C.7). For N ≥ 2, compute all ratios from shifted exponentials. Set b = max n Λ(n), zn = eΛ(n)−b, ¯ z = N −1 P 
+
+> n
+
+zn,and s2 
+
+> z
+
+= ( N − 1) −1 P
+
+> n
+
+(zn − ¯z)2. Then 
+
+bv = s2
+
+> z
+
+N ¯z2 , bΛ = log bΨ + bv
+
+2 = b + log ¯ z + bv
+
+2 . (36) Here s2 
+
+> z
+
+is the sample variance of the shifted replicas zn. The random common shift makes those replicas dependent; unbiasedness is invoked only for the unshifted replicas below. Writing bs2 for the unbiased sample variance of the unshifted replicas eΛ(n)
+
+, the ratio is unchanged by the common shift, bv = s2 
+
+> z
+
+/(N ¯z2) = bs2/(N bΨ2), so Eq. 36 adds the bias correction bs2/(2 N bΨ2). The correction removes the leading log bias, leaving O(N −2)under the stated assumptions. 
+
+## C.7 Delta-Method Bias of the Log Label 
+
+Proposition 4 (Bias of a log sample mean) . Let Z1, . . . , Z N be i.i.d. with Zi ∈ [zmin , z max ], 0 < z min ≤ zmax < ∞,mean μ, and variance s2. For N ≥ 2, write bΨ = N −1 P 
+
+> i
+
+Zi and let bs2 be the unbiased sample variance. Then 
+
+E[log bΨ] = log μ − s2
+
+2N μ 2 + O(N −2), E
+
+
+
+log bΨ + bs2
+
+2N bΨ2
+
+
+
+= log μ + O(N −2).
+
+The constants depend on the replica bounds. 
+
+20 Proof. Set U = bΨ − μ. Taylor’s theorem through degree three gives log( μ + U ) = log μ + U/μ − U 2/(2 μ2) + 
+
+U 3/(3 μ3) + R4 with |R4| ≤ CU 4 because bΨ ≥ zmin . Independence gives EU = 0, EU 2 = s2/N , EU 3 = O(N −2), and EU 4 = O(N −2), proving the first expansion. For the correction, expand ( μ + U )−2 = μ−2 − 2μ−3U + R2, where |R2| ≤ CU 2. Since bs2 is bounded, 
+
+E[bs2R2] = O(N −1). Also Ebs2 = s2 and E[bs2U ] = m3/N , with m3 the third central moment of Zi. Hence 
+
+E[bs2/ bΨ2] = s2/μ 2 + O(N −1), which proves the corrected expansion. Jensen’s inequality gives the nonpositive bias of the uncorrected logarithm for every N .For a fixed environment, horizon K, and target bounded by 0 < Ψ− 
+
+> min
+
+≤ Ψθ− ≤ Ψ− 
+
+> max
+
+< ∞, let Wmin > 0 be a lower bound on the step weight, which exists by Eq. 35 when the star radius is bounded. The walk replicas then lie in [ zmin , z max ] with zmin = W K 
+
+> min
+
+min( gmin , Ψ−
+
+> min
+
+) and zmax = max(1 , Ψ−
+
+> max
+
+). The target bounds hold because the log field is continuous on the compact domain. They are not assumed uniform over all trained parameters or environments. The shifted calculation in Eq. 36 preserves the variance ratio exactly in real arithmetic and avoids underflow from a common small scale. 
+
+## C.8 Bounded Local Search 
+
+Recall the lattice of Section 4.4, with vertices Xh and edges between axis-adjacent free cells. We take this graph to be finite and Ψ θ finite at every vertex. 
+
+Reachable endpoint scores. The largest desirability reachable in k moves is computed by 
+
+B0(x) = Ψ θ (x), Bk+1 (x) = max   
+
+> y∈{ x}∪N (x)
+
+Bk(y). (37) Indeed, R0(x) = {x} and 
+
+Rk+1 (x) = Rk(x) ∪ [ 
+
+> y∈N (x)
+
+Rk(y),
+
+so induction gives Bk(x) = max z∈R k (x) Ψθ(z). Equation 14 therefore compares BL−1 at candidate neighbors. Moving to that neighbor uses the first of the L moves. 
+
+Recovering a route. In each propagation layer, the previous score is kept unless a neighbor has a strictly higher score, in which case the corresponding edge is stored. Starting at horizon L, follow the stored edges while decreasing the remaining horizon. A layer with no edge is skipped because its maximum was already reachable at a shorter horizon. Induction on the remaining horizon gives a feasible route of at most L edges ending at a cell with score BL(x0). Executing a prefix preserves graph feasibility, although the next replan may select a different endpoint. Continuous-motion feasibility additionally requires valid edges; collision-free sampled endpoints are insufficient. The implemented lattice uses cells marked free in the saved occupancy mask, connected through face-adjacent free cells. Continuous segments from off-center states are checked across all traversed voxels. All edges are checked for collisions. For e = 1, Eq. 14 instead selects a neighbor anew from the fixed BL−1 map at each visited state. 
+
+Saturation at large depth. The reachable sets are nested, hence Bk+1 (x) ≥ Bk(x). On a connected component 
+
+C of graph diameter D, every k ≥ D gives Bk(x) = max z∈C Ψθ (z) for all x ∈ C. Once L − 1 ≥ D, the candidate scores in Eq. 14 coincide and direction depends on tie-breaking. For a reconstructed route, maximizing the terminal score likewise does not distinguish the lengths of paths to the same endpoint. Thus increasing depth enlarges the set of candidate endpoints, but does not guarantee a shortest path or a successful rollout. 
+
+# D Supplementary Experiments 
+
+## D.1 Evaluation and Training Protocol 
+
+Evaluation scope. The pretrained 2D application benchmark contains 592 maps (37,888 starts); the 2D generated and 4D manipulator test sets each contain 512 maps (32,768 starts). Every map uses eight goals and every goal uses eight starts, chosen at the centers of eight equal goal-distance quantile bins. Success is evaluated on the matched saved queries, including failed rollouts in the denominator. Field prediction or solve, controller preprocessing, and rollout/search all contribute to reported test-time cost. These costs are amortized over the corresponding starts; they include more than the neural forward time. FEM solutions provide the numerical ground-truth fields for reconstruction-error evaluation. 21 Execution model for replanning comparisons. Table 5 compares nominal planners, sampling-based controllers, and PUN at execution-noise levels λ ∈ { 0.25 , 1, 2, 4}. Before boundary handling, the proposed transition is exk+1 = xk + ak + √λ∆t z k, with independent zk ∼ N (0 , I d), ∆ t = 1 /65 ,536, and ∥ak∥2 ≤ 1/(8 n), where n is the largest grid dimension. Each control interval contains eight microsteps. Coordinates occupy a unit square in 2D, a 1 × 1 × 12 domain in 3D, and normalized joint coordinates in 4D. The noise-increment covariance is λ∆tI d, consistent with the PDE specialization Σ = λI d. In these replanning evaluations, all compared methods use the same execution and collision-checking rules. Collision checks cover the entire executed motion segment, and an obstacle hit is counted as a rollout failure. Thus, success requires reaching the goal without an obstacle hit or an outer-domain boundary violation. The reflected PDE provides the planning field, whose effectiveness is evaluated here under collision-failure execution. Joint limits are not modeled in these experiments. Moves outside the outer workspace or configuration-domain boundary are also counted as rollout failures. For each environment–goal query at a given noise level, PUN predicts the entire field in a single forward pass and reuses it throughout the rollout. The reported replanning comparisons use positive noise levels, consistent with the 
+
+λ > 0 scope of the screened-Poisson derivation. Success requires entry into the saved goal-cell mask before failure. Methods replan from the current noisy state every eight microsteps. Execution also stops on a collision failure, an unavailable route, or the controller’s stopping condition. 
+
+Baseline configuration. The MPPI and PI 2-CMA implementations share a horizon of H = 32 steps, K = 128 sampled trajectories per optimization iteration, and one iteration per planning call. Both use double precision, componentwise action bounds [ −0.05 , 0.05], initial exploration standard deviation 0 .025, and optimization temperature η = 0 .5. This temperature is distinct from the execution-noise parameter λ. A fresh call initializes every action to ( xG − x)/H , where xG is the goal center. Thus each call evaluates KH = 4 ,096 sampled transitions, followed by a rollout of the selected nominal sequence. The wrapper supports resuming interrupted optimization from saved parameters and random-generator state; ordinary calls initialize a new optimizer rather than carrying its solution between replans. The configuration uses ( H, K, I ) = (32 , 128 , 1), where I is the iteration count. These factors describe nominal sampled work IKH . No validation-based parameter sweep was performed. We use standard values for temperature, exploration scale, action bounds, the objective weights. A⋆ and Dijkstra use standard C++ implementations with face-neighbor connectivity and unit edge costs. Grids are the native 2D maps, 64 × 64 × 32 in 3D, and 17 4 in 4D. A ⋆ uses Manhattan distance to the goal-mask bounding box; Dijkstra uses zero heuristic. CPU RRT uses OMPL 2.0.1, goal bias 0.05, uniform domain sampling, and maximum extension 0.4 in normalized coordinates. Search stops on a goal solution; there is no fixed sample or tree-size cap. 
+
+Planning objective and geometry. Both sampling-based optimizers use the following task cost, with stage costs evaluated after each predicted transition: 
+
+ℓt = 1{xt+1 /∈G} 
+
+ 1 + 10 ∥xt+1 − xG ∥22 + ∥ut∥22
+
+ + 100 It,ϕH = 100 1{xH /∈G} ∥xH − xG ∥22.
+
+Here It flags a proposed segment rejected by the geometry-validity routine when its starting state is not already in the goal. Before calling the geometry step routine, the wrapper replaces rejected actions and actions starting in the goal with zero displacement. This is a penalized planning surrogate; executed collisions are failures under the evaluation protocol above. Goal absorption is delegated to the geometry step routine. After optimization, the wrapper returns the predicted state path, truncated at its first recorded goal state. Execution noise is applied outside the optimization wrapper; its action-exploration distribution should not be identified with the execution-noise distribution. Geometry routines traverse all crossed voxels, including incident cells at edge/corner crossings, to detect goal entry, obstacle contact, and domain exit. Collision takes precedence over simultaneous goal entry in first-contact scoring. Actions are displacements in the normalized coordinates specified above. Predicted trajectories use deterministic geometry; the outer rollout adds execution noise. Returned paths are subdivided into bounded microsteps. 
+
+MPPI implementation. We use the MPPI class from pytorch mppi 3 (Williams et al., 2017a), with 
+
+noise sigma = 0 .025 2Id, lambda = 0 .5, the task costs above, and the stated action bounds. The one call to 
+
+command refines the nominal sequence at the same state with shift nominal trajectory=False . We retain the library’s MPPI update and control-perturbation cost in addition to the supplied task cost, and generate the returned path from the final nominal action sequence. The implementation uses the original MPPI update and control-perturbation cost. 
+
+> 3https://github.com/UM-ARM-Lab/pytorch_mppi
+
+22 Table 9: 95% confidence intervals for replanning success rates (%) corresponding to Table 5.                                                                                  
+
+> Dim. Method λ= 0 .25 λ= 1 λ= 2 λ= 4
+> 2D
+> A* [55.92, 62.08] [39.16, 45.50] [31.90, 38.10] [20.89, 26.45] Dijkstra [55.81, 62.19] [39.15, 45.51] [31.99, 38.01] [21.08, 26.26] RRT [79.37, 84.63] [65.68, 71.66] [49.14, 55.52] [33.46, 39.88] MPPI [81.70, 86.30] [57.77, 64.23] [42.45, 48.89] [28.82, 34.52] PI 2-CMA [75.76, 80.90] [56.81, 63.19] [44.76, 51.24] [31.95, 38.05] PUN (zero-shot) [89.90, 93.44] [71.27, 76.73] [59.15, 65.51] [42.55, 48.79]
+> 3D
+> A* [32.37, 40.97] [19.38, 27.28] [9.10, 14.90] [4.04, 7.96] Dijkstra [33.00, 41.66] [18.98, 26.36] [9.05, 14.95] [3.73, 8.27] RRT [48.85, 57.81] [30.86, 39.80] [21.28, 29.38] [8.69, 15.31] MPPI [58.44, 66.90] [30.43, 38.91] [14.98, 22.36] [4.93, 9.73] PI 2-CMA [42.92, 51.74] [18.36, 25.64] [17.51, 25.15] [6.07, 11.27] PUN (zero-shot) [89.60, 94.40] [64.44, 72.90] [35.62, 44.38] [12.71, 19.29]
+> 4D
+> A* [100.00, 100.00] [95.39, 97.95] [69.54, 75.46] [55.94, 62.40] Dijkstra [100.00, 100.00] [95.68, 97.66] [69.66, 75.34] [56.06, 62.28] RRT [97.53, 99.13] [94.65, 97.01] [87.97, 92.03] [83.82, 87.84] MPPI [93.68, 96.32] [90.59, 94.41] [79.15, 84.19] [68.91, 74.43] PI 2-CMA [95.43, 97.91] [90.70, 94.30] [84.40, 88.94] [75.77, 80.89] PUN [100.00, 100.00] [100.00, 100.00] [100.00, 100.00] [93.49, 96.51]
+
+PI 2-CMA implementation. Our adaptation of PI 2-CMA (Stulp & Sigaud, 2012) represents the action sequence by 16 uniformly spaced knots per coordinate, linearly interpolated to the 32-step horizon with aligned endpoints and clipped to the action bounds. A single parameter vector is sampled for each trajectory from 
+
+N (θ, Σ), with initial covariance Σ = 0 .025 2I16 d. For sampled parameters θk, let Skt be the remaining task cost from step t, including the terminal cost once. We compute 
+
+Pkt = exp[ −(Skt − min j Sjt )/η ]
+
+P 
+
+> j
+
+exp[ −(Sjt − min l Slt )/η ] , wk =
+
+> H−1
+
+X
+
+> t=0
+
+H − tH(H + 1) /2 Pkt ,
+
+then update θ+ = P 
+
+> k
+
+wkθk and Σ + = P 
+
+> k
+
+wk(θk − θ)( θk − θ)⊤, centering the covariance at the old mean. This implements temporal averaging of the per-step updates for exploration that is constant over a trajectory. The implementation symmetrizes the covariance and samples using an eigendecomposition, checking negative eigenvalues against a numerical tolerance before clipping them to zero; it imposes no positive exploration floor. We use a fixed temperature on unnormalized costs, rather than the cost-range normalization used in the original paper’s experiments. The custom wrapper implements knot-based PI 2-CMA, without CMA-ES evolution paths, rank-based selection, or step-size adaptation. 
+
+Hardware and timing. Both CPU and CUDA implementations were evaluated; the CPU version was faster in the implementation comparison. The optimizer’s wall-clock timer includes initialization, the one optimization iteration, logging, the final nominal rollout, and conversion of the returned path to host memory. The CUDA implementation also synchronizes after each iteration and before returning. These are per-call measurements; the tables report per-start costs and require the outer execution loop’s accounting across planning calls. Table 5 uses CPU baseline timings in 2D/3D/4D since they are faster than GPU, and GPU PUN timings throughout. Hardware is an Intel Xeon Platinum 8480+ or an NVIDIA B200. CPU software is Python 3.11.11, PyTorch 2.7.1+cpu, and NumPy 1.26.4; GPU software is Python 3.9.21, PyTorch 2.7.1+cu128, and NumPy 2.0.2. Timing excludes loading and warmup and uses three observations per selected pair, method, and noise level for the benchmark sets. Variability is minimal. Per-start measurements include initialization, all replanning calls, geometry, and execution, including failed rollouts; the number of calls depends on the realized trajectory. GPU work is synchronized at timing boundaries. PUN timings include fresh field prediction and preparation for each start, with the field reused during replanning. 
+
+Statistical reporting for replanning. Table 5 uses 500 maps in 2D, 250 in 3D, and 480 in 4D, with three goals per map and one start per goal. Each query uses one seeded execution-noise combination at each noise level; methods share the saved queries and Gaussian noise sequence. Rollouts receive equal weight, which also gives maps equal weight because each contributes three queries. One trained model per dimension is evaluated. We compute 95% intervals using 50,000 paired map-level bootstrap resamples, retaining all queries within each sampled map. Nondegenerate intervals are the estimate ±1.96 bootstrap standard errors. Runtime intervals use separate samples of maps, respectively. 
+
+Implementation of the WoSt estimator. The experiments use the following estimator and numerical choices. 23 Table 10: 95% confidence intervals for replanning runtime (ms/start) corresponding to Table 5.                                                                                  
+
+> Dim. Method λ= 0 .25 λ= 1 λ= 2 λ= 4
+> 2D
+> A* [24.99, 62.27] [26.25, 67.93] [28.10, 74.26] [29.44, 78.08] Dijkstra [79.37, 230.51] [88.65, 261.25] [102.34, 304.48] [123.40, 356.54] RRT [69.41, 127.49] [72.10, 135.64] [78.18, 146.36] [82.46, 166.96] MPPI [1227.92, 2240.30] [1257.88, 2288.74] [1279.80, 2397.66] [1400.54, 2851.70] PI 2-CMA [964.06, 1697.46] [1053.67, 1916.15] [1067.48, 1981.92] [1079.98, 2133.66] PUN (zero-shot) [7.79, 11.31] [8.80, 13.48] [10.71, 17.43] [10.19, 18.83]
+> 3D
+> A* [50.74, 96.06] [34.34, 86.60] [42.19, 105.51] [40.32, 90.18] Dijkstra [50.08, 96.84] [35.29, 90.79] [43.41, 110.57] [41.51, 93.95] RRT [155.27, 321.35] [93.18, 246.62] [76.54, 169.16] [94.56, 157.90] MPPI [382.10, 682.52] [408.91, 746.77] [433.13, 675.09] [526.69, 881.93] PI 2-CMA [332.42, 572.08] [305.61, 564.41] [371.44, 580.52] [482.06, 731.04] PUN (zero-shot) [14.95, 16.33] [14.61, 16.07] [13.26, 15.34] [13.69, 15.17]
+> 4D
+> A* [12.32, 21.30] [12.25, 21.91] [35.26, 120.78] [28.18, 96.70] Dijkstra [12.51, 21.83] [12.37, 22.31] [31.21, 102.29] [27.73, 91.05] RRT [16.26, 32.14] [16.20, 35.40] [23.09, 62.91] [28.09, 48.53] MPPI [332.13, 490.35] [329.20, 467.16] [297.34, 431.10] [300.44, 449.22] PI 2-CMA [300.61, 458.97] [291.21, 424.17] [284.19, 426.69] [288.82, 424.62] PUN [10.50, 10.76] [10.32, 10.70] [10.37, 10.73] [11.43, 11.89]
+
+1. Absorption and radius floor. A walk reaches Γ D only in the limit, so absorption is triggered on the shell {dD <ε} and the terminal value is g at the nearest point of Γ D ; ε is chosen below the tubular-neighborhood radius of Γ D and its distance to Γ N . The star radius also carries a floor, r(x) = min {dD(x), max( rmin , d sil (x)) },so that steps do not become arbitrarily short near a silhouette. The shell costs at most CΨε (Eq. 38); the floor can break star-shapedness, and the error it introduces has unknown sign (Sawhney et al., 2023). 2. Weighted survival. The solid-angle sampling law in Eq. 8 leaves the scalar screening factor Qκd as the per-step weight. We multiply these factors rather than sample killing events or apply Russian roulette. Conditioning out the killing randomness removes that source of variance and avoids zero replicas caused by stochastic killing. 3. Fixed-horizon continuation. Walks stop at the prescribed step cap or the goal. Capped paths contribute their accumulated weight times the detached EMA prediction at the endpoint, as in Section 4.2. Goal-reaching paths use the known boundary value. Every requested trajectory remains in the sample mean, including capped paths. 4. Log accumulation and bias correction. The trace records the sum of log step weights independently of their floating-point product, so product underflow does not erase the log evidence. The log-label variants use log-sum-exp and the sample-variance correction in Eq. 36. The direct-label variants use the weighted arithmetic mean without this correction. Direct and log targets are constructed from the same sampled paths. 5. Reuse of model-independent walks. Cached endpoints, weights, and completion states are independent of the neural parameters. The EMA continuation is reevaluated during training rather than frozen into the cache. 6. Stable screening kernels. The voxel backend for dimensions three through seven evaluates the full-sphere factor using the positive series 
+
+γd(z) = 
+
+
+
+> ∞
+
+X
+
+> j=0
+
+aj
+
+
+
+> −1
+
+, a0 = 1 , aj = aj−1
+
+z2
+
+4j(ν + j) , ν = d
+
+2 − 1.
+
+The CUDA implementation sums in double precision and uses a logarithmic large-argument asymptotic branch. For interior reflecting hits, it evaluates Eq. 25 with e−z Iν (z) and ez Kν (z), combining nonnegative terms with an exponential factor no greater than one. With t = κρ , T = κr , and δ = T − t, the near-sphere branch uses 
+
+Qκd (ρ, r ) ≈ γd(T )
+
+
+
+1 + δ2
+
+2 − d − 16T δ3
+
+
+
+.
+
+This reproduces the sphere endpoint without two separately rounded Bessel evaluations. The CUDA branches use this expansion for δ ≤ 2 · 10 −6(1 + T ) and the limiting value one for t ≤ 10 −7 or T = 0. 7. Voxel boundary queries. The same backend uses bounding-volume hierarchies for goal faces and view-dependent reflecting silhouettes, and voxel traversal for first boundary hits. This avoids triangulating the voxel boundary. Grid-plane and corner handling preserves the appropriate incident free cell and resolves boundary hits before accepting a sphere endpoint. These geometric operations implement the first-hit chain in Eq. 7. 24 Shell error. Let σε = inf {k : dD(ξk) < ε } and τ = σε ∧ K for finite K. Assume admissible active steps, the smooth-domain regularity assumptions, and an ε below the goal’s tubular-neighborhood radius and its separation from reflecting boundaries. Define Ψ ε,K (x) as the expected product of weights through τ times g(πD ξτ ) if σε ≤ K,or the true continuation Ψ( ξK ) otherwise. Then 
+
+∥Ψε,K − Ψ∥∞ ≤ CΨε, CΨ = sup 
+
+> Ω
+
+∥∇ Ψ∥. (38) To prove this, bounded stopping gives Ψ( x) = Ex[( Q 
+
+> j<τ
+
+Wj )Ψ( ξτ )]. Only the shell event changes the terminal value. Since g(πD ξτ ) = Ψ( πD ξτ ), the projection segment lies in the closed free domain, and its length is below 
+
+ε, the terminal difference is bounded by CΨε. The product of weights is at most one. This proves the bound without an infinite-walk termination assumption. If σε < ∞ almost surely for each start, bounded convergence also yields the same bound for the uncapped shell estimator. Replacing true continuation by a fixed bounded target adds its discounted endpoint error on {σε > K }, as described in Section 4.2. The radius floor is not covered: a clamped step can violate admissibility and introduce an error of unknown sign (Sawhney et al., 2023). Antithetic directions, first-step gradient control variates, weight-floor stopping, expected-clock stopping, and randomized horizons are disabled in the reported pretrained models. In particular, the full-sphere gradient control variate is not transferred to arbitrary WoSt stars. 
+
+Backbone compute policy. FNO uses 200 epochs. Each alternative backbone has a maximum of 200 epochs and a registered training-compute allowance of 66,856.484 seconds; an epoch is not started if it is not expected to fit within the remaining allowance. Each completed epoch uses 64 training maps and eight goals per map. The 200-epoch cosine schedule is retained when a run stops at the compute cap. The allowance was derived from 1.5 times an estimated individual FNO training cost; shared work in the reference run means it is not an exact equal-GPU-time comparison. Completed training epochs were 200 for FNO, 200 for U-NO, 185 for U-Net, 13 for GINO, 200 for LocalNO, 200 for DISCO, 146 for UPT, and 134 for Transolver. Our overall method is architecture-agnostic; we chose FNO because it gives the highest planning success among the tested implementations under this compute policy, but our overall method is compatible with other neural-operator architectures. Planning benefits from balancing sensitivity to local obstacle geometry with a global view of the environment. 
+
+Supervision parameterization. The primary WoSt rows fit direct desirability with value, goal, and gradient loss terms. The loss ablations use 200 epochs and remove one term at a time. All predictions are evaluated through the stated controller; a small field error does not guarantee path success. 
+
+Local-search implementation. Unless a depth is stated, Local search denotes Local search (10). The finite-lattice controllers use legal axis-adjacent moves, with cycle detection and a step cap. Greedy uses ( L, e ) = (1 , 1) and requires strict improvement. Local search (4) uses ( L, e ) = (5 , 1) in 2D, 3D, and 4D. Local search (10) uses ( L, e ) = (10 , 3) with route reconstruction in 2D, and ( L, e ) = (11 , 1) in 3D and 4D. In the single-move variants, four or ten propagation steps are counted after the candidate first move, explaining the extra edge in 
+
+L. Direct models use their raw finite desirability predictions, without clipping or enforcing a goal score during search. For the convention ℓθ = log Ψ θ in Appendix C.6, the maximizing search score is ℓθ. If a model instead predicts − log Ψ θ or Vθ, its output must be negated to preserve this ranking (for λ > 0 in the latter case). The implemented log-label model predicts ℓθ = − softplus( zθ), reconstructs desirability as exp( ℓθ), and uses −zθ as its search score. Maximizing −zθ gives the same ranking as maximizing ℓθ, consistent with this convention. Success requires entering the saved goal mask. Ties in the single-move rule favor the candidate’s own field score, then fewer previous visits, then a fixed lexicographic coordinate order (ascending in 2D, descending in 3D/4D). Route reconstruction retains an existing choice on equal scores, using a fixed axis traversal order for competing improvements. The 2D ten-step controller stops when the best endpoint does not improve the current score by more than 10 −12 . Missing legal moves, a fifth visit to a cell under local search, or exhaustion of the rollout budget are recorded as failures. The local diagrams below use one stored field to display these rules, with no new benchmark outcomes inferred from the illustration. Details of the walk-horizon study and qualitative resolution-transfer examples are provided below. 
+
+## D.2 Walk Horizon and Label Budget 
+
+Label budget and planning success. The controlled horizon study in Table 3 uses 16 training maps, eight goals per map, four trajectories per query, and 40 epochs, with evaluation on the generated 2D test set. With the intermediate 100- and 400-step settings, gradient / local-search (10) success is 40.55% / 66.80% and 38.06% / 69.69%, respectively. Local-search success is highest at 400 steps (69.69%) and 0.03 percentage points lower at 800 steps, whereas gradient success is highest at 100 steps. A separate study of budget allocation without pretraining is reported in Appendix F.1. 25 Table 11: FNO (WoSt) planning success (%) with gradient following and local search. 
+
+Test set Gradient Local search (10) 3D application benchmarks 65.95 89.46 4D manipulators 97.50 99.48  
+
+> Table 12: Full test-time cost (ms/start) on the 2D zero-shot application-inference subset and 4D manipulator test set. Both methods use local search in 2D and in 4D.
+
+Method 2D zero-shot 4D manipulators WoSt + FNO 1.20 2.79 Direct WoSt 1128.60 160.59 
+
+## D.3 Resolution Generalization 
+
+Figure 4 shows FNO predictions on held-out maps at 128 × 128, 200 × 200, and 256 × 256. Each field supports paths from multiple starts to one goal. These examples illustrate field reuse at different discretizations; the aggregate comparison across architectures and larger grids is Fig. 1(b). 0.5 0.75 1
+
+128 × 128 200 × 200 256 × 256 Ψθ        
+
+> Fig. 4: Zero-shot FNO field predictions and extracted paths at 128 ×128, 200 ×200, and 256 ×256 (left to right). Color shows predicted desirability Ψ θ, gray denotes obstacles, circles mark starts, and the star marks the shared goal in each map.
+
+# E Benchmarks 
+
+2D (zero-shot; 592 maps). AI4Arctic Sea Ice (Arctic sea-ice maps from satellite observations); Fields2Benchmark (agricultural field geometries); HiRISE DTM (terrain models of the surface of Mars); HydroLAKES ASV (lake-shoreline geometries for autonomous surface vessels); LOLA LDEM (lunar elevation maps from laser altimetry); MovingAI BG512 (Baldur’s Gate maps); MovingAI Street (urban street-map grids); NOAA ENC Harbor (harbor geometries from navigational charts); Open Forest Observatory (forest structure maps from drone imagery); PNO2D (synthetic obstacle environments); TartanDrive 2 (terrain from off-road driving data). 
+
+3D (zero-shot; 278 maps). Dryad SIC Foam (porous foam geometries); Falkor MAR AUV (Mid-Atlantic Ridge seafloor for autonomous underwater vehicles); Flybo UAV (scenes for aerial-robot navigation); HVaCT Liver Tip (liver and vessel anatomy for navigation); Industrial Pipe Routing (industrial layouts for pipe routing); Lung Needle (lung anatomy for needle-path planning); MOSAiC Under-Ice AUV (Arctic under-ice geometry for autonomous underwater vehicles); PNO3D iGibson/HouseExpo (indoor scene and floor-plan geometries); ReplicaCAD Indoor UAV (indoor CAD scenes for aerial navigation); Trabecular Bone (porous internal bone structure); Underwater AT40-02 MAR (seafloor surveyed for the Mid-Atlantic Ridge); Axial North Rift (seafloor terrain at Axial Seamount’s north rift); Escanaba (seafloor terrain in Escanaba Trough); Loihi Pele’s Pit (a submarine volcanic crater); Squid5 EDR (Eastern Dry Rocks coral reef topography from underwater imagery); USGS Tahoe (Lake Tahoe lakebed topography). 26 4D (512 maps). eCobra600 (Omron industrial robot arm); Kinova MICO (robot arm); OpenManipulator (ROBOTIS open-source robot arm); qArm (Quanser robot arm). Each 4D state represents a manipulator configuration in joint coordinates. 
+
+# F Additional Results 
+
+## F.1 Label-Budget Allocation without Pretraining 
+
+Allocation of a fixed label budget. Shifting from 64 walks per query and 8 goals per map to 4 walks and 128 goals reduces 2D test success from 62.6% to 51.5% for DISCO and from 61.6% to 56.3% for FNO. In 3D, the same shift raises FNO success from 25.0% to 28.8%; Transolver success changes from 6.3% to 7.0%, while label-generation cost rises from 244.35 to 621.46 GPU hours. Equal nominal label budgets therefore need not imply equal computation or a common preferred allocation. 
+
+# G Qualitative Examples and Figures 
+
+The following examples illustrate the geometry-to-field mapping, stochastic labels, and path extraction. The sampling budget for each field and walk figure is indicated in its panel. 
+
+## G.1 Geometry, Fields, and Multiple Starts 
+
+Figure 5 illustrates the reuse of a goal-conditioned field across multiple initial states: the field represents a map and goal, while path extraction starts from each selected location.  
+
+> Fig. 5: Goal-conditioned field prediction and reuse across initial states.
+
+27 G.2 Walk Geometry and Label Variability 
+
+Figure 6 brings together walk geometry, label variability, and spatial sampling cost. 
+
+(a) Walk geometry and boundary treatment 
+
+(c) Mean walk length 
+
+(b) Label and gradient variability 
+
+Fig. 6: WoSt walk and label statistics: (a) walk-length variability and boundary treatment; (b) label and gradient variability on a fixed map, with differences measured against a finite Monte Carlo reference; (c) spatial variation in mean walk length. 
+
+## G.3 Local Search Example (A) (B) (C) 
+
+Fig. 7: Local search on one fixed urban-map field: (A) full map and routes; (B,C) enlarged neighborhoods for local search (4) and (10). Greater depth exposes endpoints farther along the passage. Gray cells are obstacles; overlays mark candidate regions and routes. Table 1 reports aggregate controller success. 
+
+28
