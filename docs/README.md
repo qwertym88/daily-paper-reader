@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-26</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-27</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 14 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 19 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>7</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>12</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-26 23:22:24 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-27 23:54:16 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日筛选14篇论文并精读2篇，聚焦稀疏历史下的跨任务架构搜索与机器人优化/控制/强化学习。最值得看的是两篇9.0分精读：不完整搜索日志与零成本代理驱动的架构搜索，以及机器人优化、最优控制与强化学习的系统梳理。普通读者可先读这两篇建立框架，再按需浏览GGraph等速读论文。</p>
+<p>2026-10-27 日报精选 19 篇：精读 7 篇、速读 12 篇，聚焦神经架构搜索与 Actor-Critic 理论分析。</p>
+<p>最值得看的是 9.0 分的《MOSHO》仿鲨鱼离散元启发式硬件感知 NAS，以及同分的《A Unified Analysis of Importance-Corrected Momentum Actor-Critic》。</p>
+<p>普通读者可优先了解 NAS 的硬件效率优化，再结合 ViT-H 等 7 分速读，判断哪些方向值得深入。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +73,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">2 篇</strong>
+    <strong class="dpr-home-dashboard-count">7 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Searching with Sparse Histories: Cross-Task Architecture Search from Incomplete Search Logs and Zero-Cost Proxies">Searching with Sparse Histories: Cross-Task Architecture Search from Incomplete Search Logs and Zero-Cost Proxies</span></li><li><span class="dpr-home-dashboard-paper-title" title="Optimization, Optimal Control, and Reinforcement Learning for Robotics">Optimization, Optimal Control, and Reinforcement Learning for Robotics</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="MOSHO: A Native Discrete Shark-Inspired Metaheuristic for Hardware-Aware Neural Architecture Search">MOSHO: A Native Discrete Shark-Inspired Metaheuristic for Hardware-Aware Neural Architecture Search</span></li><li><span class="dpr-home-dashboard-paper-title" title="A Unified Analysis of Importance-Corrected Momentum Actor-Critic over a Markovian Trajectory">A Unified Analysis of Importance-Corrected Momentum Actor-Critic over a Markovian Trajectory</span></li><li><span class="dpr-home-dashboard-paper-title" title="CORMA: Constraint-Routed Decision Mamba for Generalizable Multi-Constraint Offline Safe Reinforcement Learning">CORMA: Constraint-Routed Decision Mamba for Generalizable Multi-Constraint Offline Safe Reinforcement Learning</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>4</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,9 +89,9 @@
     <strong class="dpr-home-dashboard-count">12 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="GGraph: A GPU-Accelerated Library for Graph-Based Robot Deployment and Learning">GGraph: A GPU-Accelerated Library for Graph-Based Robot Deployment and Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Nested Sparsity for Scalable Pretraining and Continual Learning">Nested Sparsity for Scalable Pretraining and Continual Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="SEVI: Safe Evidential Real-World Reinforcement Learning">SEVI: Safe Evidential Real-World Reinforcement Learning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Early learning in large residual networks">Early learning in large residual networks</span></li><li><span class="dpr-home-dashboard-paper-title" title="ViT-H: Generative Video-To-Humanoid Control with Motion Tracking Feedback">ViT-H: Generative Video-To-Humanoid Control with Motion Tracking Feedback</span></li><li><span class="dpr-home-dashboard-paper-title" title="Energy Efficient Lung Tumor Segmentation with a modified CBAM ENet Skip Model">Energy Efficient Lung Tumor Segmentation with a modified CBAM ENet Skip Model</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>6</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>4</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>1</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>6</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>3</strong></span></div>
 </section>
 </div>
 
