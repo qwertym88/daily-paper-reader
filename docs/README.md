@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-28</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-29</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 20 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>14</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>4</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-28 23:34:37 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-30 00:07:20 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精选 20 篇论文，聚焦神经最优控制与人形机器人全身控制两大前沿。最值得看的是两项得分均为 9.0 的工作：数据驱动哈密顿方法与随机运动标记化。普通读者可优先读精读论文的控制框架思路，再浏览速读论文中关于人形通用 VLA 与物理神经网络优化的部分。</p>
+<p>今日以速读为主、无精读，4篇论文集中扫过，主线是机器人学习与非线性控制。最值得看的是人形机器人可达性学习用于跌倒恢复监控，以及用图卷积强化学习加终端滑模控制实现Chua电路有限时间稳定，另有人类到人形的动作基元技能迁移可作补充。普通读者可先挑人形恢复监控那篇，配合动作迁移一起读，理解机器人如何“学会不摔倒、学会像人一样动”。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">6 篇</strong>
+    <strong class="dpr-home-dashboard-count">0 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Data-Driven Hamiltonian for Neural Optimal Control">Data-Driven Hamiltonian for Neural Optimal Control</span></li><li><span class="dpr-home-dashboard-paper-title" title="Whole-Body Humanoid Control via Stochastic Motion Tokenization">Whole-Body Humanoid Control via Stochastic Motion Tokenization</span></li><li><span class="dpr-home-dashboard-paper-title" title="HC2Robot: Hyper-Connection Transformers with Predicted Foresight for Multi-Terrain Humanoid Parkour">HC2Robot: Hyper-Connection Transformers with Predicted Foresight for Multi-Terrain Humanoid Parkour</span></li></ul>
+<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>2</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">14 篇</strong>
+    <strong class="dpr-home-dashboard-count">4 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Optimizing Physical Neural Networks through Device Variable Selection">Optimizing Physical Neural Networks through Device Variable Selection</span></li><li><span class="dpr-home-dashboard-paper-title" title="HuGe: Scaling Humanoid Generalist Vision-Language-Action Models with Egocentric Experience">HuGe: Scaling Humanoid Generalist Vision-Language-Action Models with Egocentric Experience</span></li><li><span class="dpr-home-dashboard-paper-title" title="Physical Canvas: A Vision Tactile World Model For Robot Policy Evaluation And Learning">Physical Canvas: A Vision Tactile World Model For Robot Policy Evaluation And Learning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Active Reachability Learning for Humanoid Recoverability Monitoring">Active Reachability Learning for Humanoid Recoverability Monitoring</span></li><li><span class="dpr-home-dashboard-paper-title" title="Graph-Convolutional Reinforcement Learning for Finite-Time Stabilization of a Chaotic Chua Circuit via Unified Flexible Terminal Sliding-Mode Control">Graph-Convolutional Reinforcement Learning for Finite-Time Stabilization of a Chaotic Chua Circuit via Unified Flexible Terminal Sliding-Mode Control</span></li><li><span class="dpr-home-dashboard-paper-title" title="Tokens of Motion: Primitive Motion Learning for Human-Humanoid Skill Transfer">Tokens of Motion: Primitive Motion Learning for Human-Humanoid Skill Transfer</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>9</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>2</strong></span></div>
 </section>
 </div>
 
