@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-29</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-30</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 18 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>4</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>9</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>9</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-30 00:07:20 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-30 23:50:04 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日以速读为主、无精读，4篇论文集中扫过，主线是机器人学习与非线性控制。最值得看的是人形机器人可达性学习用于跌倒恢复监控，以及用图卷积强化学习加终端滑模控制实现Chua电路有限时间稳定，另有人类到人形的动作基元技能迁移可作补充。普通读者可先挑人形恢复监控那篇，配合动作迁移一起读，理解机器人如何“学会不摔倒、学会像人一样动”。</p>
+<p>今日共筛选 18 篇论文，精读 9 篇、速读 9 篇，重点集中在人形机器人敏捷运动控制与非线性系统算子学习两条主线。最值得看的是两篇 9.0 分精读工作：FORGE 用可行的在线降阶参考生成配合全身执行，实现人形机器人敏捷行走；另一篇用数据驱动的随机特征方法逼近非线性连续时间系统的 Koopman 生成元。普通读者可先看 FORGE 的“参考生成+全身执行”整体流程，再顺着速读里的安全流匹配策略与不确定性量化两篇，了解从仿真到决策的落地环节。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">9 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="FORGE: Feasible Online Reduced-Order Reference Generation and Whole-Body Execution for Agile Humanoid Locomotion">FORGE: Feasible Online Reduced-Order Reference Generation and Whole-Body Execution for Agile Humanoid Locomotion</span></li><li><span class="dpr-home-dashboard-paper-title" title="Data-driven Random-feature Approximation of Koopman Generators of Nonlinear Continuous-time Systems">Data-driven Random-feature Approximation of Koopman Generators of Nonlinear Continuous-time Systems</span></li><li><span class="dpr-home-dashboard-paper-title" title="LocoManiLab: A Unified Testbed for Data, Policies, Controllers, and Deployment in Humanoid Loco-Manipulation">LocoManiLab: A Unified Testbed for Data, Policies, Controllers, and Deployment in Humanoid Loco-Manipulation</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>3</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">4 篇</strong>
+    <strong class="dpr-home-dashboard-count">9 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Active Reachability Learning for Humanoid Recoverability Monitoring">Active Reachability Learning for Humanoid Recoverability Monitoring</span></li><li><span class="dpr-home-dashboard-paper-title" title="Graph-Convolutional Reinforcement Learning for Finite-Time Stabilization of a Chaotic Chua Circuit via Unified Flexible Terminal Sliding-Mode Control">Graph-Convolutional Reinforcement Learning for Finite-Time Stabilization of a Chaotic Chua Circuit via Unified Flexible Terminal Sliding-Mode Control</span></li><li><span class="dpr-home-dashboard-paper-title" title="Tokens of Motion: Primitive Motion Learning for Human-Humanoid Skill Transfer">Tokens of Motion: Primitive Motion Learning for Human-Humanoid Skill Transfer</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Possibility-based Inference: A Deterministic Framework for Robust and Reliable Uncertainty Quantification in Decision-Making">Possibility-based Inference: A Deterministic Framework for Robust and Reliable Uncertainty Quantification in Decision-Making</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning Safe Flow Matching Robot Policies from Binary Feasibility Oracles">Learning Safe Flow Matching Robot Policies from Binary Feasibility Oracles</span></li><li><span class="dpr-home-dashboard-paper-title" title="Gym-Anything for Robotics: Scaling physical simulations with digital agents">Gym-Anything for Robotics: Scaling physical simulations with digital agents</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>6</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span></div>
 </section>
 </div>
 
