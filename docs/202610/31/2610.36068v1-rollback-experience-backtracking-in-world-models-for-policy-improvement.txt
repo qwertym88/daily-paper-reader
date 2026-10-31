@@ -1,0 +1,1938 @@
+arXiv:2610.36068v1  [cs.RO]  26 Oct 2026
+Rollback: Experience Backtracking in World Models for
+Policy Improvement
+Jiayi Luo1,2,∗
+Yang Zhang1,∗
+Liliang Chen1,∗,†
+Nan Wang1
+Chen Gao2,3
+Boxiang Qiu1,2
+Zhuoxuan Li1
+Baorui Peng1
+Chuankang Li1
+Yuxiang Yan1
+Si Liu2
+Qingyun Sun2
+Shuicheng Yan3
+Maoqing Yao1
+Jianxin Li2,⋄
+Guanghui Ren1,⋄
+1 AgiBot
+2 BUAA
+3 NUS
+https://rollback-wm.github.io/
+Abstract
+Action-conditioned world models offer a scalable alternative to costly real-world interaction for
+improving robot policies. However, existing world-model-based methods largely treat world
+models as forward-only surrogates of the physical environment, leaving untapped a capability no
+physical environment affords: rewinding to past decision points to explore counterfactual futures.
+In this work, we introduce Rollback, a policy improvement paradigm that turns world models from
+passive simulators into counterfactual engines: it rolls back to critical decision points, branches
+into alternative actions, and contrasts their outcomes to attribute success to individual decisions.
+This concentrates imagination where it matters most and distills counterfactual outcomes into
+fine-grained, action-level supervision without a separately learned value model. Furthermore, we
+build a scalable training system that unifies distributed world-model search with asynchronous
+real-robot execution, forming a self-reinforcing cycle: real-world experience continually sharpens
+the world model, and a sharper world model in turn drives further policy improvement. We term
+the world-model side of this cycle test-time physics grounding, a capability that hand-built physics
+simulators lack: while the world model serves as the training environment, real transitions from the
+policy it trains correct its dynamics through a lightweight LoRA pipeline. Experiments on three
+challenging real-world tasks show that Rollback improves success rates over the strongest baseline
+by an absolute 10.67%, 11.11%, and 11.85% on block extraction, ball tossing, and tabletop curling,
+respectively, while achieving more stable improvement throughout training. Although initialized
+from teleoperated demonstrations far below human level, Rollback surpasses the average success
+rate of human players on both ball tossing and tabletop curling within 8 hours of training.
+1
+Introduction
+Action-conditioned world models have provided simulated environments for robot policy training, offering a
+scalable complement to real-world interaction (Hafner et al., 2018, 2019, 2020). By predicting the consequences
+of policy-generated actions, they allow policies to collect experience and learn from imagined outcomes without
+physical deployment (Jiang et al., 2025; Yang et al., 2023; Zhu et al., 2024). Recent video world models extend this
+paradigm to diverse robotic tasks, supporting policy evaluation (Gemini Robotics Team et al., 2025; Li et al., 2025b)
+and improvement through synthetic experience (Jang et al., 2025; Wang et al., 2026; Yang et al., 2026). These
+advances further extend to general-purpose robot policies, which can be refined using imagined interactions and
+task feedback (Xiao et al., 2025; Zhu et al., 2025). Moving exploration and optimization into learned environments
+makes policy learning less bound to physical trials.
+Despite this progress, existing world-model-based policy learning largely retains the trajectory-centric interaction
+protocol of real-world training, using the world model primarily to generate forward rollouts whose intermediate
+contexts are discarded afterward. This overlooks a capability unavailable in physical RL: the ability to “rewind and
+reconsider.” While a physical environment cannot generally return to an identical intermediate state after execution,
+a world model can restore a cached temporal context, rewind to an earlier decision point, and explore alternative
+∗Equal Contribution.
+† Project Leader.
+⋄Corresponding Author.
+
+
+(a) Real-World RL
+(b) Forward-Rollout WM RL
+(c) Rollback (Ours)
+Real-World Tasks
+Physical
+Interaction
+Reset &
+Monitor
+Costly physical interaction
+Independent Rollouts
+✓
+×
+×
+Dream Space
+Unstable Training Process
+Explore alternative futures
+...
+...
+Roll back to
+key decisions
+✓
+✓
+×
+Policy update
+Real-world
+feedback
+Learn from outcome differences
+Block Extraction
+Ball Tossing
+Tabletop Curling
+Figure 1: From real-world interaction to learning in world models. (a) Real-world RL incurs costly physical
+interaction. (b) Forward-rollout world-model RL spends much of its interaction budget on less informative
+exploration. (c) Our proposed Rollback enables high-value exploration and dense supervision through experience-
+backtracking tree search, while real-world feedback refines the world model.
+Key insight
+Our key insight is therefore to redesign world-model-based policy learning around a training-time ex-
+perience backtracking primitive, repeatedly rewinding to and reconsidering decisions for informative data
+generation. The world model becomes not merely a surrogate simulator, but a rewindable training environment.
+action continuations from the same history. This enables the policy to reconsider what it could have done differently
+at a particular decision rather than restarting exploration from scratch.
+Fully exploiting this capability, however, requires addressing three key challenges as shown in Figure 1. (i) Limited
+informative exploration. Not all decisions are equally worth revisiting: along a trajectory, a few critical decisions
+determine the outcome, while alternatives to most others lead to similar results. Independent rollouts cannot identify
+these consequential decisions or adaptively allocate exploration among them (Browne et al., 2012; Ecoffet et al.,
+2020). (ii) Sparse decision-level supervision. Trajectory-level feedback does not reveal which intermediate actions
+determine the outcome (Andrychowicz et al., 2017; Tan et al., 2025). Treating continuations independently preserves
+this credit-assignment problem, whereas learning an additional value model introduces extra modeling assumptions
+and potential estimation bias (Fujimoto et al., 2018; Lu et al., 2025; Schulman et al., 2015). (iii) Biased world-model
+predictions. Branching from policy-selected contexts may shift interactions beyond the world model’s training
+distribution, causing prediction errors to accumulate or be exploited during optimization (Chen et al., 2026; Janner
+et al., 2019; Yu et al., 2020, 2021). Without real-world grounding, imagined gains may not transfer to real robots.
+To operationalize training-time experience backtracking and address these challenges, we present Rollback, a policy
+improvement paradigm that turns world models from passive simulators into counterfactual engines. Rollback
+comprises three key components: (i) Experience-backtracking tree search. Starting from successful and failed
+real-world trajectories, Rollback rolls back to intermediate decision points and branches into alternative action
+chunks. Monte Carlo tree search adaptively allocates simulation budget toward decisions whose alternatives lead
+to divergent outcomes, avoiding exhaustive branching (Browne et al., 2012; Hubert et al., 2021; Silver et al., 2016).
+(ii) Tree-structured value estimation. Since sibling branches share a decision context, contrasting their downstream
+outcomes isolates the effect of individual actions. Subtree-level outcome aggregation yields fine-grained, action-
+level advantage supervision without an additional learned value model. (iii) World model–policy co-evolution. A
+scalable training system unifies distributed world-model search with asynchronous real-robot execution. Real-world
+experience continually refines the world model, which in turn provides more faithful imagination for search and
+policy improvement. We call this test-time physics grounding: after pretraining, while the world model serves as the
+training environment for a policy, real transitions collected by that policy correct its predicted dynamics in the states
+2
+
+
+the policy actually visits. Most existing action-conditioned world models are trained offline and then used as fixed
+simulators (Guo et al., 2025a; Jiang et al., 2025; Yang et al., 2023; Zhu et al., 2024), which suffices for evaluation
+but not for policy learning, because an improving policy moves into exactly the states the simulator has seen least.
+We evaluate Rollback on three challenging real-world robotics tasks: block extraction, ball tossing, and tabletop
+curling. Across these tasks, Rollback improves success rates over the strongest baseline by an absolute 10.67%,
+11.11%, and 11.85%, respectively. Under matched interaction budgets, Rollback achieves faster and more consistent
+improvements in task success rates. Within 8 hours of training with one physical robot, Rollback surpasses the
+average success rate of human players on both ball tossing and tabletop curling, although it is initialized from
+teleoperated demonstrations far below human level. Our project website is available at rollback-wm.github.io.
+In summary, our contributions in this work can be summarized as follows:
+• We propose Rollback, a policy improvement paradigm that exploits experience backtracking to turn world
+models from passive simulators into counterfactual engines, supported by a training system unifying distributed
+world-model search with asynchronous real-robot execution.
+• We design an experience-backtracking search that concentrates imagination on critical decision points, and a
+tree-structured value estimation that distills counterfactual outcomes into fine-grained, action-level supervision
+without a separately learned value model.
+• Extensive experiments on three challenging real-world robotics tasks demonstrate that Rollback achieves higher
+success rates and more stable improvement.
+2
+Related Work
+Robot Policy Learning from Interaction.
+Robot policies are commonly improved for downstream tasks and
+deployment conditions using task-specific data and interaction feedback (Guo et al., 2025b; Kim et al., 2025;
+Physical Intelligence et al., 2025a). For generalist policies including RT-2, OpenVLA, and the π series (Black
+et al., 2024; Brohan et al., 2023; Kim et al., 2024; Physical Intelligence et al., 2025b), supervised fine-tuning learns
+task-specific behaviors; OpenVLA-OFT improves adaptation and inference efficiency through optimized action
+representations and objectives (Kim et al., 2025). Reinforcement learning further exploits execution outcomes:
+iRe-VLA alternates reinforcement and supervised learning for stability (Guo et al., 2025b); VLA-RL learns a
+process reward model (Lu et al., 2025); RIPT-VLA uses dynamic sampling and leave-one-out advantages to learn
+from sparse success without a value network (Tan et al., 2025); and SimpleVLA-RL scales training through efficient
+sampling and parallelization (Li et al., 2025a). For real-world adaptation, RECAP combines demonstrations,
+autonomous experience, and expert corrections through advantage-conditioned training (Physical Intelligence et al.,
+2025a). However, reinforcement learning on physical robots remains resource-intensive due to costly interactions
+and labor-intensive environment resets (Yang et al., 2026; Zang et al., 2026).
+World Models for Robotics.
+World models support robot learning and planning by predicting the consequences of
+candidate actions before physical execution (Hafner et al., 2018, 2019; Yang et al., 2023). Recent advances span
+general-purpose world simulation and models tailored to robot interaction. Cosmos-Predict2.5 and LingBot-World
+advance controllable video generation and interactive simulation (NVIDIA et al., 2025; Robbyant Team et al.,
+2026). UniSim, IRASim, EnerVerse-AC, and Ctrl-World model action-conditioned visual dynamics to support
+simulated interaction and policy development (Guo et al., 2025a; Jiang et al., 2025; Yang et al., 2023; Zhu et al.,
+2024). DreamDojo further transfers interaction knowledge from large-scale human videos to robot world modeling
+through latent actions (Gao et al., 2026). WorldEval, WorldGym, and the Veo robotics simulator study generated
+rollouts as proxies for real-world policy evaluation (Gemini Robotics Team et al., 2025; Li et al., 2025b; Quevedo
+et al., 2025). Beyond simulation, EnerVerse, Genie Envisioner, and LingBot-VA connect future visual prediction
+with action generation for robot control (Huang et al., 2025; Li et al., 2026; Liao et al., 2025). DreamGen uses
+generated videos and inferred actions to construct synthetic training trajectories (Jang et al., 2025), while V-JEPA
+2-AC supports robotic planning through action-conditioned prediction in latent space (Assran et al., 2025).
+World-Model-Based Policy Improvement.
+Recent work increasingly uses action-conditioned world models as
+interactive environments for policy improvement (Jiang et al., 2026; Sharma et al., 2026; Xiao et al., 2025; Yang
+et al., 2026; Zhu et al., 2025). World-Env combines a video simulator with a VLM-guided reflector that supplies
+task feedback and termination signals (Xiao et al., 2025), while WMPO optimizes policies through interactions with
+a learned world model (Zhu et al., 2025). World-Gymnast uses VLM-evaluated imagined rollouts for reinforcement
+learning and investigates iterative world-model updates using real-world experience (Sharma et al., 2026). To
+obtain informative supervision, RISE combines a controllable dynamics model with a learned progress value model
+that provides advantages for policy improvement (Yang et al., 2026). WoVR instead emphasizes the reliability
+3
+
+
+of imagined interaction through keyframe-initialized rollouts and world model–policy co-evolution (Jiang et al.,
+2026). However, these methods struggle to improve steadily, as forward-only rollouts rarely revisit informative
+decisions and learned values may be biased.
+Physics Grounding of World Simulators.
+Action-conditioned world models are typically trained offline on large
+collections of robot or human videos and then evaluated or deployed as fixed simulators (Gao et al., 2026; Guo
+et al., 2025a; Jiang et al., 2025; Yang et al., 2023; Zhu et al., 2024). Their fidelity is measured on held-out data from
+the training distribution, and how a simulator should remain physically grounded once a policy starts exploring
+it has received little attention. Physics engines offer a contrast: their dynamics are specified by hand, and system
+identification can only tune the parameters of a fixed model. A learned world simulator can instead absorb new real
+transitions directly, so its physics can be corrected while it is in use. World-Gymnast and WoVR update the world
+model with real experience as part of their training loops (Jiang et al., 2026; Sharma et al., 2026). We isolate this
+update as a capability of the simulator itself, test-time physics grounding, and show that it matters for steady policy
+improvement in world-model-based reinforcement learning.
+Tree Search for Policy Improvement.
+Monte Carlo tree search allocates a limited simulation budget by balancing
+the exploitation of promising branches with the exploration of under-visited ones (Browne et al., 2012). AlphaGo
+and Expert Iteration distill search-improved decisions back into a policy network (Anthony et al., 2017; Silver
+et al., 2016), MuZero plans with a learned latent dynamics model (Schrittwieser et al., 2019), and Sampled MuZero
+extends search to complex and continuous action spaces through action sampling (Hubert et al., 2021). Go-Explore
+further shows that returning to previously visited states before exploring substantially improves exploration in
+hard-exploration problems (Ecoffet et al., 2020). However, these methods rely on exact simulators or compact
+latent models, leaving the ability of video world models to restore past contexts and branch counterfactual futures
+unexplored for real-world robot policy improvement.
+3
+Preliminaries
+3.1
+Problem Formulation
+Given a language instruction g and an observation ot comprising multi-view images and proprioception, the policy
+πθ generates an action chunk at ∈RH×da with horizon H and action dimension da. The action-conditioned world
+model Wϕ predicts the next observation and updates its temporal context through (ˆot+1, mt+1) ∼Wϕ(· | mt, at, g),
+where mt denotes the retained temporal context. The predicted observation ˆot+1 contains both the multi-view images
+and the proprioceptive state, so the policy receives the same inputs in imagination as on the real robot. Our objective
+is to improve the policy’s real-world task success by learning from imagined world-model interactions and real-world
+experience. A real-world episode τ = (o0, a0, o1, a1, . . . , oT ) ends with a binary outcome yτ ∈{0, 1} indicating
+task success, so the objective amounts to maximizing J(πθ) = Eτ∼πθ[yτ] with as little physical interaction as
+possible. Real episodes are expensive since each occupies the robot and needs a manual reset, whereas GPU
+compute scales with hardware.
+3.2
+World Models as Rewindable Environments
+Unlike a physical environment, a world model can also be rewound. Because mt is an explicit data structure, it can
+be cached and restored, so many continuations can branch from one decision point:
+mt
+RESTORE
+−−−−−−→
+
+(ˆo(i)
+t+1, m(i)
+t+1) ∼Wϕ(· | mt, a(i)
+t , g)
+	n
+i=1.
+(1)
+We refer to this operation as experience backtracking. It differs from resetting a simulator to its initial state in two
+respects. First, the restored context can be anchored to real experience: conditioning Wϕ on a recorded observation
+starts imagination from a situation that the robot actually faced, including the decision points at which a real attempt
+succeeded or failed. Second, the shared prefix is never regenerated, so the cost of a new continuation depends only
+on its own length rather than on the length of the full trajectory.
+4
+Proposed Rollback
+In this section, we elaborate on our proposed Rollback, a policy improvement paradigm that exploits experience
+backtracking in world models. As illustrated in Figure 2, Rollback revisits decision points, compares alternative
+actions through their downstream outcomes, and distills the results into the policy, while real-world feedback refines
+the world model. Rollback follows the search-and-distill scheme of AlphaGo and Expert Iteration (Anthony et al.,
+2017; Silver et al., 2016), in which the policy proposes actions, search evaluates them, and the policy is then trained
+4
+
+
+(a) Experience-backtracking search
+(b) Tree-structured values
+(c) World model–policy co-evolution
+Real trajectories
+Task: extract the target block
+Cached temporal context
+Action-conditioned
+World Model
+Policy
+Action chunk
+Observation
++ proprio state
+restore
+Reusable decision contexts
+✓
+✗
+✓
+✓
+✗
+✗
+Real path
+MCTS selection
+Experience
+backtracking
+Shared decision context
+a₁
+✓
+✓
+✓
+✗
+0.75
+High
+a₂
+✓
+✓
+✗
+✗
+0.50
+Mid
+a₃
+✗
+✗
+✗
+✗
+0.00
+Low
+Relative quality labels
+Advantage-conditioned
+Policy Update
+Tree samples + real data
+Real-robot execution
+Real replay
+World-model adaptation
+test-time physics grounding
+LoRA SFT
+DMD
+Tree supervision
+Deploy
+New real
+trajectories
+Real data
+Updated world model
+Iteration  k → k + 1
+Figure 2: Overview of Rollback. (a) Experience-backtracking tree search restores cached world-model contexts
+to explore informative branches without regenerating shared prefixes. The world model predicts both multi-view
+observations and the robot’s proprioceptive state. (b) Tree-structured value estimation aggregates downstream
+outcomes into relative action-quality labels for policy training without an additional value model. (c) World
+model–policy co-evolution continually incorporates real trajectories to refine the world model through test-time
+physics grounding (LoRA SFT followed by DMD) while the policy keeps improving.
+on the search results. Unlike these methods, the search runs inside a learned video world model and starts from real
+robot experience instead of an exact simulator. Search and training are also not alternating phases here: search,
+policy training, and world-model adaptation run concurrently and exchange data through a shared pool, and each
+tree uses the model versions that are current when it starts (Section 5).
+4.1
+Experience-Backtracking Tree Search
+Independent rollouts expend substantial computation on repeatedly generating shared trajectory prefixes, yet provide
+limited comparisons of alternative actions from critical intermediate decision contexts. World models enable these
+comparisons by restoring saved contexts and simulating alternative continuations from previously explored decision
+points. Building on this capability, Rollback organizes reusable decision contexts into a search tree, allowing
+exploration to branch from selected nodes without regenerating their shared prefixes.
+Decision Context Construction.
+Experience-backtracking search requires decision contexts for exploring alter-
+native continuations. Using GE-Sim 2.0 as the world model (Qiu et al., 2026), we construct a reference path by
+sampling a seed trajectory from offline demonstrations or collected real trajectories and retaining observations at
+action-chunk boundaries. Given an action chunk, GE-Sim 2.0 jointly predicts the future frames of the three camera
+views and, through its pose-expert head, the robot’s proprioceptive state (seven arm joints and one gripper per arm);
+together they form the imagined observation from which the policy proposes the next chunk. Without the predicted
+proprioceptive state, the policy would have to infer the arm configuration from generated images alone, which is
+too coarse for the precise contacts and release timing that our tasks require. Each non-terminal node serves as a
+branching point where the policy proposes alternative actions and the world model simulates their consequences
+from the corresponding real observation. The outcome of the sampled trajectory is backed up along the reference
+path, so the real attempt itself acts as the first evaluated branch of the tree. We cache the world-model context at each
+imagined node, enabling further continuations from the same decision point without regenerating the shared prefix.
+MCTS-Guided Exploration.
+Building on these reusable decision contexts and inspired by AlphaGo (Silver et al.,
+2016), we use Monte Carlo tree search (MCTS) (Browne et al., 2012) to concentrate a limited imagination budget
+on promising regions of the decision space. By propagating rollout outcomes back to earlier decisions, MCTS uses
+evidence from completed explorations to guide subsequent branch selection. Branches with higher observed success
+rates receive further exploration, while an exploration bonus preserves opportunities for less-visited alternatives.
+This adaptive allocation helps discover successful continuations and examine alternative actions around them,
+5
+
+
+producing informative comparisons for policy improvement rather than spending the budget uniformly across
+decision points. For each node v, we maintain a visit count N(v) and accumulated return W(v), yielding the
+empirical search value Q(v) = W(v)/N(v). An existing child u is selected according to the PUCT score as follows:
+U(v, u) = Q(u) + cpuctP(u | v)
+p
+1 + N(v)
+1 + N(u) ,
+(2)
+where the first term exploits high empirical success rates and the second explores under-visited branches. We assign
+uniform priors P(u | v) over existing children. For continuous action chunks, progressive widening (Couëtoux
+et al., 2011) permits at most ⌈cpw max(1, N(v))α⌉actions, where 0 < α < 1. When permitted, a zero-valued
+virtual child with prior 1/(|C(v)| + 1), where C(v) is the set of existing children of v, competes under the same
+rule, balancing new actions against existing continuations. Each new action is rolled out until success or the depth
+limit, after which a task-specific reward model returns y ∈{0, 1}. We back up this return via N ←N + 1 and
+W ←W + y. For informative comparisons, we sample two actions at each new branch and prioritize rollouts
+in sibling subtrees with different provisional value bins.
+Policy-Guided Expansion.
+Since action chunks are continuous and high-dimensional, the children of a node cannot
+be enumerated. We use the policy itself as the proposal distribution: each expansion restores the context of the
+selected node and samples a chunk from the highest-bin policy πθ(· | ov, g, b = K) with a fresh noise seed, where
+ov is the real or imagined observation at v and b = K is the highest of the K value bins defined in Section 4.2, so the
+search explores alternatives that the current policy considers plausible, in the manner of Sampled MuZero (Hubert
+et al., 2021). The search stops once the number of simulated action chunks reaches the imagination budget B.
+Disagreement-Driven Refinement.
+A pair of sibling actions provides a training signal only when their outcomes
+differ, and a difference observed from one or two rollouts can arise by chance. Whenever sibling subtrees fall into
+different provisional value bins (Equation 4), we push their parent into a priority queue and allocate further rollouts
+to the least-visited sibling until every sibling has received at least nconf visits. This concentrates the budget on
+comparisons that produce supervision and reduces label noise before they are used for training; Algorithm 2 in
+Appendix A gives the complete procedure.
+4.2
+Tree-Structured Value Estimation
+Tree structure connects an action to multiple downstream outcomes and allows alternative actions to be compared
+within a shared decision context. We use this structure to obtain chunk-level quality labels without fitting an
+additional value function. Because labels are computed relative to sibling actions, decision contexts of different
+difficulty contribute comparable supervision.
+Chunk-Level Value Estimation.
+We estimate the value of each action chunk from the outcomes of its downstream
+continuations. Each chunk ai connects a parent node v to an imagined child ui, whose subtree contains the
+continuations explored after that action. We obtain their outcomes using the world judge of GE-Sim 2.0 (Qiu
+et al., 2026), a reward model that we fine-tune for each task on annotated robot videos with binary cross-entropy
+supervision. Given visual observations and the task instruction, the model predicts task completion, which is
+converted into a binary outcome yℓ∈{0, 1} using task-specific success criteria and temporal consistency checks.
+The chunk value is then estimated as follows:
+ˆq(v, ai) =
+1
+|L(ui)|
+X
+ℓ∈L(ui)
+yℓ,
+(3)
+where L(ui) denotes the leaves in the subtree rooted at ui. This estimate measures the empirical success rate of the
+explored continuations without requiring an additional learned value critic. The reward model only judges whether a
+completed rollout succeeds, which is easier to train than a value model that predicts success from intermediate states.
+Relative Value Supervision.
+To convert chunk-level value estimates into policy supervision, we compare alternative
+actions from the same decision context. Let Cim(v) denote the imagined children of node v and qmax(v) =
+maxui∈Cim(v) ˆq(v, ai). For groups containing at least two actions with qmax(v) > 0, we normalize each chunk
+value by the best sibling value and discretize it into K bins:
+ρi = ˆq(v, ai)
+qmax(v),
+bi = min(K, 1 + ⌊Kρi⌋) .
+(4)
+The label bi ∈{1, . . . , K} indicates how well an action performs relative to the best explored alternative.
+Normalizing within a group of siblings resembles the group-relative advantages of GRPO (Shao et al., 2024),
+6
+
+
+which compare samples generated for the same prompt; here, the group consists of actions sampled from the same
+restored context. Groups whose siblings share one bin carry no preference signal and are discarded. Each retained
+action contributes a sample (ov, g, ai, bi) to Dtree for policy training.
+Advantage-Conditioned Policy Update.
+Following RECAP (Physical Intelligence et al., 2025a), we train the policy
+conditioned on discretized advantage labels, using our tree-derived relative value bins as chunk-level supervision.
+We instantiate the policy with π0.5 (Physical Intelligence et al., 2025b) and encode each bin in the policy prompt.
+For a normalized action chunk a and Gaussian noise ϵ ∼N(0, I), we construct xs = (1 −s)a + sϵ at flow time s
+and optimize the flow-matching objective (Lipman et al., 2023) as follows:
+Lπ(θ) = E(o,g,a,b)∼Dmix
+s,ϵ,˜b∼p(˜b|b)
+vθ(xs, s | o, g,˜b) −(ϵ −a)
+
+2
+2
+
+,
+(5)
+where Dmix combines tree-derived samples with offline demonstrations and robot-collected trajectories. Successful
+real trajectories receive the highest bin, and failed trajectories receive the lowest bin. During training, we randomly
+omit the advantage condition with probability pdrop. During tree search and deployment, we condition on the
+highest bin and apply classifier-free guidance (Ho and Salimans, 2022) through vguided = v∅+ β(vK −v∅), where
+β controls the guidance strength. Because search proposals are sampled from the same highest-bin policy, each new
+policy snapshot also changes the actions proposed in the trees started after it.
+4.3
+World Model–Policy Co-Evolution
+As the policy evolves, its observation-action distribution may shift beyond the world model’s training data, allowing
+policy optimization to exploit inaccurate predictions. We therefore keep adapting the world model through
+supervised fine-tuning (SFT) and distribution matching distillation (DMD) while the policy improves. For the
+k-th adaptation, the successful and failed trajectories collected since the previous one, D(k)
+new, are added to the replay
+set as D(k+1)
+real
+= D(k)
+real ∪D(k)
+new. We first adapt the world model to these real transitions using its action-conditioned
+prediction objective:
+L(k)
+SFT(ϕ) = Eτ∼D(k+1)
+real
+"X
+t
+ℓWM
+ ϕ; o≤t, at, ot+1, g
+
+#
+.
+(6)
+where ℓWM is the action-conditioned prediction loss used to train the world model, applied to both the multi-view
+frames and the proprioceptive state.
+We then apply distribution matching distillation (DMD) (Yin et al.,
+2024) to obtain a few-step generator for efficient imagined interaction. The resulting world model supports
+experience-backtracking search to generate new tree-structured supervision. Because the newly collected trajectories
+are produced by recent policies, adaptation targets the states and actions that upcoming search is likely to visit.
+Test-Time Physics Grounding.
+We call the capability that this adaptation provides test-time physics grounding.
+Here test time refers to the world model, not the policy: it is the period after the world model’s own pretraining in
+which it serves as the environment for policy learning. The initial world model is fine-tuned on expert data, which
+covers the contacts and object motions that teleoperators produce but few of those produced by a policy that fails in
+new ways or succeeds along new routes; an error there, for example a block that stays upright when it should topple,
+can be exploited by search and labeled as success. Grounding needs no extra annotation, since each real transition
+(o≤t, at, ot+1) supplies its own target under Equation 6. A LoRA adapter (Hu et al., 2022) keeps each update small
+enough to repeat throughout training without retraining the full model, and DMD restores few-step sampling for
+search. The capability is specific to learned simulators: a physics engine has hand-specified dynamics, and system
+identification can only tune its parameters. It is also a general requirement for any learned simulator used to train
+policies, because an improving policy drifts toward the states that the simulator’s training data covers least. The
+frozen-world-model ablation in Section 6.3 disables this grounding.
+5
+Asynchronous Real–Imagination Training System
+Search in a video world model is computationally heavy, whereas real-robot interaction is slow and cannot be
+parallelized beyond the number of available robots. A synchronous loop that alternates data collection, search,
+and training would leave each resource idle while the others work, so Rollback runs them as concurrent processes.
+The three processes also run at different rates: a real episode lasts as long as the robot needs to complete or fail
+the task and be reset, a search tree lasts until it spends its imagination budget, which takes different amounts of
+time for different seeds, and the learners advance at the rate of their gradient steps. None of them waits for another:
+they exchange only data and versioned model snapshots. Section 5.1 describes where each process runs, Section 5.2
+how search is scheduled around cached world-model contexts, and Section 5.3 the resulting training loop.
+7
+
+
+Cloud
+Elastic Orchestrator
+Queue-aware allocation
+State-affine placement
+Worker recovery
+Distributed Search Pool
+Policy
+WM
+Context cache
+GPU
+…
+GPU workers ×N
+Version-pinned jobs
+Co-Evolution Learners
+Policy Trainer
+GPU 0
+GPU N
+Gradient sync
+WM Trainer
+GPU 0
+GPU N
+Gradient sync
+Experience Fabric
+…
+Stream ingest
+Sharded replay
+Real
+Search
+Source-aware sampling
+Publish
+Policy
+WM
+Versioned snapshots
+Edge
+Site 1
+Trajectory buffer
+Edge Policy Runtime
+Policy
+Weight
+cache
+Site N
+Trajectory buffer
+Edge Policy Runtime
+Policy
+Weight
+cache
+…
+Device
+Robots @ Site 1
+Controller
+Controller
+Controller
+Controller
+…
+Robots @ Site N
+Controller
+Controller
+Controller
+Controller
+…
+…
+Queued dispatch
+Buffered results
+Policy + WM sync
+Batch prefetch
+Checkpoint transfer
+Trajectory uplink
+Policy downlink
+Observations
+Actions
+Observations
+Actions
+Figure 3: Rollback training infrastructure. The cloud runs tree search on GPU workers, stores real trajectories
+and tree supervision in the Experience Fabric, and trains the policy and the world model in parallel. Edge sites run
+policy inference for their robots, buffer trajectories for upload, and cache policy snapshots. Robots send observations
+to their edge site and execute the returned actions. Policy snapshots are sent to search workers and edge sites;
+world-model snapshots are sent only to search workers.
+5.1
+Cloud–Edge–Device Infrastructure
+Figure 3 divides the system into three tiers. All GPU-intensive work, namely search, data storage, and training, runs
+in the cloud. Edge sites are located next to the robots and run policy inference, so the cloud is not part of the robot’s
+control loop. Devices only sense and actuate.
+Distributed Search Pool.
+Each search GPU hosts a policy replica, a world-model instance, and a cache of world-
+model contexts. The Elastic Orchestrator assigns each worker seed trajectories drawn from offline demonstrations
+and collected real trajectories, and the worker builds the tree for a seed without communicating with other workers.
+Policy sampling, world-model prediction, and context restoration all take place on the same GPU, so no intermediate
+rollout state is sent over the network during search; a worker sends only the supervision extracted from each finished
+tree. Because search workers share no state, the throughput of imagination grows with the number of GPUs.
+Experience Fabric.
+All data exchanged between producers and learners passes through the Experience Fabric. It
+stores real trajectories and tree supervision in separate streams because they are used differently: offline demon-
+strations and real trajectories seed search and provide direct policy supervision, tree samples provide chunk-level
+quality labels, and world-model adaptation uses real trajectories only. Policy batches are sampled from all three
+sources to form Dmix and prefetched to the learners. Robots and search workers write whenever data is ready,
+learners read whenever they need a batch, and no process waits for another; this shared pool is the only place where
+processes exchange data.
+Co-Evolution Learners.
+The Policy Trainer optimizes Equation 5 continuously with distributed data parallelism
+(DDP) on batches prefetched from the Experience Fabric. Concurrently, the WM Trainer performs the test-time
+physics grounding described in Section 4.3: it repeatedly adapts the world model to real trajectories with LoRA
+SFT followed by DMD, using 400 and 100 steps per adaptation in our experiments. Gradients are synchronized
+only within each trainer, and neither trainer waits for the other or for search. Both trainers hand their weights to
+the Publish component, which stores them as versioned snapshots and sends policy snapshots to search workers
+and edge sites, and world-model snapshots to search workers.
+Edge Sites and Devices.
+Each edge site runs a Policy Runtime, a trajectory buffer, and a weight cache. A robot
+streams observations to the Policy Runtime and executes the returned action chunks with its own low-level controller.
+8
+
+
+Real world
+robot execution
+Policy
+World model
+rollback search
+rollback search
+rollback search
+Adapt
+LoRA SFT
++ DMD
+Adapt
+LoRA SFT
++ DMD
+deploy
+Figure 4: Training process of Rollback. The robot continually executes the latest policy and uploads real
+trajectories Dreal. The policy is continually updated with tree supervision Dtree from rollback search, while the
+world model is repeatedly adapted to real trajectories via LoRA SFT and DMD; each search tree uses the latest
+versions of both.
+New policy snapshots are downloaded into the weight cache, and the runtime switches a robot to the new version
+only when its current episode ends, so each real trajectory is generated by a single policy. Robots at the same site
+switch independently. The trajectory buffer turns each episode’s observations, actions, and outcome into a labeled
+trajectory and uploads it to the Experience Fabric in the background.
+In our experiments, the cloud consists of 48 NVIDIA H200 GPUs, of which 40 run world-model search and 8 run
+policy training, and serves one edge site with one physical robot. Additional sites would connect through the same
+upload and download paths; we have not evaluated such configurations.
+5.2
+Search Scheduling and Context Reuse
+Worker-Local Contexts.
+Experience backtracking branches from states that earlier rollouts have already reached.
+Regenerating the prefix of each new branch would cost as many world-model calls as the depth of the branching
+node. Each worker therefore keeps its trees and the world-model contexts of their nodes in GPU memory, and a new
+branch starts by restoring the cached context of the selected node (Section 4.1). A tree stays on the worker that
+holds its contexts until it is finished, and the orchestrator sends new seeds to idle workers.
+Version-Pinned Search Jobs.
+Trees take different amounts of time because their seed trajectories, depths, and
+refinement steps differ. If search paused for every model update, each update would wait for the slowest tree, and the
+search GPUs would sit idle while the learners train. Search and training are therefore fully decoupled: workers keep
+searching while both trainers keep training. Each search job is pinned to the latest policy and world-model snapshots
+available when its tree starts and keeps them until the tree is finished; snapshots published in the meantime are
+picked up by the worker’s next tree. Pinning keeps every tree internally consistent: all of its branches are proposed
+by one policy and simulated by one world model, so sibling outcomes remain comparable and the cached contexts
+stay valid for the whole tree. Supervision from a finished tree enters the Experience Fabric immediately and is
+mixed into subsequent policy batches.
+Cost of Imagination.
+Two mechanisms reduce the GPU time spent on each tree. Context reuse removes the
+recomputation of shared prefixes, and DMD reduces the number of sampling steps needed to generate each
+new action chunk (Section 4.3). Network traffic is limited to seed dispatch, finished supervision, and weight
+synchronization, since all tree operations stay on the worker. Search capacity can therefore be increased by adding
+GPUs, whereas real data grows only with the number of robots. As search GPUs are added, the Policy Trainer and
+the Experience Fabric must process proportionally more tree supervision, so they eventually limit throughput.
+5.3
+Training Process
+As shown in Figure 4, Rollback runs real-robot execution, world-model search, policy training, and world-model
+adaptation concurrently, exchanging information only through the Experience Fabric and asynchronous transfer
+of versioned snapshots. The robot continually executes the latest policy it has received and uploads each labeled
+trajectory to Dreal; new weights take effect only between episodes, so physical data collection never waits for
+9
+
+
+training. Meanwhile, GPU workers continually run experience-backtracking search from offline demonstrations
+and the growing Dreal, and the Policy Trainer continually updates the policy on Dmix with Equation 5, so tree
+supervision is used as soon as it is produced. In parallel, the WM Trainer repeatedly adapts the world model to the
+accumulated real trajectories (Section 4.3) and publishes each adapted model to the search pool. A policy snapshot
+thus reaches the robot at its next episode boundary and each search worker at its next tree, and the trajectories it
+collects reach the world model at the next adaptation. Algorithm 1 gives the complete training procedure.
+6
+Experiments
+We evaluate Rollback on three real-world manipulation tasks to assess policy performance and data efficiency. We
+investigate the contributions of experience-backtracking search (through the comparison with RISE w/ GE-Sim2,
+our reproduction of RISE on the same world model without backtracking), tree-structured supervision, and
+world-model adaptation to iterative policy improvement. Specifically, we ask whether Rollback outperforms
+existing baselines in the real world, how much each component contributes, whether it improves stably and reaches
+human-level performance, and how faithful its world model is.
+6.1
+Experimental Setup
+Tasks and Evaluation.
+We evaluate our proposed Rollback and baselines on the AGIBOT Genie-02 robot (AGIBOT,
+2026) across three real-world tasks spanning contact-rich manipulation, precise control, and competitive interaction:
+• Block Extraction. The robot removes wooden Jenga blocks one at a time from a stacked tower without collapsing
+it, testing precise manipulation under stability constraints.
+• Ball Tossing. The robot throws a ball into a bucket, with success determined by whether the ball lands inside.
+This task tests precise control of the throwing motion and release timing.
+• Tabletop Curling. A human and the robot each deliver two stones. Later shots can displace earlier stones, and
+the winner is determined by the score based on proximity to the target center. This task tests strategic selection
+and precise execution against an opponent.
+The policy observes three RGB views, from one head-mounted camera and two wrist cameras, together with the
+robot’s proprioceptive state, and controls 16 action dimensions, comprising seven arm joints and one gripper per
+side, at 30 Hz. For each task, we select six initial positions (nine for Tabletop Curling) and run 15 trials per position
+(25 for Block Extraction); per-position results are in Appendix D.
+Implementation Details.
+(1) World Model Training. We initialize the world model from pretrained GE-Sim 2.0 (Qiu
+et al., 2026) and train it in two stages: supervised fine-tuning followed by distribution matching distillation (Yin
+et al., 2024). We fine-tune the model on task-specific data for 10K steps using 32 NVIDIA H200 GPUs with a
+global batch size of 128. We then perform DMD on the same dataset for 2,500 steps using 16 NVIDIA H200 GPUs
+with a global batch size of 16. (2) Policy Warm-up. We initialize the policy from π0.5 (Physical Intelligence et al.,
+2025b) and pre-train it on task-specific expert-collected data using RECAP-style quality conditioning (Physical
+Intelligence et al., 2025a). We use five quality bins, assigning successful trajectories to the highest bin 5 and failed
+trajectories to the lowest bin 1. Training runs for 100K steps on 16 NVIDIA H200 GPUs with a global batch size
+of 64. (3) Reward Model Training. We use the world judge of GE-Sim 2.0 (Qiu et al., 2026) as the reward model
+and fine-tune it on task-specific robot videos annotated with success labels. Conditioned on visual observations
+and the task instruction, the model predicts task completion using a binary classification head trained with binary
+cross-entropy loss. (4) Policy Improvement in World Models. We run policy improvement with one physical robot
+and 48 NVIDIA H200 GPUs, allocating 40 GPUs to world-model-based tree search and 8 to policy training with
+DDP. Following world-model warm-up, all processes run asynchronously; each world-model adaptation adds newly
+collected real trajectories to the replay dataset and adapts the world model through 400 steps of LoRA-based (Hu
+et al., 2022) SFT followed by 100 steps of DMD.
+Baselines.
+We compare Rollback with imitation learning, reinforcement learning, and world-model-based baselines.
+All methods use the same π0.5 initialization and comparable compute budgets; RECAP and RISE w/ GE-Sim2 are
+trained for a similar duration of about 8 hours with one physical robot and a similar number of NVIDIA H200 GPUs.
+Execution-level details and hyperparameters are provided in Appendices B and C. (1) SFT. We fine-tune π0.5 (Physi-
+cal Intelligence et al., 2025b) on task-specific expert demonstrations using supervised learning. (2) RECAP. We adapt
+RECAP (Physical Intelligence et al., 2025a) to π0.5, using a learned value model to estimate advantages for condi-
+tioned policy training on collected real-world data. (3) RISE w/ GE-Sim2. RISE (Yang et al., 2026) learns from imag-
+ined interactions with a compositional world model that couples action-conditioned dynamics with a learned progress
+10
+
+
+Table 1: Performance on three real-world tasks.
+Success rates (%) of Rollback and imitation-learning,
+reinforcement-learning, and world-model-based baselines.
+Method
+Category
+Block Extraction
+Ball Tossing
+Tabletop Curling
+Average
+π0.5 + SFT
+Imitation learning
+48.67
+23.33
+48.89
+40.30
+π0.5 + RECAP
+Real-world RL
+56.00
+25.56
+51.11
+44.22
+π0.5 + RISE w/ GE-Sim2
+World-model RL
+58.67
+28.89
+52.59
+46.72
+Rollback (Ours)
+World-model RL
+69.33
+40.00
+64.44
+57.93
+Gain over strongest baseline
++10.67
++11.11
++11.85
++11.21
+Table 2: Ablation study on Block Extraction. We evaluate world-model adaptation and tree-structured value
+estimation via target contact rate, task success rate, and the average number of consecutive extractions; the full
+framework performs best on all metrics.
+Variant
+Target Contact (%)
+Task Success (%)
+Consecutive Extractions
+Frozen World Model
+78.67
+64.67
+1.90
+Direct Reward Supervision
+77.33
+59.33
+1.73
+Rollback (Full)
+89.33
+69.33
+2.60
+value model. We reproduce RISE on GE-Sim 2.0 (Qiu et al., 2026), the same world model that Rollback uses, with
+five RECAP-style advantage bins, and denote this reproduction RISE w/ GE-Sim2. All RISE results in this report
+come from this reproduction rather than from the original paper. Because the two methods share the world model,
+the comparison isolates experience-backtracking search and tree-structured supervision from world-model quality.
+6.2
+Main Results
+Table 1 compares Rollback with the baselines across three real-world tasks. Rollback achieves the highest success
+rate on all tasks, reaching 69.33% on Block Extraction, 40.00% on Ball Tossing, and 64.44% on Tabletop Curling.
+Rollback’s average success rate exceeds SFT, RECAP, and RISE w/ GE-Sim2 by 17.63%, 13.71%, and 11.21%,
+respectively. Compared with RISE w/ GE-Sim2, which also learns through interaction with the same world model,
+Rollback improves success rates by an absolute 10.67%, 11.11%, and 11.85% on the three tasks. This corresponds
+to a relative improvement of 24.0% in average success rate over RISE w/ GE-Sim2. On average, real-world RL
+with RECAP adds 3.92% over SFT and forward world-model rollouts with RISE w/ GE-Sim2 add another 2.49%,
+whereas experience backtracking with the same world model adds 11.21% on top of RISE w/ GE-Sim2, more than
+the two previous gains combined. The largest relative gain is on Ball Tossing (38.5% over RISE w/ GE-Sim2), where
+the outcome is decided by the release, so comparing sibling actions from the same context directly identifies better re-
+leases. These gains span contact-rich manipulation, precise throwing, and competitive interaction, indicating that the
+benefits of search-based training transfer to physical execution without requiring world-model search at deployment.
+6.3
+Ablation Studies
+We conduct ablations on Block Extraction to examine the contributions of world-model adaptation and tree-structured
+value estimation; frozen-world-model results on the other two tasks are reported in Appendix D. We report three
+metrics over all evaluation trials: Target Contact measures whether the pushing motion hits the target block; Task
+Success measures complete extraction without collapsing the remaining structure; and Consecutive Extractions
+counts the average number of blocks extracted in a row before failure. (1) Frozen World Model. We retain the
+world model obtained after initial task-specific training and disable subsequent updates from real interaction, which
+disables test-time physics grounding. (2) Direct Reward Supervision. We replace subtree-aggregated values with
+individual rollout rewards for quality-conditioned policy training while retaining tree search. All variants use the
+same policy initialization and computation budget. As shown in Table 2, removing either component degrades all
+three metrics; direct reward supervision lowers task success most (59.33%), and a frozen world model reduces
+consecutive extractions from 2.60 to 1.90. Target contact also falls from 89.33% to 78.67% with a frozen world
+model and to 77.33% with direct reward supervision. With direct reward supervision, each label depends on a single
+stochastic rollout rather than a subtree average, and with a frozen world model, prediction errors accumulate over
+the long sequences of contact-rich decisions that block extraction requires.
+11
+
+
+0
+2
+4
+6
+8
+Training time (h)
+25
+30
+35
+40
+Success rate (%)
+Ball Tossing
+0
+2
+4
+6
+8
+Training time (h)
+50
+55
+60
+65
+Tabletop Curling
+Rollback (Ours)
+RISE w/ GE-Sim2
+Figure 5: Training dynamics. Real-world success rate
+of Rollback and RISE w/ GE-Sim2 versus wall-clock
+training time.
+0
+2
+4
+6
+8
+Training time (h)
+20
+30
+40
+Success rate (%)
+Ball Tossing
+6 h
+0
+2
+4
+6
+8
+Training time (h)
+40
+50
+60
+Tabletop Curling
+4 h
+Rollback (Ours)
+Human
+Teleop.
+Figure 6: Surpassing human performance. Success
+rate versus training time against human players and tele-
+operation (dashed). Stars mark when Rollback first ex-
+ceeds humans.
+6.4
+Training Dynamics
+Figure 5 tracks the real-world success rate of Rollback and RISE w/ GE-Sim2 on Ball Tossing and Tabletop Curling
+over 8 hours of training. Starting from the RECAP policy, Rollback improves Ball Tossing steadily from 25.56% to
+40.00%, whereas RISE w/ GE-Sim2 fluctuates and ends at only 28.89%. This is a relative improvement of 56.5%
+within 8 hours using a single physical robot, while RISE w/ GE-Sim2 first drops to 24.44% after 2 hours. Keeping
+the world model frozen instead yields only 26.67%, indicating that continually refining the world model with real
+experience is essential for sustained improvement. On Tabletop Curling, Rollback rises from 51.11% to 64.44%
+over the same period, while RISE w/ GE-Sim2 stays close to its initialization and ends at 52.59%, only 1.48%
+above its starting point. On Tabletop Curling, the gap between the two methods widens at every evaluation; on Ball
+Tossing, it widens steadily after 4 hours.
+6.5
+Qualitative Results
+Figure 7 visualizes experience-backtracking search on Tabletop Curling: panel (a) shows the search tree, and panels
+(b, c) show continuations from a branch point inside imagination and from a rollback on a real attempt. Rather
+than restarting from the initial state, Rollback rolls back to two intermediate decision points of a real attempt and
+branches from the restored contexts. At step 200 (control steps at 30 Hz), during the second push, the recorded
+push brings the red stone into the house, whereas an imagined alternative from the same context leaves it short
+of the house. Comparing continuations that share everything up to this point isolates the second push as the decision
+that determines the outcome. Branching also happens inside imagination: from the same imagined state at step
+50, both continuations push the first stone alike, but one releases the second stone fast enough to reach the house
+and the other releases it slowly, so it stops in front. More examples for all three tasks are provided in Appendix E.
+6.6
+Surpassing Human Performance
+We compare Rollback with human players performing each task by hand and with teleoperated data collection, both
+under the same initial positions and success criteria; each is averaged over three people. On Ball Tossing, human
+players and teleoperation achieve 31.48% and 16.53%, respectively, and Rollback surpasses the human average
+after 6 hours of training (33.33%), reaching 40.00% after 8 hours (Figure 6). On Tabletop Curling, human players
+and teleoperation achieve 58.39% and 38.94%, and Rollback surpasses humans after 4 hours, reaching 64.44% after
+8 hours. Although Rollback is initialized from teleoperated demonstrations far below human level, it surpasses
+human players on both tasks by learning from counterfactual imagination. At the end of training, Rollback exceeds
+the human average by 8.52% and 6.05% on the two tasks, and teleoperation by 23.47% and 25.50%. The RECAP
+initialization already exceeds teleoperation on both tasks (25.56% vs. 16.53% and 51.11% vs. 38.94%), but only
+training with Rollback lifts it above human players. The policy never observes the human players, so the margin
+over them comes from comparing the robot’s own alternative actions in imagination.
+6.7
+World-Model Fidelity and Reward Reliability
+To measure how far imagined rollouts drift from reality, we replay the recorded actions of eight failed real Block
+Extraction episodes open-loop in the co-evolved world model, five times each, and compare the predictions with
+the real recordings (Table 3). The average PSNR is 21.6 dB, highest for the head camera (23.4 dB), whose static
+12
+
+
+(a) Experience-backtracking search tree
+Step 0
+Step 50
+Step 100
+Step 150
+Step 200
+Step 250
+Step 300
+imagined
+real
+(b) Branch point inside imagination (step 50): the two continuations diverge at the second push
+stone tracks after the branch
+Step 194
+Step 205
+Step 217
+Step 230
+Step 242
+Step 253
+Step 273
+Step 300
+continuation 1
+continuation 2
+Both continuations share the state at step 50 and push the first stone alike. At the second push, continuation 1
+releases the stone fast enough to slide into the house; continuation 2 releases it slowly and it stops in front.
+(c) Rollback on the real attempt (step 200): same restored context, different second pushes
+stone tracks after the branch
+Step 200
+Step 203
+Step 207
+Step 213
+Step 225
+Step 242
+Step 265
+Step 300
+real
+imagined
+From the restored context, the recorded push sends the stone into the house within about 10 steps; the imagined
+alternative pushes it more gently, so the stone slides for about 60 steps and stops short of the house.
+b
+c
+✓
+✓
+✗
+✓
+✓
+✗
+✗
+branch point (b)
+inside imagination
+rollback
+rollback (c)
+✓
+✗
+✓
+✗
+Figure 7: Experience-backtracking search on Tabletop Curling. (a) Search tree. The blue dashed path is a real
+attempt and colored paths are imagined continuations; edges are green, red, or purple when the continuations below
+all succeed, all fail, or are mixed. Purple rings mark branch points at intermediate decisions, each followed by
+successful and failed continuations. (b) Two world-model continuations from a branch point inside imagination; (c)
+the real attempt and a world-model alternative from a rollback point. Each panel shows stone tracks overlaid on the
+frame at the branch (left) and time-aligned frames (right). In both cases the continuations differ in how fast the
+second stone is released: a fast release reaches the house, a slow one stops short.
+13
+
+
+Table 3: Open-loop world-model fidelity on Block Extraction (40 rollouts).
+PSNR (dB) ↑
+RGB L1 ↓
+Reward false positives
+Head
+Left wrist
+Right wrist
+First quarter
+Last quarter
+23.41
+20.63
+20.85
+6.79
+11.79
+0 / 40
+Table 4: Open-loop world-model fidelity with and without co-evolution on Tabletop Curling (64 validation
+episodes, three rollouts each).
+World model
+PSNR (dB) ↑
+RGB L1 ↓
+Rollout spread ↓
+Head
+Left wrist
+Right wrist
+First quarter
+Last quarter
+Frozen
+21.50
+17.07
+15.01
+12.48
+23.73
+9.39
+Co-evolved
+22.27
+17.79
+16.37
+10.50
+14.47
+6.12
+Step 0
+Step 70
+Step 100
+Step 130
+Step 170
+Step 215
+stone drifts off center
+next stone arrives early
+0
+50
+100
+150
+200
+250
+300
+Control step (30 Hz)
+0
+5
+10
+15
+20
+25
+Open-loop RGB L1 error
+Frozen WM
+Co-evolved WM
+−33% error on average
+64 validation episodes
+(a)
+Real
+recorded
+Frozen WM
+w/o co-evolution
+Co-evolved WM
+Rollback
+(b)
+Figure 8: World-model fidelity with and without co-evolution on Tabletop Curling. (a) Open-loop predictions
+of the frozen world model (before co-evolution) and the co-evolved world model under the recorded actions of one
+validation episode, with the real recording on top. Each cell shows the head camera cropped to the sheet; insets
+magnify the house, and red boxes mark hallucinated stones. Steps are control steps at 30 Hz. (b) RGB L1 error over
+control steps, averaged over the 64 validation episodes, with 95% confidence intervals shaded.
+background is easier to predict than the wrist views. The per-pixel L1 error grows from 6.8 in the first quarter of
+each rollout to 11.8 in the last quarter, a 1.74× increase over rollouts of 150–275 frames, consistent with our choice
+to branch from real observations rather than roll out long imagined horizons. Figure 12 in Appendix E shows one of
+these episodes. The reward model reports success on none of the 40 rollouts, all of which replay failed episodes. A
+false positive would turn a failed imagined branch into a positive label and thereby corrupt the relative value labels
+that the policy is trained on.
+To measure what test-time physics grounding changes, we replay the recorded actions of the 64 Tabletop Curling
+validation episodes open-loop, three times each, in the world model before co-evolution (frozen) and in the world
+model after co-evolution (co-evolved), and compare both with the real recordings (Table 4). These episodes are real
+trajectories collected by the policy, so the comparison measures fidelity on the states that the policy visits; they are
+part of the real data the co-evolved world model is adapted to and are not seen by the frozen one. The co-evolved
+world model has a lower RGB L1 error on all 64 episodes, and its average error falls from 19.52 to 12.96. The gap
+widens along the rollout: the error rises from 12.48 in the first quarter to 23.73 in the last quarter for the frozen
+world model (1.90×), but only from 10.50 to 14.47 for the co-evolved one (1.38×), as shown in Figure 8(b). The
+three rollouts of the co-evolved world model also differ less from each other (L1 spread 6.12 vs. 9.39).
+Figure 8(a) shows one episode. After the first stone stops at the center of the house, the frozen world model moves
+it to the edge of the house by step 130 and keeps it there, and at step 215 it brings the second stone into the house
+while the real stone is still sliding. The co-evolved world model keeps the first stone at the center and the second
+14
+
+
+stone on the sheet, as in the recording. Such errors change the score of an imagined shot and thus the value labels of
+the branches that contain it, which the policy is then trained on.
+7
+Conclusion
+We presented Rollback, a policy improvement paradigm that exploits experience backtracking in world models.
+By revisiting decision contexts and aggregating the outcomes of alternative continuations, Rollback concentrates
+imagination on informative comparisons and obtains chunk-level supervision without a learned value model. A
+unified training system couples this search with real-robot execution, jointly improving the policy and the world
+model through real-world feedback. This test-time physics grounding keeps the world model accurate in the states
+the policy visits. Experiments on three challenging real-world tasks demonstrate higher success rates and more
+stable improvement than competing baselines. Over RISE w/ GE-Sim2, our reproduction of RISE on the same
+world model, Rollback improves the success rate by an absolute 10.67%, 11.11%, and 11.85% on block extraction,
+ball tossing, and tabletop curling, and it surpasses the average human player on the latter two tasks after 8 hours of
+training with one robot.
+References
+AGIBOT. AGIBOT G2 Universal Embodied Intelligent Robot, 2026. URL https://www.agibot.com/products/G2.
+M. Andrychowicz, F. Wolski, A. Ray, J. Schneider, R. Fong, P. Welinder, B. McGrew, J. Tobin, P. Abbeel, and W. Zaremba.
+Hindsight Experience Replay, 2017. URL https://arxiv.org/abs/1707.01495.
+T. Anthony, Z. Tian, and D. Barber. Thinking Fast and Slow with Deep Learning and Tree Search, 2017. URL https:
+//arxiv.org/abs/1705.08439.
+M. Assran, A. Bardes, D. Fan, Q. Garrido, R. Howes, M. Komeili, M. Muckley, A. Rizvi, C. Roberts, K. Sinha, A. Zholus,
+S. Arnaud, A. Gejji, A. Martin, F. R. Hogan, D. Dugas, P. Bojanowski, V. Khalidov, P. Labatut, F. Massa, M. Szafraniec,
+K. Krishnakumar, Y. Li, X. Ma, S. Chandar, F. Meier, Y. LeCun, M. Rabbat, and N. Ballas. V-JEPA 2: Self-Supervised Video
+Models Enable Understanding, Prediction and Planning, 2025. URL https://arxiv.org/abs/2506.09985.
+K. Black, N. Brown, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, L. Groom, K. Hausman, B. Ichter, S. Jakubczak,
+T. Jones, L. Ke, S. Levine, A. Li-Bell, M. Mothukuri, S. Nair, K. Pertsch, L. X. Shi, J. Tanner, Q. Vuong, A. Walling,
+H. Wang, and U. Zhilinsky. π0: A Vision-Language-Action Flow Model for General Robot Control, 2024. URL https:
+//arxiv.org/abs/2410.24164.
+K. Black, M. Y. Galliker, and S. Levine. Real-Time Execution of Action Chunking Flow Policies, 2025. URL https:
+//arxiv.org/abs/2506.07339.
+A. Brohan, N. Brown, J. Carbajal, Y. Chebotar, X. Chen, K. Choromanski, T. Ding, D. Driess, A. Dubey, C. Finn, P. Florence,
+C. Fu, M. G. Arenas, K. Gopalakrishnan, K. Han, K. Hausman, A. Herzog, J. Hsu, B. Ichter, A. Irpan, N. Joshi, R. Julian,
+D. Kalashnikov, Y. Kuang, I. Leal, L. Lee, T.-W. E. Lee, S. Levine, Y. Lu, H. Michalewski, I. Mordatch, K. Pertsch, K. Rao,
+K. Reymann, M. Ryoo, G. Salazar, P. Sanketi, P. Sermanet, J. Singh, A. Singh, R. Soricut, H. Tran, V. Vanhoucke, Q. Vuong,
+A. Wahid, S. Welker, P. Wohlhart, J. Wu, F. Xia, T. Xiao, P. Xu, S. Xu, T. Yu, and B. Zitkovich. RT-2: Vision-Language-Action
+Models Transfer Web Knowledge to Robotic Control, 2023. URL https://arxiv.org/abs/2307.15818.
+C. B. Browne, E. Powley, D. Whitehouse, S. M. Lucas, P. I. Cowling, P. Rohlfshagen, S. Tavener, D. Perez, S. Samothrakis,
+and S. Colton. A survey of Monte Carlo Tree Search methods. IEEE Transactions on Computational Intelligence and AI in
+Games, 4(1):1–43, 2012. doi: 10.1109/TCIAIG.2012.2186810.
+Z. Chen, P. Liu, J. Li, and Q. Wang. HaWMPO: Hallucination-Aware World Model-based Policy Optimization for Generalist
+Robot Policy, 2026. URL https://arxiv.org/abs/2609.09941.
+A. Couëtoux, J.-B. Hoock, N. Sokolovska, O. Teytaud, and N. Bonnard. Continuous upper confidence trees. In International
+Conference on Learning and Intelligent Optimization, pages 433–445, 2011.
+A. Ecoffet, J. Huizinga, J. Lehman, K. O. Stanley, and J. Clune. First return, then explore, 2020. URL https://arxiv.org/
+abs/2004.12919.
+S. Fujimoto, H. van Hoof, and D. Meger. Addressing Function Approximation Error in Actor-Critic Methods, 2018. URL
+https://arxiv.org/abs/1802.09477.
+S. Gao, W. Liang, K. Zheng, A. Malik, S. Ye, S. Yu, W.-C. Tseng, Y. Dong, K. Mo, C.-H. Lin, Q. Ma, S. Nah, L. Magne, J. Xiang,
+Y. Xie, R. Zheng, D. Niu, Y. L. Tan, K. R. Zentner, G. Kurian, S. Indupuru, P. Jannaty, J. Gu, J. Zhang, J. Malik, P. Abbeel,
+M.-Y. Liu, Y. Zhu, J. Jang, and L. J. Fan. DreamDojo: A Generalist Robot World Model from Large-Scale Human Videos,
+2026. URL https://arxiv.org/abs/2602.06949.
+Gemini Robotics Team, K. Choromanski, C. Devin, Y. Du, D. Dwibedi, R. Gao, A. Jindal, T. Kipf, S. Kirmani, I. Leal, F. Liu,
+A. Majumdar, A. Marmon, C. Parada, Y. Rubanova, D. Shah, V. Sindhwani, J. Tan, F. Xia, T. Xiao, S. Yang, W. Yu, and A. Zhou.
+Evaluating Gemini Robotics Policies in a Veo World Simulator, 2025. URL https://arxiv.org/abs/2512.10675.
+15
+
+
+Y. Guo, L. X. Shi, J. Chen, and C. Finn. Ctrl-World: A Controllable Generative World Model for Robot Manipulation, 2025a.
+URL https://arxiv.org/abs/2510.10125.
+Y. Guo, J. Zhang, X. Chen, X. Ji, Y.-J. Wang, Y. Hu, and J. Chen. Improving Vision-Language-Action Model with Online
+Reinforcement Learning, 2025b. URL https://arxiv.org/abs/2501.16664.
+D. Hafner, T. Lillicrap, I. Fischer, R. Villegas, D. Ha, H. Lee, and J. Davidson. Learning Latent Dynamics for Planning from
+Pixels, 2018. URL https://arxiv.org/abs/1811.04551.
+D. Hafner, T. Lillicrap, J. Ba, and M. Norouzi. Dream to Control: Learning Behaviors by Latent Imagination, 2019. URL
+https://arxiv.org/abs/1912.01603.
+D. Hafner, T. Lillicrap, M. Norouzi, and J. Ba. Mastering Atari with Discrete World Models, 2020. URL https://arxiv.or
+g/abs/2010.02193.
+J. Ho and T. Salimans. Classifier-Free Diffusion Guidance, 2022. URL https://arxiv.org/abs/2207.12598.
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, and W. Chen. LoRA: Low-rank adaptation of large language
+models. In International Conference on Learning Representations, 2022.
+S. Huang, L. Chen, P. Zhou, S. Chen, Z. Jiang, Y. Hu, Y. Liao, P. Gao, H. Li, M. Yao, and G. Ren. EnerVerse: Envisioning
+Embodied Future Space for Robotics Manipulation, 2025. URL https://arxiv.org/abs/2501.01895.
+T. Hubert, J. Schrittwieser, I. Antonoglou, M. Barekatain, S. Schmitt, and D. Silver. Learning and Planning in Complex Action
+Spaces, 2021. URL https://arxiv.org/abs/2104.06303.
+J. Jang, S. Ye, Z. Lin, J. Xiang, J. Bjorck, Y. Fang, F. Hu, S. Huang, K. Kundalia, Y.-C. Lin, L. Magne, A. Mandlekar, A. Narayan,
+Y. L. Tan, G. Wang, J. Wang, Q. Wang, Y. Xu, X. Zeng, K. Zheng, R. Zheng, M.-Y. Liu, L. Zettlemoyer, D. Fox, J. Kautz,
+S. Reed, Y. Zhu, and L. Fan. DreamGen: Unlocking Generalization in Robot Learning through Video World Models, 2025.
+URL https://arxiv.org/abs/2505.12705.
+M. Janner, J. Fu, M. Zhang, and S. Levine. When to Trust Your Model: Model-Based Policy Optimization, 2019. URL
+https://arxiv.org/abs/1906.08253.
+Y. Jiang, S. Chen, S. Huang, L. Chen, P. Zhou, Y. Liao, X. He, C. Liu, H. Li, M. Yao, and G. Ren. EnerVerse-AC: Envisioning
+Embodied Environments with Action Condition, 2025. URL https://arxiv.org/abs/2505.09723.
+Z. Jiang, S. Zhou, Y. Jiang, Z. Huang, M. Wei, Y. Chen, T. Zhou, Z. Guo, H. Lin, Q. Zhang, Y. Wang, H. Li, C. Yu, and
+D. Zhao. WoVR: World Models as Reliable Simulators for Post-Training VLA Policies with RL, 2026. URL https:
+//arxiv.org/abs/2602.13977.
+M. J. Kim, K. Pertsch, S. Karamcheti, T. Xiao, A. Balakrishna, S. Nair, R. Rafailov, E. Foster, G. Lam, P. Sanketi, Q. Vuong,
+T. Kollar, B. Burchfiel, R. Tedrake, D. Sadigh, S. Levine, P. Liang, and C. Finn. OpenVLA: An Open-Source Vision-Language-
+Action Model, 2024. URL https://arxiv.org/abs/2406.09246.
+M. J. Kim, C. Finn, and P. Liang. Fine-Tuning Vision-Language-Action Models: Optimizing Speed and Success, 2025. URL
+https://arxiv.org/abs/2502.19645.
+H. Li, Y. Zuo, J. Yu, Y. Zhang, Z. Yang, K. Zhang, X. Zhu, Y. Zhang, T. Chen, G. Cui, D. Wang, D. Luo, Y. Fan, Y. Sun, J. Zeng,
+J. Pang, S. Zhang, Y. Wang, Y. Mu, B. Zhou, and N. Ding. SimpleVLA-RL: Scaling VLA Training via Reinforcement
+Learning, 2025a. URL https://arxiv.org/abs/2509.09674.
+L. Li, Q. Zhang, Y. Luo, S. Yang, R. Wang, F. Han, M. Yu, Z. Gao, N. Xue, X. Zhu, Y. Shen, and Y. Xu. Causal World Modeling
+for Robot Control, 2026. URL https://arxiv.org/abs/2601.21998.
+Y. Li, Y. Zhu, J. Wen, C. Shen, and Y. Xu. WorldEval: World Model as Real-World Robot Policies Evaluator, 2025b. URL
+https://arxiv.org/abs/2505.19017.
+Y. Liao, P. Zhou, S. Huang, D. Yang, S. Chen, Y. Jiang, Y. Hu, J. Cai, S. Liu, J. Luo, L. Chen, S. Yan, M. Yao, and G. Ren. Genie
+Envisioner: A Unified World Foundation Platform for Robotic Manipulation, 2025. URL https://arxiv.org/abs/2508
+.05635.
+Y. Lipman, R. T. Q. Chen, H. Ben-Hamu, M. Nickel, and M. Le. Flow matching for generative modeling. In International
+Conference on Learning Representations, 2023.
+G. Lu, W. Guo, C. Zhang, Y. Zhou, H. Jiang, Z. Gao, Y. Tang, and Z. Wang. VLA-RL: Towards Masterful and General Robotic
+Manipulation with Scalable Reinforcement Learning, 2025. URL https://arxiv.org/abs/2505.18719.
+NVIDIA, A. Ali, J. Bai, M. Bala, Y. Balaji, A. Blakeman, T. Cai, J. Cao, T. Cao, E. Cha, Y.-W. Chao, P. Chattopadhyay, M. Chen,
+Y. Chen, Y. Chen, S. Cheng, Y. Cui, J. Diamond, Y. Ding, J. Fan, L. Fan, L. Feng, F. Ferroni, S. Fidler, X. Fu, R. Gao, Y. Ge,
+J. Gu, A. Gupta, S. Gururani, I. E. Hanafi, A. Hassani, Z. Hao, J. Huffman, J. Jang, P. Jannaty, J. Kautz, G. Lam, X. Li, Z. Li,
+M. Liao, C.-H. Lin, T.-Y. Lin, Y.-C. Lin, H. Ling, M.-Y. Liu, X. Liu, Y. Lu, A. Luo, Q. Ma, H. Mao, K. Mo, S. Nah, Y. Narang,
+A. Panaskar, L. Pavao, T. Pham, M. Ramezanali, F. Reda, S. Reed, X. Ren, H. Shao, Y. Shen, S. Shi, S. Song, B. Stefaniak,
+S. Sun, S. Tang, S. Tasmeen, L. Tchapmi, W.-C. Tseng, J. Varghese, A. Z. Wang, H. Wang, H. Wang, H. Wang, T.-C. Wang,
+F. Wei, J. Xu, D. Yang, X. Yang, H. Ye, S. Ye, X. Zeng, J. Zhang, Q. Zhang, K. Zheng, A. Zhu, and Y. Zhu. World Simulation
+with Video Foundation Models for Physical AI, 2025. URL https://arxiv.org/abs/2511.00062.
+16
+
+
+Physical Intelligence, A. Amin, R. Aniceto, A. Balakrishna, K. Black, K. Conley, G. Connors, J. Darpinian, K. Dhabalia,
+J. DiCarlo, D. Driess, M. Equi, A. Esmail, Y. Fang, C. Finn, C. Glossop, T. Godden, I. Goryachev, L. Groom, H. Hancock,
+K. Hausman, G. Hussein, B. Ichter, S. Jakubczak, R. Jen, T. Jones, B. Katz, L. Ke, C. Kuchi, M. Lamb, D. LeBlanc,
+S. Levine, A. Li-Bell, Y. Lu, V. Mano, M. Mothukuri, S. Nair, K. Pertsch, A. Z. Ren, C. Sharma, L. X. Shi, L. Smith,
+J. T. Springenberg, K. Stachowicz, W. Stoeckle, A. Swerdlow, J. Tanner, M. Torne, Q. Vuong, A. Walling, H. Wang,
+B. Williams, S. Yoo, L. Yu, U. Zhilinsky, and Z. Zhou.
+π∗
+0.6: a VLA That Learns From Experience, 2025a.
+URL
+https://arxiv.org/abs/2511.14759.
+Physical Intelligence, K. Black, N. Brown, J. Darpinian, K. Dhabalia, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, M. Y.
+Galliker, D. Ghosh, L. Groom, K. Hausman, B. Ichter, S. Jakubczak, T. Jones, L. Ke, D. LeBlanc, S. Levine, A. Li-Bell,
+M. Mothukuri, S. Nair, K. Pertsch, A. Z. Ren, L. X. Shi, L. Smith, J. T. Springenberg, K. Stachowicz, J. Tanner, Q. Vuong,
+H. Walke, A. Walling, H. Wang, L. Yu, and U. Zhilinsky. π0.5: a Vision-Language-Action Model with Open-World
+Generalization, 2025b. URL https://arxiv.org/abs/2504.16054.
+B. Qiu, L. Chen, Y. Liao, N. Wang, L. Wang, J. Luo, W. Zhao, S. Chen, D. Chen, Y. Li, et al. GE-Sim 2.0: A roadmap towards
+comprehensive closed-loop video world simulators for robotic manipulation. arXiv preprint arXiv:2605.27491, 2026.
+J. Quevedo, A. K. Sharma, Y. Sun, V. Suryavanshi, P. Liang, and S. Yang. WorldGym: World Model as An Environment for
+Policy Evaluation, 2025. URL https://arxiv.org/abs/2506.00613.
+Robbyant Team, Z. Gao, Q. Wang, Y. Zeng, J. Zhu, K. L. Cheng, Y. Li, H. Wang, Y. Xu, S. Ma, Y. Chen, J. Liu, Y. Cheng,
+Y. Yao, J. Zhu, Y. Meng, K. Zheng, Q. Bai, J. Chen, Z. Shen, Y. Yu, X. Zhu, Y. Shen, and H. Ouyang. Advancing Open-source
+World Models, 2026. URL https://arxiv.org/abs/2601.20540.
+J. Schrittwieser, I. Antonoglou, T. Hubert, K. Simonyan, L. Sifre, S. Schmitt, A. Guez, E. Lockhart, D. Hassabis, T. Graepel,
+T. Lillicrap, and D. Silver.
+Mastering Atari, Go, Chess and Shogi by Planning with a Learned Model, 2019.
+URL
+https://arxiv.org/abs/1911.08265.
+J. Schulman, P. Moritz, S. Levine, M. Jordan, and P. Abbeel. High-Dimensional Continuous Control Using Generalized
+Advantage Estimation, 2015. URL https://arxiv.org/abs/1506.02438.
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. K. Li, Y. Wu, and D. Guo. DeepSeekMath: Pushing
+the Limits of Mathematical Reasoning in Open Language Models, 2024. URL https://arxiv.org/abs/2402.03300.
+A. K. Sharma, Y. Sun, N. Lu, Y. Zhang, J. Liu, and S. Yang. World-Gymnast: Training Robots with Reinforcement Learning in a
+World Model, 2026. URL https://arxiv.org/abs/2602.02454.
+D. Silver, A. Huang, C. J. Maddison, A. Guez, L. Sifre, G. van den Driessche, J. Schrittwieser, I. Antonoglou, V. Panneershelvam,
+M. Lanctot, S. Dieleman, D. Grewe, J. Nham, N. Kalchbrenner, I. Sutskever, T. Lillicrap, M. Leach, K. Kavukcuoglu,
+T. Graepel, and D. Hassabis. Mastering the game of Go with deep neural networks and tree search. Nature, 529(7587):
+484–489, 2016. doi: 10.1038/nature16961.
+S. Tan, K. Dou, Y. Zhao, and P. Krähenbühl. Interactive Post-Training for Vision-Language-Action Models, 2025. URL
+https://arxiv.org/abs/2505.17016.
+Y. Wang, R. Syed, F. Wu, M. Zhang, A. Onol, J. Barreiros, H. Nayyeri, T. Dear, H. Zhang, and Y. Li. Interactive World Simulator
+for Robot Policy Training and Evaluation, 2026. URL https://arxiv.org/abs/2603.08546.
+J. Xiao, Y. Yang, X. Chang, R. Chen, F. Xiong, M. Xu, W.-S. Zheng, and Q. Zhang. World-Env: Leveraging World Model as a
+Virtual Environment for VLA Post-Training, 2025. URL https://arxiv.org/abs/2509.24948.
+J. Yang, K. Lin, J. Li, W. Zhang, T. Lin, L. Wu, Z. Su, H. Zhao, Y.-Q. Zhang, L. Chen, P. Luo, X. Yue, and H. Li. RISE:
+Self-Improving Robot Policy with Compositional World Model, 2026. URL https://arxiv.org/abs/2602.11075.
+S. Yang, Y. Du, K. Ghasemipour, J. Tompson, L. Kaelbling, D. Schuurmans, and P. Abbeel. Learning Interactive Real-World
+Simulators, 2023. URL https://arxiv.org/abs/2310.06114.
+T. Yin, M. Gharbi, R. Zhang, E. Shechtman, F. Durand, W. T. Freeman, and T. Park. One-step diffusion with distribution
+matching distillation. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages
+6613–6623, 2024.
+T. Yu, G. Thomas, L. Yu, S. Ermon, J. Zou, S. Levine, C. Finn, and T. Ma. MOPO: Model-based Offline Policy Optimization,
+2020. URL https://arxiv.org/abs/2005.13239.
+T. Yu, A. Kumar, R. Rafailov, A. Rajeswaran, S. Levine, and C. Finn. COMBO: Conservative Offline Model-Based Policy
+Optimization, 2021. URL https://arxiv.org/abs/2102.08363.
+H. Zang, S. Yu, H. Lin, T. Zhou, Z. Huang, Z. Guo, X. Xu, J. Zhou, Y. Sheng, S. Zhang, F. Gao, W. Tang, Y. Yue, Q. Zhang,
+X. Chen, C. Yu, and Y. Wang. RLinf-USER: A Unified and Extensible System for Real-World Online Policy Learning in
+Embodied AI, 2026. URL https://arxiv.org/abs/2602.07837.
+F. Zhu, H. Wu, S. Guo, Y. Liu, C. Cheang, and T. Kong. IRASim: A Fine-Grained World Model for Robot Manipulation, 2024.
+URL https://arxiv.org/abs/2406.14540.
+F. Zhu, Z. Yan, Z. Hong, Q. Shou, X. Ma, and S. Guo. WMPO: World Model-based Policy Optimization for Vision-Language-
+Action Models, 2025. URL https://arxiv.org/abs/2511.09515.
+17
+
+
+A
+Detailed Training Algorithm
+Algorithm 1 summarizes the overall training procedure. Real-robot execution, tree search, policy training, and
+world-model adaptation run as concurrent processes that never wait for one another. They exchange data only
+through the shared pool of the Experience Fabric (Dreal and Btree) and models only as versioned snapshots; each
+search tree is pinned to the snapshots that are current when it starts. Algorithm 2 details the experience-backtracking
+search, and Algorithm 3 gives the exact rule used to extract tree-structured supervision.
+Algorithm 1 Rollback training with world model–policy co-evolution
+Require: Offline demonstrations Ddemo; initial real replay buffer Dreal; policy πθ; world model Wϕ; task-specific GE-Sim 2.0
+world judge; number of value bins K
+Ensure: Updated policy πθ and world model Wϕ
+1: Initialize an empty tree buffer Btree in the shared pool
+2: Run the following four processes concurrently until training ends
+Real robot
+3: loop
+4:
+Load the latest policy snapshot at the episode boundary
+5:
+Execute one episode and append the labeled trajectory to Dreal
+6: end loop
+Search worker (one per search GPU)
+7: loop
+8:
+Pin the latest snapshots πθ and Wϕ for this tree
+9:
+Sample a seed trajectory τ ∼Ddemo ∪Dreal
+10:
+Tτ ←BACKTRACKINGTREESEARCH(τ, πθ, Wϕ)
+11:
+Append EXTRACTTREELABELS(Tτ, K) to Btree
+12: end loop
+Policy Trainer
+13: loop
+14:
+Sample a batch of Dmix from Btree, Ddemo, and Dreal
+15:
+Update θ with the advantage-conditioned policy objective (DDP)
+16:
+Periodically publish πθ to search workers and the edge policy runtime
+17: end loop
+WM Trainer
+18: loop
+19:
+Adapt Wϕ on the current Dreal by LoRA SFT using the action-conditioned prediction objective
+20:
+Distill the adapted model into the few-step simulator by DMD
+21:
+Publish Wϕ to search workers
+22: end loop
+23: return πθ, Wϕ
+Each call to EXPANDANDROLLOUT first restores mv, samples an action chunk from πθ(· | ov, g, b = K) using a
+fresh noise seed, and steps Wϕ. The resulting world-model state is cached at the new child. The highest-bin policy
+is then rolled out until success or Dτ, caching every intermediate node. The routine returns the terminal leaf and the
+number of simulated action chunks consumed. In SELECTPUCTPW, existing children use the PUCT score defined
+in the main text with uniform sibling priors. A node may contain at most ⌈cpw max(1, N(v))α⌉children. Whenever
+widening is permitted, a virtual child with zero empirical value and prior 1/(|C(v)| + 1) competes with existing
+children; selecting it returns v for expansion. Restoring mv before every expansion ensures that all siblings share
+the same decision context without regenerating their common trajectory prefix. The budget B counts simulated
+action chunks and is soft because an initiated rollout and its atomic sibling pair are completed before termination;
+truncating either would not yield comparable outcomes. In our configuration, the first imagined sibling pair is
+always admitted, whereas later widening is restricted to mixed groups and capped at a task-specific maximum width.
+B
+Experiment Details
+The main text describes the three tasks and the headline evaluation protocol. Here, we provide the execution-level
+details needed for reproducibility.
+Observation and Control Interface.
+All policies receive three RGB views (one head-mounted camera and two
+wrist cameras) together with the robot’s proprioceptive state. Images from both real execution and imagined rollouts
+are mapped to a common 384 × 512 canvas before the policy-specific image transforms are applied. The deployed
+action has 16 dimensions, comprising seven arm and one gripper coordinate per side. The low-level control loop
+runs at 30 Hz. For block extraction and ball tossing, the policy predicts 50-step action chunks and is executed with
+18
+
+
+Algorithm 2 Experience-backtracking tree search
+Require: Seed trajectory τ with instruction g and binary outcome yτ ∈{0, 1}; policy πθ; world model Wϕ; task-specific
+GE-Sim 2.0 world judge; imagination budget B; maximum search depth Dmax; number of bins K; PUCT coefficient cpuct;
+widening parameters (cpw, α); confirmation count nconf
+Ensure: Imagination tree T
+1: Build a reference spine T from observations of τ at action-chunk boundaries
+2: Cache the root world-model state; materialize and cache other spine states on first use
+3: Mark the final spine node terminal and back up yτ ∈{0, 1} along the spine
+4: Set depth limit Dτ to the spine depth if yτ = 1, and to Dmax otherwise
+5: Initialize nsim ←0 and an empty queue Qmix
+6: while nsim < B and T contains an expandable node do
+7:
+v ←SELECTPUCTPW(T , cpuct, cpw, α)
+▷PUCT with progressive widening
+8:
+if v = ∅then
+9:
+break
+10:
+end if
+11:
+nnew ←2 if v has no imagined child; otherwise nnew ←1
+12:
+for j = 1, . . . , nnew do
+13:
+(ℓ, ∆n) ←EXPANDANDROLLOUT(v, Dτ)
+14:
+nsim ←nsim + ∆n
+15:
+Obtain yℓ∈{0, 1} from the task-specific reward model
+16:
+Back up yℓfrom leaf ℓto the root: N ←N + 1, W ←W + yℓ, and Q ←W/N
+17:
+end for
+18:
+Recompute the relative bins of the imagined children of v
+19:
+if the children of v occupy different bins then
+20:
+Push v into Qmix
+21:
+end if
+22:
+while Qmix̸ = ∅and nsim < B do
+23:
+Pop a parent p from Qmix
+24:
+while an expandable imagined child u ∈Cim(p) has N(u) < nconf and nsim < B do
+25:
+Choose the least-visited such child u ←arg minu′ N(u′)
+26:
+Select an expandable descendant v′ within the subtree rooted at u
+27:
+(ℓ, ∆n) ←EXPANDANDROLLOUT(v′, Dτ)
+28:
+nsim ←nsim + ∆n
+29:
+Obtain yℓfrom the reward model; back up yℓand enqueue any new mixed group
+30:
+end while
+31:
+end while
+32: end while
+33: return T
+Algorithm 3 Extraction of tree-structured relative-value supervision
+Require: Imagination tree T ; number of bins K
+Ensure: Tree-derived training set Dtree
+1: Dtree ←∅
+2: for each parent v with imagined children Cim(v) do
+3:
+if |Cim(v)| < 2 then
+4:
+continue
+5:
+end if
+6:
+for each action-child pair (ai, ui) of v do
+7:
+ˆq(v, ai) ←|L(ui)|−1 P
+ℓ∈L(ui) yℓ
+8:
+end for
+9:
+qmax(v) ←maxi ˆq(v, ai)
+10:
+if qmax(v) = 0 then
+11:
+continue
+▷No successful continuation was observed
+12:
+end if
+13:
+for each (ai, ui) do
+14:
+ρi ←ˆq(v, ai)/qmax(v)
+15:
+bi ←min(K, 1 + ⌊Kρi⌋)
+16:
+end for
+17:
+if |{bi}i| = 1 then
+18:
+continue
+▷Settled group; no relative preference signal
+19:
+end if
+20:
+for each (ai, bi) do
+21:
+Dtree ←Dtree ∪{(ov, g, ai, bi)}
+22:
+end for
+23: end for
+24: return Dtree
+19
+
+
+real-time chunking (Black et al., 2025) using a delay of 6 steps and a replanning stride of 32 steps. The same
+observation processing, action interface, and controller settings are used for all compared policies.
+Trial Initialization and Termination.
+Before each trial, the robot is returned to a task-specific reset configuration
+sampled from a pool constructed from the beginning of successful demonstration segments. This avoids evaluating
+every policy from a single fixed arm pose while keeping the reset distribution identical across methods. Object
+configurations are then randomized according to the task protocol. Block-extraction episodes have a hard limit of
+700 control steps (23.3 s), whereas ball-tossing episodes are limited to 120 steps (4.0 s). An episode terminates early
+once the outcome is determined or a safety stop is issued. A tabletop-curling trial ends after the human and robot
+have each completed two shots, and the winner is determined from the final stone configuration.
+Outcome Annotation.
+Real-robot trajectories are assigned binary success labels from their observed physical
+outcomes. Block extraction is successful only when the target block is removed while the tower remains intact; a
+collapse or an unlabeled termination is treated as failure. Ball tossing is successful only when the ball lands in the
+bucket, and all other terminations are failures. Curling is scored only after all four shots so that displacement by
+later shots is accounted for. The task-specific GE-Sim 2.0 world judge is used to evaluate imagined world-model
+rollouts only; it does not determine the reported real-world success rates.
+C
+Hyperparameters
+Table 5 lists the hyperparameters of Rollback; task-specific values are given as Block Extraction / Ball Tossing /
+Tabletop Curling, and all other values are shared across the three tasks.
+Table 5: Hyperparameters of Rollback.
+Component
+Hyperparameter
+Value
+World model
+Initialization
+GE-Sim 2.0
+Initial SFT (steps / GPUs / batch)
+10K / 32 / 128
+Initial DMD (steps / GPUs / batch)
+2,500 / 16 / 16
+Per adaptation
+400 LoRA SFT + 100 DMD steps
+Frames per action chunk / frame rate
+25 / 16 fps
+Policy
+Initialization
+π0.5
+Warm-up (steps / GPUs / batch)
+100K / 16 / 64
+Advantage bins K
+5
+Condition dropout pdrop
+0.5
+Guidance strength β
+1.5
+Action chunk / control frequency
+50 steps / 30 Hz
+Reward model
+Initialization
+GE-Sim 2.0 world judge
+Success threshold
+0.5
+Search
+PUCT coefficient cpuct
+1.5
+Widening parameters (cpw, α)
+(1.5, 0.5) / (4.0, 0.5) / (1.5, 0.5)
+Actions per new branch
+2
+Confirmation count nconf
+5 / 9 / 5
+Imagination budget B (action chunks)
+256
+Maximum search depth Dmax (action chunks)
+12 / 2 / 8
+System
+GPUs for search / policy training
+40 / 8 (H200)
+Physical robots
+1
+D
+Per-Position Results
+Tables 6–8 report success rates at each initial position. Every policy is evaluated for 25 trials per position on Block
+Extraction and 15 trials per position on Ball Tossing and Tabletop Curling. For Block Extraction, we additionally
+report the average number of blocks extracted in a row before failure; for Tabletop Curling, we report the average
+score obtained against the human opponent.
+20
+
+
+Table 6: Per-position results on Block Extraction (success rate, %; 25 trials per position).
+Method
+P1
+P2
+P3
+P4
+P5
+P6
+Overall
+Consec. Extr.
+π0.5 + SFT
+64.00
+80.00
+44.00
+40.00
+44.00
+20.00
+48.67
+1.60
+π0.5 + RECAP
+48.00
+84.00
+40.00
+48.00
+72.00
+44.00
+56.00
+1.78
+Frozen World Model
+72.00
+76.00
+48.00
+68.00
+60.00
+64.00
+64.67
+1.90
+Direct Reward Supervision
+76.00
+64.00
+48.00
+64.00
+64.00
+40.00
+59.33
+1.73
+π0.5 + RISE w/ GE-Sim2
+60.00
+80.00
+32.00
+68.00
+52.00
+60.00
+58.67
+2.00
+Rollback (Ours)
+72.00
+56.00
+56.00
+64.00
+84.00
+84.00
+69.33
+2.60
+Table 7: Per-position results on Ball Tossing (success rate, %; 15 trials per position).
+Method
+P1
+P2
+P3
+P4
+P5
+P6
+Overall
+π0.5 + SFT
+13.33
+60.00
+0.00
+0.00
+46.67
+20.00
+23.33
+π0.5 + RECAP
+0.00
+60.00
+20.00
+13.33
+46.67
+13.33
+25.56
+Frozen World Model
+0.00
+46.67
+26.67
+13.33
+53.33
+20.00
+26.67
+π0.5 + RISE w/ GE-Sim2
+13.33
+73.33
+13.33
+13.33
+20.00
+40.00
+28.89
+Rollback (Ours)
+26.67
+60.00
+33.33
+46.67
+53.33
+20.00
+40.00
+Table 8: Per-position results on Tabletop Curling (success rate, %; 15 trials per position).
+Method
+P1
+P2
+P3
+P4
+P5
+P6
+P7
+P8
+P9
+Overall
+Score
+π0.5 + SFT
+60.00
+86.67
+33.33
+26.67
+60.00
+0.00
+40.00
+80.00
+53.33
+48.89
+0.35
+π0.5 + RECAP
+60.00
+66.67
+13.33
+26.67
+60.00
+0.00
+60.00
+73.33
+100.00
+51.11
+0.44
+Frozen World Model
+53.33
+53.33
+13.33
+6.67
+33.33
+46.67
+80.00
+100.00
+86.67
+52.59
+0.51
+π0.5 + RISE w/ GE-Sim2
+20.00
+86.67
+20.00
+26.67
+40.00
+80.00
+20.00
+80.00
+100.00
+52.59
+0.43
+Rollback (Ours)
+86.67
+80.00
+60.00
+20.00
+20.00
+80.00
+80.00
+80.00
+73.33
+64.44
+0.79
+2/3̂
+q = 0.67
+1/3̂
+q = 0.33
+0/2
+off the real path
+real trajectory
+✓
+✗
+✗
+✓
+✓
+✗
+✗
+✗
+✓
+Restored context
+Figure 9: Search tree on Tabletop Curling with recorded leaf outcomes. Besides branching from the restored
+context, Rollback rolls back to an intermediate decision point on the real trajectory and explores alternative
+continuations from there (purple; here color marks where a branch starts, not its outcome).
+21
+
+
+Ball trajectories of sibling branches
+branch A
+branch B
+branch C
+branch D
+Step 53
+Step 61
+Step 69
+Step 78
+Step 86
+A
+B
+C
+D
+Figure 10: Sibling continuations on Ball Tossing. Left: ball trajectories of four sibling branches expanded from
+the same context. Right: close-ups around the bucket for each branch.
+E
+Additional Qualitative Results
+Search Tree on Tabletop Curling.
+Figure 9 shows another search tree with its recorded leaf outcomes. The two
+root subtrees attain 2/3 and 1/3 successful continuations, yielding subtree values of 0.67 and 0.33, while branches
+rolled back from the real trajectory probe a late decision point.
+Sibling Continuations on Ball Tossing.
+Figure 10 compares four sibling branches expanded from the same context.
+Although all branches share the same history, the sampled action chunks produce distinct ball trajectories, illustrating
+the diversity of explored counterfactual continuations.
+50
+200
+350
+500
+650
+Step
+0/3
+2/2
+1/1
+A
+B
+real attempt
+branch point
+(a)
+(b)
+A
+B
+✓
+✓
+✓
+✓
+✓
+✗
+✗
+✗
+✓
+✓
+✓
+✓
+Step 300
+Step 400
+Step 450
+Step 500
+Step 550
+Step 650
+✓
+✗
+Figure 11: Search tree on Block Extraction. (a) Search tree with leaf outcomes, read from the imagined head-
+camera videos. The blue dashed path is a real attempt and the other paths are imagined continuations; edges are
+green, red, or purple when the continuations below all succeed, all fail, or are mixed. The ring marks a branch
+point inside imagination at step 300, whose three children reach 0/3, 2/2, and 1/1 successful continuations. (b)
+Continuations A and B from this branch point at the same control steps (30 Hz): in A the gripper pulls the red block
+out of the tower and withdraws with it, while in B it is still in the tower at the end of the horizon.
+Search Tree on Block Extraction.
+Figure 11 shows a search tree on Block Extraction with the outcome of
+each imagined continuation. Rollback rolls back to several points of a real attempt and expands 12 imagined
+continuations, 9 of which extract the red block with the tower intact. Branching also happens inside imagination:
+22
+
+
+from the same imagined state at step 300, three sampled action chunks lead to subtrees with 0/3, 2/2, and 1/1
+successful continuations. Panel (b) compares one continuation from each of the first two subtrees. Both start from
+the identical state, but in A the gripper pulls the red block out by step 500, whereas in B it stays in the tower until
+step 650. The resulting subtree values (0 vs. 1) single out the chunk that leads to extraction, which is the relative
+signal on which the policy is trained.
+Step 1
+Head
+Left wrist
+Right wrist
+Step 61
+Step 121
+Step 182
+Step 242
+Step 300
+Head
+Left wrist
+Right wrist
+Real
+World
+model
+Figure 12: Open-loop world-model predictions on Block Extraction. Real recording (top) and world-model
+prediction under the same recorded actions (bottom) for one episode, from the head and both wrist cameras. Steps
+are control steps at 30 Hz.
+World-Model Fidelity on Block Extraction.
+Figure 12 visualizes one episode of the open-loop evaluation in
+Section 6.7. Under the recorded actions, the world model reproduces the arm approaching the tower and the gripper
+closing on the red block over 300 control steps, consistently across the head and both wrist cameras, and keeps the
+tower intact as in the real recording.
+✓
+Robot (success)
+✗
+Robot (failure)
+Human player
+✓
+Human player (success)
+✗
+Human player (failure)
+Ball Tossing
+Tabletop Curling
+Figure 13: Real-world executions. Stroboscopic composites overlay the ball (top) and sliding stones (bottom)
+over time onto a single frame. Top: ball tossing by the robot and by a human player. Bottom: tabletop curling
+by human players, with successful and failed deliveries.
+Real-World Executions.
+Figure 13 visualizes real-world executions with stroboscopic composites. In ball tossing,
+successful and failed robot throws differ mainly in the release that determines the landing point, with failures
+23
+
+
+bouncing off the rim. In tabletop curling, successful human deliveries bring the red stones to rest in the house while
+displacing the opponent’s stones, whereas failed deliveries leave them outside the scoring area.
+t = 0 s
+extraction 1  (17 s)
+extraction 2  (37 s)
+extraction 3  (64 s)
+extraction 4  (81 s)
+extraction 5  (105 s)
+grasp  (0.0 s)
+wind-up  (2.0 s)
+release  (2.5 s)
+landing  (3.2 s)
+✓
+ball trajectory
+initial  (0.0 s)
+grasp stone  (3.3 s)
+delivery 1  (5.0 s)
+grasp stone  (8.3 s)
+delivery 2  (10.0 s)
+final  (11.3 s)
+Block Extraction
+Ball Tossing
+Tabletop Curling
+Figure 14: Third-person views of Rollback on the real robot. Top: five consecutive extractions without collapsing
+the tower. Middle: a successful toss, with the ball trajectory overlaid on the final frame. Bottom: two stone deliveries
+that leave the red stones in the house.
+Third-Person Executions.
+Figure 14 shows real-robot executions of the final Rollback policy: five consecutive
+block extractions, a successful toss, and two curling deliveries.
+F
+Failure Modes
+Short
+Overshoot
+Rim bounce
+Failed release
+Figure 15: Typical failures on Ball Tossing. Stroboscopic composites of unsuccessful throws sampled from
+real-robot data collected during training.
+Figure 15 shows the four failure types we observe on Ball Tossing. Short and overshooting throws come from
+errors in release velocity, and rim bounces from small errors in release direction; these three types account for
+most failures. Failed releases, where the gripper opens too late and the ball drops near the robot, are less frequent.
+All four types are decided within a short window around release, so a single action chunk largely determines the
+outcome of the whole episode.
+G
+Limitations and Future Work
+Rollback relies on a task-specific reward model and on world-model fidelity over long contact-rich horizons. The
+fidelity analysis in Section 6.7 shows that prediction error grows along a rollout, and each policy in this work is
+24
+
+
+trained for a single task with one physical robot. Future work includes learning outcome detectors jointly with the
+world model and extending Rollback to multi-task policies. Another direction is to scale the system to multiple
+robots that share one search cluster.
+25

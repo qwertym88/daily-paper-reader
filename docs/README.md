@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-30</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-31</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 18 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 9 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>9</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>9</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>8</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-30 23:50:04 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-31 22:37:31 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共筛选 18 篇论文，精读 9 篇、速读 9 篇，重点集中在人形机器人敏捷运动控制与非线性系统算子学习两条主线。最值得看的是两篇 9.0 分精读工作：FORGE 用可行的在线降阶参考生成配合全身执行，实现人形机器人敏捷行走；另一篇用数据驱动的随机特征方法逼近非线性连续时间系统的 Koopman 生成元。普通读者可先看 FORGE 的“参考生成+全身执行”整体流程，再顺着速读里的安全流匹配策略与不确定性量化两篇，了解从仿真到决策的落地环节。</p>
+<p>2026-10-31 日报共筛出 9 篇论文，其中 1 篇精读、8 篇速读，重点聚焦肺结节恶性风险分类的 2D、2.5D、3D 残差网络对比。最值得看的是这篇精读论文（8.0/10）对影像维度取舍的系统比较，以及人形机器人可达性与恢复监控方向的速读线索。普通读者可先读精读论文的结论，再按需浏览速读列表，留意 2.5D 在性能与成本间是否更划算。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">9 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="FORGE: Feasible Online Reduced-Order Reference Generation and Whole-Body Execution for Agile Humanoid Locomotion">FORGE: Feasible Online Reduced-Order Reference Generation and Whole-Body Execution for Agile Humanoid Locomotion</span></li><li><span class="dpr-home-dashboard-paper-title" title="Data-driven Random-feature Approximation of Koopman Generators of Nonlinear Continuous-time Systems">Data-driven Random-feature Approximation of Koopman Generators of Nonlinear Continuous-time Systems</span></li><li><span class="dpr-home-dashboard-paper-title" title="LocoManiLab: A Unified Testbed for Data, Policies, Controllers, and Deployment in Humanoid Loco-Manipulation">LocoManiLab: A Unified Testbed for Data, Policies, Controllers, and Deployment in Humanoid Loco-Manipulation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="From Slices to Volumes: Comparing 2D, 2.5D, and 3D Residual Networks for Pulmonary Nodule Malignancy-Risk Classification">From Slices to Volumes: Comparing 2D, 2.5D, and 3D Residual Networks for Pulmonary Nodule Malignancy-Risk Classification</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>3</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">9 篇</strong>
+    <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Possibility-based Inference: A Deterministic Framework for Robust and Reliable Uncertainty Quantification in Decision-Making">Possibility-based Inference: A Deterministic Framework for Robust and Reliable Uncertainty Quantification in Decision-Making</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning Safe Flow Matching Robot Policies from Binary Feasibility Oracles">Learning Safe Flow Matching Robot Policies from Binary Feasibility Oracles</span></li><li><span class="dpr-home-dashboard-paper-title" title="Gym-Anything for Robotics: Scaling physical simulations with digital agents">Gym-Anything for Robotics: Scaling physical simulations with digital agents</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Active Reachability Learning for Humanoid Recoverability Monitoring">Active Reachability Learning for Humanoid Recoverability Monitoring</span></li><li><span class="dpr-home-dashboard-paper-title" title="Sparsity-driven emergence of functional modularity in multitask neural networks">Sparsity-driven emergence of functional modularity in multitask neural networks</span></li><li><span class="dpr-home-dashboard-paper-title" title="DT-JEPA: Learning to Predict Future Representations for Decision-Making">DT-JEPA: Learning to Predict Future Representations for Decision-Making</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>6</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>4</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
 </div>
 

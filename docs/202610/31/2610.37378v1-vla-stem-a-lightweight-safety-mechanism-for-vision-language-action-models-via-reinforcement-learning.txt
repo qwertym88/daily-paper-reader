@@ -1,0 +1,1682 @@
+VLA-Stem: A Lightweight Safety Mechanism for Vision-Language-Action
+Models via Reinforcement Learning
+Bojun Zou1,2∗, Wenhao Yu1∗, Jiaohao Li1, Jiaxuan Lin1, Guanting Ye3,
+Haohan Geng1, Weihao Yu2, Yanyong Zhang1, Jianmin Ji1†
+1University of Science and Technology of China (USTC)
+2Peking University (PKU)
+3University of Macau (UM)
+∗Equal contribution.
+†Corresponding author.
+Abstract— Vision-Language-Action
+(VLA)
+models
+have
+emerged as a prominent paradigm for end-to-end robotic control,
+integrating high-level reasoning with low-level action execution.
+However, most existing VLA models are primarily designed
+for static manipulation tasks in unconstrained environments,
+failing to account for safety-critical scenarios that involve
+spatial constraints or dynamic obstacles. Fine-tuning VLAs
+on obstacle-avoidance data is a straightforward solution, but
+collecting such data is costly, especially for dynamic scenarios,
+and may degrade their original task capabilities. To address these
+limitations, we propose VLA-Stem, a lightweight, reinforcement-
+learning-based safety mechanism for VLA systems. Without
+fine-tuning the underlying VLA policy, VLA-Stem converts
+its action chunks into motion references and uses trajectory-
+level guidance to preserve their spatial intent while allowing
+flexible motion and timing adjustments. Conditioned on these
+references, robot proprioception, and local obstacle information,
+the Stem policy adaptively modifies execution at inference time,
+preserving the original task intent while enabling responsive
+adaptation to spatial constraints and dynamic obstacles. To
+achieve robust and sample-efficient policy learning in complex
+environments, we adopt a teacher–student distillation framework
+combined with curriculum learning. We evaluate VLA-Stem
+on reference following, static spatial constraints, and dynamic
+obstacle avoidance. Across six constrained simulation settings,
+VLA-Stem achieves 52.8% average collision-free task success
+versus 23.7% for the strongest safety baseline, while preserving
+base-policy performance in obstacle-free settings; real-world
+experiments further show consistent collision reductions under
+static and dynamic obstacles. These results demonstrate that
+VLA-Stem couples high-level VLA task intent with rapid, reflex-
+like responses to immediate physical risks, providing a brainstem-
+inspired mechanism for robust robot execution.
+I. INTRODUCTION
+Embodied intelligence aims to integrate robotics with
+artificial intelligence for general real-world interaction, with
+Vision-Language-Action (VLA) models emerging as a promi-
+nent direction. State-of-the-art VLA models [1] adopt end-
+to-end architectures that combine high-level capabilities with
+low-level action execution. This resembles human behavior,
+where deliberate reasoning guides bodily actions to accom-
+plish diverse real-world tasks. However, we argue that this
+paradigm overlooks another fundamental aspect of biological
+intelligence: basic physiological and sensorimotor functions,
+such as postural regulation and rapid reflexive responses,
+Cerebrum & Cerebellum
+VLA Model
+VLA-Stem
+Brainstem
+sensory afferent pathway
+motor efferent pathway
+Raw Action
+Logical Reasoning & Motor Coordination
+Reflex & Safety
+target object
+obstacle
+collision
+frozen
+train
+Fig. 1.
+This figure illustrates the biological motivation behind our method.
+The left side depicts the interaction between higher-level motor control
+and lower-level sensorimotor regulation: task-directed motor commands are
+continuously shaped by rapid responses to immediate physical conditions.
+In this functional analogy, higher-level task control and motor coordination
+correspond to the base VLA, while the brainstem-inspired lower-level
+regulation corresponds to our proposed VLA-Stem. The right side shows
+how VLA-Stem adapts the VLA-directed motion to bypass an obstacle while
+continuing toward the target object.
+which operate through lower-level neural circuits including
+the brainstem. In contrast, most existing VLA policies lack an
+explicit counterpart to such lower-level responsive regulation.
+Therefore, VLA policies should not only learn what to do
+and how to do it, but also remain responsive to the safety
+demands of physical interaction.
+Building on this perspective, we aim to endow VLA
+systems with the ability to react to immediate physical risks
+while remaining coordinated with their task-directed behavior
+(Fig. 1). Existing approaches mainly follow two directions.
+One is to learn collision-aware manipulation behaviors from
+large-scale avoidance data [2]; however, collecting such data
+is labor-intensive and costly, especially in dynamic environ-
+ments, and adapting a pretrained VLA requires additional
+training of the task policy itself. Another direction is to
+augment a frozen VLA with a conventional safety module. For
+example, VLSA [3] introduces control-theoretic constraints
+to modify unsafe VLA actions during execution. While
+this modular design provides an explicit mechanism for
+satisfying local geometric constraints, it primarily focuses
+on action-space safety and ignores the coordination between
+safety responses and the task-directed behavior of the VLA,
+arXiv:2610.37378v1  [cs.RO]  27 Oct 2026
+
+
+leading to restricted corrective behaviors, reduced task success,
+and limited adaptability in complex dynamic environments.
+This motivates a mechanism that does not treat safety
+adaptation independently of VLA task intent, but instead
+tightly integrates safety responses with VLA task execution.
+To address these limitations, we propose VLA-Stem, a
+lightweight, brainstem-inspired RL-based safety mechanism
+that couples VLA task intent with rapid responses to phys-
+ical risks. Specifically, VLA-Stem uses the short-horizon
+trajectory generated by the base VLA as a reference for
+its intended motion, and jointly conditions on this reference
+trajectory, robot proprioception, and local obstacle information
+to generate executable actions. To support such flexible
+execution, we introduce a trajectory-level guidance objective
+that preserves the spatial intent of the motion reference while
+relaxing strict temporal alignment. We further adopt teacher–
+student distillation with curriculum learning to facilitate
+structured exploration and improve the learned policy’s
+recovery capability under safety-induced deviations. As a
+result, VLA-Stem improves execution safety and robustness
+without sacrificing task performance or incurring additional
+training cost for the base policy.
+We evaluate VLA-Stem across multiple manipulation tasks
+and scenarios, including obstacle-free execution, static spatial
+constraints, and dynamic obstacle avoidance. Results show
+that VLA-Stem reduces safety violations while maintaining
+base-policy task performance, demonstrating its potential as
+an inference-time safety mechanism for VLA policies. Our
+main contributions are summarized as follows:
+• We propose VLA-Stem, a lightweight, reinforcement-
+learning-based safety mechanism for VLA models that
+directly integrates VLA task intent with runtime safety
+adaptation to physical constraints, without fine-tuning
+the underlying policy.
+• We design a trajectory-level guidance objective that
+uses the base VLA trajectory as a reference motion,
+allowing flexible local motion and timing adjustments
+while preserving task behavior. We further introduce a
+teacher–student distillation framework with curriculum
+learning to improve recovery from obstacle-avoidance-
+induced deviations.
+• We conduct extensive experiments across multiple manip-
+ulation scenarios in both simulation and the real world,
+demonstrating improved collision-free task success and
+direct sim-to-real transfer of the Stem policy without
+real-world training or fine-tuning.
+II. RELATED WORK
+A. Vision-Language-Action Models
+Vision-Language-Action (VLA) models have emerged as
+an end-to-end paradigm for robot manipulation, conditioning
+action generation on visual observations and language instruc-
+tions [4], [5]. Representative systems, including OpenVLA [6],
+RT-X [7], [8], RDT [9], π0 [10], and π0.5 [1], have continued
+to improve the scale, generalization, and action-generation
+capability of robot policies [11], [12].
+Although VLA models demonstrate strong generalization,
+they remain constrained by high-quality data requirements
+and limited robustness in out-of-distribution scenarios. Recent
+work has explored reinforcement learning for VLA adaptation,
+such as VLA-RL [13] and π∗
+0.6 [14]. While these methods
+improve task-level robustness, they still primarily optimize
+policies for task completion and adaptation, without explic-
+itly treating execution safety in challenging manipulation
+scenarios as a central objective.
+B. Safety for Manipulators
+Safe trajectory generation has been widely studied through
+sampling-based planners such as RRT [15] and PRM [16],
+optimization-based methods such as CHOMP [17], Tra-
+jOpt [18], and STOMP [19], as well as MPC. Although
+widely used, these methods often require substantial manual
+effort due to their complexity and the need for extensive
+retuning across different scenarios. Learning-based meth-
+ods [20], including Motion Planning Diffusion [21], Deep
+Reactive Policy [2], and URPlanner [22], improve efficiency
+and generalization through demonstrations or reinforcement
+learning [23]. However, they typically act as standalone
+trajectory generators and are difficult to directly integrate with
+VLA policies without disrupting the task-directed behavior
+of the base policy.
+Beyond trajectory generation, recent work has also explored
+safety mechanisms for end-to-end policies. CBF-based safe
+RL methods [24], [25] enforce safety through constrained
+policy optimization, with SafeVLA [26] extending this
+direction to VLA policies, while safety filters such as
+RAIL [27] augment frozen policies with external safety
+modules. However, filtering-based corrections can become
+less reliable in complex or dynamic environments and may
+compromise base-policy performance on challenging tasks.
+C. Test-Time VLA
+Test-time VLA [28] is a recent paradigm that adjusts VLA
+actions during deployment, avoiding costly fine-tuning. VLA-
+Reasoner [29] improves actions through online MCTS, while
+V-GPS [30] selects candidate actions using a pretrained value
+function. However, these methods evaluate multiple candidate
+action sequences at inference time, boosting performance at
+the expense of real-time efficiency. In contrast, our method
+performs lightweight VLA-conditioned execution with a
+compact Stem policy, enabling efficient safety augmentation
+without candidate search or VLA fine-tuning.
+III. METHOD
+An overview of the proposed framework is illustrated
+in Fig. 2. We first formulate VLA-conditioned execution,
+where the frozen VLA provides a task-directed motion
+reference that conditions the Stem policy (§III-A). We then
+introduce trajectory-level guidance to preserve the spatial
+intent of this reference while allowing flexible motion and
+timing adjustments (§III-B). Next, we present teacher–student
+distillation for learning recovery from execution deviations
+using privileged task information during training (§III-C).
+
+
+Finally, we describe the RL objective and curriculum that
+progressively train the Stem policy from trajectory following
+to static and dynamic obstacle interactions (§III-D).
+A. VLA-Conditioned Execution
+We formulate VLA-Stem as a coupled execution architecture
+in which the frozen VLA provides a short-horizon task-
+directed motion reference, while the Stem policy conditions
+jointly on this reference and the current physical context to
+generate executable actions.
+Execution is organized into intervals of h control steps,
+each associated with one VLA action chunk. Let c denote
+such an execution interval and tc its first control step. At tc,
+the frozen VLA policy πVLA is queried with its observation
+oVLA
+tc
+and produces an h-step action chunk
+AVLA
+c
+= πVLA
+ oVLA
+tc
+
+.
+(1)
+Rather than being executed directly, this action chunk is
+converted into a motion reference that conditions Stem
+execution over the current interval.
+Let T w
+t ∈SE(3) denote the end-effector pose in the world
+frame. We map the VLA action chunk to the corresponding
+future end-effector poses {T w
+tc+1, . . . , T w
+tc+h} and express
+them relative to the end-effector pose T w
+tc at the beginning
+of the interval:
+∆Tc,k =
+ T w
+tc
+−1 T w
+tc+k,
+τ rel
+c
+= {∆Tc,k}h
+k=1 .
+(2)
+The resulting trajectory τ rel
+c
+serves as the task-directed motion
+reference until the next VLA query.
+At each control step t within the interval, the Stem policy
+also receives the current physical context, consisting of
+robot proprioception and local obstacle information. The
+proprioceptive state xt ∈Rn contains the joint positions and
+end-effector pose. For each obstacle j, the local obstacle
+information consists of its center cw
+j,t ∈R3 in the world
+frame and its bounding-box dimensions dj,t = (dx, dy, dz).
+We represent the set of local obstacles as
+oobs
+t
+=
+ cw
+j,t, dj,t
+	M
+j=1 ,
+(3)
+where M denotes the number of local obstacles.
+Conditioned on the active VLA motion reference and
+the current physical context, the Stem policy generates an
+executable action at each control step:
+aexec
+t
+= πstem
+ xt, oobs
+t
+, τ rel
+c
+
+,
+tc ≤t < tc + h.
+(4)
+After these h execution steps, the VLA is queried again
+with the updated observation to generate the action chunk
+for the next execution interval.
+B. Trajectory-Level Guidance for Spatial Intent Preservation
+Many runtime safety mechanisms operate by correcting
+the current nominal action at each control step. Such local
+correction can satisfy immediate physical constraints but
+does not account for how the corrected robot state affects
+the remaining VLA action sequence. The same issue arises
+when step-wise action or waypoint alignment is directly used
+to guide RL exploration and sampling. The resulting robot
+state may therefore become misaligned with subsequent time-
+indexed actions or waypoints along the reference trajectory.
+Repeated step-wise correction or alignment can therefore
+produce discontinuous corrections and accumulate deviation
+from the VLA-directed motion. This accumulated mismatch
+can further shift closed-loop execution away from the state
+distribution expected by the base VLA.
+To address this issue, we introduce trajectory-level guid-
+ance. Instead of aligning execution with a fixed action or
+waypoint at each time step, we measure its deviation from
+local segments of the VLA reference trajectory. This preserves
+spatial consistency with the task-directed motion at the
+trajectory level. We further preserve forward progression
+while relaxing strict temporal correspondence.
+Specifically, for reward computation, we use the world-
+frame form of the same active reference trajectory, τ ref
+c
+=
+{(pref
+i , qref
+i )}h
+i=1. For each segment between consecutive
+waypoints, we project the current end-effector position
+onto the positional segment and interpolate its endpoint
+orientations using normalized quaternion interpolation with
+the same projection coefficient. The segment deviation is
+di = dpos
+i
++ αdrot
+i , where dpos
+i
+is the Euclidean distance to
+the projected position, drot
+i
+is the rotational geodesic distance
+to the interpolated orientation, and α balances the two terms.
+To avoid matching delayed or detoured execution to
+previously traversed segments, we maintain a non-decreasing
+segment index mt and restrict matching to a forward corridor:
+I+
+t = {mt−1, . . . , min(mt−1 + K, h −1)},
+(5)
+where K is the look-ahead range. At the start of each
+execution interval, we reset mtc−1 = 1. The matched segment
+and trajectory-level deviation are
+i∗
+t = arg min
+i∈I+
+t
+di,
+d∗
+t = di∗
+t .
+(6)
+We then update the progress index as mt = max(mt−1, i∗
+t ).
+This constrains reference matching to move forward while
+allowing execution to remain near the current segment during
+waiting or local detours.
+We map the deviation to a dense trajectory-following
+reward:
+rfollow
+t
+= exp(−kposed∗
+t ) ,
+(7)
+where kpose controls sensitivity to reference deviations. This
+forms the trajectory-following component of rguidance
+t
+in
+Sec. III-D. During the early curriculum stages, the auxiliary
+progress bonus uses the normalized index advancement (mt−
+mt−1)/(h −1).
+C. Teacher–Student Distillation
+Trajectory-level guidance limits execution drift by main-
+taining spatial consistency with the VLA reference. However,
+some constrained interactions require larger deviations that
+cannot be resolved through local trajectory adjustment alone.
+Such deviations can alter subsequent observations and VLA
+references, pushing closed-loop execution away from the state
+distribution expected by the base VLA. Recovering from
+such states with reinforcement learning alone is challenging,
+
+
+Pre-trained VLM
+Action
+Expert
+Grasp orange
+carrot and move it
+into the box.
+Curriculum Learning
+trajectory
+following
+dynamic
+obstacle
+static
+constraint
+Common Input
+Privileged Input
+        Student
+        Teacher
+Teacher Policy Training
+Obstacle
+Target Object
+Robot
+Proprioception
+Reference
+Trajectory
+Fig. 2.
+VLA-Stem pipeline. The teacher is trained using curriculum learning, progressing from reference trajectory following to static obstacle avoidance
+and then to dynamic obstacle avoidance, with gradually increasing difficulty. The teacher policy takes as input the trajectory sequence produced by the base
+VLA policy, robot proprioception, and obstacle information, and additionally leverages privileged task information about the target object to accelerate
+training. Finally, the teacher policy is used to distill a student policy, removing the dependence on task-specific privileged information at deployment.
+as the guidance reward is task-agnostic and the deployable
+observation lacks explicit task-state information, making the
+recovery direction ambiguous. To address this challenge, we
+adopt a teacher–student distillation framework. For the teacher,
+we augment the deployable observation with privileged task-
+level information oextra; for example, in pick-and-place tasks,
+the positions of the target object are provided as oextra. The
+privileged information is introduced only as an additional
+teacher observation during training and does not modify
+the reward function. Thus, the teacher and student are
+optimized under the same reward design, while differing
+in their observation spaces. These privileged inputs provide
+direct task information during training, making exploration
+more structured and helping the teacher learn recovery
+behaviors more efficiently. Since such privileged information
+is not assumed to be available at deployment time, we
+distill the teacher policy into a student policy that relies
+only on the deployable observation space without privileged
+inputs. Specifically, we optimize the student policy using a
+loss function that combines reinforcement learning with a
+distillation loss [31]:
+L(πstu) = LRL(πstu) + λDKL(πstu ∥πtea),
+(8)
+where LRL denotes the PPO [32] objective under the reward
+function defined in Sec. III-D, and DKL encourages the stu-
+dent policy to imitate the action distribution of the privileged
+teacher. We set λ = 0.1 to balance task optimization and
+teacher imitation. After distillation, the student policy serves
+as the final deployable policy of VLA-Stem, retaining the
+teacher’s recovery behavior while removing the dependence
+on privileged task information.
+D. RL Optimization and Curriculum Learning
+We optimize the Stem policy with PPO [32] using a reward
+that jointly captures task completion, collision avoidance, and
+consistency with the VLA motion reference:
+rt = wtaskrtask
+t
++ wcollrcoll
+t
++ wguidancerguidance
+t
+.
+(9)
+Here, rtask
+t
+provides sparse success feedback, with an aux-
+iliary grasp-event bonus to facilitate learning; each event is
+rewarded only once per episode. The collision term rcoll
+t
+is −1
+whenever a collision or spatial-constraint violation occurs and
+0 otherwise. The guidance term follows the trajectory-level
+objective in Sec. III-B and is augmented during the early
+curriculum stages with a progress bonus proportional to the
+normalized forward advancement of the matched reference
+segment. Reward weights vary across curriculum stages, while
+the reward design is shared across all tasks.
+To progressively introduce the behaviors required for
+VLA-conditioned execution, we organize training into three
+sequential curriculum stages [33]. The first stage trains πstem
+in obstacle-free environments to follow the task-directed
+motion provided by the frozen VLA. The second stage
+introduces static spatial constraints, encouraging the policy to
+make local spatial adjustments while remaining aligned with
+the reference trajectory. The third stage introduces moving
+obstacles, requiring the policy to jointly adjust local motion
+and execution timing, including waiting when necessary
+before resuming task progression.
+IV. EXPERIMENT
+A. Experimental Setup
+We conduct simulation experiments in ManiSkill [34] on
+three manipulation tasks: PickCube, StackCube, and our
+Object Stowing task, which requires placing household objects
+into a target container under spatial constraints. Across all
+three tasks, VLA-Stem uses the same Stem architecture,
+reward design, and training procedure, while keeping the
+corresponding base VLA frozen throughout Stem training.
+Each base VLA is fine-tuned on 100 demonstrations for
+
+
+TABLE I
+EXPERIMENTAL RESULTS ON SIMULATION TASKS. HIGHER SUCC IS BETTER AND LOWER COLL IS BETTER.
+Method
+Metric
+PickCube
+Object Stowing
+StackCube
+Normal
+Static
+Dynamic
+Normal
+Static
+Dynamic
+Normal
+Static
+Dynamic
+π0
+SUCC↑
+0.6884
+0.0106
+0.0044
+0.4322
+0.0006
+0.0559
+0.6506
+0.1316
+0.1453
+COLL↓
+–
+0.9422
+0.9703
+–
+0.5363
+0.6809
+–
+0.6478
+0.5484
+π0.5
+SUCC↑
+0.7166
+0.0325
+0.0131
+0.6138
+0.0000
+0.0256
+0.7450
+0.1725
+0.1247
+COLL↓
+–
+0.8781
+0.9328
+–
+0.5897
+0.6156
+–
+0.7319
+0.7012
+VLA-finetune
+SUCC↑
+0.7166
+0.2847
+0.1869
+0.6138
+0.0072
+0.4784
+0.7450
+0.0062
+0.0641
+COLL↓
+–
+0.4413
+0.5156
+–
+0.2159
+0.2331
+–
+0.7469
+0.6072
+VLSA-EE
+SUCC↑
+0.7166
+0.1619
+0.0959
+0.6138
+0.3503
+0.1678
+0.7450
+0.2372
+0.4078
+COLL↓
+–
+0.2303
+0.2847
+–
+0.2609
+0.2663
+–
+0.4509
+0.2244
+VLSA-ARM
+SUCC↑
+0.7166
+0.1516
+0.0856
+0.6138
+0.3506
+0.1716
+0.7450
+0.2334
+0.4038
+COLL↓
+–
+0.2253
+0.2903
+–
+0.2644
+0.2578
+–
+0.3753
+0.1628
+VLA-Stem
+SUCC↑
+0.7325
+0.5219
+0.4153
+0.7061
+0.5784
+0.5950
+0.7521
+0.5141
+0.5419
+COLL↓
+–
+0.2316
+0.3122
+–
+0.1756
+0.1203
+–
+0.3353
+0.0784
+30,000 optimization steps, with the resulting checkpoint
+shared by all compared safety mechanisms for that task.
+For each task, we construct three scenarios: normal, static,
+and dynamic. The normal scenario contains no additional
+obstacles and evaluates whether VLA-Stem preserves base-
+policy task performance. The static scenario uses two obstacle
+placement strategies. The first places obstacles near the
+target object or placement region to constrain grasping and
+placement. The second samples points along the nominal
+object-to-placement path and applies random lateral offsets
+to generate obstacles around the transfer route. Placements
+are checked for workspace validity and overlap.
+In the dynamic scenario, moving obstacles cross the robot’s
+path during either approach or object transfer. We sample a
+crossing region along the task motion and generate an obstacle
+trajectory with a randomized starting position, direction, and
+constant speed. Obstacle crossing times are sampled within
+a temporal window corresponding to the robot’s expected
+passage through this region, inducing interaction during
+execution. This setting requires the policy to adapt both its
+motion and execution timing (Fig. 3).
+We compare VLA-Stem with three types of baselines: (1)
+the base VLA policies, π0 and π0.5, which reflect the original
+performance without an additional safety mechanism; (2)
+VLA-finetune, which fine-tunes a separate VLA policy for
+each task and scenario using RRT-based obstacle-avoidance
+trajectories, with an additional wait primitive in dynamic
+scenarios. We evaluate VLA-finetune under multiple demon-
+stration budgets and report the best-performing setting in
+the main results. In our experiments, performance peaks at
+1,500 demonstrations, while increasing the data to 2,000
+leads to a decline; and (3) VLSA, a plug-and-play safety
+baseline using the same π0.5 checkpoint and ground-truth
+obstacle information as VLA-Stem. VLSA applies CBF-based
+corrections to the nominal end-effector motion converted from
+VLA joint actions, leaving gripper commands unchanged. We
+evaluate VLSA-EE with end-effector constraints and VLSA-
+ARM with additional constraints on collision-prone arm links.
+For each task and scenario, we tune the CBF gain, geometric
+scales, and optimization weights on validation episodes and
+report the configuration achieving the highest SUCC.
+We report two metrics: (1) SUCC, the proportion of
+episodes completed without constraint violations or colli-
+sions; and (2) COLL, the proportion of episodes with such
+violations. For each trained policy, every task–scenario setting
+is evaluated over 3,200 episodes.
+Training details. Both teacher and student use MLP actor–
+critic networks. For trajectory following, PPO uses 256
+parallel environments, a learning rate of 2 × 10−4, 8 update
+epochs, and a minibatch size of 3,200. For the static and
+dynamic stages, the corresponding values are 192, 1.5×10−4,
+12, and 19,200. All stages use a rollout horizon of 100 steps,
+a discount factor of γ = 0.8, and the Adam optimizer. Using
+GPU-parallel simulation, the stage-wise training budgets for
+the evaluated checkpoints are approximately 38.0M, 23.7M,
+and 20.6M simulated environment transitions per seed for
+trajectory following, static, and dynamic training, respectively,
+including both teacher and student optimization.
+B. Results of Simulation Tasks
+1) Main Results: Tab. I reports the performance of all
+methods on the three tasks under the normal, static, and
+dynamic scenarios. The results evaluate two key aspects
+of the coupled execution architecture: preserving the task
+performance of the base VLA in obstacle-free settings and
+adapting execution to physical constraints in static and
+dynamic settings.
+Task Performance Preservation. In the normal scenario,
+VLA-Stem achieves success rates of 0.7325, 0.7061, and
+0.7521 on PickCube, Object Stowing, and StackCube, re-
+spectively, compared with 0.7166, 0.6138, and 0.7450 for
+the corresponding π0.5 base policies. Thus, introducing the
+Stem policy into the execution loop does not reduce the
+observed task success in any of the three obstacle-free settings.
+These results indicate that the coupled execution architecture
+
+
+Fig. 3.
+Dynamic obstacle avoidance in simulation. Compared with π0.5,
+VLA-Stem waits for the moving obstacle to pass before resuming task
+execution.
+preserves the task capability of the frozen VLA when safety-
+induced adaptation is not required.
+Safety–Task Trade-off. Under static and dynamic con-
+straints, the base π0.5 policy exhibits frequent collisions and
+correspondingly low collision-free task success. For example,
+on PickCube, its SUCC drops sharply from 0.7166 in the
+normal setting to only 0.0325 and 0.0131 under the static
+and dynamic obstacles, with collision rates of 0.8781 and
+0.9328, respectively.
+Increasing obstacle-avoidance supervision through VLA-
+finetune improves some constrained settings, but its per-
+formance remains inconsistent across tasks. Our failure
+analysis suggests that a single VLA policy has difficulty
+simultaneously maintaining fine-grained task execution and
+acquiring reliable safety responses. Even in relatively low-
+risk cases where no substantial avoidance maneuver is
+required, the fine-tuned policy can fail on behaviors that the
+raw VLA performs successfully, particularly during precise
+manipulation; for example, our failure analysis frequently
+observes grasp failures on irregular objects such as the carrot
+in Object Stowing, where the original π0.5 policy often
+succeeds. Meanwhile, substantial collision rates remain in
+several static and dynamic settings despite the additional
+avoidance supervision. Together, these observations indicate
+that directly incorporating obstacle-response behavior into
+the VLA can interfere with its original manipulation behavior
+without consistently establishing reliable safety adaptation.
+VLSA exhibits a different type of limitation. Its explicit
+safety optimization can substantially reduce collision rates,
+but in practice, lower collision rates do not necessarily
+translate into successful task execution. On PickCube-Static,
+for example, VLSA-ARM reduces COLL to 0.2253, slightly
+below the 0.2316 of VLA-Stem, yet achieves only 0.1516
+SUCC compared with 0.5219 for VLA-Stem. To better
+understand the gap between collision reduction and task
+success, we inspect the collision-free failures of VLSA.
+In static scenes, local corrections near fine-grained phases
+such as grasping often disrupt the continuity of the VLA
+motion and lead to grasp failures; when large obstacles
+block the transfer path, geometric avoidance can instead push
+execution away from the VLA’s nominal motion distribution,
+making subsequent task recovery difficult. In dynamic scenes,
+even mild obstacle-induced corrections during early fine-
+grained phases can disturb the original grasping motion and
+(a) Trajectory visualization.
+Dir.
+Dnorm
+mod ↓
+Dnorm
+ori
+↓
+SUCC↑
+Left
+0.218±0.189 0.954±1.165
+60.0%
+Right 0.269±0.292 0.920±0.913
+63.3%
+Up
+0.203±0.258 0.808±1.248
+70.0%
+(b) Quantitative results.
+Fig. 4.
+Reference-conditioned execution on StackCube: trajectory
+visualization and quantitative results over 30 paired trials per direction.
+TABLE II
+VLA REFERENCE ABLATION ON PICKCUBE. RESULTS ARE REPORTED
+FOR STUDENT POLICIES.
+Method
+Normal
+Static
+Dynamic
+SUCC↑
+COLL↓
+SUCC↑
+COLL↓
+SUCC↑
+COLL↓
+VLA-Stem w/o reference
+0.0000
+–
+0.0000
+0.1300
+0.0000
+0.0156
+VLA-Stem
+0.7325
+–
+0.5219
+0.2316
+0.4153
+0.3122
+cause the task to fail before the robot reaches later, more
+challenging obstacle interactions. Consequently, part of the
+relatively low collision rate in dynamic settings comes from
+trajectories that terminate in early task failures, rather than
+from successful negotiation of the subsequent moving obstacle.
+These observations further show that local geometric safety
+correction alone does not necessarily preserve the continuity
+of VLA-directed task execution.
+In contrast, VLA-Stem achieves the highest collision-free
+task success across the evaluated constrained settings while
+maintaining competitive collision rates. On StackCube, it
+reaches SUCC of 0.5141 and 0.5419 in the static and dynamic
+settings, with COLL of 0.3353 and 0.0784, respectively.
+Together, these results support the central design of VLA-
+Stem: using the VLA trajectory as a task-directed motion
+reference while adapting execution to immediate physical
+constraints provides a stronger coupling between task intent
+and responsive safety behavior.
+2) Analysis and Ablations: Beyond overall safety–task
+performance, we are particularly interested in how the Stem
+policy encodes and conditions on the motion information
+contained in VLA action chunks. Specifically, we examine
+how VLA-provided motion references shape the Stem policy’s
+capabilities during training and continue to guide its execution
+at inference time. We further investigate the respective roles
+of trajectory-level guidance and teacher–student distillation
+in supporting this learning process.
+Reference-conditioned
+execution. We first examine
+whether the Stem policy relies on VLA-provided motion refer-
+ences to develop its task-execution capability. On PickCube,
+we remove both the VLA reference inputs and reference-
+based guidance rewards from teacher–student training, while
+keeping the same task settings, network architecture, and
+remaining task and collision rewards unchanged. As shown
+in Tab. II, the resulting student policies achieve zero SUCC
+across all three scenarios despite low collision rates in the
+obstacle settings, while the teachers attain only a few percent
+success at best. In our framework, VLA references convey
+task-directed motion to the student, which lacks explicit task-
+
+
+Obstacle
+RealSense D455
+RealSense D435i
+Target Object
+(a) Real-world examples.
+Normal
+SUCC↑
+Static
+SUCC↑
+Static
+COLL↓
+Dynamic
+SUCC↑
+Dynamic
+COLL↓
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Rate
+π0.5
+VLA-Stem
+(b) Object Stowing.
+Normal
+SUCC↑
+Static
+SUCC↑
+Static
+COLL↓
+Dynamic
+SUCC↑
+Dynamic
+COLL↓
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Rate
+π0.5
+VLA-Stem
+(c) Stacking.
+Fig. 5.
+Real-world evaluation of VLA-Stem. (a) Real-world experimental examples. (b–c) Quantitative results on Object Stowing and Stacking, respectively.
+level observations, while the associated dense guidance directs
+exploration under a sparse task-reward design shared across
+tasks. The poor performance after removing both signals
+supports their role in shaping the Stem policy’s task-execution
+capability during training.
+We next turn to the full VLA-Stem model and examine
+whether its trained Stem policy remains guided by the VLA’s
+motion reference during execution. We design a controlled
+trajectory-intervention experiment to directly probe how
+the Stem policy responds to spatial variations of the VLA
+reference. To make the spatial response clearly observable,
+we select a VLA action chunk with relatively large motion
+magnitude in StackCube and apply controlled perturbations
+to its trajectory.
+We smoothly deform the selected VLA reference toward
+three spatial directions (left, right, and up), using three
+predefined displacement magnitudes of 15, 17.5, and 20 cm.
+For each direction, we evaluate 30 paired rollouts, with 10
+pairs at each perturbation magnitude. The execution preceding
+the intervention is identical within each pair; only the selected
+reference chunk is modified, while subsequent VLA chunks
+are normally regenerated from the updated observations.
+For each perturbed rollout, we measure the forward-
+segment positional distance between the executed trajectory
+and the modified reference, Dmod, as well as that to the
+original VLA reference, Dori. To account for variations
+in VLA motion scale across episodes, both distances are
+normalized by the complete arc length of the corresponding
+original VLA reference chunk.
+As shown in Fig. 4, Stem execution consistently follows the
+spatial variation introduced into the VLA reference: Dnorm
+mod is
+on average 0.230 across left/right/up perturbations, compared
+with 0.894 for Dnorm
+ori
+. Overall, 88 of 90 rollouts (97.8%)
+are closer to the modified reference, showing that the VLA
+action chunk provides an effective spatial conditioning signal
+for Stem execution.
+The trajectory visualization further shows that, after the
+local perturbation, subsequent VLA references generated from
+the updated robot state redirect execution toward task com-
+pletion. Together with the 60.0%–70.0% task success under
+these deliberately altered references, this demonstrates that
+responsive Stem execution remains coupled with subsequent
+VLA task progression.
+Effectiveness of trajectory-level guidance. To verify the
+TABLE III
+ABLATION RESULTS OF TRAJECTORY-LEVEL GUIDANCE ON OBJECT
+STOWING.
+Method
+Normal
+Static
+Dynamic
+SUCC↑
+COLL↓
+SUCC↑
+COLL↓
+SUCC↑
+COLL↓
+VLA-Stem w/ Step-wise
+0.2888
+–
+0.4778
+0.0366
+0.1453
+0.2194
+VLA-Stem
+0.7061
+–
+0.5784
+0.1756
+0.5950
+0.1203
+TABLE IV
+ABLATION RESULTS OF TEACHER–STUDENT DISTILLATION ON OBJECT
+STOWING.
+Method
+Normal
+Static
+Dynamic
+SUCC↑
+COLL↓
+SUCC↑
+COLL↓
+SUCC↑
+COLL↓
+VLA-Stem w/o distillation
+0.2903
+–
+0.0525
+0.3066
+0.0900
+0.4419
+VLA-Stem
+0.7061
+–
+0.5784
+0.1756
+0.5950
+0.1203
+effectiveness of trajectory-level guidance, we compare it with
+step-wise action alignment, which penalizes the Euclidean
+distance between the Stem action and the corresponding VLA
+action at each time step, with all other settings unchanged.
+Tab. III shows that trajectory-level guidance substantially
+improves task success across all three scenarios, increasing
+the average success rate from 30% to 63% compared with
+step-wise action alignment. Although step-wise alignment
+obtains a lower collision rate in the static scenario, its much
+lower success rate suggests that this does not reflect a better
+safety–task trade-off, but is largely associated with incomplete
+task execution under time-indexed strict action matching. By
+replacing strict time-indexed action matching with a soft
+spatial constraint around the base VLA trajectory, VLA-Stem
+allows flexible local motion and timing adjustments while
+maintaining consistency with the task-directed motion of the
+base policy, leading to stronger overall performance under
+both static constraints and dynamic obstacles.
+Necessity of teacher–student distillation. We compare
+VLA-Stem with a variant that removes teacher–student distilla-
+tion and directly trains the Stem policy using only deployable
+observations and the same RL rewards, while keeping all
+other settings unchanged.
+As shown in Tab. IV, removing teacher–student distillation
+leads to substantially lower success rates and higher collision
+rates across all scenarios. Compared with the variant without
+distillation, VLA-Stem increases the average success rate from
+14% to 63% and reduces the average collision rate from
+37% to 15% in constrained scenarios. These results indicate
+that privileged task observations provide more informative
+
+
+training signals for learning recovery behavior after obstacle-
+avoidance-induced deviations, which is then transferred to
+the deployable student policy through distillation.
+C. Real-World Evaluation
+We evaluate VLA-Stem across two real-world manipulation
+tasks, object stowing and stacking, on a real UR7e robotic
+arm equipped with two RealSense D435i cameras for VLA
+observations. For each task, we collect 50 teleoperated
+demonstrations to fine-tune the real-world VLA policy. During
+execution, obstacle poses are estimated using AprilTag [35]
+with an additional RealSense D455 camera and converted into
+local obstacle representations. The safety policy is trained
+only in simulation and directly deployed on the real robot,
+aided by low-dimensional inputs with smaller domain gaps
+than raw visual observations.
+We use the same SUCC and COLL metrics as in simulation
+and conduct 15 trials per task and scenario. Fig. 5 reports
+results on both object stowing and stacking. In normal settings,
+VLA-Stem retains the observed base-policy success rates.
+Under static and dynamic obstacles across both tasks, VLA-
+Stem reduces collision rates from 73–100% to 20–40% and
+increases task success from 0–20% to 47–60%. These results
+further demonstrate the effectiveness of the simulation-trained
+Stem policy in real-world deployment.
+V. CONCLUSION
+We propose VLA-Stem, a lightweight RL-based safety
+mechanism that couples frozen VLA motion references
+with responsive obstacle avoidance. Trajectory-level guidance
+allows local spatial and timing adjustments while preserving
+the intended motion progression, and teacher–student training
+supports recovery from execution deviations. Simulation
+and real-world experiments demonstrate improved collision-
+free task success under static and dynamic obstacles while
+retaining base-policy performance in obstacle-free settings.
+Direct deployment of the simulation-trained Stem policy on
+the real robot further demonstrates its practical potential.
+The current evaluation focuses on structured manipulation
+tasks and collision avoidance using low-dimensional obstacle
+representations. Future work will extend the framework to
+longer-horizon tasks and contact- or force-related safety
+objectives, while integrating robust visual perception to
+improve reliability under noisy obstacle observations.
+REFERENCES
+[1] Physical Intelligence, K. Black, N. Brown, J. Darpinian, K. Dhabalia,
+D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, et al., “π0.5: a
+vision-language-action model with open-world generalization,” arXiv
+preprint arXiv:2504.16054, 2025.
+[2] J. Yang, J. J. Liu, Y. Li, Y. Khaky, K. Shaw, and D. Pathak, “Deep
+reactive policy: Learning reactive manipulator motion planning for
+dynamic environments,” arXiv preprint arXiv:2509.06953, 2025.
+[3] S. Hu, Z. Liu, S. Liu, J. Cen, Z. Meng, S. Wang, X. Li, and X. He,
+“VLSA: Vision-Language-Action models with plug-and-play safety
+constraint layer,” arXiv preprint arXiv:2512.11891, 2025.
+[4] G. Ye, Q. Zhao, W. Yu, X. Zhang, J. Ji, Y. Zhang, and K.-V. Yuen,
+“C2RoPE: Causal continuous rotary positional encoding for 3d large
+multimodal-models reasoning,” arXiv preprint arXiv:2602.10551, 2026.
+[5] K. Yip, Q. Zhao, W. Yu, L. Yuen, M. Li, X. Zhang, J. Ji, Y. Zhang,
+Q. Jiang, and K.-V. Yuen, “Sope: Spherical coordinate-based positional
+embedding for enhancing spatial perception of 3d lvlms,” in Proceed-
+ings of the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition, 2026, pp. 33 714–33 726.
+[6] M. J. Kim, K. Pertsch, S. Karamcheti, T. Xiao, A. Balakrishna, S. Nair,
+R. Rafailov, E. Foster, G. Lam, P. Sanketi, et al., “OpenVLA: An open-
+source vision-language-action model,” arXiv preprint arXiv:2406.09246,
+2024.
+[7] B. Zitkovich, T. Yu, S. Xu, P. Xu, T. Xiao, F. Xia, J. Wu, P. Wohlhart,
+S. Welker, A. Wahid, et al., “RT-2: Vision-language-action models
+transfer web knowledge to robotic control,” in Conference on Robot
+Learning.
+PMLR, 2023, pp. 2165–2183.
+[8] A. Brohan, N. Brown, J. Carbajal, Y. Chebotar, J. Dabis, C. Finn,
+K. Gopalakrishnan, K. Hausman, A. Herzog, J. Hsu, et al., “RT-1:
+Robotics transformer for real-world control at scale,” arXiv preprint
+arXiv:2212.06817, 2022.
+[9] S. Liu, L. Wu, B. Li, H. Tan, H. Chen, Z. Wang, K. Xu, H. Su,
+and J. Zhu, “RDT-1B: a diffusion foundation model for bimanual
+manipulation,” arXiv preprint arXiv:2410.07864, 2024.
+[10] K. Black, N. Brown, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai,
+L. Groom, K. Hausman, B. Ichter, et al., “π0: A vision-language-action
+flow model for general robot control,” arXiv preprint arXiv:2410.24164,
+2024.
+[11] Y. Xiong, W. Yu, J. Lin, B. Zou, J. Li, L. Zhang, Y. Zhang, and J. Ji,
+“Cac-vla: Context-gated action conditioning for vision-language-action
+models,” arXiv preprint arXiv:2607.04816, 2026.
+[12] H. Geng, S. Zhang, W. Sun, G. Ye, W. Yu, Y. Xie, Q. Zeng,
+P. Ye, J. Deng, and J. Ji, “Trajwam: An efficient trajectory-guided
+world action model for dynamic robotic manipulation,” arXiv preprint
+arXiv:2610.25763, 2026.
+[13] G. Lu, C. Zhang, H. Jiang, Y. Zhou, Z. Gao, Y. Tang, and Z. Wang,
+“VLA-RL: Towards masterful and general robotic manipulation with
+scalable reinforcement learning,” 2025, Notion Blog.
+[14] A. Amin, R. Aniceto, A. Balakrishna, K. Black, K. Conley, G. Connors,
+J. Darpinian, K. Dhabalia, J. DiCarlo, D. Driess, et al., “π0.6: a VLA
+that learns from experience,” arXiv preprint arXiv:2511.14759, 2025.
+[15] S. M. LaValle and J. J. Kuffner, “Rapidly-exploring random trees:
+Progress and prospects,” Algorithmic and Computational Robotics, pp.
+303–307, 2001.
+[16] L. E. Kavraki, P. Svestka, J.-C. Latombe, and M. H. Overmars, “Prob-
+abilistic roadmaps for path planning in high-dimensional configuration
+spaces,” IEEE Transactions on Robotics and Automation, vol. 12, no. 4,
+pp. 566–580, 1996.
+[17] N. Ratliff, M. Zucker, J. A. Bagnell, and S. Srinivasa, “CHOMP:
+Gradient optimization techniques for efficient motion planning,” in
+2009 IEEE International Conference on Robotics and Automation.
+IEEE, 2009, pp. 489–494.
+[18] J. Schulman, Y. Duan, J. Ho, A. Lee, I. Awwal, H. Bradlow, J. Pan,
+S. Patil, K. Goldberg, and P. Abbeel, “Motion planning with sequential
+convex optimization and convex collision checking,” The International
+Journal of Robotics Research, vol. 33, no. 9, pp. 1251–1270, 2014.
+[19] M. Kalakrishnan, S. Chitta, E. Theodorou, P. Pastor, and S. Schaal,
+“STOMP: Stochastic trajectory optimization for motion planning,” in
+2011 IEEE International Conference on Robotics and Automation.
+IEEE, 2011, pp. 4569–4574.
+[20] W. Yu, J. Peng, H. Yang, J. Zhang, Y. Duan, J. Ji, and Y. Zhang, “Ldp:
+A local diffusion planner for efficient robot navigation and collision
+avoidance,” in 2024 IEEE/RSJ international conference on intelligent
+robots and systems (IROS).
+IEEE, 2024, pp. 5466–5472.
+[21] J. Carvalho, A. T. Le, M. Baierl, D. Koert, and J. Peters, “Motion
+planning diffusion: Learning and planning of robot motions with
+diffusion models,” in 2023 IEEE/RSJ International Conference on
+Intelligent Robots and Systems (IROS).
+IEEE, 2023, pp. 1916–1923.
+[22] F. Ying, H. Zhang, H. Wang, H. Huang, and M. H. Ang Jr, “URPlanner:
+A universal paradigm for collision-free robotic motion planning based
+on deep reinforcement learning,” arXiv preprint arXiv:2505.20175,
+2025.
+[23] W. Yu, J. Peng, Q. Qiu, H. Wang, L. Zhang, and J. Ji, “Pathrl: An
+end-to-end path generation method for collision avoidance via deep
+reinforcement learning,” in 2024 IEEE International Conference on
+Robotics and Automation (ICRA).
+IEEE, 2024, pp. 9278–9284.
+[24] R. Cheng, G. Orosz, R. M. Murray, and J. W. Burdick, “End-to-end
+safe reinforcement learning through barrier functions for safety-critical
+
+
+continuous control tasks,” in Proceedings of the AAAI Conference on
+Artificial Intelligence, vol. 33, no. 01, 2019, pp. 3387–3395.
+[25] J. Breeden and D. Panagou, “Predictive control barrier functions for
+online safety critical control,” in 2022 IEEE 61st Conference on
+Decision and Control (CDC).
+IEEE, 2022, pp. 924–931.
+[26] B. Zhang, Y. Zhang, J. Ji, Y. Lei, J. Dai, Y. Chen, and Y. Yang,
+“SafeVLA: Towards safety alignment of vision-language-action model
+via constrained learning,” Advances in Neural Information Processing
+Systems, vol. 38, pp. 153 335–153 373, 2026.
+[27] W. Jung, D. Anthony, U. A. Mishra, N. R. Arachchige, M. Bronars,
+D. Xu, and S. Kousik, “RAIL: Reachability-aided imitation learning
+for safe policy execution,” in 2025 IEEE International Conference on
+Robotics and Automation (ICRA).
+IEEE, 2025, pp. 3582–3589.
+[28] H. Deng, Z. Wu, H. Liu, W. Guo, Y. Xue, Z. Shan, C. Zhang, B. Jia,
+Y. Ling, G. Lu, et al., “A survey on reinforcement learning of Vision-
+Language-Action models for robotic manipulation,” Authorea Preprints,
+2025.
+[29] W. Guo, G. Lu, H. Deng, Z. Wu, Y. Tang, and Z. Wang, “VLA-
+Reasoner: Empowering vision-language-action models with reasoning
+via online monte carlo tree search,” arXiv preprint arXiv:2509.22643,
+2025.
+[30] M. Nakamoto, O. Mees, A. Kumar, and S. Levine, “Steering your
+generalists: Improving robotic foundation models via value guidance,”
+arXiv preprint arXiv:2410.13816, 2024.
+[31] Y. Ze, Z. Chen, J. P. Ara´ujo, Z.-a. Cao, X. B. Peng, J. Wu, and C. K.
+Liu, “Twist: Teleoperated whole-body imitation system,” arXiv preprint
+arXiv:2505.02833, 2025.
+[32] J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov, “Prox-
+imal policy optimization algorithms,” arXiv preprint arXiv:1707.06347,
+2017.
+[33] Y. Bengio, J. Louradour, R. Collobert, and J. Weston, “Curriculum
+learning,” in Proceedings of the 26th Annual International Conference
+on Machine Learning, 2009, pp. 41–48.
+[34] S. Tao, F. Xiang, A. Shukla, Y. Qin, X. Hinrichsen, X. Yuan, C. Bao,
+X. Lin, Y. Liu, T.-k. Chan, Y. Gao, X. Li, T. Mu, N. Xiao, A. Gurha,
+V. N. Rajesh, Y. W. Choi, Y.-R. Chen, Z. Huang, R. Calandra, R. Chen,
+S. Luo, and H. Su, “ManiSkill3: GPU parallelized robotics simulation
+and rendering for generalizable embodied AI,” Robotics: Science and
+Systems, 2025.
+[35] M. Krogius, A. Haggenmiller, and E. Olson, “Flexible layouts for
+fiducial tags,” in Proceedings of the IEEE/RSJ International Conference
+on Intelligent Robots and Systems (IROS), October 2019.
+
+
+APPENDIX
+A. Implementation and Execution Details
+1) VLA-Conditioned Execution: VLA-Stem couples a
+frozen vision–language–action (VLA) policy with a separately
+trained Stem policy. At the beginning tc of each execution
+interval c, the base VLA generates an action chunk of length
+h = 8. As described in Sec. III-A, the proposed actions are
+converted into future end-effector poses and expressed relative
+to the end-effector pose at the beginning of the interval:
+∆Tc,k = (T w
+tc )−1T w
+tc+k,
+τ rel
+c
+= {∆Tc,k}h
+k=1.
+(10)
+The resulting trajectory serves as a motion reference
+rather than being executed directly. At each control step
+t within the interval, the Stem policy generates an executable
+action conditioned on robot proprioception xt, local obstacle
+information oobs
+t
+, and the active reference τ rel
+c :
+aexec
+t
+= πstem(xt, oobs
+t
+, τ rel
+c ),
+tc ≤t < tc + h.
+(11)
+The deployable Stem policy uses three low-dimensional in-
+puts. The proprioceptive input is a 16-dimensional vector con-
+sisting of nine joint-position values and a seven-dimensional
+end-effector pose. The VLA reference is represented as an
+8 × 8 trajectory feature sequence. The obstacle input is a 33-
+dimensional vector supporting up to three obstacles, with 11
+features per obstacle slot. These features include the obstacle
+geometry described in Sec. III-A. The inputs are processed
+without raw visual observations.
+The Stem policy outputs a seven-dimensional normalized
+action under the end-effector delta-pose control mode. The
+action is bounded to [−1, 1] through a hyperbolic tangent
+function. The complete executable action is generated by the
+Stem policy, while the VLA action chunk provides the motion
+reference for conditioning. After each execution interval, the
+frozen VLA generates a new reference based on the updated
+observation.
+2) Policy Architecture: The deployable Stem policy adopts
+an MLP-based actor–critic architecture with three independent
+feature encoders. The VLA reference trajectory is flattened
+and processed by a three-layer MLP with hidden dimensions
+(256, 256, 256). The proprioceptive and obstacle inputs are
+encoded by two-layer MLPs with dimensions (256, 256) and
+(64, 64), respectively. ReLU activations are used between
+layers.
+The encoded features are concatenated into a 576-
+dimensional representation shared by the actor and critic.
+Both heads contain three hidden layers of dimensions
+(1024, 1024, 512) with ReLU activations. The actor parameter-
+izes a seven-dimensional diagonal Gaussian action distribution
+with a learned, state-independent log standard deviation.
+Actions are passed through a tanh transformation, while
+deterministic inference uses the tanh-transformed action mean.
+The critic outputs a scalar state-value estimate.
+The deployable Stem policy contains approximately 4.56
+million trainable parameters. During teacher–student train-
+ing, the privileged teacher additionally receives task-related
+state information, resulting in a 23-dimensional state input,
+whereas the deployed student uses only the 16-dimensional
+proprioceptive input.
+B. RL Training and Reward Details
+1) Reward Components: The reward defined in Sec. III-D
+is implemented by separating the trajectory-level guidance
+into trajectory-following and progress terms:
+rt = wtaskrtask
+t
++ wcollrcoll
+t
++ wfollowrfollow
+t
++ wsteprstep
+t
+.
+(12)
+The last two terms jointly correspond to the guidance
+contribution wguidancerguidance
+t
+in the main formulation.
+The task reward consists of a sparse grasping bonus and a
+terminal success reward:
+rtask
+t
+= 0.4rgrasp
+t
++ rsucc
+t
+.
+(13)
+Here, rgrasp
+t
+= 1 when the target object is first successfully
+grasped, and rsucc
+t
+= 1 upon task completion; otherwise, both
+terms are zero. Each event is rewarded only once per episode.
+The collision penalty is defined as
+rcoll
+t
+= −rviol
+t
+,
+(14)
+where rviol
+t
+= 1 if a collision or spatial-constraint violation
+occurs at step t, and 0 otherwise.
+The trajectory-following reward encourages spatial consis-
+tency with the VLA reference, while the auxiliary progress
+reward encourages forward advancement along the reference
+trajectory during early curriculum stages. Their detailed
+computations are provided in App. C.
+The reward weights used in each curriculum stage are
+summarized in Tab. V.
+TABLE V
+REWARD WEIGHTS USED IN THE THREE CURRICULUM STAGES.
+Stage
+wtask
+wcoll
+wfollow
+wstep
+Following
+0.6
+0.0
+0.4
+0.2
+Static
+1.2
+1.0
+0.4
+0.1
+Dynamic
+1.2
+1.0
+0.6
+0.0
+2) PPO Optimization and Training Budget: The teacher
+and student policies are optimized using PPO with GPU-
+parallel simulation and the Adam optimizer. The stage-
+wise training configurations and simulation budgets are
+summarized in Tab. VI. The reported environment transitions
+include both teacher and student training.
+The student PPO implementation uses generalized ad-
+vantage estimation (GAE) with λGAE = 0.9, a clipping
+coefficient of 0.2, a value-loss coefficient of 0.5, and an
+entropy coefficient of 0. Gradients are clipped to a maximum
+norm of 0.5, and the Adam optimizer uses ϵ = 10−5.
+3) Teacher–Student Distillation: The privileged teacher is
+first optimized with PPO under the curriculum described in
+Sec. III-D. It receives the deployable observation ot together
+with privileged task-level information oextra,t. After training,
+the teacher is frozen and used to guide the optimization of
+the deployable student.
+
+
+TABLE VI
+STAGE-WISE PPO TRAINING CONFIGURATIONS AND SIMULATION
+BUDGETS. TRANSITION COUNTS ARE APPROXIMATE AND INCLUDE BOTH
+TEACHER AND STUDENT TRAINING.
+Parameter
+Following
+Static
+Dynamic
+Parallel environments
+256
+192
+192
+Learning rate
+2×10−4
+1.5×10−4
+1.5×10−4
+PPO update epochs
+8
+12
+12
+Minibatch size
+3,200
+19,200
+19,200
+Rollout horizon
+100
+100
+100
+Discount factor γ
+0.8
+0.8
+0.8
+Transitions / seed
+∼38.0M
+∼23.7M
+∼20.6M
+During student training, both deployable observations and
+their corresponding privileged observations are collected in
+the rollout buffer. The frozen teacher is evaluated on these
+observations during PPO minibatch updates, providing action
+distributions for distillation. The student is jointly optimized
+using the PPO objective and the distillation loss:
+L(πstu) = LPPO(πstu; D) + λLdistill.
+(15)
+The distillation term is defined as
+Ldistill = ED
+
+DKL
+ πstu(· | o) ∥
+πtea(· | o, oextra)
+
+.
+(16)
+Here, D denotes the student rollout buffer, and LPPO includes
+the clipped policy objective, value-function regression, and
+entropy regularization. The distillation coefficient is set to
+λ = 0.1.
+The privileged inputs are used only for teacher supervision
+and do not modify the reward function. After distillation, only
+the student policy is deployed, without requiring privileged
+task information.
+C. Computation of Trajectory-Level Guidance
+1) Pose Deviation to Reference Segments: Consider the
+active world-frame reference chunk for interval c,
+τ ref
+c
+= {(pref
+i , qref
+i )}h
+i=1.
+(17)
+At a control step t within this interval, we compute the
+deviation between the current end-effector pose (pt, qt) and
+each segment of τ ref
+c . Positional waypoints define piecewise
+linear segments, and their orientations are interpolated using
+normalized quaternion interpolation.
+For segment i ∈{1, . . . , h −1}, let Ai = pref
+i
+and Bi =
+pref
+i+1. We project pt onto the segment using
+λi = clip
+(pt −Ai)⊤(Bi −Ai)
+∥Bi −Ai∥2 + ϵ
+, 0, 1
+
+,
+ˆpi = Ai + λi(Bi −Ai),
+(18)
+where ϵ > 0 is a numerical stability constant. The positional
+deviation is
+dpos
+i
+= ∥pt −ˆpi∥.
+(19)
+To compute the rotational deviation at the same projected
+point, we first account for the double-cover property of
+quaternions by adjusting the sign of the segment endpoint:
+si =
+(
+1,
+⟨qref
+i , qref
+i+1⟩≥0,
+−1,
+⟨qref
+i , qref
+i+1⟩< 0,
+˜qref
+i+1 = siqref
+i+1.
+(20)
+The interpolated orientation is obtained by normalizing the
+linear interpolation:
+ui = (1 −λi)qref
+i
++ λi˜qref
+i+1,
+ˆqi =
+ui
+∥ui∥.
+(21)
+The geodesic rotational deviation between unit quaternions is
+drot
+i
+= 2 arccos
+ clip
+ |⟨qt, ˆqi⟩|, 0, 1
+
+.
+(22)
+The segment-level pose deviation combines the positional
+and rotational components:
+di = dpos
+i
++ αdrot
+i ,
+α = 4
+7.
+(23)
+In implementation, the corresponding weighted deviation is
+˜di = 0.7di = 0.7dpos
+i
++ 0.4drot
+i .
+2) Forward Corridor and Progress Reward: Reference
+matching is performed independently for each active VLA
+action chunk. At the start tc of every execution interval, the
+progress index is reset to mtc−1 = 1. Within the interval,
+the index is constrained to be non-decreasing. The candidate
+segment set includes the current segment and all subsequent
+segments:
+I+
+t = {mt−1, . . . , min(mt−1 + K, h −1)}.
+(24)
+We set K = h −2 = 6 for the reference horizonh = 8,
+allowing matching against all remainingsegments without an
+additional look-ahead restriction. The matched segment and
+minimum pose deviation are
+i∗
+t = arg min
+i∈I+
+t
+di,
+d∗
+t = di∗
+t ,
+mt = max(mt−1, i∗
+t ).
+(25)
+This matching rule prevents the selected reference segment
+from moving backward within a chunk, while allowing the
+robot to remain near the current segment when waiting or
+making a local detour. The auxiliary step-progress reward
+used in the early curriculum stages is the normalized index
+advancement:
+rstep
+t
+= max(0, mt −mt−1)
+h −1
+.
+(26)
+The trajectory-following reward is computed as
+rfollow
+t
+= exp(−10 ˜d∗
+t ) = exp(−7d∗
+t ),
+(27)
+The trajectory-following and progress terms enter Eq. (12)
+with their respective curriculum weights.
+
+
+D. Baseline Implementation Details
+1) Base VLA Policies: We report the raw π0 and π0.5
+policies as unmodified baselines. For each simulation task,
+the corresponding base VLA is fine-tuned using 100 demon-
+strations for 30,000 optimization steps; its checkpoint is then
+held fixed when comparing runtime safety mechanisms and
+training Stem. This ensures that Stem and the safety-layer
+baselines are evaluated with the same task-level VLA policy.
+2) VLA Fine-Tuning Baseline: The VLA-finetune baseline
+trains separate policies using planner-generated obstacle-
+avoidance demonstrations. We generate these trajectories
+using RRT-based planning; dynamic scenarios additionally
+employ a waiting primitive. We vary the number of obstacle-
+avoidance demonstrations and report the best-performing con-
+figuration in the main comparison. The evaluated performance
+peaks at 1,500 demonstrations, while increasing the budget
+to 2,000 results in a decline, as discussed in the main paper.
+3) VLSA Safety-Layer Baseline:
+a) Geometric CBF Formulation:
+We approximate
+the robot and obstacles using oriented ellipsoids. VLSA-
+EE models only the end-effector ellipsoid, while VLSA-
+ARM additionally includes five arm links (panda link3–
+panda link7), resulting in six robot ellipsoids.
+For each robot–obstacle ellipsoid pair (i, j), we adopt a
+rotating supporting-hyperplane barrier. Let pi and pj denote
+the ellipsoid centers, ¯Qi and ¯Qj their world-frame shape
+matrices, and zij a virtual separation direction on the unit
+sphere. The barrier is defined as
+hij = (pj −pi)⊤¯Q−1
+i zij
+∥¯Q−1
+i zij∥
+−∥¯Qj ¯Q−1
+i zij∥+ 1
+∥¯Q−1
+i zij∥
+.
+(28)
+The condition hij ≥0 represents geometric separation
+along the selected virtual direction. Each robot–obstacle pair
+introduces a linear CBF constraint:
+a⊤
+v,ijvi + a⊤
+ω,ijωi
++ a⊤
+z,ijuz,ij + αhij ≥0,
+(29)
+where vi and ωi are the linear and angular velocities of
+the corresponding robot ellipsoid, and uz,ij controls the
+virtual separation direction. For VLSA-ARM, link poses and
+Jacobians are computed from the current robot configuration
+to construct the constraints for all modeled links. Box-shaped
+obstacles are approximated by ellipsoids with matching
+centers and orientations, with geometric scales included in
+parameter tuning.
+b) QP Optimization: The safety layer solves a weighted
+quadratic program to minimize deviations from the nominal
+VLA action:
+min
+u,{uz,ij}
+wm
+2 ∥u −unom∥2
+2
++ wz
+2
+X
+i,j
+∥uz,ij −unom
+z,ij ∥2
+2,
+(30)
+subject to the robot–obstacle CBF constraints. Here, u ∈
+R6 denotes the end-effector motion command. The gripper
+command is directly retained from the base VLA.
+We use batched PyTorch-based QP solvers. VLSA-EE
+employs active-set enumeration for at most three constraints,
+while VLSA-ARM uses batched Hildreth dual projection
+to handle up to 18 constraints. Infeasible QPs are handled
+using a weighted half-space projection fallback. The imple-
+mentation also retains the action-space and QP-space scaling
+transformations of the original VLSA formulation.
+c) Parameter Tuning: For each task and scenario, we
+tune the CBF gain, geometric scales, and optimization weights
+on validation episodes. The configuration achieving the
+highest collision-free task success (SUCC) is selected for
+the corresponding setting.
+d) Dynamic Obstacle Handling: In dynamic scenarios,
+the obstacle geometry is updated online using the current
+ground-truth obstacle observations. Each obstacle is repre-
+sented by its center, full dimensions, orientation, and presence
+indicator, forming an 11-dimensional feature vector, with up
+to three obstacle slots.
+At each control step, VLSA reconstructs the obstacle
+ellipsoids and updates the corresponding CBF constraints
+using their current poses. The implementation does not esti-
+mate obstacle velocities or predict future obstacle trajectories.
+It therefore performs reactive safety correction based on
+instantaneous geometric information rather than predictive
+dynamic-obstacle avoidance.
