@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-31</span>
+      <span class="dpr-home-dashboard-kicker">2026-11-01</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 9 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>8</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-31 22:37:31 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-11-01 22:57:00 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>2026-10-31 日报共筛出 9 篇论文，其中 1 篇精读、8 篇速读，重点聚焦肺结节恶性风险分类的 2D、2.5D、3D 残差网络对比。最值得看的是这篇精读论文（8.0/10）对影像维度取舍的系统比较，以及人形机器人可达性与恢复监控方向的速读线索。普通读者可先读精读论文的结论，再按需浏览速读列表，留意 2.5D 在性能与成本间是否更划算。</p>
+<p>今日精选 4 篇论文，重点精读一篇关于灵巧操作中离线到在线安全强化学习的研究。最值得看的是 RBGA 的残差预算引导仲裁（8.0/10），以及离线目标条件强化学习如何避免“路径海市蜃楼”。普通读者可先读精读文章的摘要与方法图，再按兴趣速览其余三篇。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -74,9 +74,9 @@
     <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="From Slices to Volumes: Comparing 2D, 2.5D, and 3D Residual Networks for Pulmonary Nodule Malignancy-Risk Classification">From Slices to Volumes: Comparing 2D, 2.5D, and 3D Residual Networks for Pulmonary Nodule Malignancy-Risk Classification</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="RBGA: Residual-Budget Guide Arbitration for Offline-to-Online Safe Reinforcement Learning in Dexterous Manipulation">RBGA: Residual-Budget Guide Arbitration for Offline-to-Online Safe Reinforcement Learning in Dexterous Manipulation</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">8 篇</strong>
+    <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Active Reachability Learning for Humanoid Recoverability Monitoring">Active Reachability Learning for Humanoid Recoverability Monitoring</span></li><li><span class="dpr-home-dashboard-paper-title" title="Sparsity-driven emergence of functional modularity in multitask neural networks">Sparsity-driven emergence of functional modularity in multitask neural networks</span></li><li><span class="dpr-home-dashboard-paper-title" title="DT-JEPA: Learning to Predict Future Representations for Decision-Making">DT-JEPA: Learning to Predict Future Representations for Decision-Making</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Tikhonov-Regularized Dynamics and Inexact Algorithms for Nonlinear Saddle-Point Problems">Tikhonov-Regularized Dynamics and Inexact Algorithms for Nonlinear Saddle-Point Problems</span></li><li><span class="dpr-home-dashboard-paper-title" title="A New Perspective on Optimal Power Flow: From Control Theory to Numerical Optimization">A New Perspective on Optimal Power Flow: From Control Theory to Numerical Optimization</span></li><li><span class="dpr-home-dashboard-paper-title" title="Escaping Path Mirages in Offline Goal-Conditioned Reinforcement Learning">Escaping Path Mirages in Offline Goal-Conditioned Reinforcement Learning</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>4</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>2</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>3</strong></span></div>
 </section>
 </div>
 
