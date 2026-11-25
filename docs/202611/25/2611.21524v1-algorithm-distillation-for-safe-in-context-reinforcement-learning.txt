@@ -1,0 +1,933 @@
+Title: Algorithm Distillation for Safe In-Context Reinforcement Learning
+
+URL Source: https://arxiv.org/pdf/2611.21524v1
+
+Published Time: Tue, 17 Nov 2026 06:17:17 GMT
+
+Number of Pages: 28
+
+Markdown Content:
+# Algorithm Distillation for Safe In-Context Reinforcement Learning 
+
+Minjae Kwon ∗ mjkwon@virginia.edu University of Virginia 
+
+Amir Moeini ∗ amoeini@virginia.edu University of Virginia 
+
+Shangtong Zhang shangtong@virginia.edu University of Virginia 
+
+Lu Feng lu.feng@virginia.edu University of Virginia 
+
+## Abstract 
+
+Safe in-context reinforcement learning (Safe ICRL) asks a policy with fixed parameters to improve on an unseen constrained task from its interaction history while aiming to keep its cost within a budget. Prior work studied Safe ICRL on five benchmarks in three families: a grid world with a hidden goal and obstacles (DarkRoom), continuous navigation where goals and hazards stay invisible until reached (PointGoal, CarGoal), and locomotion with a hidden velocity limit (HalfCheetah, Ant). Safe Algorithm Distillation (Safe AD), trained on the learning histories of a safe RL algorithm, has shown adaptation failures in prior evaluations (Moeini et al., 2026; Kwon et al., 2026c). For example, in the locomotion tasks its return stays below zero, and it rarely reaches the goal in CarGoal. We revisit two parts of Safe AD. First, we distill a budget-aware teacher with two phases. It searches for the hidden task, exploring more when more budget remains. After its first reward or cost, an expert policy exploits the task within the remaining budget. We collect the teacher’s histories under fixed or dynamic budgets. Dynamic budgets increase the occupancy entropy of the return and budget inputs in every environment, and at test time they improve return and lower cost in DarkRoom and HalfCheetah. Second, we propose A-Lag, a test-time adjustment that reweights the distilled policy’s actions by their predicted cost, with an adaptive Lagrange multiplier that is updated from the costs observed. In our experiments, A-Lag had lower mean episode cost than Safe AD in all five environments, with lower mean final return in four. 
+
+## 1 Introduction 
+
+In-context reinforcement learning (ICRL) adapts to a new task through the interaction history, without updating model parameters (Moeini et al., 2025; Run & Ding, 2026). When the test task differs from the training tasks, this adaptation poses a safety-generalization problem: changes in dynamics or task conditions may remain partly unobserved, degrade policy generalization, and create safety risks (Kirk et al., 2023; Benjamins et al., 2023; Kwon et al., 2026b). Safe ICRL extends ICRL to this setting by asking the policy to improve its task behavior while controlling cost. Transformer policies can learn in-context adaptation for reward-only objectives (Xu et al., 2022; Laskin et al., 2023; Lee et al., 2023; Raparthy et al., 2024; Huang et al., 2024; Song et al., 2026), and prior work formalized Safe ICRL with constrained Markov decision processes (Moeini et al., 2026). Algorithm Distillation (AD) trains a Transformer on the learning histories 
+
+> ∗Equal contribution.
+
+1arXiv:2611.21524v1 [cs.LG] 16 Nov 2026 of an RL algorithm (Laskin et al., 2023). Safe AD, the AD baseline of that work, distills the histories of a safe RL algorithm such as PPO-Lagrangian (Moeini et al., 2026) and has shown adaptation failures on some of these benchmarks. In HalfCheetah and Ant its return stays below zero in every in-context episode, and in CarGoal, it rarely reaches the goal (Appendix J). This motivates the central question of the paper: 
+
+can Safe AD adapt to unseen tasks at lower cost if it learns from a budget-aware teacher and adjusts to the budget explicitly at test time? 
+
+We study two parts of Safe AD, the data it learns from and how it uses the budget at deployment. In safe RL, the learning histories usually come from a collector trained under one fixed cost limit (Achiam et al., 2017; Ray et al., 2019). Safe AD distills the learning histories. These histories show policy improvement, but they are not built to show how behavior should change with the budget or how to search for an unknown task at low cost. We instead distill a teacher whose histories show the behavior we want from the student. It searches for the hidden task while the budget allows it and then switches to an expert policy that exploits what it found with the best behavior that fits the remaining budget, similar to expert-data pretraining for ICRL (Lee et al., 2023). At deployment, Safe AD takes the remaining cost budget (cost-to-go, CTG) as an input at every step, but how it reacts to that input is learned in training. For example, if an episode overspends its budget, Safe AD can adjust the next episode only in the way it learned during training, through the history in its context. To address this, we propose Action-level Lagrangian (A-Lag), which adds an explicit correction while leaving the trained weights unchanged. Its Lagrange multiplier penalizes the predicted cost of each action inside the distilled policy rather than a training objective. A-Lag keeps Safe AD’s Transformer, its return-to-go (RTG) and CTG inputs, and its behavior-cloning objective, and it trains one extra head that predicts the immediate cost of an action from the policy’s representation. At deployment the distilled policy is reweighted by the predicted cost of each action, scaled by a multiplier λ, so that actions with high predicted cost become less likely. The multiplier is updated between episodes by a dual-ascent step on the realized episode cost relative to the budget. A-Lag therefore adapts in two ways, through its context as Safe AD does and through the multiplier, which responds explicitly to observed costs relative to the budget. Our experiments use the five Safe ICRL benchmarks of Moeini et al. (2026): a grid world with a hidden goal and obstacles (DarkRoom), continuous navigation where goals and hazards stay invisible until reached (PointGoal, CarGoal), and locomotion with a hidden velocity limit (HalfCheetah, Ant). Our contributions are the following. •Budget-aware teacher. We propose distilling a budget-aware teacher that searches for the hidden task and then exploits it. Collecting its histories under dynamic budgets makes the return and budget inputs more diverse by occupancy entropy (Table 1). •A-Lag. We propose a Lagrange multiplier that reweights actions by predicted cost and is updated from observed episode costs at test time. In our experiments, A-Lag had lower mean episode cost than Safe AD in all five environments, with lower mean final return in four (Section 5.3). 
+
+## 2 Background 
+
+Constrained Markov Decision Process. We model each task as a finite-horizon Constrained Markov Decision Process (CMDP) M = ( S, A, r, c, p, p 0, T, δ ), where c : S × A → R is the cost function and δ ≥ 0is the safety budget (Altman, 2021). At time step t, the agent observes state St ∈ S , takes action At ∈ A 
+
+according to policy π(· | St), receives reward Rt+1 
+
+.
+
+= r(St, A t) and cost Ct+1 
+
+.
+
+= c(St, A t), and transitions to St+1 ∼ p(· | St, A t). An episode is the trajectory τ = ( S0, A 0, R 1, C 1, S 1, . . . , S T −1, A T −1, R T , C T ), with return G(τ ) .
+
+= ∑Tt=1 Rt and episode cost Gc(τ ) .
+
+= ∑Tt=1 Ct. The objective is to maximize Eτ ∼π [G(τ )] subject to Eτ ∼π [Gc(τ )] ≤ δ.
+
+In-Context Reinforcement Learning. In-context reinforcement learning (ICRL) pretrains a trans-former policy πθ on a static dataset of logged trajectories and then adapts to a new task by conditioning on its growing interaction history, without gradient updates at test time (Laskin et al., 2023; Kirsch et al., 2023). The parameters θ are learned once during pretraining and then fixed. At test time the policy conditions 2on context Hkt at each step t of episode k: πθ (· | Skt , H kt ). A common choice for the context is the history of observed transitions: Hkt
+
+.
+
+= ( τ1, . . . , τ k−1, τ tk), where τ tk
+
+.
+
+= ( Sk 
+
+> 0
+
+, A k 
+
+> 0
+
+, R k 
+
+> 1
+
+, C k 
+
+> 1
+
+, S k 
+
+> 1
+
+, . . . , S kt−1, A kt−1, R kt , C kt ) is the observed prefix of the current episode up to time t, with per-step costs included only in the constrained setting. We denote the future realized reward and cost sums by Gr,t (τ ) .
+
+= ∑Ti=t+1 Ri, G c,t (τ ) .
+
+= ∑Ti=t+1 Ci,
+
+respectively. We use RTG t for target rewards, realized in training and user-specified at deployment, and CTG t for cost budgets. This adaptation is often explained as the network running an RL algorithm in its forward pass, which improves as the context grows (Laskin et al., 2023; Kirsch et al., 2023; Lin et al., 2024; Wang et al., 2025a;b). 
+
+Safe In-Context Reinforcement Learning. Safe ICRL studies the safety of adaptation to unseen tasks (Moeini et al., 2026). The goal of Safe ICRL is to pretrain parameters θ such that, when the policy πθ
+
+is deployed on unseen CMDPs at test time, performance improves across episodes while satisfying the safety budget δ. Formally, parameters θ are learned on training CMDPs. On a fixed unseen CMDP, the resulting policy is evaluated over episodes {τk}Kk=1 by Eπθ
+
+[∑Kk=1 G(τk)
+
+]
+
+s.t. ∀k, Eπθ [Gc(τk)] ≤ δ. Since the CMDP and θ stay fixed during this evaluation, any adaptation comes from the growing context Hkt .
+
+## 3 Teacher Data for Safe Algorithm Distillation 
+
+Safe AD can only learn the behavior its histories show. The learning histories of a safe RL algorithm under one fixed cost limit show a policy improving, but not how to search for a hidden task at low cost or how to act when less budget remains. To address this, we collect histories with the two-phase teacher of Section 3.2, under the fixed- and dynamic-budget schemes defined below. 
+
+3.1 Dynamic-Budget Collection 
+
+Each training history consists of K in-context episodes on one training task, generated by a teacher policy 
+
+πT. The budget B0, the δ of Section 2, is sampled once per history, and the remaining budget Bkt restarts from it in every episode: 
+
+B0 ∼ D budget , Bk 
+
+> 0
+
+= B0,Akt ∼ πT(· | Skt , H kt , B kt ), Bkt+1 = max (0, B kt − Ckt+1 
+
+), (1) where k ∈ { 1, . . . , K } indexes in-context episodes, and Skt and Hkt are defined in Section 2. In the dynamic-budget collection, Dbudget = U[Bmin , B max ] over the environment’s budget range. In the fixed-budget col-lection, every history uses one budget, B0 = Bmax . Prior Safe ICRL work used fixed cost limits, with the learning histories of a safe RL algorithm such as PPO-Lagrangian (Moeini et al., 2026). Fixed-budget his-tories still differ in realized cost, since how much the teacher explores depends on the task, but they never show how behavior should change when the starting budget is small. Each logged step carries state, action, reward, cost, RTG kt = Gr,t (τk) and CTG kt = Bkt , and the executed action is the training target. RTG is the reward still to come in episode τk, while CTG is the remaining budget, not the cost still to come. 
+
+3.2 The Teacher 
+
+The teacher does not see the task (the goal location or the velocity threshold) or the hazard layout. It decides only from the inputs the student also sees: observations, rewards, costs and episode boundaries. Writing H
+
+for the history Hkt together with the current state Skt , and B for Bkt , it acts in two phases: 
+
+πT(· | H, B ) = 
+
+{Search( H, B ), until the first reward (goal tasks) or cost (velocity tasks) in H, 
+
+Expert q (H, B ), afterwards . (2) Search explores more when more budget remains and avoids places where it has already paid cost. After this switching event, the expert of quality q exploits it with the best behavior it knows. In DarkRoom, the expert follows the shortest known path with no observed cost, which fits any remaining budget. In the 3navigation tasks, it drives to the goal position estimated from its history. In the velocity tasks, it runs at the fastest speed whose cost fits B. In the navigation and velocity tasks, the expert decides where to go or how fast to run. Then a PPO policy, trained to reach a given position or hold a given speed, produces the actions accordingly. Search, Expert q and the event that switches between them depend on the environment (Appendix B and Table 3). 
+
+3.3 Expert Quality 
+
+Expert 1 is our highest-return expert in each environment. Like every expert, it uses only behavior whose known cost fits the remaining budget. In DarkRoom it takes the shortest known cost-free path. In the other environments it runs the PPO controller checkpoint with the best validation score (Appendix B). The quality q of an expert is its return after the switching event, as a fraction of Expert 1’s, 
+
+q =
+
+E[ ¯Gpost 
+
+]
+
+> Expert q
+
+E[ ¯Gpost 
+
+]
+
+> Expert 1
+
+, (3) where ¯Gpost is the mean return of in-context episodes that follow the one with the switching event. We collect histories at q = 1 and at q ≈ 0.5 and train on both, so the student sees both strong and weak experts. The weaker expert is an earlier checkpoint of the same controller or, in DarkRoom, Expert 1 mixed with random actions at a rate chosen to give q ≈ 0.5. The stronger expert is also the safer one. In the dynamic-budget histories, its violation rate and cost are lower than the weaker expert’s in every environment (Appendix B). 
+
+## 4 A-Lag: In-Context Dual Adaptation 
+
+A-Lag, short for action-level Lagrangian, penalizes the predicted cost of each action with a Lagrange multi-plier and updates that multiplier during deployment. It combines the Safe AD sequence model, trained as in Safe AD (Section 4.1), a cost head that defines a family of cost-reweighted policies (Section 4.2), and a deployment-time update of the multiplier from realized costs (Section 4.3). Apart from the growing context, only this update changes how the trained network acts. 
+
+4.1 Sequence Model 
+
+We model Safe ICRL as causal action prediction over histories of states, actions, rewards and costs (Chen et al., 2021; Laskin et al., 2023; Xu et al., 2022; Moeini et al., 2026). Each completed transition adds four positions: state, action, reward and cost. States, actions, rewards and costs have different input domains, so separate encoders Es, Ea, Er and Ec map them into a shared embedding space, and further encoders ERTG 
+
+and ECTG map the two control inputs into the same space. Scalars are encoded with the signed logarithm 
+
+ψ(z) = sign( z) log(1 + |z|), (4) which preserves sign and order and reduces scale differences across environments. Let p = ( k, t ) identify step t of episode k, with Rp+1 
+
+.
+
+= Rkt+1 and Cp+1 
+
+.
+
+= Ckt+1 . As in Safe AD, the control inputs enter the state position: 
+
+ep, s = Es(Sp) + ERTG (ψ(RTG p)) + ECTG (ψ(CTG p)) ,
+
+ep, a = Ea(Ap), ep, r = Er(ψ(Rp+1 )) , ep, c = Ec(ψ(Cp+1 )) . (5) A sampled training window τ is a consecutive window of these positions from one K-episode history. The state position precedes the action, reward and cost positions of its transition, so under causal masking the prediction of Ap cannot see that action or its outcome. The action head reads the last-layer representation up
+
+at the state position of step p in an L-layer Transformer and defines the base policy πθ (· | up): a categorical distribution with logits ℓ(up, ·) for discrete actions, or a diagonal Gaussian with mean μd(up) and variance 
+
+vd(up) in action dimension d for continuous actions. Training minimizes the negative log-likelihood of the logged action, 
+
+Lact = Eτ
+
+[
+
+− ∑
+
+> p
+
+mp log πθ
+
+(Ap | up
+
+)]
+
+, (6) 4where mp masks padded positions. This is Safe AD’s model and objective. 
+
+4.2 Cost Head and the Cost-Reweighted Policy 
+
+A second head ˆ c(up, ·) scores each action by its predicted immediate cost, scaled by c0 (Eq. (8)). For discrete actions it outputs one score per action. For continuous actions it is a quadratic in each action dimension, ˆ c(u, A ) = b(u) + ∑
+
+> d
+
+(gd(u)Ad + 12 κd(u)A2
+
+> d
+
+) with κd ≥ 0. For a multiplier λ the head defines the cost-reweighted policy 
+
+πλ(A | up) ∝ πθ (A | up) exp (−λ ˆc(up, A )). (7) For discrete actions the reweighted logits are ℓ(up, A )−λ ˆc(up, A ). For continuous actions the cost-reweighted policy is Gaussian in closed form, with variance ( v−1 
+
+> d
+
++ λκ d)−1 and mean ( v−1 
+
+> d
+
+μd − λg d)/(v−1 
+
+> d
+
++ λκ d) in dimension d. A positive λ shifts probability toward actions with low predicted cost, and π0 = πθ .
+
+Training. The cost head is fitted by regression to the scaled immediate cost of the executed action, maintaining the policy representation fixed for this loss: 
+
+Lcost = Eτ
+
+[∑
+
+> p
+
+mp
+
+(ˆc(sg( up), A p) − Cp+1 /c 0
+
+)2
+
+]
+
+, (8) where sg blocks the cost-loss gradient into the backbone and c0 > 0 is the standard deviation of the immediate cost in the environment’s training data. We minimize Lact + ηC Lcost with λ = 0 throughout training. The cost loss trains the cost head, while the action loss trains the backbone and action head. 
+
+4.3 In-Context Dual Adaptation 
+
+In a deployment of K episodes with budget B0, A-Lag keeps one multiplier λk for each episode k. It starts at λ1 = 0, and after episode k it is updated from the realized cost of that episode, 
+
+λk+1 = Π [0 ,λ max ]
+
+(
+
+λk + η Gc(τk) − B0
+
+Bmax 
+
+)
+
+, (9) where η > 0 is a step size, Bmax the upper end of the environment’s budget range (Section 3.1), used as a fixed scale, and Π the projection onto [0 , λ max ]. Within episode k every action is sampled from πλk (· | up). The context and the RTG and CTG inputs are those of Safe AD, and λ restarts at zero in the next deployment. Episode costs above the budget raise λ and make the next episode more conservative. Costs below it lower 
+
+λ again, at most down to 0, where A-Lag acts as its base policy. Eq. (9) has the form of projected dual subgradient ascent on the Lagrangian of the episode constraint 
+
+E[Gc(τk)] ≤ B0, with the realized episode cost as a one-sample estimate of the constraint value. Lagrangian safe RL applies this update to its multiplier during training (Altman, 2021; Ray et al., 2019). A-Lag uses it during a single test deployment of a distilled policy, to tune the multiplier from the costs the agent incurs, with no retraining and no choice of λ per task. Only the upper bound λmax is set per environment, in advance on training tasks by a fixed rule. The step size, in units of λmax , is the same in every environment (Appendix E). 
+
+4.4 Properties 
+
+For a fixed representation u, let Zλ = EA∼πθ [exp( −λˆc(u, A ))] be the normalizer of πλ. It is finite for every 
+
+λ ≥ 0, both for finite action sets and in the Gaussian case. For every λ ≥ 0, πλ is the unique minimizer, over action distributions π with finite objective, of KL (π ∥ πθ (· | u)) + λ EA∼π
+
+[ˆc(u, A )], because this objective is equal to KL( π ∥ πλ) − log Zλ. For λ ≥ 0, the cost-reweighted policy is the solution of a KL-regularized Lagrangian relaxation in which λ penalizes the predicted cost and the distilled policy plays the role of the unconstrained policy. The next proposition shows that raising the multiplier never raises the expected predicted cost. 5Proposition 1 (Monotone predicted cost) . Assume the history in the context is fixed, so that up does not change. Then for every λ ≥ 0,
+
+ddλ EA∼πλ
+
+[ˆc(up, A )] = − Var A∼πλ
+
+(ˆc(up, A )) ≤ 0. (10) Appendix F gives the proof and the derivation of the KL characterization above. By Eq. (9), an episode whose cost is above the budget B0 does not decrease λ, and by Proposition 1, at every fixed history the next episode’s expected predicted cost per step then does not increase. An episode below the budget does not increase λ, so the expected predicted cost does not decrease. This holds only for the predicted cost with the context fixed. It does not mean that the actual episode cost falls as λ grows, since different actions lead to a different context, and it does not guarantee that the budget is met. The cost head predicts only the cost of the next step, so it cannot predict later costs. 
+
+## 5 Experiments 
+
+We ask three questions. RQ1 : do dynamic budgets, which make the teacher data cover more diverse return and budget inputs, improve test return and cost over a fixed budget? RQ2 : does A-Lag improve on the return and cost of Safe AD on unseen test tasks, and how does CDT compare? RQ3 : how often and by how much does each method go over its budget? 
+
+5.1 Experimental Setup 
+
+We use five environments derived from the Safe ICRL benchmarks of Moeini et al. (2026). Each has separate training and test tasks. Appendix A gives the layouts and the sizes of the splits. • DarkRoom is a partially observed grid world with a hidden goal and hidden obstacles. Training goals and obstacles are center-oriented, while test goals and obstacles are edge-oriented. • PointGoal and CarGoal are continuous navigation tasks with a broken lidar, so the agent cannot sense goals or hazards until it reaches or touches them. Their training layouts are center-oriented and their test layouts are edge-oriented. • HalfCheetahVelocity and AntVelocity , below called HalfCheetah and Ant or the velocity tasks, are locomotion tasks in which cost is incurred above a hidden velocity limit that differs between tasks (Ji et al., 2023). The test velocity limits are unseen. 
+
+Models. Safe AD (Moeini et al., 2026) and A-Lag are both trained from scratch using the backbone of Section 4.1. Unless otherwise stated, Safe AD here is trained on the teacher data, not PPO-Lagrangian histories. The main models use 32 histories per task. We report the 50% mixture. A-Lag adds the cost head and the deployment-time update. CDT (Liu et al., 2023) is an offline safe-RL sequence policy that conditions on RTG and CTG. All models train for 100,000 updates with three random seeds and the same per-environment architecture. We also show two safe meta-RL baselines from a preliminary study, MAML with a cost penalty (Finn et al., 2017) and SafeMeta (Xu & Zhu, 2025), which adapt by updating policy parameters on each new task. We do not compare with SCARED (Moeini et al., 2026) or latent Q-barrier shielding (Kwon et al., 2026c) because they are pretrained online, interacting with the training environments under their own objectives. Safe AD and A-Lag instead learn offline from fixed teacher histories, and our question is what the data and a deployment-time multiplier do for AD itself. 
+
+Evaluation. A deployment runs one test task for K episodes with fixed parameters while the context grows. History is retained across episode resets within a deployment and cleared between deployments. K
+
+is 50 in DarkRoom, 20 in PointGoal and CarGoal and 10 in the velocity tasks. Each deployment samples its initial RTG uniformly between two values fixed from the training data, the lowest and the median over training tasks of the teacher’s best in-context episode return, and its budget B0 uniformly over the training budget range. Both stay fixed within the deployment. Every test task receives 15 deployments, and the 6draws are shared by all methods. We report four quantities, averaged over draws, tasks and seeds. The final return is the mean return of the last three episodes. In PointGoal and CarGoal the reward is sparse. The episode return is 1 if the goal is reached and 0 otherwise, so there the return is the success rate. The cost is the mean episode cost Gc over all K episodes. The violation rate is the fraction of these episodes whose cost exceeds B0, and the excess cost is their mean of max(0 , G c − B0). Each curve point is the mean of that episode over all deployments, test tasks and seeds, so it pools de-ployments with different budgets. Table entries average these over the episodes. The shaded bands in the figures show ±2 standard errors over deployments. Text comparisons pair methods on the same seed and deployment draw. Main-text comparisons describe observed means. Appendix I gives per-seed results and intervals over test tasks. 
+
+Tuning A-Lag. We set λmax per environment from a sweep of fixed multipliers on training tasks (Figure 6). It is the largest tested value up to which the mean final return stays above 75% of that at λ = 0. The step size η = λmax was chosen once in DarkRoom and is used in every environment (Appendix E). The primary comparison is A-Lag against Safe AD on the test tasks. In no environment does A-Lag have both a lower mean violation rate and a higher mean final return (Table 6). 
+
+5.2 RQ1: Fixed vs. Dynamic Budgets in the Teacher Data 
+
+We train Safe AD and A-Lag on the fixed-budget histories, in which B0 = Bmax , and compare them with the main models, which are trained on the dynamic-budget histories. Both use the same training settings, so the two differ only in the data. 
+
+Why coverage matters. Safe AD and A-Lag choose each action from the history and two control inputs, the return still to be reached (RTG) and the budget still left (CTG). Each deployment samples a new budget, and the remaining budget falls as cost is incurred, so at test time the model sees many (RTG, CTG) pairs. It is most likely to act well at pairs that occur in its training data. Under a fixed budget every episode starts with the remaining budget at Bmax , and a small remaining budget appears only after cost has been incurred. Table 1 measures how diverse the two kinds of histories are, and Figure 5 in Appendix D shows where their steps fall. More occupied cells mean that the histories reach more (RTG, CTG) pairs, and a higher entropy means that their steps spread more evenly over these pairs instead of concentrating on a few. On a 20 × 20 grid over RTG and CTG, the dynamic-budget steps occupy all 400 cells in DarkRoom and the velocity tasks, while the fixed-budget steps occupy 179 in DarkRoom. The dynamic-budget histories also have the higher entropy in all five environments. 
+
+Test results. Figure 1 shows how the main models and the fixed-budget models adapt over the episodes of a deployment. In DarkRoom, fixed-budget data lower the final return by 0.167 for Safe AD and by 0.123 for A-Lag and raise the mean episode cost of both by about 0.8. Both gaps open early in the deployment and last to its end. In the other environments the main models return more in every case except A-Lag in Ant. The gap is largest in PointGoal and CarGoal, where the return of the main models is nearly twice as high. Outside DarkRoom the costs move in both directions. They are lower for the main models in HalfCheetah and higher for both methods in PointGoal. In CarGoal and Ant they are lower for A-Lag and higher for Safe AD. The entropy is higher in every environment, but return and cost move in the favorable direction for both methods only in DarkRoom and HalfCheetah. 
+
+5.3 RQ2: A-Lag vs. Safe AD and CDT 
+
+A-Lag has a lower mean episode cost than Safe AD in all five environments (Table 6), with smaller differences in PointGoal and HalfCheetah. The trade-off is a lower mean final return in DarkRoom, PointGoal, CarGoal and Ant. The largest drop is in Ant, 286.4 against 350.9, about 18%, against 5 to 7% in the other three. In HalfCheetah A-Lag returns 11.8 more, and averaged over all in-context episodes rather than the last three, the returns of A-Lag and Safe AD are nearly equal, 242.6 and 242.5. Figure 2 shows the return and the cost over the episodes of a deployment. 7Table 1: Coverage of the (RTG, CTG) plane in the teacher data under fixed and dynamic budgets (both quality levels). Each input is rescaled to [0 , 1] between its near-minimum and near-maximum (the 1st and 99th percentiles over both datasets, with values outside clipped), and the plane is divided into a 20 × 20 grid. Cells: occupied cells out of 400. Entropy = − ∑ 
+
+> b
+
+pb log pb/ log 400, where pb is the share of steps in cell 
+
+b. Entropy is 1 when the steps spread evenly over all cells (Appendix D). Higher values mean more diverse training data. Bold marks the higher value of each pair. In PointGoal and CarGoal the RTG takes only the values 0 and 1, so at most 40 cells can be occupied and Entropy is at most log 40 / log 400 ≈ 0.62. 
+
+Cells Entropy Environment Fixed Dynamic Fixed Dynamic DarkRoom 179 400 0.549 0.935 
+
+PointGoal 40 40 0.346 0.551 
+
+CarGoal 40 40 0.371 0.560 
+
+HalfCheetah 315 400 0.707 0.894 
+
+Ant 279 400 0.696 0.906 20 40 0.2 0.4 0.6 0.8             
+
+> return
+> DarkRoom
+> 10 20 0.10 0.15 0.20
+> return
+> PointGoal
+> 10 20 0.1 0.2 0.3 0.4 0.5
+> return
+> CarGoal
+> 510 150 200 250 300 350
+> return
+> HalfCheetah
+> 510 280 300 320 340 360
+> return
+> Ant
+> 20 40
+> episode
+> 3456
+> cost
+> 10 20
+> episode
+> 510 15
+> cost
+> 10 20
+> episode
+> 10.0 12.5 15.0 17.5
+> cost
+> 510
+> episode
+> 510 15
+> cost
+> 510
+> episode
+> 510
+> cost A-Lag, Dynamic A-Lag, Fixed Safe AD, Dynamic Safe AD, Fixed
+
+Figure 1: Models trained on dynamic-budget histories (Dynamic) and on fixed-budget histories (Fixed), on the test tasks. Each curve shows the mean episode return or cost over three seeds, with a shaded band of 
+
+±2 standard errors. With dynamic budgets, A-Lag has a lower cost in four of the five environments, all but PointGoal, and Safe AD has a higher return in all five, compared with fixed budgets. Compared with λ = 0, the multiplier lowers mean cost in four environments. In Ant it raises mean cost and excess cost while lowering the violation rate, and A-Lag’s lower cost than Safe AD is already present with the multiplier held at zero (Appendix H). Table 5 (column Main) gives CDT’s numbers. In DarkRoom, CDT does not learn to find the goal, with a final return of 0.010. In the navigation tasks, CDT returns more than Safe AD in PointGoal, 0.326 against 0.173, and slightly less in CarGoal, 0.468 against 0.489, at a higher mean cost in both, 16.98 and 20.97 against 10.04 and 14.77. PointGoal return stays below 0.35 for every method, so the small differences between A-Lag and Safe AD there give little evidence either way. In the velocity tasks, CDT returns more than Safe AD, 284.9 and 387.0 against 206.7 and 350.9, and its mean cost is 18.4 and 37.7 above Safe AD’s. The two safe meta-RL baselines show little in-context adaptation. In the velocity tasks their curves are flat. SafeMeta’s return stays near 210 at a mean cost of about 2.5, and MAML with a cost penalty has negative 820 40 0.00 0.25 0.50 0.75              
+
+> return
+> DarkRoom
+> 10 20 0.0 0.1 0.2 0.3
+> return
+> PointGoal
+> 10 20 0.0 0.2 0.4
+> return
+> CarGoal
+> 510 0200 400
+> return
+> HalfCheetah
+> 510 0200 400
+> return
+> Ant
+> 20 40
+> episode
+> 2.5 5.0 7.5 10.0
+> cost
+> 10 20
+> episode
+> 510 15 20
+> cost
+> 10 20
+> episode
+> 10 20
+> cost
+> 510
+> episode
+> 020 40
+> cost
+> 510
+> episode
+> 020 40
+> cost A-Lag Safe AD CDT MAML with penalty SafeMeta
+
+Figure 2: In-context adaptation on the test tasks. Each curve shows the mean episode return or cost over three seeds, with a shaded band of ±2 standard errors. A-Lag starts every deployment at λ = 0, and λ is adjusted during test time by Eq. (9). In DarkRoom, PointGoal and CarGoal the return of A-Lag and Safe AD rises over the episodes while their cost falls. In HalfCheetah and Ant their cost drops sharply after the first episode, and in HalfCheetah the return falls with it. A-Lag’s Ant return also declines across episodes. A-Lag has a lower cost than Safe AD in DarkRoom, CarGoal and Ant, at a lower return. The mean costs are also slightly lower in PointGoal, at a slightly lower return, and in HalfCheetah, where it ends with a higher return. CDT has a higher cost than both in the navigation and velocity tasks and does not find the goal in DarkRoom. return at a cost below 1. In DarkRoom and the navigation tasks their return does not rise steadily over the episodes. These curves come from a different protocol and are shown only for context. 
+
+5.4 RQ3: Budget Violations 
+
+Prior Safe ICRL work evaluates safety by the mean episode cost (Moeini et al., 2026; Kwon et al., 2026c). This is not enough, because budgets differ between deployments, so a low mean cost can still hide frequent or large budget violations. In HalfCheetah, for example, A-Lag has a lower mean cost than Safe AD but goes over its budget more often (Table 6). Hence, we also report how often a method exceeds its budget and by how much. Figure 3 shows how often and by how much each method goes over its budget during a deployment. A-Lag’s violation rate and excess cost drop after the first episode in every environment. In Ant, Safe AD’s violation rate drops at the second episode but rises again over the remaining episodes, while A-Lag’s stays low. A-Lag has a lower mean violation rate than Safe AD in DarkRoom, PointGoal, CarGoal and Ant. The reductions in DarkRoom, CarGoal and Ant are 0.049, 0.043 and 0.172, but as RQ2 showed it also returns less there. In PointGoal the mean violation rates are 0.137 for A-Lag and 0.139 for Safe AD. In HalfCheetah A-Lag violates more often. Compared with λ = 0 (Appendix H), the multiplier lowers the mean violation rate in all five environments. The smallest mean reduction is in PointGoal. In HalfCheetah A-Lag at λ = 0 already violates more often than Safe AD, and the multiplier reduces it. 920 40 0.1 0.2 0.3 0.4            
+
+> violation rate
+> DarkRoom
+> 10 20 0.10 0.15 0.20 0.25
+> violation rate
+> PointGoal
+> 10 20 0.2 0.3
+> violation rate
+> CarGoal
+> 510 0.1 0.2 0.3 0.4
+> violation rate
+> HalfCheetah
+> 510 0.2 0.3 0.4
+> violation rate
+> Ant
+> 20 40
+> episode
+> 0.5 1.0 1.5
+> excess cost
+> 10 20
+> episode
+> 510 15
+> excess cost
+> 10 20
+> episode
+> 510 15
+> excess cost
+> 510
+> episode
+> 020 40
+> excess cost
+> 510
+> episode
+> 020 40
+> excess cost A-Lag Safe AD CDT
+
+Figure 3: Violation rate and excess cost max(0 , G c − B0) over the episodes of a deployment on the test tasks. Each curve is the mean over three seeds, with a shaded band of ±2 standard errors. Averaged over the episodes, A-Lag has the lowest excess cost in DarkRoom, PointGoal, CarGoal and HalfCheetah and is close to Safe AD in Ant. In most later DarkRoom episodes CDT, which does not find the goal, is lower. 
+
+Why the violation rate and the excess cost disagree. The excess cost is the violation rate times the average amount by which a violating episode exceeds its budget, 
+
+E[max(0 , G c − B0)] = Pr( Gc > B 0) E[Gc − B0 | Gc > B 0
+
+]. (11) A method can therefore go over its budget less often than another and still have the same excess cost, if it exceeds the budget by more each time, and the reverse. In Ant, A-Lag’s violation rate is 0.184, about half of Safe AD’s 0.356, yet both have an excess cost of about 2.2, because a violating A-Lag episode exceeds its budget by about 12 on average against 6 for Safe AD. The multiplier adds to this, since compared with λ = 0 it lowers the violation rate from 0.210 to 0.184 but raises the excess cost from 1.56 to 2.23. HalfCheetah goes the other way. There A-Lag goes over the budget more often than Safe AD, 0.158 against 0.123, but by about 13 each time against 20, so its excess cost is 0.47 lower. In the other three environments the two measures move in the same direction. In DarkRoom, where it does not find the goal, CDT violates the budget least often of the three methods, 0.108, and its excess cost of 0.43 lies between A-Lag’s 0.39 and Safe AD’s 0.60. In the navigation tasks, CDT goes over the budget more often than Safe AD, 0.195 and 0.270 against 0.139 and 0.207, with a higher excess cost, 8.5 and 9.5 against 4.2 and 5.8. In the velocity tasks, it also violates more often, 0.239 and 0.364 against 0.123 and 0.356, and its excess cost is 20.2 and 40.5 against Safe AD’s 2.5 and 2.2. 
+
+Additional analyses. For Table 7, we sweep fixed values of λ from 0.3 to 1000 on training tasks (Ap-pendix E). A larger multiplier lowers the return and usually the violation rate, so we compare the adaptive multiplier with the fixed value that has the lowest violation rate among those whose return is not clearly below that at λ = 0. Compared with λ = 0, the multiplier lowers mean cost in every environment but Ant (Appendix H). Per seed, A-Lag’s cost is lower than Safe AD’s in all three seeds in CarGoal and Ant and in two of three elsewhere (Appendix I). In the expert-share study, A-Lag has a lower mean cost than Safe AD in 16 of 25 combinations of environment and share of q = 1 histories, so the main result does not hold for every data mixture (Appendix G). In DarkRoom, dynamic budgets also lower the violation rate, by 0.085 for Safe AD and 0.097 for A-Lag (Appendix H). 10 6 Related Work 
+
+In-Context Reinforcement Learning. Adapting to new tasks without parameter updates has roots in recurrent meta-RL (Duan et al., 2016; Wang et al., 2016; Beck et al., 2025; Moeini et al., 2025). Mod-ern ICRL instead pretrains a fixed sequence policy to improve through its interaction history. Algorithm Distillation learns from complete RL learning histories (Laskin et al., 2023; Zisman et al., 2024), whereas supervised pretraining methods learn from pretrained policies or action labels (Lee et al., 2023; Xu et al., 2022; Huang et al., 2024), and the Decision Importance Transformer weights the imitation loss by learned advantages so that it can learn from suboptimal histories (Dong et al., 2026). Later work covers multi-task agents, varied action spaces and in-context Q-learning (Grigsby et al., 2024a;b; Sinii et al., 2024; Polubarov et al., 2025; Liu et al., 2026), and theory studies when Transformers learn in context (Lin et al., 2024; Wang et al., 2025a;b). Recent analyses connect temporal-difference policy evaluation to specific Transformer constructions, including softmax attention (Xie et al., 2026b) and chain-of-thought generation with linear Transformers (Xie et al., 2026a). These works mainly study reward maximization. 
+
+Safe Reinforcement Learning. Safe RL commonly uses CMDPs to maximize reward subject to expected-cost constraints (García & Fernández, 2015; Gu et al., 2024; Wachi et al., 2024). Policy optimization (Achiam et al., 2017; Zhang et al., 2020; Yang et al., 2020; Xu et al., 2021; Yang et al., 2022; Bai et al., 2023), safe exploration (Wachi & Sui, 2020; As et al., 2025) and runtime shielding (Kwon et al., 2026a) update a policy or model online, or filter actions, rather than distilling an adaptation algorithm into context. Offline sequence policies, including CDT and safety-conditioned variants (Liu et al., 2023; Wang & Zhou, 2024; Guo et al., 2024), condition on return and cost but do not target repeated contextual adaptation to unseen CMDPs. Other work handles changing budgets within a known task, by conditioning one policy on the cost threshold (Yao et al., 2023) or by inferring trajectories for a budget set at deployment from offline data (Lin et al., 2023). 
+
+Safe In-Context and Meta Reinforcement Learning. Safe meta-RL adapts to constrained tasks through gradient updates or additional task-specific data (Luo et al., 2021; Khattar et al., 2023; Guan et al., 2024; Xu & Zhu, 2025). Safe ICRL instead keeps parameters fixed. SCARED formalizes this setting and uses budget-sensitive Lagrangian pretraining (Moeini et al., 2026). More recently, latent Q-barrier shielding adds an explicit deployment-time filter that reweights actions from a frozen Safe ICRL policy using predicted future cost (Kwon et al., 2026c). A-Lag also acts at deployment, but it penalizes only the predicted immediate cost, with one multiplier per deployment updated from realized episode costs. 
+
+## 7 Conclusion 
+
+We revisited the histories AD distills and the way the distilled policy uses the budget, with a budget-aware teacher and A-Lag, a deployment-time Lagrange multiplier. A-Lag had a lower mean cost than Safe AD in all five environments, with lower mean final return in four. Against fixed multipliers, the adaptive multiplier had lower mean cost in four environments, but higher cost and return in Ant. Dynamic budgets during data collection gave higher occupancy entropy of the return and budget inputs in every environment and, in DarkRoom, improved both return and violation rate. Unlike prior Safe ICRL evaluations, which report the mean episode cost, we also report how often and by how much each method exceeds its budget. In HalfCheetah, A-Lag has a lower mean cost than Safe AD but exceeds its budget more often, and in Ant and HalfCheetah the violation rate and the excess cost disagree, so both should be reported. Our study has limits. The cost head predicts only immediate cost and is learned only from the actions the teacher took. The teacher also requires environment-specific search, experts and switching events. 
+
+## References 
+
+Joshua Achiam, David Held, Aviv Tamar, and Pieter Abbeel. Constrained policy optimization. In Proceedings of the International Conference on Machine Learning , 2017. Eitan Altman. Constrained Markov Decision Processes: Stochastic Modeling . Routledge, 2021. 11 Yarden As, Bhavya Sukhija, Lenart Treven, Carmelo Sferrazza, Stelian Coros, and Andreas Krause. Actsafe: Active exploration with safety constraints for reinforcement learning. In Proceedings of the International Conference on Learning Representations , 2025. Qinbo Bai, Amrit Singh Bedi, and Vaneet Aggarwal. Achieving zero constraint violation for constrained reinforcement learning via conservative natural policy gradient primal-dual algorithm. In Proceedings of the AAAI Conference on Artificial Intelligence , 2023. Jacob Beck, Risto Vuorio, Evan Zheran Liu, Zheng Xiong, Luisa Zintgraf, Chelsea Finn, and Shimon White-son. A tutorial on meta-reinforcement learning. Foundations and Trends in Machine Learning , 2025. Carolin Benjamins, Theresa Eimer, Frederik Günter Schubert, Aditya Mohan, Sebastian Döhler, André Biedenkapp, Bodo Rosenhahn, Frank Hutter, and Marius Lindauer. Contextualize me – the case for context in reinforcement learning. Transactions on Machine Learning Research , 2023. Lili Chen, Kevin Lu, Aravind Rajeswaran, Kimin Lee, Aditya Grover, Misha Laskin, Pieter Abbeel, Aravind Srinivas, and Igor Mordatch. Decision transformer: Reinforcement learning via sequence modeling. In 
+
+Advances in Neural Information Processing Systems , 2021. Juncheng Dong, Moyang Guo, Ethan X. Fang, Zhuoran Yang, and Vahid Tarokh. In-context reinforcement learning from suboptimal historical data, 2026. URL https://arxiv.org/abs/2601.20116 .Yan Duan, John Schulman, Xi Chen, Peter L Bartlett, Ilya Sutskever, and Pieter Abbeel. RL 2: Fast reinforcement learning via slow reinforcement learning, 2016. URL https://arxiv.org/abs/1611.02779 .Chelsea Finn, Pieter Abbeel, and Sergey Levine. Model-agnostic meta-learning for fast adaptation of deep networks. In Proceedings of the International Conference on Machine Learning , 2017. Javier García and Fernando Fernández. A comprehensive survey on safe reinforcement learning. Journal of Machine Learning Research , 2015. Jake Grigsby, Linxi Fan, and Yuke Zhu. Amago: Scalable in-context reinforcement learning for adaptive agents. In Proceedings of the International Conference on Learning Representations , 2024a. Jake Grigsby, Justin Sasek, Samyak Parajuli, Ikechukwu D Adebi, Amy Zhang, and Yuke Zhu. Amago-2: Breaking the multi-task barrier in meta-reinforcement learning with transformers. In Advances in Neural Information Processing Systems , 2024b. Shangding Gu, Long Yang, Yali Du, Guang Chen, Florian Walter, Jun Wang, and Alois Knoll. A review of safe reinforcement learning: Methods, theories, and applications. IEEE Transactions on Pattern Analysis and Machine Intelligence , 2024. Cong Guan, Ruiqi Xue, Ziqian Zhang, Lihe Li, Yi-Chen Li, Lei Yuan, and Yang Yu. Cost-aware offline safe meta reinforcement learning with robust in-distribution online task adaptation. In Proceedings of the International Conference on Autonomous Agents and Multiagent Systems , 2024. Zijian Guo, Weichao Zhou, and Wenchao Li. Temporal logic specification-conditioned decision transformer for offline safe reinforcement learning. In Proceedings of the International Conference on Machine Learning ,2024. Sili Huang, Jifeng Hu, Hechang Chen, Lichao Sun, and Bo Yang. In-context decision transformer: rein-forcement learning via hierarchical chain-of-thought. In Proceedings of the International Conference on Machine Learning , 2024. Jiaming Ji, Borong Zhang, Jiayi Zhou, Xuehai Pan, Weidong Huang, Ruiyang Sun, Yiran Geng, Yifan Zhong, Josef Dai, and Yaodong Yang. Safety gymnasium: A unified safe reinforcement learning benchmark. In 
+
+Advances in Neural Information Processing Systems , 2023. 12 Vanshaj Khattar, Yuhao Ding, Bilgehan Sel, Javad Lavaei, and Ming Jin. A CMDP-within-online frame-work for meta-safe reinforcement learning. In Proceedings of the International Conference on Learning Representations , 2023. Robert Kirk, Amy Zhang, Edward Grefenstette, and Tim Rocktäschel. A survey of zero-shot generalisation in deep reinforcement learning. Journal of Artificial Intelligence Research , 2023. Louis Kirsch, James Harrison, C. Freeman, Jascha Sohl-Dickstein, and Jürgen Schmidhuber. Towards general-purpose in-context learning agents. In NeurIPS Foundation Models for Decision Making Workshop ,2023. Minjae Kwon, Tyler Ingebrand, Ufuk Topcu, and Lu Feng. Adaptive shielding for safe reinforcement learning under hidden-parameter dynamics shifts, 2026a. URL https://arxiv.org/abs/2506.11033 .Minjae Kwon, Josephine Lamp, and Lu Feng. Safety generalization under distribution shift in safe reinforce-ment learning: A diabetes testbed. In Proceedings of the International Conference on Machine Learning ,2026b. Minjae Kwon, Amir Moeini, Shangtong Zhang, and Lu Feng. Latent q-barrier shielding for safe in-context reinforcement learning, 2026c. URL https://arxiv.org/abs/2605.25267 .Michael Laskin, Luyu Wang, Junhyuk Oh, Emilio Parisotto, Stephen Spencer, Richie Steigerwald, DJ Strouse, Steven Stenberg Hansen, Angelos Filos, Ethan Brooks, Maxime Gazeau, Himanshu Sahni, Satinder Singh, and Volodymyr Mnih. In-context reinforcement learning with algorithm distillation. In 
+
+Proceedings of the International Conference on Learning Representations , 2023. Jonathan Lee, Annie Xie, Aldo Pacchiano, Yash Chandak, Chelsea Finn, Ofir Nachum, and Emma Brunskill. Supervised pretraining can learn in-context reinforcement learning. In Advances in Neural Information Processing Systems , 2023. Licong Lin, Yu Bai, and Song Mei. Transformers as decision makers: Provable in-context reinforcement learning via supervised pretraining. In Proceedings of the International Conference on Learning Represen-tations , 2024. Qian Lin, Bo Tang, Zifan Wu, Chao Yu, Shangqin Mao, Qianlong Xie, Xingxing Wang, and Dong Wang. Safe offline reinforcement learning with real-time budget constraints. In Proceedings of the International Conference on Machine Learning , 2023. Jinmei Liu, Fuhong Liu, Zhenhong Sun, Jianye Hao, Huaxiong Li, Bo Wang, Daoyi Dong, Chunlin Chen, and Zhi Wang. Scalable in-context q-learning. In Proceedings of the International Conference on Learning Representations , 2026. Zuxin Liu, Zijian Guo, Yihang Yao, Zhepeng Cen, Wenhao Yu, Tingnan Zhang, and Ding Zhao. Constrained decision transformer for offline safe reinforcement learning. In Proceedings of the International Conference on Machine Learning , 2023. Michael Luo, Ashwin Balakrishna, Brijen Thananjeyan, Suraj Nair, Julian Ibarz, Jie Tan, Chelsea Finn, Ion Stoica, and Ken Goldberg. Mesa: Offline meta-rl for safe adaptation and fault tolerance. In NeurIPS Workshop on Safe and Robust Control of Uncertain Systems , 2021. Amir Moeini, Jiuqi Wang, Jacob Beck, Ethan Blaser, Shimon Whiteson, Rohan Chandra, and Shangtong Zhang. A survey of in-context reinforcement learning, 2025. URL https://arxiv.org/abs/2502.07978 .Amir Moeini, Minjae Kwon, Alper Kamil Bozkurt, Yuichi Motai, Rohan Chandra, Lu Feng, and Shangtong Zhang. Safe in-context reinforcement learning, 2026. URL https://arxiv.org/abs/2509.25582 .Andrei Polubarov, Nikita Lyubaykin, Alexander Derevyagin, Ilya Zisman, Denis Tarasov, Alexander Nikulin, and Vladislav Kurenkov. Vintix: Action model via in-context reinforcement learning. In Proceedings of the International Conference on Machine Learning , 2025. 13 Sharath Chandra Raparthy, Eric Hambro, Robert Kirk, Mikael Henaff, and Roberta Raileanu. Generalization to new sequential decision making tasks with in-context learning. In Proceedings of the International Conference on Machine Learning , 2024. Alex Ray, Joshua Achiam, and Dario Amodei. Benchmarking safe exploration in deep reinforcement learning. Technical report, OpenAI, 2019. A Run and Ziluo Ding. In-context reinforcement learning under non-stationarity: A survey, 2026. URL 
+
+https://arxiv.org/abs/2607.11906 .Viacheslav Sinii, Alexander Nikulin, Vladislav Kurenkov, Ilya Zisman, and Sergey Kolesnikov. In-context re-inforcement learning for variable action spaces. In Proceedings of the International Conference on Machine Learning , 2024. Kefan Song, Amir Moeini, Peng Wang, Lei Gong, Rohan Chandra, Shangtong Zhang, and Yanjun Qi. Reward is enough: LLMs are in-context reinforcement learners. In Proceedings of the International Conference on Learning Representations , 2026. Akifumi Wachi and Yanan Sui. Safe reinforcement learning in constrained markov decision processes. In 
+
+Proceedings of the International Conference on Machine Learning , 2020. Akifumi Wachi, Xun Shen, and Yanan Sui. A survey of constraint formulations in safe reinforcement learning. In Proceedings of the International Joint Conference on Artificial Intelligence , 2024. Jane X Wang, Zeb Kurth-Nelson, Dhruva Tirumala, Hubert Soyer, Joel Z Leibo, Remi Munos, Charles Blundell, Dharshan Kumaran, and Matt Botvinick. Learning to reinforcement learn, 2016. URL https: //arxiv.org/abs/1611.05763 .Jiuqi Wang, Ethan Blaser, Hadi Daneshmand, and Shangtong Zhang. Transformers can learn temporal difference methods for in-context reinforcement learning. In Proceedings of the International Conference on Learning Representations , 2025a. Jiuqi Wang, Rohan Chandra, and Shangtong Zhang. Towards provable emergence of in-context reinforcement learning. In Advances in Neural Information Processing Systems , 2025b. Ruhan Wang and Dongruo Zhou. Safe decision transformer with learning-based constraints. In NeurIPS Safe Generative AI Workshop , 2024. Zixuan Xie, Xinyu Liu, Rohan Chandra, and Shangtong Zhang. Convergence and emergence of in-context reinforcement learning with chain of thought, 2026a. URL https://arxiv.org/abs/2605.07123 .Zixuan Xie, Xinyu Liu, Claire Chen, Shuze Daniel Liu, Rohan Chandra, and Shangtong Zhang. Beyond linear attention: Softmax transformers implement in-context reinforcement learning, 2026b. URL https: //arxiv.org/abs/2605.07333 .Mengdi Xu, Yikang Shen, Shun Zhang, Yuchen Lu, Ding Zhao, Joshua Tenenbaum, and Chuang Gan. Prompting decision transformer for few-shot policy generalization. In Proceedings of the International Conference on Machine Learning , 2022. Siyuan Xu and Minghui Zhu. Efficient safe meta-reinforcement learning: Provable near-optimality and anytime safety. In Advances in Neural Information Processing Systems , 2025. Tengyu Xu, Yingbin Liang, and Guanghui Lan. Crpo: A new approach for safe reinforcement learning with convergence guarantee. In Proceedings of the International Conference on Machine Learning , 2021. Long Yang, Jiaming Ji, Juntao Dai, Linrui Zhang, Binbin Zhou, Pengfei Li, Yaodong Yang, and Gang Pan. Constrained update projection approach to safe policy optimization. In Advances in Neural Information Processing Systems , 2022. 14 Tsung-Yen Yang, Justinian Rosca, Karthik Narasimhan, and Peter J. Ramadge. Projection-based constrained policy optimization. In Proceedings of the International Conference on Learning Representations , 2020. Yihang Yao, Zuxin Liu, Zhepeng Cen, Jiacheng Zhu, Wenhao Yu, Tingnan Zhang, and Ding Zhao. Constraint-conditioned policy optimization for versatile safe reinforcement learning. In Advances in Neural Information Processing Systems , 2023. Yiming Zhang, Quan Vuong, and Keith W. Ross. First order constrained optimization in policy space. In 
+
+Advances in Neural Information Processing Systems , 2020. Ilya Zisman, Vladislav Kurenkov, Alexander Nikulin, Viacheslav Sinii, and Sergey Kolesnikov. Emergence of in-context reinforcement learning from noise distillation. In Proceedings of the International Conference on Machine Learning , 2024. 15 (a) Training Environments (b) Evaluation Environments DarkRoom PointGoal CarGoal 
+
+Figure 4: Example training and evaluation layouts, adapted from Moeini et al. (2026). Training layouts are center-oriented, whereas evaluation layouts are edge-oriented. We use this shift for the DarkRoom, PointGoal and CarGoal test tasks. 
+
+## A Environments and Task Splits 
+
+In each environment the tasks are split into training and test sets. Following Moeini et al. (2026), layouts are sampled with density ∝ exp( α d (x, c )), where d(x, c ) is the distance from the center of the grid or arena. A negative α favors the center and a positive α the edge. • DarkRoom is a partially observed 13 × 13 grid with one hidden goal and 50 hidden obstacles, and the agent starts at the center. Training uses 103 goals with three obstacle maps each, with goals and obstacles drawn with α = −0.5 (center oriented). The test set has 32 other goals, none of them a training goal, each paired with a new obstacle map. Test goals and obstacles are drawn from edge-oriented distributions. • PointGoal and CarGoal are continuous navigation tasks with a broken lidar, so the agent cannot sense goals or hazards until it reaches or touches them. Goals and hazards are both placed with this density. Training uses 128 center-oriented layouts with α = −0.2. The test set has 30 edge-oriented layouts with α = +0 .2, which put goals and hazards where they are rare in training. • In HalfCheetah and Ant the hidden velocity limit is the default velocity threshold of Safety-Gymnasium times a factor in [0 .5, 2.0] (Ji et al., 2023). Training uses 64 factors and the test set 30 other factors. Figure 4 shows example training and test layouts. 16 B Teacher Data Details 
+
+Table 3 summarizes the environment-specific parts of the teacher of Section 3.2 and the size of the collected data. This appendix gives the details. 
+
+Shared setup. The budget range [ Bmin , B max ] is [1 , 15] in DarkRoom, [10 , 50] in PointGoal and CarGoal, and [0 , 15] in the velocity tasks. We write B = Bkt for the remaining budget of Eq. (1), which restarts at B0
+
+in every episode. The teacher remembers, across the K in-context episodes, where it has been, where it paid cost and, once found, the task. Search explores more when more budget remains. The expert uses the best behavior it knows whose cost fits B. Histories of the same task and budget differ by the teacher’s random seed, which sets the Gaussian action noise (standard deviation 0.1 in the navigation tasks and 0.05 in the velocity tasks), the tie-breaking order of the sweep, the first speed and the speed step, which varies by up to 10%. 
+
+DarkRoom. 
+
+•Switching event: the first reward. Its position is the goal. •Search: at each cell, the teacher tries a move it has not tried yet with probability 0 .1+0 .9 min( B/B max , 1), and otherwise waits. After two waits in a row it must try a move. A move that incurred cost is never tried again. When no untried move is left at its cell, it walks the shortest known path to the nearest cell that has one. •Expert: it follows the shortest known path to the goal, which has no observed cost, and then stays on the goal. 
+
+PointGoal and CarGoal. 
+
+•Switching event: the first reward. Its position gives the goal. •Planner: a shortest-path planner on a 0.1 m grid with 8-connected moves. A path costs its length plus a penalty for each cell it enters within 0.25 m of a position where cost was observed. The penalty is 1000 while B < B 0/2 and 0.3 otherwise. Ground with no observed cost has no penalty, so the teacher avoids a hazard only after it has paid cost there in the same K in-context episodes. With no budget left, the robot only leaves ground with known cost and then stands still. •Search: the planner drives to the nearest unvisited point of a 0.5 m grid over the arena. While B < B 0/2, it skips grid points within 0.35 m of observed cost. •Expert: the planner drives to the estimated goal, the mean position of the rewarded steps. •Control: a PPO waypoint controller drives toward a point 0.6 m ahead on the planned path. 
+
+HalfCheetah and Ant. 
+
+•Switching event: the first cost, which means the robot ran faster than the hidden threshold. This only bounds the threshold, and the expert keeps narrowing it. •Search: the first speed is drawn per history from [0 .8, 1.2] m/s (HalfCheetah) or [0 .5, 0.8] m/s (Ant). Every 25 steps the teacher raises the commanded speed by about 0.5 m/s (HalfCheetah) or 0.35 m/s (Ant), as long as B covers another probe. At the first cost it returns to the last cost-free speed. •Expert: it commands the slowest speed at which it has observed cost, as long as B covers that speed’s cost per step, and otherwise the fastest speed it has held without cost. When enough budget remains at the start of an episode, it first spends 25 steps at the midpoint between these two speeds, which narrows the gap between them. •Rules for both phases: each episode starts with 25 steps at the fastest cost-free speed found so far. Aprobe needs a reserve of at least 1 plus a running estimate of the cost paid while slowing down after a step down in speed (initially 1). Cost in the first 10 steps after a change of command is not attributed to the new command. If cost appears at a speed believed to be safe, that speed is lowered by half a step. •Control: a PPO speed controller tracks the commanded speed. 17 PPO controllers. Each controller is a PPO policy with two hidden layers of 128 units. Training takes 6M, 8M, 20M and 30M steps in PointGoal, CarGoal, HalfCheetah and Ant, with a checkpoint every 10% of training. The environment’s own reward and cost are not used. The waypoint controllers of PointGoal and CarGoal see the robot’s accelerometer, velocimeter, gyroscope and magnetometer (CarGoal also its rear wheel sensors) and the target’s position relative to the robot. They are trained on targets drawn uniformly over the arena at least 0.6 m away, and are rewarded for progress toward the target with a bonus for reaching it. The speed controllers of HalfCheetah and Ant see the environment observation and the target speed. They are trained on target speeds in [0 .5, 7] m/s and [0 .25 , 5.5] m/s and rewarded for tracking them. 
+
+Quality levels. The q = 1 controllers are the checkpoints with the best validation score, saved at 10%, 30%, 100% and 80% of training in PointGoal, CarGoal, HalfCheetah and Ant. For q ≈ 0.5, we measured q
+
+(Eq. (3)) on calibration tasks outside the training set, for candidate checkpoints or, in DarkRoom, candidate random-action probabilities. We took the candidate closest to 0.5 within [0 .4, 0.6]. Table 2 gives the chosen q
+
+and how often the teacher goes over its budget in the dynamic-budget histories. With the q ≈ 0.5 expert, the Table 2: Chosen quality of the weaker expert and the share of teacher episodes over budget in the dynamic-budget histories.                          
+
+> Chosen qEpisodes over budget Environment (q≈0.5 level) q≈0.5q= 1 DarkRoom (random-action probability 0.3) 0.49 5.3% 5.0% PointGoal 0.55 25.8% 11.5% CarGoal 0.43 33.4% 12.7% HalfCheetah 0.44 25.6% 12.3% Ant 0.51 12.5% 7.3%
+
+teacher also has a higher cost in every environment: three to four times as high in PointGoal and CarGoal, and only slightly higher in Ant (2.83 against 2.80 per in-context episode). It finds the task less often in PointGoal, HalfCheetah and Ant, in 66%, 73% and 54% of the histories, against 87% to 98% with q = 1. 
+
+Training mixture. We collect 16 histories per task, budget regime and quality level. The main models train on the dynamic-budget histories of both quality levels, half of the histories from each. Counted in steps, the split is also even in DarkRoom and the velocity tasks. In PointGoal and CarGoal the q ≈ 0.5episodes are longer (about 56 against 23 steps), so the q = 1 histories supply about 29% of the training steps. The expert-share models of Appendix G use 16 dynamic-budget histories per task, of which 0, 4, 8, 12 or 16 come from the q = 1 expert and the rest from the q ≈ 0.5 expert. 
+
+What the teacher sees. To check that the teacher uses only what the student sees, we run it again on the logged observations alone. In DarkRoom this reproduces every history. In the other environments we ran this check on separate histories collected the same way, not on the training histories. 
+
+## C Training Details 
+
+Baselines. The sequence models share the backbone in Table 4 and the same tokenization, four tokens per step for state, action, reward, and cost. Safe AD and A-Lag add both RTG and CTG embeddings to the state token at every step. A-Lag also has the cost head, which changes actions only through the deployment-time multiplier. In our CDT implementation, RTG and CTG are carried by context-level prefix tokens rather than per step. This differs from the original CDT, which conditions on return and cost at every step, and CDT uses the same training settings as Safe AD and A-Lag rather than separately tuned ones. The fixed-budget models of RQ1 differ from the main models only in the training data. The two gradient-based safe meta-RL baselines, MAML with a cost penalty and SafeMeta, adapt policy parameters on each evaluation task and therefore share none of this backbone. They keep the settings of the preliminary study (bottom of Table 4). 18 Table 3: The teacher and its data. Top: the environment-specific parts of the teacher. Everything else is shared by all five environments. Bottom: teacher data per environment, over both budget regimes and both quality levels.                                                     
+
+> Environment Switching event Search Expert of quality q
+> DarkRoom first reward, at the goal tries new moves, more of-ten when more budget is left. Never repeats a move that cost takes the shortest known path without cost. For q < 1, mixes in random actions at a fixed rate PointGoal, CarGoal first reward, at the goal drives through a grid of points over the arena. Goes less far around known hazards when more budget is left drives to the goal position es-timated from the history, using a PPO controller. For q<1, the controller is saved earlier in training HalfCheetah, Ant first cost, from running too fast runs faster every 25 steps while the budget allows another try runs at the fastest speed whose known cost fits the budget, us-ing a PPO controller. For q < 1, the controller is saved earlier in training Environment Training tasks KHistories Steps DarkRoom 309 (103 goals ×3 maps) 50 19,776 29.7M PointGoal 128 layouts 20 8,192 6.5M CarGoal 128 layouts 20 8,192 6.3M HalfCheetahVelocity 64 thresholds 10 4,096 8.2M AntVelocity 64 thresholds 10 4,096 8.2M
+
+A-Lag implementation. The cost head is one linear layer on the state-position representation up. For discrete actions it outputs one score per action. For continuous actions it outputs b, gd and a raw curvature per action dimension, with κd the softplus of the raw value. At initialization b = gd = 0 and κd = 10 −3, so the reweighted policy starts close to the base policy. The loss weight is ηC = 1 in every environment. The reweighted Gaussian of Section 4.2 is the distribution of the sampled action before any clipping to the action range, and Proposition 1 concerns that distribution. Within an episode the RTG and CTG inputs fall by the received reward and the incurred cost, the CTG not below zero, and both restart at their deployment values in the next episode. 
+
+Hyperparameter Details. Table 4 reports the configurations used in our experiments. All sequence models are trained with AdamW ( β = (0 .9, 0.99), weight decay 0 .01, gradient-norm clipping at 1 .0) under a cosine schedule with warmup over the first 2 .5% (DarkRoom) or 5% (all other environments) of the update budget, for 100,000 updates with seeds 42, 43 and 44, and we evaluate the final checkpoint. CDT trains on the same dynamic-budget histories as Safe AD and A-Lag. PointGoal and CarGoal share the navigation settings below. HalfCheetahVelocity and AntVelocity share the velocity settings. 
+
+## D Teacher-Data Coverage 
+
+We measure how much of the plane of the two per-step control inputs, RTG and CTG, the fixed- and dynamic-budget histories cover. In each environment we rescale each coordinate to [0 , 1], mapping its 1st and 99th percentiles over the fixed- and dynamic-budget data together to 0 and 1 and clipping values outside, so that a few extreme values do not stretch the grid. We then divide the plane into a 20 × 20 grid. We report the number of occupied cells and, with nb steps in cell b, the normalized occupancy entropy 
+
+pb = nb
+
+∑ 
+
+> b′
+
+nb′
+
+, Entropy = −
+
+∑ 
+
+> b:pb>0
+
+pb log pb
+
+log 400 . (12) 19 Table 4: Training settings. Top: the sequence models (Safe AD, A-Lag and CDT). Num Layers is L in Section 4.1. Seq Len counts environment steps, not token positions. Safe AD and A-Lag use four positions per step plus two constant prefix positions. Token Embedding Dim is the width of the per-modality encoders before they are projected to the Hidden Dim. The navigation tasks use four gradient accumulation steps, giving an effective batch size of 32. Action-input dropout sets each component of an action input in the history to zero with the given probability during training. The action targets are unchanged. Bottom: the gradient-based safe meta-RL baselines, SafeMeta and MAML with a cost penalty, as in the preliminary study. The navigation tasks are PointGoal and CarGoal, and the velocity tasks are HalfCheetah and Ant.                                                                               
+
+> Parameter DarkRoom PointGoal/CarGoal Velocity tasks Hidden Dim 256 256 256 Token Embedding Dim 64 128 128 Num Layers 666Num Heads 488Seq Len 100 500 400 Attention Dropout 0.5 0.5 0.1 Residual Dropout 0.3 0.3 0.1 Embedding Dropout 0.2 0.2 0.1 Action-Input Dropout 00.1 0.1 Learning Rate 5×10 −53×10 −43×10 −4
+> Batch Size 256 832 Gradient Accumulation 141Update Budget 100,000 100,000 100,000 In-Context Episodes K50 20 10 Episode Time Limit 30 75 200 Safe meta-RL baselines DarkRoom Navigation and velocity tasks Hidden layers (64, 64) (64, 512, 64) Min/Max batch size 500/1500 1500/1500 Policy learning rate 1e-3 1e-3 Value/Cost learning rate 3e-2/1e-1 3e-2/1e-1 Discount factor γ0.99 0.99 GAE parameter 0.95 0.95 Max KL divergence 1e-3 1e-3 Lagrangian weight 1.0 1.0 Policy optimizer Adam Adam Value/Cost optimizer L-BFGS L-BFGS
+
+Table 1 in Section 5.2 gives the values, and Figure 5 shows the occupancy. We also measured, on the same grid, a window coverage: the plane of return and cost summed over non-overlapping windows of 100 steps in DarkRoom, 500 in PointGoal and CarGoal and 1,000 in the velocity tasks. There the dynamic-budget histories cover slightly less than the fixed-budget ones in DarkRoom and the velocity tasks and about the same in PointGoal and CarGoal. 
+
+## E Deployment-Time Settings and Multiplier Trajectories 
+
+The upper bound λmax in Eq. (9) is fixed per environment on a fixed subset of the training tasks and with the trained A-Lag models, by a fixed rule. A sweep of fixed multipliers λ ∈ { 0.3, 1, 3, 10 , 30 , 100 , 300 , 1000 }
+
+sets the upper bound: λmax is the largest tested value up to which the mean final return stays above 75% of that at λ = 0. This gives λmax = 1 in DarkRoom, 30 in PointGoal, 10 in CarGoal, 10 in HalfCheetah and 30 in Ant (Figure 6). The fixed multiplier of Table 7 comes from the same sweep, by a second fixed rule: among the values up to λmax whose return is not clearly below that at λ = 0 (by its ±2 standard-error band), we take the one with the lowest violation rate. This gives 0.3 in DarkRoom, 1 in PointGoal, 0.3 in 20 0.0 2.5 5.0 7.5 10.0 12.5 15.0                   
+
+> Fixed CTG
+> DarkRoom
+> 010 20 30 40 50
+> PointGoal
+> 010 20 30 40 50
+> CarGoal
+> 0.0 2.5 5.0 7.5 10.0 12.5 15.0
+> HalfCheetah
+> 0.0 2.5 5.0 7.5 10.0 12.5 15.0
+> Ant
+> 0123
+> RTG
+> 0.0 2.5 5.0 7.5 10.0 12.5 15.0
+> Dynamic CTG
+> 01
+> RTG
+> 010 20 30 40 50
+> 01
+> RTG
+> 010 20 30 40 50
+> 0250 500 750 1000
+> RTG
+> 0.0 2.5 5.0 7.5 10.0 12.5 15.0
+> 0200 400 600 800
+> RTG
+> 0.0 2.5 5.0 7.5 10.0 12.5 15.0
+> 10 5
+> 10 4
+> 10 3
+> 10 2
+> 10 1
+> 10 0
+> Step probability
+
+Figure 5: Occupancy of the (RTG, CTG) plane in the teacher data, fixed budgets (top) and dynamic budgets (bottom), both quality levels. Color is the share of steps on a logarithmic scale. In PointGoal and CarGoal the RTG is 0 or 1, so it is drawn as two columns. Under a fixed budget the remaining budget starts at Bmax 
+
+and falls in steps of the incurred cost, which leaves gaps between the CTG values that occur. HalfCheetah and 10 in Ant. In CarGoal no tested value met the rule, so we use the one whose return came closest, 0.3. In every environment the multiplier update uses the step size η = λmax , the bounds [0 , λ max ] and the scale 
+
+Bmax , the upper end of the budget range (15 in DarkRoom, 50 in PointGoal and CarGoal, 15 in the velocity tasks). We chose the step size once in DarkRoom, from {1, 3, 10 } · λmax , and use it in every environment. Figure 7 shows A-Lag’s mean multiplier in each episode on the training tasks, averaged over three seeds. On average the multiplier peaks at 0.25 to 0.46 of λmax , within the first three episodes in the navigation and velocity tasks and around the tenth episode in DarkRoom, and then declines slowly. 
+
+## F Proofs of the A-Lag Properties 
+
+This appendix proves the statements of Section 4.4. The context is fixed throughout, so u = up does not change. We write ˆ c(a) for ˆ c(u, a ) and πθ (a) for πθ (a | u), so that πλ(a) = πθ (a) e−λˆc(a)/Z λ with 
+
+Zλ = Eπθ [e−λˆc]. The last paragraph shows that every expectation used below is finite. 
+
+KL characterization. Since log πλ(a) = log πθ (a) − λˆc(a) − log Zλ, every action distribution π with finite objective satisfies KL( π ∥ πθ ) + λ Eπ [ˆ c] = EA∼π
+
+[
+
+log π(A)
+
+πθ (A) + λˆc(A)
+
+]
+
+= EA∼π
+
+[
+
+log π(A)
+
+πλ(A)
+
+]
+
+− log Zλ = KL( π ∥ πλ) − log Zλ.
+
+The term log Zλ does not depend on π, and KL( π ∥ πλ) ≥ 0 with equality only for π = πλ. Hence πλ is the unique minimizer. 
+
+Proof of Proposition 1. Let Nλ = Eπθ [ˆ c e −λˆc] and Mλ = Eπθ [ˆ c2e−λˆc]. Then Eπλ [ˆ c] = Nλ/Z λ and 
+
+Eπλ [ˆ c2] = Mλ/Z λ. Differentiating under the expectation, which the next paragraph justifies, gives Z′ 
+
+> λ
+
+= −Nλ
+
+and N ′ 
+
+> λ
+
+= −Mλ. Taking the derivative of Nλ/Z λ gives 
+
+ddλ Eπλ [ˆ c] = N ′
+
+> λ
+
+Zλ − NλZ′
+
+> λ
+
+Z2
+
+> λ
+
+= − Mλ
+
+Zλ
+
++
+
+( Nλ
+
+Zλ
+
+)2
+
+= −Eπλ [ˆ c2] + (Eπλ [ˆ c])2 = − Var πλ (ˆ c) ≤ 0.
+
+Exchanging derivative and expectation. For finite action sets every expectation is a finite sum, and the exchange is immediate. In the Gaussian case πθ is a diagonal Gaussian and ˆ c(a) = b + ∑
+
+> d
+
+(gdad + 12 κda2
+
+> d
+
+)
+
+21 1 10 100 1000 0.0 0.5 1.0                                  
+
+> return / return at  λ = 0  DarkRoom ( λmax = 1)
+> 110 100 1000 0.4 0.6 0.8 1.0
+> PointGoal ( λmax = 30)
+> 110 100 1000 0.4 0.6 0.8 1.0
+> CarGoal ( λmax = 10)
+> 110 100 1000 0.0 0.5 1.0
+> HalfCheetah ( λmax = 10)
+> 110 100 1000 −0.5 0.0 0.5 1.0
+> Ant ( λmax = 30)
+> 110 100 1000
+> fixed λ
+> 0.0 0.1 0.2
+> violation rate
+> 110 100 1000
+> fixed λ
+> 0.3 0.4 0.5
+> 110 100 1000
+> fixed λ
+> 0.200 0.225 0.250
+> 110 100 1000
+> fixed λ
+> 0.05 0.10 0.15 0.20
+> 110 100 1000
+> fixed λ
+> 0.10 0.15 0.20
+> fixed λ(±2 standard errors shaded) λ= 0 λmax
+
+Figure 6: Fixed multipliers on the training tasks (the reported A-Lag models, averaged over three seeds). Top: final return relative to λ = 0, with a band of ±2 standard errors of the paired difference. Bottom: violation rate with a band of ±2 standard errors. The wide gray line marks λmax . Larger fixed multipliers lower the return in every environment, and the violation rate in DarkRoom, HalfCheetah and Ant. The violation rate is nonmonotonic in PointGoal and CarGoal and can increase as the multiplier grows, including within the selected range in CarGoal. A-Lag uses this sweep only to set λmax and tunes λ within [0 , λ max ]during the test deployment, from the costs it incurs. 20 40          
+
+> episode
+> 0.00 0.25 0.50 0.75 1.00 ̄
+> λk/λmax
+> DarkRoom ( λmax = 1)
+> 10 20
+> episode
+> 0.00 0.25 0.50 0.75 1.00
+> PointGoal ( λmax = 30)
+> 10 20
+> episode
+> 0.00 0.25 0.50 0.75 1.00
+> CarGoal ( λmax = 10)
+> 510
+> episode
+> 0.00 0.25 0.50 0.75 1.00
+> HalfCheetah ( λmax = 10)
+> 510
+> episode
+> 0.00 0.25 0.50 0.75 1.00
+> Ant ( λmax = 30)
+
+Figure 7: A-Lag’s mean multiplier per episode on the training tasks, as a fraction of λmax , averaged over three seeds. with κd ≥ 0 (Section 4.2). Fix Λ > 0. For λ ∈ [0 , Λ] we have e−λˆc(a) ≤ 1 + e−Λˆ c(a), because the left side is at most 1 when ˆ c(a) ≥ 0 and at most e−Λˆ c(a) when ˆ c(a) < 0. Since κd ≥ 0, e−Λˆ c(a) ≤ e−Λb−Λ ∑  
+
+> dgdad
+
+. For 
+
+k ∈ { 0, 1, 2}, |ˆc(a)|ke−λˆc(a) is therefore bounded, uniformly in λ ∈ [0 , Λ], by a polynomial in a times one plus the exponential of a linear function of a. This bound is integrable under a Gaussian. So Zλ, Nλ and Mλ are finite, and because the bound does not depend on λ, we can differentiate Zλ and Nλ under the expectation on [0 , Λ). Because Λ is arbitrary, this holds for every λ ≥ 0. 
+
+## G Expert Quality 
+
+We train each method on 16 dynamic-budget histories per task, of which 0, 25, 50, 75 or 100% come from the teacher with the q = 1 expert and the rest with the q ≈ 0.5 expert. The main models use 32 histories per task at 50%, so they differ from the 50% runs in data size as well. Figure 8 shows the final return and the mean episode cost on the test tasks, and Table 5 gives the numbers, including the violation rates. In DarkRoom and the velocity tasks, every method that learns the task reaches its highest return at 75 or 100% q = 1 histories and its lowest at 0%, except CDT in HalfCheetah, whose lowest is at 25%. Safe AD, for 22 0 25 50 75 100 0.00 0.25 0.50 0.75 1.00                                   
+
+> final return
+> DarkRoom
+> 025 50 75 100 0.1 0.2 0.3
+> final return
+> PointGoal
+> 025 50 75 100 0.2 0.3 0.4 0.5
+> final return
+> CarGoal
+> 025 50 75 100 200 300 400
+> final return
+> HalfCheetah
+> 025 50 75 100 100 200 300 400 500
+> final return
+> Ant
+> 025 50 75 100
+> q= 1 share (%)
+> 234
+> mean episode cost
+> 025 50 75 100
+> q= 1 share (%)
+> 10 15 20
+> mean episode cost
+> 025 50 75 100
+> q= 1 share (%)
+> 10 15 20 25
+> mean episode cost
+> 025 50 75 100
+> q= 1 share (%)
+> 020 40
+> mean episode cost
+> 025 50 75 100
+> q= 1 share (%)
+> 020 40 60
+> mean episode cost
+> A-Lag Safe AD CDT
+
+Figure 8: Final return and mean episode cost on the test tasks against the share of q = 1 histories (16 histories per task), averaged over three seeds, with bands of ±2 standard errors. The main models and the violation rates are in Table 5. example, returns 1.087 at 100% against 0.709 at 0% in DarkRoom and 462.5 against 166.4 in HalfCheetah. The cost does not follow the return. Safe AD at 100% costs more than at 75% in HalfCheetah and Ant, and it also violates the budget more often there. In the velocity tasks A-Lag’s cost at 100% is lower than at 0%. CDT’s cost grows with its return in the velocity tasks. PointGoal reverses the trend for Safe AD and A-Lag. Their return is highest at 0% and lowest at 100%, while CDT’s is highest at 75%. In CarGoal, Safe AD and A-Lag return less at every share than on the main data, which has twice as many histories per task, while CDT at 25% matches its main model. 
+
+## H Additional Results 
+
+Table 6 gives the numbers behind RQ2 and RQ3. 
+
+Multiplier ablation. We evaluate the same A-Lag model at λ = 0. Only the multiplier differs, so this comparison measures its effect without retraining. The cost loss trains the cost head without updating the backbone, so A-Lag at λ = 0 uses the same policy-training loss as Safe AD, and differences between the two can come from training variation (Table 8). The multiplier lowers mean cost in every environment but Ant. It lowers return in DarkRoom and CarGoal, by 0.044 and 0.045, and slightly in HalfCheetah and Ant. In Ant, A-Lag’s lower cost than Safe AD is already present at λ = 0, which also returns 61.9 less than Safe AD. Applying the multiplier raises Ant’s cost. Table 6 gives the full comparison. 
+
+Adaptive vs. fixed multiplier. Table 7 compares the adaptive multiplier with a fixed one chosen on training tasks, on the same weights. The two rules differ in penalty size as well as in feedback. On training tasks the adaptive multiplier peaks at 0.25 to 0.46 of λmax (Figure 7), above the fixed value in PointGoal, CarGoal and HalfCheetah, similar to it in DarkRoom and below it in Ant. The adaptive one lowers the mean violation rate in DarkRoom and HalfCheetah, by 0.010 and 0.022. Its mean return is about the same in DarkRoom and lower in HalfCheetah. In Ant it returns 12.0 more at a higher cost. In PointGoal it returns more at a lower cost, with the same violation rate. In HalfCheetah the fixed λ = 0 .3 performs almost like 
+
+λ = 0 (Table 6), so there the comparison is close to one against no multiplier. In CarGoal the adaptive multiplier lowers the mean violation rate by 0.023 and also lowers mean return. It also lowers the excess cost in every environment but Ant. 23 Table 5: Expert-share study on the test split: final return, mean episode cost and violation rate of models trained on 16 dynamic-budget histories per task with the given share of the q = 1 expert (the rest q ≈ 0.5), and of the main models (50%, 32 histories per task). Means over three seeds. Bold marks the best value in each row: the highest return and the lowest cost and violation rate. 
+
+Final return 
+
+Environment Method 0% 25% 50% 75% 100% Main DarkRoom Safe AD 0.709 0.853 0.900 0.777 1.087 0.894 CDT 0.014 0.012 0.010 0.009 0.009 0.010 A-Lag 0.731 0.872 0.846 0.777 0.984 0.832 PointGoal Safe AD 0.205 0.159 0.171 0.172 0.142 0.173 CDT 0.218 0.211 0.263 0.348 0.270 0.326 A-Lag 0.209 0.199 0.167 0.155 0.115 0.164 CarGoal Safe AD 0.280 0.276 0.350 0.319 0.377 0.489 
+
+CDT 0.201 0.482 0.435 0.394 0.366 0.468 A-Lag 0.309 0.295 0.330 0.349 0.329 0.461 
+
+HalfCheetah Safe AD 166 .4 185 .1 199 .9 303 .5 462 .5 206 .7CDT 240 .0 215 .5 219 .8 460 .8 349 .9 284 .9A-Lag 168 .6 176 .6 227 .1 267 .0 386 .1 218 .5Ant Safe AD 188 .7 270 .9 346 .0 295 .8 419 .2 350 .9CDT 89 .0 273 .0 470 .0 466 .1 516 .2 387 .0A-Lag 204 .6 263 .4 269 .8 333 .6 391 .4 286 .4
+
+Mean episode cost 
+
+Environment Method 0% 25% 50% 75% 100% Main DarkRoom Safe AD 4.27 3.69 3.91 3.62 4.16 3.85 CDT 2.04 2.23 2.21 2.30 2.24 2.14 A-Lag 3.88 3.75 3.81 4.68 4.01 3.45 
+
+PointGoal Safe AD 13 .54 10 .89 9.97 9.48 9.44 10 .04 CDT 22 .07 18 .90 16 .43 18 .11 16 .61 16 .98 A-Lag 13 .13 12 .25 8.08 8.66 8.31 9.69 CarGoal Safe AD 22 .34 11 .58 12 .19 14 .71 16 .53 14 .77 CDT 26 .49 21 .32 22 .64 22 .35 22 .94 20 .97 
+
+A-Lag 22 .27 11 .66 11 .18 13 .44 15 .55 11 .80 HalfCheetah Safe AD 4.90 4.45 2.96 2.23 8.41 3.70 CDT 18 .50 19 .24 20 .35 50 .65 30 .63 22 .06 A-Lag 4.48 3.80 3.41 2.29 3.71 3.59 Ant Safe AD 6.15 5.38 5.38 2.72 6.15 5.55 CDT 14 .06 43 .86 62 .53 53 .41 61 .97 43 .24 A-Lag 18 .95 6.80 3.55 3.98 3.02 4.08 
+
+Violation rate 
+
+Environment Method 0% 25% 50% 75% 100% Main DarkRoom Safe AD 0.250 0.211 0.227 0.200 0.239 0.229 CDT 0.092 0.115 0.111 0.116 0.108 0.108 A-Lag 0.213 0.206 0.206 0.274 0.214 0.180 
+
+PointGoal Safe AD 0.170 0.146 0.143 0.133 0.140 0.139 CDT 0.222 0.222 0.202 0.217 0.204 0.195 
+
+A-Lag 0.190 0.184 0.117 0.122 0.126 0.137 CarGoal Safe AD 0.257 0.159 0.171 0.207 0.240 0.207 CDT 0.293 0.272 0.288 0.281 0.299 0.270 
+
+A-Lag 0.259 0.162 0.159 0.197 0.226 0.164 HalfCheetah Safe AD 0.173 0.161 0.112 0.105 0.298 0.123 CDT 0.338 0.282 0.235 0.363 0.212 0.239 A-Lag 0.169 0.148 0.155 0.108 0.162 0.158 Ant Safe AD 0.272 0.306 0.331 0.154 0.480 0.356 CDT 0.211 0.358 0.490 0.406 0.475 0.364 A-Lag 0.341 0.261 0.164 0.173 0.193 0.184 
+
+RQ1 violation rates in DarkRoom. In DarkRoom the dynamic-budget models return 0.167 (Safe AD) and 0.123 (A-Lag) more than the fixed-budget models and violate the budget 0.085 and 0.097 less often. 24 Table 6: Test-split results of Safe AD, of A-Lag with the multiplier held at zero and of A-Lag, whose multiplier adapts after every episode. All columns are means over three seeds. Bold marks the best of the three methods in each row: the highest return and the lowest cost, violation rate and excess cost. Return is the final return, the mean over the last three episodes, and is the success rate in PointGoal and CarGoal. Cost is the mean episode cost. The violation rate is the fraction of episodes whose cost exceeds the deployment’s budget B0, so it counts how often a method goes over its budget, not by how much. Excess cost is the mean over episodes of max(0 , G c − B0).                                                                        
+
+> Environment Metric Safe AD A-Lag, λ= 0 A-Lag DarkRoom Return 0.894 0.877 0.832 Cost 3.85 3.64 3.45
+> Violation 0.229 0.209 0.180
+> Excess cost 0.60 0.54 0.39
+> PointGoal Return 0.173 0.156 0.164 Cost 10 .04 10 .20 9.69
+> Violation 0.139 0.139 0.137
+> Excess cost 4.20 4.24 3.88
+> CarGoal Return 0.489 0.506 0.461 Cost 14 .77 14 .28 11 .80
+> Violation 0.207 0.201 0.164
+> Excess cost 5.84 5.72 3.99
+> HalfCheetah Return 206 .7220 .9218 .5Cost 3.70 3.89 3.59
+> Violation 0.123 0.182 0.158 Excess cost 2.46 2.20 1.99
+> Ant Return 350 .9289 .0286 .4Cost 5.55 3.54 4.08 Violation 0.356 0.210 0.184
+> Excess cost 2.17 1.56 2.23
+
+Sensitivity to data composition. The all-five-environment mean-cost comparison refers to the main 50% expert mixture with 32 histories per task. In the expert-share study, which uses 16 histories per task, A-Lag has lower mean cost in 16 of the 25 combinations of environment and expert share and lower mean violation rate in 16 (Table 5). At the 100% share, A-Lag also has lower mean cost than Safe AD in all five environments, at a lower mean return in all five. At the 0% strong-expert share in Ant, its mean cost is 18.95 against Safe AD’s 6.15. The main result therefore does not extend to every data mixture. 
+
+Scope of the controls. RQ1 compares training at Bmax with training over dynamic budgets, so its effect includes training–test budget mismatch. The PPO-Lagrangian comparison uses a different protocol and does not isolate the teacher’s effect (Appendix J). We do not include a budget-unaware teacher control or a teacher reference evaluated under the student test protocol. 
+
+Deployment-time controls. Safe AD has no comparable deployment-time setting to tune. We have not evaluated a fixed multiplier matched to the adaptive rule’s mean magnitude or a learned shield on the same backbone. The fixed-multiplier navigation sweeps do not show a monotone reduction in violations (Figure 6). 
+
+## I Per-Seed Results 
+
+Tables 8 and 9 give the main comparisons for each training seed. Seed s of one model is paired with seed 
+
+s of the other, on the same deployment draws. To describe uncertainty over test tasks, we resample the test tasks (10,000 bootstrap samples) and check whether the 95% interval of the seed-averaged difference excludes zero. These intervals reflect which test tasks were drawn. Variation from retraining appears in the per-seed columns. 25 Table 7: A-Lag with its adaptive multiplier against A-Lag with a fixed multiplier, on the test tasks, with the same trained weights. The fixed value, given next to each environment, was chosen on training tasks by a fixed rule: the value with the lowest violation rate whose return is not clearly below that at λ = 0 (Appendix E). Both columns are means over three seeds. Bold marks the better of the two in each row: the higher return and the lower cost, violation rate and excess cost. In CarGoal no tested value met the rule, so we use the one whose return came closest, λ = 0 .3.                                                       
+
+> Environment Metric A-Lag, fixed λA-Lag DarkRoom ( λ= 0 .3) Return 0.831 0.832
+> Cost 3.47 3.45
+> Violation 0.190 0.180
+> Excess cost 0.46 0.39
+> PointGoal ( λ= 1) Return 0.150 0.164
+> Cost 10 .17 9.69
+> Violation 0.137 0.137 Excess cost 4.43 3.88
+> CarGoal ( λ= 0 .3) Return 0.484 0.461 Cost 13 .29 11 .80
+> Violation 0.187 0.164
+> Excess cost 5.06 3.99
+> HalfCheetah ( λ= 0 .3) Return 220 .8218 .5Cost 3.94 3.59
+> Violation 0.180 0.158
+> Excess cost 2.25 1.99
+> Ant ( λ= 10) Return 274 .4286 .4
+> Cost 3.49 4.08 Violation 0.174 0.184 Excess cost 1.78 2.23
+
+A-Lag’s cost is lower than Safe AD’s in all three seeds in CarGoal and Ant and in two of three in the other environments. The cost interval excludes zero in DarkRoom, CarGoal and Ant and includes it in PointGoal and HalfCheetah. Compared with λ = 0, the multiplier lowers cost in all three seeds in DarkRoom, CarGoal and HalfCheetah, where the intervals exclude zero. Its violation-rate interval excludes zero in every environment but PointGoal. In Ant its cost interval lies above zero. With dynamic budgets, the mean return is higher for both methods in every environment except A-Lag in Ant. It is higher in all three seeds for both methods in DarkRoom, PointGoal and CarGoal, and its interval excludes zero there for both methods and also in HalfCheetah and Ant for Safe AD. The cost is lower for both methods in DarkRoom and HalfCheetah, where the cost intervals exclude zero. 
+
+## J Safe AD on PPO-Lagrangian Learning Histories 
+
+Section 3 notes that the learning histories of a safe RL collector are not built to show the behavior a Safe ICRL agent needs. Figure 9 compares the main Safe AD, trained on the teacher data, with the Safe AD baseline of Moeini et al. (2026), trained on learning histories of PPO-Lagrangian (Ray et al., 2019). In DarkRoom, HalfCheetah and Ant its curves are per-episode means from its original evaluation. In PointGoal and CarGoal they come from a later evaluation of the same models over 20 episodes. Both evaluations used their own test tasks and targets rather than the protocol of Section 5. The comparison is therefore not paired, and its differences cannot be attributed to the source of the histories. It was also trained on 8 tasks per environment with older training settings. In DarkRoom the earlier model learns the task, but its return stays below that of the main Safe AD in every episode, and its cost stays higher until the last episodes. In HalfCheetah and Ant its return is negative in every episode, far below the main Safe AD, and it never pays any cost in HalfCheetah. Its PointGoal return is close to that of the main Safe AD, with a slightly lower final cost, while its CarGoal return stays near 0.05, far below the main Safe AD, at a far lower cost. 26 Table 8: Per-seed differences on the test tasks: A-Lag against Safe AD, and A-Lag against its own weights with the multiplier held at zero. Each entry is the first model minus the second, averaged over the test tasks and deployments of one training seed. 
+
+A-Lag − Safe AD A-Lag − A-Lag, λ = 0 Environment Metric Seed 1 Seed 2 Seed 3 Seed 1 Seed 2 Seed 3 DarkRoom Return −0.057 −0.047 −0.080 −0.059 −0.021 −0.053 Cost −0.57 +0 .09 −0.73 −0.17 −0.16 −0.24 Violation −0.064 −0.011 −0.073 −0.025 −0.026 −0.036 PointGoal Return +0 .021 −0.027 −0.018 −0.008 +0 .032 +0 .001 Cost −0.12 −1.79 +0 .87 −1.16 −0.63 +0 .27 Violation −0.008 −0.027 +0 .027 −0.015 −0.013 +0 .020 CarGoal Return −0.016 −0.073 +0 .003 −0.052 −0.048 −0.036 Cost −2.60 −3.79 −2.52 −1.23 −3.35 −2.83 Violation −0.044 −0.055 −0.030 −0.021 −0.048 −0.041 HalfCheetah Return −28 .1 +43 .1 +20 .4 −0.4 −3.3 −3.7Cost +0 .34 −0.40 −0.28 −0.06 −0.21 −0.62 Violation 0.000 +0 .015 +0 .090 −0.006 −0.018 −0.048 Ant Return +14 .4 −76 .4 −131 .4 −1.2 −2.0 −4.6Cost −0.65 −1.10 −2.68 −0.06 +0 .22 +1 .45 Violation −0.051 −0.086 −0.380 −0.052 +0 .001 −0.027 
+
+Table 9: Per-seed differences on the test tasks between models trained on dynamic-budget and on fixed-budget histories. Each entry is the first model minus the second, averaged over the test tasks and deployments of one training seed. 
+
+Safe AD, dynamic − fixed A-Lag, dynamic − fixed Environment Metric Seed 1 Seed 2 Seed 3 Seed 1 Seed 2 Seed 3 DarkRoom Return +0 .043 +0 .147 +0 .311 +0 .085 +0 .134 +0 .152 Cost −0.78 −0.91 −0.74 −1.19 +0 .16 −1.49 Violation −0.080 −0.104 −0.071 −0.128 −0.012 −0.152 PointGoal Return +0 .081 +0 .078 +0 .059 +0 .105 +0 .093 +0 .018 Cost +0 .53 +0 .77 +1 .23 +2 .08 +2 .12 +0 .97 Violation +0 .017 +0 .012 +0 .009 +0 .028 +0 .029 +0 .026 CarGoal Return +0 .224 +0 .279 +0 .238 +0 .227 +0 .168 +0 .218 Cost +1 .51 +0 .80 +2 .31 −1.36 −3.35 −0.80 Violation +0 .025 +0 .010 +0 .035 −0.018 −0.033 −0.003 HalfCheetah Return +28 .7 −11 .0 +92 .3 −10 .5 −63 .4 +97 .9Cost −0.39 −0.58 −1.47 −2.52 −1.84 +2 .04 Violation −0.007 −0.028 −0.024 −0.038 −0.098 +0 .116 Ant Return +36 .9 −1.8 +80 .2 +20 .9 +18 .1 −79 .6Cost +1 .29 −1.95 +3 .67 −2.19 +0 .15 −1.03 Violation +0 .084 −0.135 +0 .300 −0.115 +0 .031 −0.127 
+
+27 20 40 0.2 0.4 0.6 0.8 
+
+> return
+
+DarkRoom 
+
+10 20 0.10 0.15 0.20 0.25 
+
+> return
+
+PointGoal 
+
+10 20 0.0 0.2 0.4 
+
+> return
+
+CarGoal 
+
+5 10 0100 200 300 
+
+> return
+
+HalfCheetah 
+
+5 10 0100 200 300 
+
+> return
+
+Ant 
+
+20 40 
+
+episode 
+
+456
+
+> cost
+
+10 20 
+
+episode 
+
+510 15 20 25 
+
+> cost
+
+10 20 
+
+episode 
+
+0510 15 
+
+> cost
+
+5 10 
+
+episode 
+
+0510 15 
+
+> cost
+
+5 10 
+
+episode 
+
+0.0 2.5 5.0 7.5 10.0 
+
+> cost
+
+Safe AD, Teacher Data Safe AD, PPO-Lag Data Figure 9: Safe AD trained on the teacher data (Teacher Data) and the Safe AD baseline of Moeini et al. (2026), trained on PPO-Lagrangian learning histories (PPO-Lag Data). 28

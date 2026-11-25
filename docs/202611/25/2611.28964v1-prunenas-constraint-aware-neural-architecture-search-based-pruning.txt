@@ -1,0 +1,524 @@
+Title: PruneNAS: Constraint Aware Neural Architecture Search based Pruning
+
+URL Source: https://arxiv.org/pdf/2611.28964v1
+
+Published Time: Tue, 24 Nov 2026 02:30:42 GMT
+
+Number of Pages: 22
+
+Markdown Content:
+> arXiv:2611.28964v1 [cs.AI] 21 Nov 2026
+
+SAH, CHHABRA, ROHMETRA, LI: PRUNENAS 1
+
+# PruneNAS: Constraint Aware Neural Architecture Search based Pruning 
+
+Sudhakar Sah 
+
+sudhakar.sah@st.com 
+
+Nikhil Chhabra 
+
+nikhil.chhabra@st.com 
+
+Honnesh Rohmetra 
+
+honnesh.rohmetra@st.com 
+
+Andy Li 
+
+andy.li@st.com 
+
+STMicroelectronics, Inc. Toronto, Canada 
+
+Abstract 
+
+Neural Architecture Search (NAS) has achieved state-of-the-art performance across diverse tasks, but its high computational cost remains a major barrier. We introduce PruneNAS, a novel framework that integrates structured pruning into NAS to efficiently explore high-performing architectures while leveraging pretrained models. Unlike con-ventional NAS methods that train each candidate from scratch, PruneNAS generates a candidate pool by pruning pretrained networks at multiple granularity levels and for-mulates the selection as a global optimization problem using training-free importance metrics. This approach enables rapid evaluation of candidate architectures under strict resource constraints, dramatically reducing search time from hundreds of GPU hours to mere minutes. Experiments on standard benchmarks demonstrate that PruneNAS dis-covers compact, high-accuracy architectures that nearly halve the computational cost (MACs) of prior methods on ResNet-50, while also showing strong generalization on object detection tasks with YOLO. Our method bridges structured pruning and NAS, offering a practical solution for resource-constrained model deployment. 
+
+# 1 Introduction 
+
+Deep neural networks have achieved remarkable success across diverse computer vision tasks. However, the increasing scale of these models imposes significant computational bur-dens, which complicates their deployment on resource-constrained edge devices [4, 40]. To resolve this, channel pruning [8, 20, 29, 59] has emerged as a highly effective technique. By structurally removing entire channels and their associated weights, it directly reduces the model’s memory footprint, computational cost and accelerates inference. Determining which channels to remove is commonly guided by importance criteria [19, 42, 63]. These criteria estimate each channel’s importance to the network output and are used to rank and remove channels under a target resource budget. However, identifying the optimal distribution of pruned channels across layers such that a strict hardware resource 
+
+© 2026. The copyright of this document resides with its authors. It may be distributed unchanged freely in print or electronic forms. 2 SAH, CHHABRA, ROHMETRA, LI: PRUNENAS 
+
+Table 1: Comparison of state-of-the-art methods on ResNet50/MobileNet and ImageNet.                                  
+
+> Method Training-Free Combinatorial Pre-Search Approx. GPU Hours Search Prep Search Product Mechanism
+> OFA [3] ✗✓Massive supernet ∼1,200 Evolutionary AutoSlim [60] ✗✗Slimmable Net >300 Greedy MetaPruning [36] ✗✓PruningNet >200 Evolutionary DepGraph [13] ✓✗None (Standard Pruning) NA Heuristic
+> PruneNAS (Ours) ✓✓Lookup tables minutes ILP
+
+constraint is met exactly remains a challenge, as it is typically handled through some pre-defined heuristics. Recent graph-based methods [13] address layer dependencies but typically lack sound non-uniform pruning strategies across groups, ignoring that different structural components have different sensitivities to pruning [17, 18]. Neural Architecture Search (NAS) often uni-fies search and pruning to find non-uniform distributions via searching for optimal structures within a search space. However, a brute-force approach requires the combinatorial explo-ration of all channel configurations, making it computationally impossible. While recent approaches [3, 36, 60] mitigate this by utilizing weight-sharing super networks or proxy evaluators, they often shift the computational bottleneck, requiring extensive training costs and GPU hours before the actual architecture search begins. As summarized in Table 1, these methods require hundreds to thousands of GPU hours simply to build the search space. Fur-thermore, while zero-cost proxies [24, 25, 39, 48, 51] offer efficient evaluation without full training, their application has largely been restricted to ranking entire architectures rather than selecting structured components under strict global constraints. To bridge this gap, we introduce PruneNAS, a framework that formulates channel allo-cation as a global constrained optimization problem. PruneNAS searches per-group channel widths within the pretrained model, retaining its layers and operators for native deploy-ment on target edge hardware. For each structural group in the network, a discrete set of pruned candidates is scored using an importance criterion and stored in accuracy and re-source lookup tables without any training. An Integer Linear Programming (ILP) solver then selects the globally optimal per-group channel configuration under a target resource budget. Finally, the same importance criterion used during search is used to prune the chan-nels. Unlike other NAS methods, we skip the need for pre-search training entirely. This reduces architecture discovery time from potentially hundreds of GPU hours to mere min-utes. Because the tables are computed once, the solver can be re-run for any budget instantly, making it straightforward to generate a family of compressed models across different deploy-ment budgets from a single pass. We make the following contributions: • We formulate channel pruning as a constrained optimization problem using a decou-pled tabulation strategy. Our approach eliminates the computationally expensive need for training candidate models for the search phase. • We present a highly versatile pruning framework that supports various importance criteria (e.g., magnitude, Taylor, etc) and accommodates multiple resource constraints,       
+
+> 1The authors of OFA report 1,200 GPU hours on V100s before search. AutoSlim and MetaPruning hours are conservatively estimated based on standard ResNet-50 ImageNet training ( 200 GPU hours per 90 epochs). Slimmable networks use a computationally heavy "sandwich rule" [61], making its 50-epoch preparation equivalent to 200 standard epochs. MetaPruning trains a PruningNet for ∼22 epochs, but incurs significant per-iteration overhead from meta-gradient backpropagation.
+> 2See Appendix (Table 10) for detailed wall-clock benchmarks. SAH, CHHABRA, ROHMETRA, LI: PRUNENAS 3
+
+including Multiply–Accumulate operations (MACs) and the number of parameters. • We demonstrate through empirical experiments that PruneNAS achieves SOTA accu-racy to resource trade-offs on vision classification tasks, outperforming existing meth-ods by up to 1% on ResNet-50 [15] and ImageNet-1k [6]. 
+
+# 2 Related Work 
+
+## 2.1 Importance and Zero-Cost Estimation 
+
+Structured pruning reduces the parameters in a network by removing entire groups such as neurons or channels [13, 19, 54]. Traditionally, this is achieved by analyzing the con-verged weights of pre-trained models with an importance criterion that determines what to keep. Magnitude-based pruning prunes channels with smaller ℓ1-norm [28]. Taylor expan-sion estimates the impact of pruning on the loss by computing the product of activations and their gradients [41, 42]. Second-order methods utilize Hessian-based approximations sensitivity [22, 63] and Fisher information [34, 49] to evaluate parameter. Layer Adaptive Magnitude-based Pruning (LAMP) [23] improves magnitude pruning by using a rescaled score to automatically allocate sparsity, preventing layer collapse without manual tuning. Filter Pruning via Geometric Median (FPGM) [17] prunes channels that are closest to the layer’s geometric median, focusing on removing redundancies rather than magnitude. Inter-estingly, random pruning has been shown to perform competitively in some settings, ques-tioning the necessity of complex criteria [35]. Parallel to these, zero-cost proxies (ZCPs) estimate network quality without training. Representative methods include SNIP, GraSP, SynFlow, NASWOT, Fisher, Zico, and AZ-NAS, which use gradients, activation patterns, or parameter statistics to rank candidate ar-chitectures [1, 24, 25, 27, 39, 48, 51]. Although ZCPs have been widely studied in NAS, their application to structured pruning remains limited. Existing methods primarily focus on ranking entire, randomly initialized architectures rather than selecting specific structured components under strict global constraints. Furthermore, as we demonstrate in our empirical analysis, traditional untrained ZCPs can sometimes yield noisy signals when scaling channel search space (as shown in ablation). Bridging this gap is essential for a reliable training-free structured pruning framework. PruneNAS adopts the computational efficiency of ZCP but applies it via the more robust importance criteria on pre-trained weights. This enables a smooth and more reliable tabulation process for our search algorithm. 
+
+## 2.2 Dependency Graph 
+
+Graph-based structured pruning methods have recently gained attention for their ability to handle inter-layer dependencies in modern neural networks. In particular, DepGraph [13] models structural relationships as a dependency graph, enabling consistent pruning across operations such as residual connections and concatenations. This addresses a key limitation of earlier layer-wise pruning approaches [29, 41], which often ignore cross-layer constraints and may produce suboptimal or invalid architectures. By explicitly encoding these depen-dencies, DepGraph enables globally consistent pruning decisions while preserving network integrity. However, existing graph-based methods typically apply uniform pruning strategies across groups and rely on predefined importance criteria. In contrast, different groups may 4 SAH, CHHABRA, ROHMETRA, LI: PRUNENAS 
+
+exhibit varying sensitivity to pruning, and our approach exploits this by adaptively select-ing pruning levels for each group under global resource constraints. Approaches based on soft masking and budget-aware regularization [26] enable end-to-end learning of structured sparsity under constraints, but often introduce additional optimization complexity. 
+
+## 2.3 Neural Architecture Search and Structured Pruning 
+
+Structured pruning is closely related to neural architecture search (NAS), with recent works increasingly formulating pruning as a search over channel configurations. One-Shot NAS methods such as AutoSlim [60], MetaPruning [36], Once-for-All [3], and Slimmable Net-works [62] navigate this combinatorial space by training weight-sharing super-networks or meta-networks from which sub-networks are subsequently extracted. Differentiable approaches relax channel selection and jointly optimize pruning decisions and weights [33], while ProxylessNAS [2] and FBNet [56] incorporate hardware metrics such as latency into the search objective. Pruning-as-Search (PaS) [30], TAS [10], and NAP [9] similarly cast pruning as an architecture-search problem using gradient-based or DARTS-style optimization. Many NAS methods additionally search over network structure or operators, which can complicate deployment on edge accelerators with limited operator support. LANA [43] re-places each layer with an operation drawn from a rich candidate pool, APQ [53] jointly searches architecture, pruning, and quantization, and CONNAS [5] extends ILP-based NAS to multiple hardware objectives. Training-free methods such as TTNAS [32] and PAT-NAS [57] still search over generalized supernetworks or randomly initialized architectures, while HyperNAS [38] contributes a performance predictor rather than a search algorithm. Closest to our work, PaS [30] also searches channel configurations, but learns its pruning policy by introducing depthwise-convolution layers; in contrast, PruneNAS searches the structured pruning space of a fixed pretrained model using importance scores and preserves the original operators for edge deployment. 
+
+# 3 Method 
+
+We propose a group-wise pruning-aware neural architecture search strategy that decomposes the global search problem into a training-free tabulation phase followed by a global con-strained optimization step. As illustrated in Figure 1, our method integrates a structured search space defined over layer groups, where each group comprises multiple layers and the search variables correspond to the number of channels retained or pruned within each group, together with zero-cost proxy tabulation and resource-aware constraint handling into a cohesive pipeline. Following a preliminary graph profiling step to partition the pretrained model into struc-turally valid pruning groups, the core of our approach centers on two primary phases. First, in the tabulation phase, we generate candidate networks by pruning one group at a time and estimate their resource reductions and accuracy trade-offs using an importance metric (e.g., Taylor). These candidates along with their KPIs are stored in lookup tables. Next, during the NAS and generation phase, we formulate the global architecture search as an ILP (PuLP package [12]) problem, which explores the tabulated space to find the globally optimal con-figuration that minimizes the total importance score drop while strictly conforming to a target SAH, CHHABRA, ROHMETRA, LI: PRUNENAS 5Graph profiling  Tabulation  NAS & Generation      
+
+> ...
+> ...
+> ...
+> 60% ...
+> Group \
+> Channel
+> ratio
+> 10%
+> g1 : 850
+> : 0.9M
+> : 320
+> : 0.6M
+> : 50
+> : 0.3M
+> g2 : 920
+> : 1.2M
+> : 410
+> : 0.8M
+> : 80
+> : 0.4M
+> g3 : 540
+> : 0.4M
+> : 180
+> : 0.2M
+> : 30
+> : 0.1M
+> 30%
+> Start Channel: 8
+> Granularity: 2 Target MAC reduction:
+> Fine-tuning
+
+Figure 1: The PruneNAS pipeline. (Left) A dense pretrained model is parsed into structurally coupled channel groups. (Center) A local search space is tabulated using zero-cost proxies to estimate resource reductions ( ∆R) and importance tradeoffs ( ∆S). (Right) An ILP solver selects the globally optimal configuration under target resource budgets, producing a pruned architecture ready for fine-tuning. resource budget. The resulting architecture is then constructed and fine-tuned to recover task performance. 
+
+## 3.1 Graph Profiling 
+
+Let a dense, pre-trained network be parameterized by W. To ensure structural integrity and valid tensor operations during pruning, we partition W into N groups G = {g1, g2, ... gN } as shown in figure 2. For each group, we define a discrete set of candidates Ci = {C i,1, Ci,2, ... Ci,M }
+
+corresponding to the group’s remaining channels after pruning. The objective of our method is to select exactly one optimal configuration c∗ 
+
+> i
+
+∈ Ci for every group to construct the final solution, such that the total importance score loss (i.e., cumulative accuracy degradation) is minimized, subject to achieving a resource reduction of at least B.To ensure structural consistency, we partition the network into a set of pruning groups 
+
+G, where each group contains layers with pruning dependencies (e.g., due to residual con-nections or channel alignment constraints). Channels within a group are pruned jointly as proposed by Fang et. al. [13]. 6 SAH, CHHABRA, ROHMETRA, LI: PRUNENAS Conv1      
+
+> Conv2 Conv3
+> Conv4 Conv5 Conv6
+> Conv7 Conv8
+> 3 x 16 x K 2
+> 16 x 32 x K 216 x 48 x K 2
+> 48 x 72 x K 248 x 64 x K 2
+> 64 x 96 x K 2
+> 32 x 64 x K 2
+> 64 x 128 x K 2
+> g1
+> g2
+> g3
+> g4
+> Conv1, Conv2, Conv3
+> Conv3, Conv4, Conv5
+> Conv2, Conv6
+> Conv6, Conv7, Conv8
+
+Figure 2: Independent groups in a sample model based on common number of input and output channels 
+
+## 3.2 Candidate Generation 
+
+For each group g ∈ G , we generate candidate architectures by pruning a small number of channels according to a predefined granularity. Specifically, for each pruning level k, we construct a candidate model Ag,k by removing k channels from group g while keeping all other groups unchanged. The tabulation stage evaluates only the group-wise pruning variations independently, re-sulting in ∑g∈G Kg measured candidates. The exhaustive architecture space is then implicitly defined by the Cartesian product of these group-level choices, which the ILP solver optimizes over without explicit enumeration: 
+
+|T full | = ∏
+
+g∈G
+
+Kg (1) Where each candidate architecture is represented as: 
+
+A = {c1, c2, . . . , cg} (2) where cg denotes the number of retained channels in group g.
+
+## 3.3 Tabulation 
+
+Each candidate model Ag,k is evaluated to compute: • Resource metrics Rg,k (FLOPs, MACs, latency, power, RAM etc.) • Estimated accuracy score Sg,k using an importance-based zero-cost proxy We further compute the relative changes with respect to the baseline. And these delta values form the entries of the accuracy and resource tables: 
+
+∆Rg,k = R0 − R g,k, ∆Sg,k = S0 − Sg,k (3) SAH, CHHABRA, ROHMETRA, LI: PRUNENAS 7
+
+3.3.1 Resource Tabulation 
+
+Resource tabulation is performed using metrics such as FLOPs, MACs, parameter count, latency,and memory (RAM) usage. Resource estimation is performed via profiling tools. The baseline model is used to establish the reference resource value Ro. We then construct the resource table by storing the delta resource values for all variations within each group relative to this baseline. For hardware aware tabulation, the model is executed on actual hardware to gather the latency, RAM, Flash and power budget, whereas hardware agnostic calculations use proxies such as latency, RAM and power. 
+
+3.3.2 Accuracy Tabulation 
+
+To efficiently estimate the baseline score S0 and the candidate scores Sg,k without the cost of fine-tuning, we explored the option to use zero-cost proxies (ZCP) methods such as SNIP [25] and GraSP [51] relying on gradient information, which approach zero at conver-gence for pretrained models and give noisy importance evaluation. Similarly, SynFLOW [48] is independent of training data, and does not make use of trained models. After careful com-parative analysis as explained quantitatively in section 4.3.1, we adopted importance criteria such as Hessian, [63], L1 weight magnitude, Taylor expansion [41] as a proxy to estimate the impact of pruning on performance of the model. We use the same method as an accu-racy estimator during the search phase to approximate the candidates as well as for channel pruning once the optimal configuration is finalized. Let Wc denote the set of weights associated with a specific channel c. We leverage channel-wise importance scores derived from the learned representations of a pretrained model. Specifically, the change in accuracy (delta accuracy) for a candidate is estimated as the sum of the importance values of the removed channels. For a single layer’s channel c,the metrics are mathematically expressed as follows: 
+
+## 3.4 Constrained Optimization 
+
+Given the tabulated candidates, we formulate the global search as a constrained optimization problem that selects one pruning action per group: min  
+
+> p
+
+# ∑
+
+> (g,k)∈p
+
+∆Sg,k s.t. ∑
+
+> (g,k)∈p
+
+∆Rg,k ≥ B (4) where p denotes the set of selected pruning actions and B is the resource budget. The formulation naturally extends to multiple resource constraints. For example, when jointly optimizing MACs and Flash memory, we define separate reduction terms ∆RMAC  
+
+> g,k
+
+and 
+
+∆Rflash  
+
+> g,k
+
+with corresponding target reductions B1 and B2.min  
+
+> p
+
+# ∑
+
+> (g,k)∈p
+
+∆Sg,k s.t. ∑
+
+> (g,k)∈p
+
+∆RMAC  
+
+> g,k
+
+≥ B 1 (5) min  
+
+> p
+
+# ∑
+
+> (g,k)∈p
+
+∆Sg,k s.t. ∑
+
+> (g,k)∈p
+
+∆Rflash  
+
+> g,k
+
+≥ B 2 (6) In practice, we solve the optimization independently for each resource target (e.g., MACs and Flash). The final pruning configuration is then obtained by taking, for every group, the minimum retained channels across the resulting solutions, ensuring that both constraints are satisfied conservatively. The complete procedure is summarized in Algorithm 1. 8 SAH, CHHABRA, ROHMETRA, LI: PRUNENAS 
+
+Algorithm 1 PruneNAS: Group-wise Candidate Generation and Search 
+
+Require: Pretrained model M, pruning groups G, resource budget B
+
+Ensure: Optimal pruning configuration p∗ 
+
+> 1:
+
+Initialize baseline architecture A0 ← M  
+
+> 2:
+
+Compute baseline resources R0 and baseline score S0 
+
+> 3:
+
+T ← /0 ▷ Candidate table  
+
+> 4:
+
+for each group g ∈ G do  
+
+> 5:
+
+Determine pruning granularity levels {k1, k2, . . . } for group g 
+
+> 6:
+
+for each pruning level k in group g do  
+
+> 7:
+
+Ag,k ← prune k channels from group g in A0 
+
+> 8:
+
+Compute resource Rg,k (FLOPs, MACs, latency, etc.)  
+
+> 9:
+
+Estimate score Sg,k using importance-based zero-cost proxy  
+
+> 10:
+
+Compute deltas: 
+
+∆Rg,k = R0 − R g,k, ∆Sg,k = S0 − Sg,k 
+
+> 11:
+
+Store (g, k, Rg,k, Sg,k, ∆Rg,k, ∆Sg,k) in T 
+
+> 12:
+
+end for  
+
+> 13:
+
+end for 
+
+▷ Search optimal combination under constraints  
+
+> 14:
+
+p∗ ← /0 
+
+> 15:
+
+Solve: min  
+
+> p
+
+# ∑
+
+> (g,k)∈p
+
+∆Sg,k s.t. ∑
+
+> (g,k)∈p
+
+∆Rg,k ≥ B  
+
+> 16:
+
+Construct final architecture A∗ using p∗ 
+
+> 17:
+
+return A∗
+
+## 3.5 Finetuning and Training 
+
+The optimal solution p∗ specifies the number of channels to prune for each group. Using p∗,we construct the final pruned architecture A∗ and train it to completion. Our method gives the flexibility to prune either one-shot or iteratively: • The model is pruned to the target A∗ at once, followed by standard fine-tuning to completion. • Iterative Fine-Tuning: The pruning process is divided into n steps, removing p∗
+
+> g
+
+/n
+
+channels per group at each step. The intermediate network is fine-tuned for m epochs after each increment over n × m total epochs. 
+
+# 4 Experiments 
+
+We conduct extensive experiments on ImageNet-1k [6] and Flowers102 dataset[44]. We first benchmark PruneNAS against state-of-the-art structured pruning methods on the large-scale ImageNet-1k dataset using ResNet-50 [15] and MobileNetV2 [46] to demonstrate its com-petitive accuracy to resource trade-offs. Next, we use the Flowers102 dataset with ResNet-18 and MobileNetV2 to compare our one-shot and iterative pruning variants. We then validate SAH, CHHABRA, ROHMETRA, LI: PRUNENAS 9
+
+Table 2: Pruning results on ImageNet. ∆ Acc. denotes the accuracy drop after pruning. MACs are in billions (G) and Params in millions (M). A group-wise prune ratio ceiling of 70% is applied to MobileNetV2 and no ceiling is applied to ResNet-50. ResNet-50 was fine-tuned with one-shot and MobileNetV2 was fine-tuned iteratively for 5 rounds. (*Not a ResNet variation but model with similar GMACs) 
+
+Arch. Method Base Pruned ∆ Acc. MACs (G) Params (M) 
+
+ResNet-50 Baseline 76.15 - - 4.13 25.6 ThiNet [37] 72.88 72.04 -0.84 2.44 -SSS [54] 76.12 74.18 -1.94 2.82 -SFP [16] 76.15 74.61 -1.54 2.40 -AutoSlim [60] 76.10 75.60 -0.50 2.00 -FPGM [17] 76.15 75.50 -0.65 2.38 -Taylor [42] 76.18 74.50 -1.68 2.25 -Slimmable [62] 76.10 74.90 -1.20 2.30 -CCP [45] 76.15 75.50 -0.65 2.11 -AOFP-C1 [7] 75.34 75.63 +0.29 2.58 -TAS [11] 77.46 76.20 -1.26 2.31 -GFP [31] 76.79 76.42 -0.37 2.04 -GReg-2 [52] 76.13 75.36 -0.77 2.77 -PaS-C* [30] - 75.50 - 2.40 -DepGraph [13] 76.15 73.58 -2.57 1.37 8.77 
+
+PruneNAS 76.15 74.54 -1.61 1.37 8.60 MobileNetV2 Baseline 71.87 - - 0.33 3.5 NetAdapt [58] - 70.00 - 0.24 -Meta [36] 74.70 68.20 -6.50 0.14 -GFP [31] 75.74 69.16 -6.58 0.15 -DepGraph [13] 71.87 68.46 -3.41 0.15 -
+
+PruneNAS 71.57 67.80 -3.77 0.15 1.57 the practical deployability of our architectures through on-device hardware benchmarking. Furthermore, we evaluate the framework’s cross-task generalization to YOLO object detec-tion architectures. Candidate tabulation and global search processes were primarily conducted on NVIDIA A100/A6000 GPUs, taking only a few minutes per search due to the training-free nature of our proxy method. For all fine-tuning, we use the default training hyperparameters from the timm library [55] (300 epochs, warmup epochs-5, SGD optimizer, momentum 0.9, weight decay -1e-4, LR schedule- cosine decay, batch size - 512). Our iterative variant does not increase the training budget: the epochs consumed across all intermediate pruning rounds and the final fine-tuning sum to the same total as the one-shot variant. 
+
+## 4.1 Classification using ImageNet 
+
+We evaluate the effectiveness of the proposed PruneNAS framework on the ImageNet dataset and compare it with a wide range of state-of-the-art structured pruning methods. Table 2 re-ports the Top-1 accuracy before and after pruning, the corresponding accuracy drop ( ∆ Acc.), 10 SAH, CHHABRA, ROHMETRA, LI: PRUNENAS 
+
+Table 3: YOLOv8 Results on MSCOCO [50] dataset trained using 640px resolution 
+
+Model mAP@50–95 FLOPS (G) Parameters (M) 
+
+YOLOv8s [50] (Dense) 44.9 28.60 11.17 YOLOv8n [50] (Dense) 37.3 8.70 3.20 
+
+YOLOv8s (PruneNAS) 38.4 8.48 2.32 
+
+YOLOv8s (PruneNAS) 41.4 15.74 3.28 as well as the computational complexity in terms of MACs and model size (parameters). 
+
+ResNet-50. For ResNet-50, PruneNAS achieves a favorable trade-off between accuracy and efficiency at a comparable computational budget. Specifically, at 1.37G MACs, Prune-NAS obtains a Top-1 accuracy of 74.54%, resulting in a 1.61% drop from the baseline. This outperforms DepGraph [13], which incurs a larger accuracy drop of 2.57% under the same MAC constraint. Compared to other pruning approaches such as ThiNet, SFP, and FPGM, PruneNAS demonstrates competitive or superior accuracy while operating at lower or sim-ilar computational costs. Notably, PruneNAS reaches accuracy comparable to PaS-C [30] (74.54% vs. 75.50%) at nearly half the compute (1.37G vs. 2.40G MACs) and, unlike PaS, inserts no additional depthwise-convolution layers, preserving the original operator set for edge deployment. 
+
+MobileNetV2. On MobileNetV2 [46], we further validate the effectiveness of PruneNAS under a lightweight architecture setting. At 0.15G MACs, PruneNAS achieves 67.80% Top-1 accuracy. While this reflects a slightly more accuracy drop compared to some methods like Depgraph [13], it is important to note that PruneNAS operates under strict compression constraints and achieves a significantly reduced parameter count (1.57M). Compared to Dep-Graph, PruneNAS provides a more compact model with fewer parameters, highlighting its ability to aggressively compress networks. We additionally validate PruneNAS on medium-scale CIFAR-100 with ResNet-18 (Appendix, Table 9), where it consistently outperforms DepGraph across all MAC-reduction ratios from 1 .5× to 9 ×.
+
+## 4.2 Object Detection using COCO 
+
+YOLOv8 The results in Table 3 highlight the effectiveness of PruneNAS in adapting a stronger baseline (YOLOv8s) to tighter resource budgets while retaining competitive accu-racy. When pruning YOLOv8s to match the compute footprint of the lighter YOLOv8n (∼8.70 FLOPS), PruneNAS achieves a clear improvement in mAP (38.4 vs. 37.3), demon-strating that structured pruning guided by search can outperform a hand-designed compact model at the same compute level. Similarly, the pruned YOLOv8s variant (3.28M parame-ters) preserves significantly higher accuracy (41.4 mAP) than YOLOv8n (37.3). Overall, PruneNAS consistently achieves strong performance across different architec-tures, particularly under high compression regimes. The results suggest that the proposed search-based pruning strategy is effective in exploring the trade-off between accuracy and efficiency. In particular, PruneNAS shows clear advantages over dependency-based pruning methods at identical MAC budgets, demonstrating its ability to better preserve important structures during pruning. SAH, CHHABRA, ROHMETRA, LI: PRUNENAS 11 
+
+Table 4: Accuracy to MAC Reduction trade-offs on the Flowers102 dataset using one-shot and iterative training. Pruned represents the accuracy immediately after pruning and before training. A maximum group-wise pruning ratio ceiling of 70% is imposed to prevent layer collapse, except for MobileNetV2 at 9 × compression, where the ceiling is relaxed to 80%. 
+
+Model Variation MAC Reduction 
+
+1.0x 1.5x 3.0x 6.0x 9.0x ResNet18 Pruned 91.87 27.79 1.14 0.47 0.47 DepGraph [13] 91.87 90.32 86.27 79.87 76.01 PruneNAS( one-shot ) 91.87 89.40 85.35 82.55 74.66 
+
+PruneNAS (iterative ) 91.87 90.13 87.25 84.89 82.79 
+
+MobileNetV2 Pruned 93.62 2.46 1.40 1.19 0.60 DepGraph [13] 93.62 90.86 86.05 64.63 62.32 
+
+PruneNAS (iterative ) 93.62 90.86 86.25 84.35 81.13 
+
+Table 5: Comparison of pruned accuracy using various importance criteria and MAC reductions, tested with ResNet-18 and the Flowers102 dataset. A max group-wise prune ratio ceiling of 70% is applied to prevent layer collapse. To ensure statistical robustness, the performance metrics for the importance criteria ablations are averaged over 3 random seeds. 
+
+Importance MAC Reduction 1.5 × 3× 6× 9× Avg. 
+
+Unpruned 91.87 Magnitude 89.21 ± 0.35 84.74 ± 0.36 83.69 ± 0.28 79.77 ± 0.29 84.35 ± 0.16 Taylor 89.51 ± 0.27 86.65 ± 0.22 83.50 ± 0.13 77.03 ± 0.37 84.17 ± 0.13 Hessian 89.23 ± 0.40 83.72 ± 0.50 71.13 ± 2.42 50.28 ± 4.05 73.59 ± 1.19 FPGM 88.75 ± 0.41 83.37 ± 0.21 81.91 ± 0.25 77.94 ± 0.43 82.99 ± 0.17 LAMP 89.97 ± 0.34 88.12 ± 0.35 85.28 ± 0.13 80.30 ± 0.06 85.67 ± 0.13 
+
+## 4.3 Ablation Studies 
+
+4.3.1 Accuracy Estimators 
+
+Appendix Table 8 presents a comparison of top-1 accuracy achieved by different zero-cost estimators under a fixed 9 × MAC reduction constraint using a ResNet-18 model on the Flowers102 dataset. The dense (unpruned) baseline achieves a top-1 accuracy of 91.87%, providing a reference for evaluating the effectiveness of each estimator under aggressive compression. Taylor-based scoring achieves the highest top-1 accuracy of 82.79%, indicating its supe-rior ability to preserve salient network parameters during pruning. NWOT follows closely with 82.61%, demonstrating competitive performance despite its data-agnostic formulation. L2-Norm achieves 82.35%, suggesting that magnitude-based pruning remains a strong base-line even at high compression ratios. In contrast, AZ-NAS[24] yields a lower accuracy of 81.80%, highlighting comparatively weaker ranking capability under the same constraint. Overall, the results indicate that gradient-based criteria, particularly Taylor expansion, 12 SAH, CHHABRA, ROHMETRA, LI: PRUNENAS 
+
+Figure 3: Group-wise score distributions for various zero-cost accuracy estimators (L2-Norm [28], NWOT [39] , AZ-NAS [24], and Taylor Importance [41] across the ResNet-18 archi-tecture. Each plot illustrates how the estimator’s score changes with the number of channels. provide more reliable importance estimation for structured pruning at high compression lev-els. The relatively small performance gap between methods, however, suggests that multiple zero-cost proxies can remain viable depending on the deployment constraints and computa-tional budget. 
+
+4.3.2 Pruning Ratio 
+
+We evaluate the effectiveness of different structured pruning methods in terms of multiply-accumulate (MAC) reduction on the Flowers102 dataset [44]. Table 4 summarizes the results across multiple pruning ratios for both ResNet18 and MobileNetV2 architectures. As shown in Table 4, we compare baseline models with pruning approaches including DepGraph [13] and the proposed PruneNAS variants (one-shot and iterative). The pruning ratios range from mild compression (1.5 ×) to aggressive reduction (9 ×), allowing us to analyze performance trends under varying computational budgets. Notably, at 6 × and 9 × MAC reduction on MobileNetV2, DepGraph suffers severe per-formance degradation, whereas iterative PruneNAS maintains robust performance, yielding an accuracy improvement of up to ∼20%. 
+
+4.3.3 Importance Criteria 
+
+To evaluate the impact of different importance criteria within the PruneNAS framework, we compare Magnitude [14], Taylor [41], Hessian [22], FPGM [17], and LAMP [23]. We analyze their effect on the performance of the final pruned architecture using ResNet-18 [15] on the Flowers102 dataset [44]. As shown in Table 5, the choice of importance criterion significantly affects the model’s performance, particularly at aggressive compression ratios. LAMP achieves the highest re-SAH, CHHABRA, ROHMETRA, LI: PRUNENAS 13 
+
+Figure 4: Group-wise channel distribution at 3 × Mac Reduction tained accuracy overall, demonstrating exceptional robustness at higher compression levels. Taylor expansion shows strong performance at lower compression rates (e.g., 1 .5×). No-tably, despite its simplicity, the ℓ1 magnitude proxy exhibits remarkable consistency across all compression budgets, outperforming all other methods except LAMP at the extreme 9 ×
+
+reduction. Figure 4 visualizes the resulting group-wise channel distribution at 3 × MAC reduc-tion; additional compression ratios are shown in the Appendix. LAMP is fundamentally a magnitude-based variant, and at most compression ratios, their distributions are similar, but at 3 ×, LAMP’s layer-adaptive properties prevent the more aggressive middle-layer prun-ing. The structural bottlenecking could explain why it outperforms the standard magnitude proxy. At 9 × compression ratio, almost all groups reach the 70% prune ratio ceiling, but the resulting pruned models have distinct topologies. The precise group-wise distribution dic-tates the network’s remaining representational capacity and explains why certain methods are superior to others. 
+
+## 4.4 Hardware Benchmarking 
+
+We benchmarked pruned models generated using DepGraph [13] and PruneNAS on edge AI hardware (STM32H7 board) featuring 620 KB internal RAM, 16 MB external RAM, 64 KB internal flash, and 128 MB external flash. It is important to note that accesses to external RAM and flash incur significantly higher latency compared to internal memory. As a result, models that minimize reliance on external memory demonstrate superior runtime performance. Table 6 shows that, under 3 × and 6 × MAC reduction budgets, PruneNAS achieves la-tency improvements of 3.64 × and 6.42 ×, respectively, compared to the baseline. In contrast, DepGraph achieves latency improvements of only 2.40 × and 3.83 × under the same budgets. Furthermore, PruneNAS models exhibit lower RAM usage than DepGraph models at both 3× and 6 × reduction levels, which contributes to the additional speedup observed. On the other hand, DepGraph-pruned models tend to have smaller model sizes (i.e., lower flash re-quirements). This is because PruneNAS optimizes models under a MAC-based constraint, 14 SAH, CHHABRA, ROHMETRA, LI: PRUNENAS 
+
+Table 6: Benchmarking of MobileNetV2 models on STM32H7S78-DK device (trained on Flowers102 datasets). Accuracy is reported on FP32 models; RAM and latency are measured on STM32H7 [47] using INT8 inference. ∗ Indicates the use of external memory, which is slower than internal memory.                                 
+
+> Model Params (M) Top-1 Acc. (%) RAM (MB) Latency (ms) Baseline MobileNetV2 3.39 93.62 1.61 1304.00
+> DepGraph
+> MAC/1.5 1.59 90.86 1.34 ∗1034.00
+> MAC/3.0 0.82 86.05 1.05 ∗542.60 MAC/6.0 0.46 64.63 0.77 339.70
+> PruneNAS
+> MAC/1.5 2.10 90.86 1.25 ∗1072.00 MAC/3.0 1.07 86.25 0.46 358.50
+> MAC/6.0 0.53 84.35 0.44 202.80
+
+resulting in non-uniform pruning ratios across layers, whereas DepGraph applies a more uniform pruning strategy across layers for a given pruning budget. These results also underscore that MACs are an imperfect proxy for real-world efficiency. For instance, in a separate experiment on the STM32N6, an unpruned MobileNetV2 runs in 16.01 ms, whereas a naive 1 .5× MAC-reduced model can be markedly slower (96.37 ms) once its larger intermediate tensors spill into slower external memory. PruneNAS mitigates this by optimizing directly under hardware-aware constraints rather than proxy MACs alone. 
+
+## 4.5 Limitations and Future Work 
+
+While PruneNAS ensures strict constraint satisfaction and structural integrity by grouping dependent layers, our ILP formulation (Eq. 4) assumes independent pruning effects across groups. Furthermore, this work focuses on single-objective constraints and will transition to a unified joint-optimization solver in future work. Finally, we observe that under extreme compression regimes (e.g., < 0.15G MACs on lightweight models like MobileNetV2), one-shot pruning can suffer from severe degradation and requires iterative fine-tuning to recover performance. 
+
+# 5 Conclusion 
+
+In this paper, We presented PruneNAS, a structured pruning framework that efficiently gen-erates candidate architectures via training-free tabulation followed by a global search. On ImageNet, it maintains competitive accuracy on ResNet-50 while nearly halving the MACs required by prior approaches. Furthermore, it improves accuracy by 1% for ResNet, high-lighting the importance of searching for optimal, non-uniform channel distributions. At 9× MACs reduction on flowers, it yields up to an improvement of ∼ 20% over DepGraph on MobileNetV2. These savings translate directly to physical edge hardware, achieving up to a 6 .42 × reduction in inference latency and significantly lower RAM utilization on an STM32H7 microcontroller. PruneNAS provides a fast, highly scalable, and hardware-validated solution for real-world model deployment. SAH, CHHABRA, ROHMETRA, LI: PRUNENAS 15 
+
+# References 
+
+[1] Mohamed S Abdelfattah, Abhinav Mehrotra, Łukasz Dudziak, and Nicholas D Lane. Zero-cost proxies for lightweight nas. arXiv preprint arXiv:2101.08134 , 2021. [2] Han Cai, Ligeng Zhu, and Song Han. Proxylessnas: Direct neural architecture search on target task and hardware. arXiv preprint arXiv:1812.00332 , 2018. [3] Han Cai, Chuang Gan, Tianzhe Wang, Zhekai Zhang, and Song Han. Once-for-all: Train one network and specialize it for efficient deployment. arXiv preprint arXiv:1908.09791 , 2019. [4] Jiasi Chen and Xukan Ran. Deep learning with edge computing: A review. Proceedings of the IEEE , 107(8):1655–1674, 2019. [5] Gregory De Ruyter, Mathias Verbeke, and Hans Hallez. Constraint-guided hardware-aware neural architecture search through gradient modification. In International Con-ference on Learning Representations (ICLR) , 2026. URL https://openreview. net/forum?id=fcKMFIiNFQ .[6] Jia Deng, Wei Dong, Richard Socher, Li-Jia Li, Kai Li, and Li Fei-Fei. Imagenet: A large-scale hierarchical image database. In 2009 IEEE conference on computer vision and pattern recognition , pages 248–255. Ieee, 2009. [7] Xiaohan Ding, Guiguang Ding, Yuchen Guo, and Jungong Han. Accelerated filter pruning with structural redundancy reduction. In CVPR , 2019. [8] Xiaohan Ding, Guiguang Ding, Yuchen Guo, and Jungong Han. Centripetal sgd for pruning very deep convolutional networks with complicated structure. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 4943– 4953, 2019. [9] Yadong Ding, Yu Wu, Chengyue Huang, Siliang Tang, Fei Wu, Yi Yang, Wenwu Zhu, and Yueting Zhuang. Nap: Neural architecture search with pruning. Neurocomputing ,477:85–95, 2022. [10] Xuanyi Dong and Yi Yang. Network pruning via transformable architecture search. 
+
+Advances in neural information processing systems , 32, 2019. [11] Xuanyi Dong and Yi Yang. Task-aware network compression via joint architecture search and pruning. In CVPR , 2019. [12] Iain Dunning, Stuart Mitchell, and Michael O’Sullivan. Pulp: a linear pro-gramming toolkit for python. Optimization Online , 2011. URL https:// optimization-online.org/2011/09/3178/ .[13] Gongfan Fang, Xinyin Ma, Mingli Song, Michael Bi Mi, and Xinchao Wang. Dep-graph: Towards any structural pruning. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 16091–16101, 2023. [14] Song Han, Jeff Pool, John Tran, and William J. Dally. Learning both weights and connections for efficient neural network. In Advances in Neural Information Processing Systems (NeurIPS) , 2015. 16 SAH, CHHABRA, ROHMETRA, LI: PRUNENAS 
+
+[15] Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image recognition. In Proceedings of the IEEE conference on computer vision and pattern recognition , pages 770–778, 2016. [16] Yang He, Guoliang Kang, Xuanyi Dong, Yanwei Fu, and Yi Yang. Soft filter pruning for accelerating deep convolutional neural networks. In IJCAI , 2018. [17] Yang He, Ping Liu, Ziwei Wang, Zhilan Hu, and Yi Yang. Filter pruning via geometric median for deep convolutional neural networks acceleration. In CVPR , 2019. [18] Yihui He, Ji Lin, Zhijian Liu, Hanrui Wang, Li-Jia Li, and Song Han. Amc: Automl for model compression and acceleration on mobile devices. In Proceedings of the European conference on computer vision (ECCV) , pages 784–800, 2018. [19] Yihui He et al. Channel pruning for accelerating very deep neural networks. In ICCV ,2017. [20] Zejiang Hou, Minghai Qin, Fei Sun, Xiaolong Ma, Kun Yuan, Yi Xu, Yen-Kuang Chen, Rong Jin, Yuan Xie, and Sun-Yuan Kung. Chex: Channel exploration for cnn model compression. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 12287–12298, 2022. [21] Alex Krizhevsky. Learning multiple layers of features from tiny images. Technical report, University of Toronto, 2009. Technical Report. [22] Yann LeCun, John Denker, and Sara Solla. Optimal brain damage. Advances in neural information processing systems , 2, 1989. [23] Jaeho Lee, Sejun Park, Sangwoo Mo, Sungsoo Ahn, and Jinwoo Shin. Layer-adaptive sparsity for the magnitude-based pruning. arXiv preprint arXiv:2010.07611 , 2020. [24] Junghyup Lee and Bumsub Ham. Az-nas: Assembling zero-cost proxies for network architecture search. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 5893–5903, 2024. [25] Namhoon Lee, Thalaiyasingam Ajanthan, and Philip HS Torr. Snip: Single-shot net-work pruning based on connection sensitivity. In ICLR , 2019. [26] Carl Lemaire, Andrew Achkar, and Pierre-Marc Jodoin. Structured pruning of neural networks with budget-aware regularization. In Proceedings of the IEEE/CVF Confer-ence on Computer Vision and Pattern Recognition (CVPR) , pages 9108–9116, 2019. [27] Guihong Li, Yuedong Yang, Kartikeya Bhardwaj, and Radu Marculescu. Zico: Zero-shot nas via inverse coefficient of variation on gradients. arXiv preprint arXiv:2301.11300 , 2023. [28] Hao Li, Asim Kadav, Igor Durdanovic, Hanan Samet, and Hans Peter Graf. Pruning filters for efficient convnets. In International Conference on Learning Representations ,2017. [29] Hao Li et al. Pruning filters for efficient convnets. In ICLR , 2017. SAH, CHHABRA, ROHMETRA, LI: PRUNENAS 17 
+
+[30] Yanyu Li, Pu Zhao, Geng Yuan, Xue Lin, Yanzhi Wang, and Xin Chen. Pruning-as-search: Efficient neural architecture search via channel pruning and structural reparam-eterization. In IJCAI , 2022. [31] Shaohui Lin, Rongrong Ji, et al. Global filter pruning for accelerating deep convolu-tional neural networks. In IJCAI , 2018. [32] Yiqi Lin, Yuki Endo, Jinho Lee, and Shunsuke Kamijo. Neural architecture search via trainless pruning algorithm: A bayesian evaluation of a network with multiple indica-tors. Electronics , 13(22):4547, 2024. doi: 10.3390/electronics13224547. [33] Hanxiao Liu et al. Darts: Differentiable architecture search. In ICLR , 2019. [34] Liyang Liu, Shilong Zhang, Zhanghui Kuang, Aojun Zhou, Jing-Hao Xue, Xinjiang Wang, Yimin Chen, Wenming Yang, Qingmin Liao, and Wayne Zhang. Group fisher pruning for practical network compression. In International Conference on Machine Learning , pages 7021–7032. PMLR, 2021. [35] Shiwei Liu, Tianlong Chen, Xiaohan Chen, Li Shen, Decebal Constantin Mocanu, Zhangyang Wang, and Mykola Pechenizkiy. The unreasonable effectiveness of ran-dom pruning: Return of the most naive baseline for sparse training. arXiv preprint arXiv:2202.02643 , 2022. [36] Zechun Liu et al. Metapruning: Meta learning for automatic neural network channel pruning. In ICCV , 2019. [37] Jian-Hao Luo, Jianxin Wu, and Weiyao Lin. Thinet: A filter level pruning method for deep neural network compression. In ICCV , 2017. [38] Jindi Lv, Yuhao Zhou, Yuxin Tian, Qing Ye, Wentao Feng, and Jiancheng Lv. Hy-pernas: Enhancing architecture representation for nas predictor via hypernetwork. In 
+
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , 2026. [39] Joe Mellor, Jack Turner, Amos Storkey, and Elliot J Crowley. Neural architecture search without training. In International conference on machine learning , pages 7588– 7598. PMLR, 2021. [40] Gaurav Menghani. Efficient deep learning: A survey on making deep learning models smaller, faster, and better. ACM Computing Surveys , 55(12):1–37, 2023. [41] Pavlo Molchanov, Stephen Tyree, Tero Karras, Timo Aila, and Jan Kautz. Pruning con-volutional neural networks for resource efficient inference. In International Conference on Learning Representations (ICLR) , 2017. [42] Pavlo Molchanov, Arun Mallya, Stephen Tyree, Iuri Frosio, and Jan Kautz. Importance estimation for neural network pruning. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 11264–11272, 2019. [43] Pavlo Molchanov, Jimmy Hall, Hongxu Yin, Jan Kautz, Nicolò Fusi, and Arash Vahdat. Lana: Latency aware network acceleration. In European Conference on Computer Vision (ECCV) , Lecture Notes in Computer Science, pages 137–156. Springer, 2022. 18 SAH, CHHABRA, ROHMETRA, LI: PRUNENAS 
+
+[44] Maria-Elena Nilsback and Andrew Zisserman. Automated flower classification over a large number of classes. In 2008 Sixth Indian conference on computer vision, graphics & image processing , pages 722–729. IEEE, 2008. [45] Hanting Peng, Jing Wu, Shuxin Chen, et al. Channel pruning via conditional mutual information. In ECCV , 2018. [46] Mark Sandler, Andrew Howard, Menglong Zhu, Andrey Zhmoginov, and Liang-Chieh Chen. Mobilenetv2: Inverted residuals and linear bottlenecks. In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition , pages 4510–4520, 2018. [47] STMicroelectronics. Stm32n6 ai npu platform for next-generation embedded vision, 2024. https://www.st.com/en/ microcontrollers-microprocessors/stm32n6.html .[48] Hidenori Tanaka, Daniel Kunin, Daniel L Yamins, and Surya Ganguli. Pruning neural networks without any data by iteratively conserving synaptic flow. Advances in neural information processing systems , 33:6377–6389, 2020. [49] Lucas Theis, Iryna Korshunova, Alykhan Tejani, and Ferenc Huszár. Faster gaze pre-diction with dense networks and fisher pruning. arXiv preprint arXiv:1801.05787 ,2018. [50] Ultralytics. Yolov8: Ultralytics yolo. https://github.com/ultralytics/ ultralytics , 2023. Accessed: 2026-04-29. [51] Chaoqi Wang, Guodong Zhang, and Roger Grosse. Picking winning tickets be-fore training by preserving gradient flow. In International Conference on Learn-ing Representations , 2020. URL https://openreview.net/forum?id= SkgsACVKPH .[52] Huan Wang, Can Qin, Yulun Zhang, and Yun Fu. Neural pruning via growing regular-ization. In International Conference on Learning Representations (ICLR) , 2021. URL 
+
+https://arxiv.org/abs/2012.09243 .[53] Tianzhe Wang, Kuan Wang, Han Cai, Ji Lin, Zhijian Liu, Hanrui Wang, Yujun Lin, and Song Han. Apq: Joint search for network architecture, pruning and quantization policy. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pages 2075–2084, 2020. doi: 10.1109/CVPR42600.2020.00215. [54] Wei Wen et al. Learning structured sparsity in deep neural networks. In NeurIPS , 2016. [55] Ross Wightman, Hugo Touvron, and Hervé Jégou. Resnet strikes back: An improved training procedure in timm. arXiv preprint arXiv:2110.00476 , 2021. [56] Bichen Wu, Xiaoliang Dai, Peizhao Zhang, Yanghan Wang, Fei Sun, Yiming Wu, Yuandong Tian, Peter Vajda, Yangqing Jia, and Kurt Keutzer. Fbnet: Hardware-aware efficient convnet design via differentiable neural architecture search. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 10734– 10742, 2019. SAH, CHHABRA, ROHMETRA, LI: PRUNENAS 19 
+
+[57] Jiechao Yang, Yong Liu, Wei Wang, Haoran Wu, Zhiyuan Chen, and Xibo Ma. Patnas: A path-based training-free neural architecture search. IEEE Transactions on Pattern Analysis and Machine Intelligence , 47(11):9876–9893, 2025. doi: 10.1109/TPAMI. 2024.3498035. [58] Tien-Ju Yang, Andrew Howard, et al. Netadapt: Platform-aware neural network adap-tation for mobile applications. In ECCV , 2018. [59] Zhonghui You, Kun Yan, Jinmian Ye, Meng Ma, and Ping Wang. Gate decorator: Global filter pruning method for accelerating deep convolutional neural networks. Ad-vances in neural information processing systems , 32, 2019. [60] Jiahui Yu and Thomas Huang. Autoslim: Towards one-shot architecture search for channel numbers. In ICLR , 2020. [61] Jiahui Yu and Thomas S Huang. Universally slimmable networks and improved train-ing techniques. In Proceedings of the IEEE/CVF international conference on computer vision , pages 1803–1811, 2019. [62] Jiahui Yu, Linjie Yang, Ning Xu, Jianchao Yang, and Thomas Huang. Slimmable neural networks. In ICLR , 2019. [63] Shixing Yu, Zhewei Yao, Amir Gholami, Zhen Dong, Sehoon Kim, Michael W Ma-honey, and Kurt Keutzer. Hessian-aware pruning and optimal neural implant. In Pro-ceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision ,pages 3880–3891, 2022. 20 SAH, CHHABRA, ROHMETRA, LI: PRUNENAS 
+
+# 6 Appendix 
+
+Figure 5: Group-wise channel distribution at 1.5 × Mac Reduction 
+
+Figure 6: Group-wise channel distribution at 6 × Mac Reduction SAH, CHHABRA, ROHMETRA, LI: PRUNENAS 21 
+
+Figure 7: Group-wise channel distribution at 9 × Mac Reduction Table 7: Summary of channel importance metrics used for structured pruning. 
+
+Method Description Importance Score 
+
+Weight Magnitude [14] Assumes that weights with smaller absolute values con-tribute less to the network out-put. 
+
+Smag (c) = ∑
+
+> w∈Wc
+
+|w|
+
+First-Order Taylor [41] Estimates change in loss L
+
+when a channel is removed us-ing first-order gradient informa-tion. 
+
+Staylor (c) = ∑
+
+> w∈Wc
+
+w ∂ L
+
+∂ w
+
+Hessian Approximation [22] Captures curvature of the loss using a diagonal approxima-tion of the Hessian (empirical Fisher). 
+
+Shessian (c) = ∑
+
+> w∈Wc
+
+w2
+
+ ∂ L
+
+∂ w
+
+2
+
+LAMP [23] Normalizes magnitude scores to produce globally comparable importance across layers. 
+
+Slamp (cu) = Smag (cu)
+
+∑v≥u Smag (cv)
+
+FPGM [17] Identifies redundant channels via geometric similarity (Eu-clidean distance) within a group 
+
+G.
+
+Sfpgm (c) = ∑
+
+> c′∈G
+
+∥Wc −Wc′ ∥222 SAH, CHHABRA, ROHMETRA, LI: PRUNENAS 
+
+Table 8: Comparison of top-1 accuracy across various estimators at a fixed 9 × MAC re-duction, evaluated using ResNet-18 (dense model top-1 accuracy 91.87) on the Flowers102 dataset [44]. 
+
+Estimator MAC Reduction 9×
+
+L2-Norm [28] 82.35 NWOT [39] 82.61 AZ-NAS [24] 81.80 Taylor [41] 82.79 
+
+Table 9: Accuracy–MAC reduction trade-offs on the CIFAR100 for ResNet-18 model [21] dataset. “Pruned” denotes the accuracy immediately after pruning and before fine-tuning. 
+
+Method MAC Reduction 
+
+1.0 × 1.5 × 3.0 × 6.0 × 9.0 ×
+
+Pruned 77.48 50.51 7.83 2.30 1.46 DepGraph [13] 77.48 76.90 75.99 74.38 73.06 (-0.58) (-1.49) (-3.10) (-4.42) 
+
+PruneNAS 76.93 77.02 76.34 74.57 73.10 
+
+(+0.44) (-0.59) (-2.36) (-3.83) 
+
+Table 10: Tradeoff between granularity and optimization quality for ResNet-18 on the CIFAR-100 [21] dataset. The model is pruned to approximately one-third of its MAC, and Top-1 accuracy is reported after fine-tuning. 
+
+Granularity Top-1 Accuracy (%) MAC Reduction Tabulation Time (s) 
+
+2 75.61 2.994 × 135.32 4 75.90 3.021 × 69.64 8 76.34 3.001 × 36.11 16 75.88 3.007 × 19.92 32 76.18 3.012 × 11.27 Table 11: Per-group pruning-cap sensitivity for ResNet-18 on CIFAR-100 at 9 .01 × com-pression (557 .9 → 61 .9 MMACs; baseline 76.91%). Max Pruning Percentage Top-1 Acc (%) ∆ vs. baseline 90% 70.43 −6.48 80% 72.41 −4.50 70% 73.10 −3.81

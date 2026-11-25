@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-11-24</span>
+      <span class="dpr-home-dashboard-kicker">2026-11-25</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 0 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 23 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>0</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>9</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>14</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-11-24 04:31:47 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-11-25 03:26:29 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日无新推荐，系统未产出可展示论文。</p>
+<p>今日精选23篇论文，精读9篇、速读14篇，重点聚焦人形动作跟踪与自回归神经网络架构搜索。最值得关注的是两篇9.0分精读：QTOP用分位数评价器扩展人形动作跟踪，以及从基础操作出发搜索自回归架构。普通读者可先看这两篇精读摘要，再按兴趣挑速读中的MPC与LQR方向延伸。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">9 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="QTOP: Scaling Humanoid Motion Tracking with Quantile Critics">QTOP: Scaling Humanoid Motion Tracking with Quantile Critics</span></li><li><span class="dpr-home-dashboard-paper-title" title="Searching for Autoregressive Neural Architectures from Fundamental Operations">Searching for Autoregressive Neural Architectures from Fundamental Operations</span></li><li><span class="dpr-home-dashboard-paper-title" title="Safe Reinforcement Learning with Hard Constraints: Policy Gradient Methods with Intersample Guarantees">Safe Reinforcement Learning with Hard Constraints: Policy Gradient Methods with Intersample Guarantees</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>3</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">14 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Koopman Temporal Logic and Model Predictive Control of Nonlinear Systems: A Demonstration in AC-DC Power Conversion">Koopman Temporal Logic and Model Predictive Control of Nonlinear Systems: A Demonstration in AC-DC Power Conversion</span></li><li><span class="dpr-home-dashboard-paper-title" title="First-Order Model-Free Policy Gradient for Undiscounted LQR with Global Optimality and Convergence Guarantees">First-Order Model-Free Policy Gradient for Undiscounted LQR with Global Optimality and Convergence Guarantees</span></li><li><span class="dpr-home-dashboard-paper-title" title="Sample-Efficient Model Predictive Control via Proximal Policy Optimization">Sample-Efficient Model Predictive Control via Proximal Policy Optimization</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>8</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>5</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span></div>
 </section>
 </div>
 
