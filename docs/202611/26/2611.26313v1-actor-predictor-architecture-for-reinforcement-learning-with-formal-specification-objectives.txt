@@ -1,0 +1,564 @@
+Title: Actor-Predictor Architecture for Reinforcement Learning with Formal Specification Objectives
+
+URL Source: https://arxiv.org/pdf/2611.26313v1
+
+Published Time: Fri, 20 Nov 2026 03:28:40 GMT
+
+Number of Pages: 14
+
+Markdown Content:
+# Actor-Predictor Architecture for Reinforcement Learning with Formal Specification Objectives 
+
+Josef Brozovich University of Michigan, Ann Arbor 
+
+broz@umich.edu 
+
+Qining Zhang University of Michigan, Ann Arbor 
+
+qiningz@umich.edu 
+
+Lei Ying University of Michigan, Ann Arbor 
+
+leiying@umich.edu 
+
+Abstract 
+
+One fundamental challenge in reinforcement learning (RL) is enforcing temporal safety constraints, such as satisfying formal specifications. Existing methods often transform logic formulas into automata for state augmentation and reward shaping. However, this approach assumes that automaton construction is both feasible and tractable, which limits its applicability to small specifications and linear temporal logic (LTL). This paper proposes Actor-Predictor, a framework that learns a surrogate representation of logic progress without explicitly constructing an automaton. The predictor continuously estimates whether a partial trajectory will satisfy the formal specification in a later step, and its learned features are provided as auxiliary inputs to the actor, which is then optimized using GRPO and RWR. We show theoretically that, under sufficient predictive accuracy, the learned representation is equivalent to the automaton state. Experiments on grid world and robotic tasks in Isaac Lab demonstrate that Actor-Predictor outperforms automaton-based baselines on LTL-constrained tasks. It also performs well on non-regular formal specifications, such as panbnq, for which finite-automaton-based approaches are not applicable. 
+
+# 1 Introduction 
+
+Formal specification is a framework for describing complex, time-dependent behaviors, such as safety constraints. Reinforcement learning (RL) with formal specifications is a data-driven approach to train an agent to learn policies that optimize objectives described by temporal logic formulas or non-regular specifications, which faces two fundamental challenges. First, formal specifications introduce long-range temporal dependencies, meaning that the optimal policy is generally non-Markovian, which may depend on the history of observations and actions rather than solely on the current environment state. Second, formal specification objectives yield binary, trajectory-level feedback, causing extreme reward sparsity that results in challenging cold-starts. The standard approach to overcome this challenge is through automata theory and reward shaping (Shah et al., 2024; Manganaris et al., 2025), which converts a temporal logic (TL) formula into a finite-state automaton and then optimizes the TL objective over the product state space including both the automaton state and the environment state. It often further modifies the reward function to provide dense feedback throughout the trajectory. However, it has been shown that translating an LTL formula into a limit-deterministic Büchi automaton (LDBA) can be computationally infeasible, where in the worst case, the complexity is double-exponential in the number of Atomic Propositions (APs) (Sickert et al., 2016). Furthermore, any language requiring an arbitrary counter is non-regular and, therefore, cannot be represented by a finite automaton. 1arXiv:2611.26313v1 [cs.AI] 19 Nov 2026 This paper takes a different approach. Our algorithm learns a surrogate representation of the automaton state using the features from a predictor that predicts the future satisfaction probability of a given partial trajectory. The intuition behind this approach is that an agent’s progress through an automaton uniquely maps to a probability of reaching a future accepting state. The predictor network can be trained from a set of collected trajectories with binary satisfactory labels. The feature of the predictor, when given a partial trajectory, can represent the automaton state, thus avoiding the construction of a finite-state automaton. This leads to our proposed Actor-Predictor approach. 
+
+1.1 Main contributions 
+
+The key contributions of this paper include: • Theoretical Guarantees: For deterministic automata with accepting states, we prove that: (i) a well-trained predictor’s hidden representation sufficiently captures the automaton state (Lemma 1); and (ii) policy optimization over the surrogate product state yields an optimal policy for the formal specification objective (Theorem 1). • Algorithm & Evaluation: We implement Actor-Predictor using a Mamba predictor (Gu and Dao, 2024) and a GRPO-optimized actor (Guo et al., 2025) with exponential reward weighting. Across quadruped navigation (LTL) and grid-world (non-regular) tasks, experiments show: (1) Actor-Predictor outperforms baselines like CyclER (Shah et al., 2024), (2) Mamba predictors outperform Transformer and LSTM baselines (Vaswani et al., 2017; Graves, 2012); (3) learned representations exhibit transferability and subformula compositionality; and (4) predictor features empirically suffice to reconstruct the automaton state. 
+
+# 2 Related Work 
+
+Combining formal specification with reinforcement learning to provide a formal framework for safety and task satisfaction is an active topic in RL (Li et al., 2017; Bozkurt et al., 2020; Hasanbeig et al., 2020, 2019; Li et al., 2018; Cai et al., 2021; Chou et al., 2022; Wang et al., 2021). Temporal logic enables specifications over trajectories as a time-ordered sequence of steps. The standard approach to address RL in formal specification is to convert the Linear Temporal Logic (LTL) formula into a limit-deterministic Büchi automaton (LDBA). A product Markov decision process (PMDP) is then constructed by combining the system’s state space and the Büchi Automaton, yielding the product state space Sϕ “ S ˆ B. This transformation renders the task Markovian, enabling stationary policies over the augmented state space. Using the LDBA, methods such as Automaton Constrained Q-Learning (ACQL), Cycle Experience Replay (CyclER), and LTL-guided Counterfactual Experience Replay (LCER) leverage progress within the automaton to automatically densify the reward signal (Shah et al., 2024; Manganaris et al., 2025; Voloshin et al., 2023). Although these methods improve learning efficiency, they fundamentally rely on access to the explicit structure and observability of the automaton. This restricts the expressivity of formal logic to regular languages. Consequently, tasks requiring arbitrary counting form non-regular languages and cannot be solved using these approaches. Our approach is inspired by predictive state representations (PSRs) for POMDPs (Littman and Sutton, 2001). In PSR, the latent state is represented by predictions of a collection of future tests, where each test corresponds to a sequence of future observations. While PSRs require carefully handcrafted tests, our predictor directly estimates the eventual satisfaction of the given specification. 21 2304A B CD D DD23E(a) (b) 
+
+Figure 1: (a) Automaton corresponding to equation 1: reward is obtained upon completing 3 Ñ 0; transition E denotes a reset. (b) Actor-predictor architecture with predictor ϕθ and actor πψ. The predictor estimates satisfaction probability and passes features ϕk to the actor. 
+
+# 3 Problem Formulation 
+
+3.1 RL Problem 
+
+This paper considers an RL problem defined by a tuple M “ p S, A, P, K, r Lq, where S is the state space, A
+
+is the action space, P : S ˆ A Þ Ñ S is the time-homogeneous transition kernel, K is the time horizon, and rL
+
+is the reward function defined by a formal specification L for trajectories, e.g., the accepting language Lφ of a linear TL (LTL) φ or a non-regular formal specification. For example, the reward rLpτ q could be a simple binary feedback on whether the trajectory τ satisfies the formal specification, or the number of times the formal specification has been repeatedly satisfied, or the counter n of the L “ t anbnu task. Different from classic RL, our formal specification reward rL is usually a function of the whole trajectory and cannot be decomposed into “local” rewards that depend on the current state-action pair. The objective of the agent is to find a policy π˚ that maximizes the expected cumulative trajectory reward, i.e., π˚ “ arg max π Eτ „πrrLpτ qs .
+
+3.2 Temporal Logic for Trajectories 
+
+Consider a temporal logic formula φ, whose language Lφ or the set of trajectories that satisfy φ defines a formal specification. A formal logic consists of atomic propositions (APs) and operators. Given a trajectory τ that consists of state-action pairs tp sk, a kqu Kk“1, an AP is a Boolean-valued predicate that can be evaluated at each time step, i.e., p : S ˆ A Þ Ñ t True , False u. Typical operators in TL that verify the characteristics of trajectories include: Finally F, globally G, next X, until U, and negation ␣. A temporal logic (formula) φ is constructed from APs and logic operators. For example, let A, B, C, and D be APs, a temporal logic formula is: 
+
+φ “ FpA ^ XpFpB ^ XpFpCqqqqq ^ Gp␣ Dq, (1) which specifies that an agent must loop around four states described by A, B, and C in sequence without reaching a dangerous state described by D.An LDBA (Sickert et al., 2016) translates a TL formula into a state machine called automaton . Given a TL formula φ with APs and operators, an LDBA can be defined as the tuple B “ p B, Σ, T B, B˚, b 0q, where B
+
+is the set of automaton states, Σ is the power set of all APs in L, T B : B ˆ p Σ Y t Euq Ñ B is the transition function, where E is a dummy transition representing restart, B˚ is the set of accepting states that define the acceptance condition of the LDBA, and b0 P B is the initial state. An automaton example of the TL formula in equation 1 is shown in Fig. 1(a). By converting the LTL specification into an LDBA, the automaton state space 
+
+B can be integrated with the RL state S to construct a product MDP Sb “ S ˆ B. Then, solving a TL task can be formulated as solving an MDP over the product space with state-action reward function r : Sb ˆ A Ñ R`. It has 3Algorithm 1 Actor-Predictor Training  
+
+> 1:
+
+Input: Initialize predictor parameters θ0, actor parameters ψ0, and exponential weighting of β 
+
+> 2:
+
+for t “ 0, 1, 2, . . . do  
+
+> 3:
+
+Roll out the current policy as in Alg. 2 with predictor ϕθt and actor πψt to collect trajectories tτ pnquNn“1
+
+with rewards rLpτ pnqq and satisfaction labels yn. 
+
+> 4:
+
+Calculate raw advantages ˜Apτ pnqq for all trajectories using inverse temperature β, and normalize them to obtain Apτ pnqq following equation 2 and equation 3.  
+
+> 5:
+
+Train the actor πψt with GRPO using loss equation 4: ψt`1 “ arg min ψ LGRPO pψq. 
+
+> 6:
+
+Train the predictor by minimizing the BCE loss: θt`1 “ arg min θ LBCE pθq.been shown that translating an LTL formula into an LDBA can be computationally infeasible, where in the worst case, the complexity is double-exponential in the number of APs (Sickert et al., 2016). In this paper, we take a different route and present an actor-predictor approach, inspired by predictive state representation (Littman and Sutton, 2001), to mitigate these issues. In the rest of this paper, we assume the automaton is unknown but make the following assumptions: 
+
+Assumption 1 (Deterministic Automaton with Accepting States) The formal specification task L can be re-duced to an unknown deterministic automaton, whose state is unobserved. The formal specification is satisfied when the state of the automaton is in one of the accepting states B˚. In other words, a trajectory τ satisfies the formal specification if bk P B˚ at some step k. .
+
+# 4 An Actor-Predictor Approach 
+
+We name our architecture Actor-Predictor , which consists of a neural network predictor and an actor as shown in Fig. 1(a). At step k, the predictor takes the entire history τk “ p s1, a 1, s 2, a 2, ¨ ¨ ¨ , s kq as input and estimates the probability that, under the current policy, the formal specification φ will be satisfied in a later step (after step 
+
+k). Note that the predictor predicts future satisfactions, not past ones. Specifically, let the feature vector output (second-to-last layer) of the predictor neural network be ϕθpτkq, where θ is the parameter, and let σp¨q be the logistic function. The predicted probability of satisfaction is σ `ϕθpτkqJw˘ where w are the linear weights of the last layer. For the actor, denoted as a probability distribution πψ where ψ is the actor parameter, it takes the feature 
+
+ϕθpτkq of the predictor and the state sk as input. Then, it outputs an action sampled from πψpϕθpτkq, s kq. The predictor is trained with a binary cross-entropy loss, and the actor is trained using GRPO with reward-weighted regression (RWR). The full algorithm is summarized in Alg. 1. Intuitively, to accurately predict the eventual satisfaction probability of the partial trajectory, the predictor feature should expressively represent useful formal specification features such as the automaton state. Integrating these features into the RL state as the input of the actor should reduce the history-dependent formal specification based decision-making problem to a stationary MDP problem, where the optimal policy is Markovian. We will prove this property under mild conditions. 
+
+4.1 Predictor with Mamba SSM 
+
+Our predictor ϕθ estimates the probability of satisfaction given a partial trajectory τk “ p s1, a 1, s 2, a 2, . . . , s kq
+
+under the current policy. We choose Mamba as our neural network architecture for the following reasons: First, since the input is a time series, the predictor needs to have memory to capture the long-range dependency. Second, Mamba can dynamically change its internal state when an atomic proposition is satisfied, effectively mimicking the state transition of an automaton without requiring an explicit graph. Third, Mamba’s computational complexity scales linearly with sequence length during training and remains constant per step during inference. Unlike the 4discrete states of a standard automaton, Mamba does not restrict its hidden state to a binary representation, granting a significantly greater expressive power. Given a set of partial trajectories tτ pnq 
+
+> kn
+
+uNn“1 where each trajectory consists of several consecutive state-action pairs from the initial state, and the binary labels tynuNn“1, where yn indicates whether τkn under the current policy would satisfy the formal specification L in a future step, (i.e., bpnq 
+
+> m
+
+P B˚ for some K ě m ě kn.). We train the Mamba predictor using the BCE loss as follows: 
+
+LBCE pθq “ ´ 1
+
+N
+
+ÿ
+
+> n
+
+„
+
+yn log σ
+
+ˆ
+
+ϕθ
+
+´
+
+τ pnq
+
+> kn
+
+¯J
+
+w
+
+˙
+
+` p 1 ´ ynq log 
+
+ˆ
+
+1 ´ σ
+
+ˆ
+
+ϕθ
+
+´
+
+τ pnq
+
+> kn
+
+¯J
+
+w
+
+˙˙ȷ 
+
+.
+
+To obtain the partial trajectories, we could first roll out a complete trajectory with Alg. 2, randomly sample some time steps kn, and then verify its future satisfaction with formal specification. 
+
+Multi-predictor and subformulas. When a temporal logic specification is long, we can break it into subformulas and use a multi-Predictor Actor approach. For each subformula on a partial trajectory τk, we use a separate feature extractor ϕθi pτkq to extract the feature of each subformula. Then, we independently verify whether each subformula is satisfied for the completion of the trajectory under the current policy. Similarly, we train all predictors using the BCE loss in equation 2. 
+
+4.2 Training MLP Actor with GRPO and RWR 
+
+Algorithm 2 Actor-Predictor Policy Roll-out 
+
+Require: Predictor feature extractor ϕθ, actor πψ 
+
+> 1:
+
+Sample initial state s1 
+
+> 2:
+
+for k “ 1, 2, . . . , K do  
+
+> 3:
+
+Extract predictor feature from history trajectory τk “ t s1, a 1, . . . , s ku to obtain ϕk “ ϕθpskq 
+
+> 4:
+
+Take action ak sampled from actor πψp¨ | sk, ϕkq and observe next state sk`1 
+
+> 5:
+
+Let τ be the full trajectory generated; randomly sample k to get partial trajectory τk and evaluate satisfaction in the future by checking the complete trajectory τ to get a corresponding label y. 
+
+The actor πψ operates on an augmented state ˜sk “ r sk, ϕks, where sk represents the environment (original RL) state and ϕk provides the surrogate automaton representation extracted from the feature of the predictor. Through the augmented state ˜s, the problem is approximately reformulated as an MDP, such that the optimal policy is Markovian. The theoretical justification will be presented in the next section. Since the formal specification based reward is only available at the end of each trajectory, we employ a modified version of GRPO (Guo et al., 2025) to train our actor πψ that incorporates the exponential weighting scheme from RWR (Peters and Schaal, 2007). In particular, given a trajectory τ, the “raw” advantage of the trajectory is defined to be 
+
+˜Apτ q “ exp pβpRpτ qq . (2) This exponential weighting emphasizes larger rewards by assigning them disproportionately higher weights, so that under a sparse-reward landscape, the algorithm could emphasize more on positive signals, which are rare at the start. Then, given a set of trajectories D “ t τ pnquNn“1, GRPO normalizes the raw advantage function as follows: 
+
+A
+
+´
+
+τ pnq¯
+
+“
+
+˜A `τ pnq˘ ´ mean 
+
+´ ˜A `τ pnq˘¯
+
+std 
+
+´ ˜A `τ pnq˘¯ . (3) 5Similarly, the GRPO loss is constructed as follows: 
+
+LGRPO pψq “ ´ 1
+
+N K 
+
+ÿ
+
+> n,k
+
+min 
+
+"
+
+rn,k pψqA
+
+´
+
+τ pnq¯
+
+, clip rrn,k pψqs 1`ε
+
+> 1´ε
+
+A
+
+´
+
+τ pnq¯ *
+
+, (4) where clip is the usual clip operator in PPO and GRPO, and rn,k is the importance sampling weight for the k-th augmented state-action pair in trajectory τ pnq, as follows: 
+
+rn,k pψq “ 
+
+πψ
+
+´
+
+apnq
+
+> k
+
+ˇˇˇ spnq 
+
+> k
+
+, ϕpnq
+
+> k
+
+¯
+
+πψold 
+
+´
+
+apnq
+
+> k
+
+ˇˇˇ spnq 
+
+> k
+
+, ϕpnq
+
+> k
+
+¯ .
+
+Alternating Optimization. As outlined in Algorithm 1, both the actor policy and predictor are trained on-policy. At each iteration t, the agent collects a new batch of trajectories using the current actor πψt and predictor ϕθk . The two networks are trained separately with alternating optimization. During each iteration, we first train the actor with a frozen predictor, then train the predictor. 
+
+# 5 Sufficiency of the Predictive Feature 
+
+In this section, we prove that the features from a well-trained predictor in our Actor-Predictor framework are a sufficient representation to learn the optimal policy under formal specifications, as a special class of Partially Observed Markov Decision Processes (POMDPs) with state space of the problem is the product space Sb “ S ˆB,
+
+where B is the state of the automaton associated with the formal specification. Suppose the trajectories used to train the predictor in equation 2 are from a simple policy μ : Sw ˆ Aw´1 Ñ
+
+PA, which takes past w step history, i.e, psk´w`1, a k´w`1, ¨ ¨ ¨ , s k´1, a k´1, s kq. Our results hold for all w Pt1, 2, ¨ ¨ ¨ , 8u . Given any two partial trajectories τk, and ˜τk1 truncated at step k and k1 respectively with the same current state s, let ω be the mapping from the partial trajectory to the automaton state and let bk “ ωpτkq and 
+
+˜bk1 “ ωpτk1 q, where ˜bk1 ‰ bk, be the deterministic automaton state at step k. With a well-trained predictor and an informative policy μ, we further make the following assumptions: 
+
+Assumption 2 (Distinguishability) Under a well-trained predictor and informative policy μ, there exists ϵ ą 0
+
+such that, for any environment state s and any distinct automaton states b and ˜b (b ‰ ˜b), the following two inequalities hold at the same time: 
+
+ˇˇσ `ϕθpτkqJw˘ ´ Pμ pD m ą k, ω pτmq P B˚ | sk “ s, b kqˇˇ ď ϵ (5) 
+
+ˇˇˇPμ pD m ą k, ω pτmq P B˚ | sk “ s, b kq ´ Pμ
+
+´
+
+Dm1 ą k1, ω p˜τm1 q P B˚ | ˜sk1 “ s, ˜bk1
+
+¯ ˇ ˇˇ ą 4ϵ. (6) This assumption states that, under policy μ, for any fixed environment state, distinct automaton states have distinct satisfaction probabilities. Moreover, the predictor estimates these satisfaction probabilities with an error of at most 
+
+ϵ. We have the following lemma under Assumptions 1 and 2, which states that the feature from the predictor is a sufficient representation of the automaton state. 
+
+Lemma 1 Given trajectories τk and ˜τk1 such that sk “ ˜sk1 , ω pτkq “ ωp˜τk1 q if and only if 
+
+ˇˇσpϕθpτkqJwq ´ σpϕθp˜τk1 qJwqˇˇ ď 2ϵ (7) 
+
+under a well-trained model θ, which implies that σpϕθpτkq “ σpϕθpτ 1
+
+> k
+
+q if bk “ ˜bk1 .
+
+6The proof of this lemma is included in the supplementary material. From this lemma, we can establish the following theorem. 
+
+Theorem 1 There exists a Markov policy ˜π˚ : S ˆ Φθ Ñ PA such that 
+
+E˜π˚
+
+«ÿ
+
+> k
+
+rpsk, b kq
+
+ff 
+
+“ max  
+
+> πPΠ
+
+Eπ
+
+«ÿ
+
+> k
+
+rpsk, b kq
+
+ff 
+
+,
+
+where Π is the set of all history-dependent policies. 
+
+Proof 1 Note that the problem is a fully observed MDP with psk, b kq. Therefore, there exists a stationary Markov policy π˚ : Sb Ñ PA such that 
+
+Eπ˚
+
+«ÿ
+
+> k
+
+rpsk, b kq
+
+ff 
+
+“ max  
+
+> πPΠ
+
+Eπ
+
+«ÿ
+
+> k
+
+rpsk, b kq
+
+ff 
+
+.
+
+Now given π˚, we define ˜π˚ such that at step k, ˜π˚psk, ϕkq “ π˚psk, b q where b is the automaton state such that 
+
+ˇˇσ `ϕJ 
+
+> k
+
+w˘ ´ Pμ pD K ě m ą k, ω pτmq P B˚ | sk “ s, b kqˇˇ ď ϵ. (8) 
+
+Now according to the previous lemma, if ϕk “ ϕθpτkq, then b “ bk, the correct automaton state. 
+
+This theorem states that with a well-trained predictive model, we can find a Markov policy on the state space 
+
+Φθ ˆS which achieves the maximum reward for the original problem on Sb, which justifies our framework. Unlike classical PSRs, which seek a predictive representation sufficient for all future observations, our representation only needs to be sufficient for predicting task satisfaction and therefore may be substantially lower-dimensional. 
+
+# 6 Experiments 
+
+Figure 2: The quadruped environment. We evaluate our Actor-Predictor architecture across four key dimensions: (1) performance against baselines with explicit automaton access, (2) expressivity on non-regular formal spec-ifications, (3) feature transferability across specifications, and (4) latent state alignment relative to ground truth automaton states. 
+
+Quadruped. Implemented in Isaac Lab (Mittal et al., 2025), this environment uses a Unitree quadruped. Control is hierarchical: a high-level policy outputs a discrete target velocity (linear ˘1, m {s or heading ( ˘π{2, rad {s) mapped to joint torques by a frozen low-level controller. In tasks in-volving the collision predicate C, a second robot patrols a circle of radius ?2 m around the red landmark (see Figure 2). The observation vector s stacks projected gravity g, lo-cal 2D landmark positions (including o only when present in logic), and robot r2 (zero-padded when absent). The temporal logic specifications are φ1 “ GpFpBqq ^ 
+
+GpFpP qq ^ GpO Ñ FpY qq ^ Gp␣ Rq ^ Gp␣ Cq, φ2 “ G`FpP ^ XpFpY ^ XpFpBqqqqq ˘ ^ Gp␣ Rq, and 
+
+φ3 “ GpFpBqq ^ GpFpP qq ^ Gp␣ Rq ^ Gp␣ Cq where B, P , O, Y , and R denote the entry of the blue, purple, orange, yellow, and red landmarks, respectively, and C is a collision }pos agent ´ pos robot2 }2 ď 0.75 m. We set 70 200 400 600 800 1000 
+
+> Iteration
+> 0.00 0.02 0.04 0.06 0.08 0.10
+> Reward / sec
+> Actor-Predictor CyclER LCER
+
+(a) 0 2000 4000 6000 8000 10000  
+
+> Iteration
+> 0246810
+> Average Reward
+> Actor-Predictor GRPO PPO CyclER
+
+(b) 0 200 400 600 800 1000  
+
+> Iteration
+> 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+> Reward / sec
+> Cold-Start Transfer-Learning
+
+(c) 
+
+Figure 3: (a) Comparison of Actor-Predictor, CyclER, and LCER on φ1 (x-axis is number of gradient updates). (b) Comparison of Actor-Predictor, GRPO, PPO, and CyclER on L “ anbn. (c) Transfer learning from φ2 to 
+
+φ3, where the actor is trained in both Cold-Start and Transfer-Learning, while the predictor is trained only in Cold-Start. batch size 512 , decision frequency 5 Hz, and episode lengths of 135 s for φ1, φ 3 and 150 s for φ2. The agent receives a reward of `1 each time the specification is newly satisfied. The APs reset after visiting an accepting state. 
+
+Grid World. A 10 ˆ 10 discrete grid world where each episode begins at p0, 0q. The agent takes discrete cardinal actions. Four landmarks are placed at blue p9, 0q, purple p0, 9q, red p4, 4q, and yellow p9, 9q. This grid world environment was used to evaluate the non-regular formal specification L “ t anbnu. This is a foundational example in formal language theory that cannot be represented with a finite automaton. Tasks a and b are two subtasks, each requiring the agent to reach a target location on the grid (Blue and Purple respectively) and then return to a specified goal location (Yellow). The red region must be avoided. These tasks must be completed an equal number of times eventually, and task a must never be completed after task b (e.g., ab, aabb ). We train with batch size 4096 over 400 -step episodes. 
+
+Baselines. We compare our approach against four standard baselines: LCER (Voloshin et al., 2023) uses an MLP policy taking state and automaton inputs, reusing transitions across automaton states via counterfactual relabeling with eventual discounting. CyclER (Shah et al., 2024) shapes rewards by maximum path completion using cycle experience replay and eventual discounting. PPO (Schulman et al., 2017) serves as a standard actor-critic baseline using the same Mamba architecture for fair comparison. GRPO (Shao et al., 2024) is a critic-free algorithm estimating advantages via trajectory-group reward normalization under the Mamba architecture. 
+
+6.1 Performance Comparison with the Baselines 
+
+We compare single-head Actor-Predictor against CyclER and LCER under specification φ1 in the quadruped environment (Fig. 3(a)). Actor-Predictor achieves the highest average reward ( 0.0905 ˘ 0.0027 ), outperforming CyclER ( 0.0724 ˘ 0.0216 ) and LCER ( 0.0566 ˘ 0.0328 ). Actor-Predictor has the slowest convergence because, unlike the baselines, it is not explicitly provided with the automaton state and there is no reward shaping, making initial rewards much more sparse. Next, we use the grid world with the non-regular specification L “ t anbnu. Since L is not regular, CycLER uses a finite automaton that creates an upper bound of n to 15 (Fig. 3(b)). Even with this truncation at N “ 15 ,the automaton has 137 states, which shows as the maximum count n suffer from state space explosion. Our Actor-Predictor architecture bypasses explicit automaton construction entirely, avoiding this scalability limitation. Actor-Predictor substantially outperforms all baselines, achieving a final average reward of 7.37 ˘ 3.56 : four of five seeds reach n “ 9, while the remaining seed converges to ab . CyclER reaches 2.0 ˘ 0.0, and GRPO and PPO reach 1.0 ˘ 0.0 and 0.98 ˘ 0.02 respectively, corresponding to the same ab optimum. The next experiment tests whether predictor features transfer across specifications (Fig. 3(c)). The “Transfer-Learning” Actor-Predictor was first trained on φ2 with two prediction heads for 1,000 iterations, after which the 80 200 400 600 800 1000 
+
+> Iteration
+> 0.01
+> 0.00 0.01 0.02 0.03 0.04 0.05 0.06
+> Reward / sec
+> Mamba-Predictorr Transformer-Predictor LSTM-Predictor
+
+(a) Ablation over predictor architectures on φ20 2000 4000 6000 8000 10000 
+
+> Iteration
+> 0246810
+> Average Reward
+> Mamba-Predictor Transformer-Predictor LSTM-Predictor
+
+(b) Ablation over predictor architectures on 
+
+L “ t anbnu0 200 400 600 800 1000 
+
+> Iteration
+> 0.01
+> 0.00 0.01 0.02 0.03 0.04 0.05 0.06
+> Reward / sec
+> 2 Prediction Heads 1 Prediction Head
+
+(c) Ablation over the number of prediction heads on φ20 2000 4000 6000 8000 10000   
+
+> Iteration
+> 0246810
+> Average Reward
+> Actor-Predictor, = 10
+> Actor-Predictor, = 1
+
+(d) Actor-Predictor with different β values on 
+
+L “ t anbnu
+
+Figure 4: Ablation over the Actor-Predictor Design Choices predictor was frozen and the actor was randomly re-initialized. The actor was then trained on φ3. The “Cold-Start” agent was trained on φ3 from scratch with one prediction head. The positions of R, B, and P were shared between the two specifications; φ3 additionally involves a second robot, whereas φ2 does not. Cold-Start reaches a final reward of 0.1080 ˘ 0.0094 , while Transfer-Learning reaches 0.0980 ˘ 0.0078 . This indicates the transferability of the learned features across different specifications. By freezing the Mamba predictor, we also achieve a 3.48 GB reduction in peak VRAM overhead per step. Empirically, while an LSTM predictor exhibits similar memory savings, the Transformer predictor yields more than twice the peak VRAM savings. 
+
+6.2 Automaton State Recovery From Hidden State 
+
+We train a linear classifier on 2,048 trajectories to recover the automaton state bt from the predictor hidden state ht,using an 80/20 train-test split. The high-recover accuracy in Table 1 indicates that ht captures the task dynamics, empirically supporting Lemma 1. Table 1: Automaton state recovery accuracy across environments (%). 
+
+Quadruped ( φ1) Quadruped ( φ2) Grid World ( L “ t anbnu)
+
+99 .63 ˘ 0.14% 99 .55 ˘ 0.22% 94 .12 ˘ 10 .30% 
+
+6.3 Ablation 
+
+We ablate key design choices in our method: the number of prediction heads, the predictor architecture, and exponential weighting. We first compared Mamba, Transformer, and Long Short-Term Memory (LSTM) predictors, each paired with an MLP actor, on the grid world using the non-regular language L “ t anbnu (Fig. 4(a)) and on the quadruped environment using the regular specification φ2 (Fig. 4(b)). Under regular constraints, Mamba, Transformer, and LSTM achieve comparable rewards ( 0.0464 ˘ 0.0005 , 0.0373 ˘ 0.0209 , 0.0458 ˘ 0.0038 ). Under non-regular constraints, Mamba reaches 7.37 ˘ 3.56 , outperforming Transformer ( 0.17 ˘ 0.02 ) and LSTM (0.20 ˘ 0.44 ). Mamba has the best performance for both non-regular and regular constraints. We also ablate the number of prediction heads: each head predicts the satisfaction of one conjunct. For φ2,we predict the full specification along with φ2,1 “ G`FpP ^ XpFpY ^ XpFpBqqqqq ˘ and φ2,2 “ Gp␣ Rq. The two-headed ( 0.0466 ˘ 0.000 ) and single-head ( 0.0466 ˘ 0.001 ) variant have nearly the same reward in Fig. 4(c) shows the compositionality of the specification. The final ablation investigates the effect of exponential weighting in the anbn task. The unweighted variant (β “ 1) receives an average reward of 1.0 ˘ 0.0, converging to the ab local optimum, while the exponentially weighted variant ( β “ 10 ) reaches 7.4 ˘ 3.6 (Fig. 4(d)). The probability of increasing n is more challenging than in the previous step, necessitating exponential weighting and encouraging exploration to higher n.97 Conclusion 
+
+RL with formal specification is challenging because of the sparse reward nature. We propose Actor-Predictor, a framework that learns a surrogate representation of logic progress without knowledge or observability of the automaton. We show theoretically that, with sufficient predictive accuracy, the learned representation is equivalent to the automaton state. Empirically, Actor-Predictor outperforms automaton-based baselines on LTL specifications without access to the automaton, learns non-regular specifications such as L “ t anbnu, and learns environmental features that can be transferred across specifications. 
+
+# AI Disclosure 
+
+LLMs were used for coding and proofreading assistance. The authors reviewed all outputs and take full responsi-bility for the content of this work. 
+
+# References 
+
+Alper Kamil Bozkurt, Yu Wang, Michael M Zavlanos, and Miroslav Pajic. Control synthesis from linear temporal logic specifications using model-free reinforcement learning. In 2020 IEEE International Conference on Robotics and Automation (ICRA) , pages 10349–10355. IEEE, 2020. Mingyu Cai, Mohammadhosein Hasanbeig, Shaoping Xiao, Alessandro Abate, and Zhen Kan. Modular deep reinforcement learning for continuous motion planning with temporal logic. IEEE robotics and automation letters , 6(4):7973–7980, 2021. Glen Chou, Necmiye Ozay, and Dmitry Berenson. Learning temporal logic formulas from suboptimal demonstra-tions: theory and experiments. Autonomous Robots , 46(1):149–174, 2022. Alex Graves. Long short-term memory. Supervised sequence labelling with recurrent neural networks , pages 37–45, 2012. Albert Gu and Tri Dao. Mamba: Linear-time sequence modeling with selective state spaces. In First Conference on Language Modeling , 2024. URL https://openreview.net/forum?id=tEYskw1VY2 .Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, Ruoyu Zhang, Shirong Ma, Xiao Bi, et al. Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning. 
+
+arXiv preprint arXiv:2501.12948 , 2025. Mohammadhosein Hasanbeig, Yiannis Kantaros, Alessandro Abate, Daniel Kroening, George J Pappas, and Insup Lee. Reinforcement learning for temporal logic control synthesis with probabilistic satisfaction guarantees. In 
+
+2019 IEEE 58th conference on decision and control (CDC) , pages 5338–5343. IEEE, 2019. Mohammadhosein Hasanbeig, Daniel Kroening, and Alessandro Abate. Deep reinforcement learning with temporal logics. In International Conference on Formal Modeling and Analysis of Timed Systems , pages 1–22. Springer, 2020. Xiao Li, Cristian-Ioan Vasile, and Calin Belta. Reinforcement learning with temporal logic rewards. In 2017 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS) , pages 3834–3839. IEEE, 2017. Xiao Li, Yao Ma, and Calin Belta. A policy search method for temporal logic specified reinforcement learning tasks. In 2018 Annual American Control Conference (ACC) , pages 240–245. IEEE, 2018. 10 Michael Littman and Richard S. Sutton. Predictive representations of state. Advances Neural Information Processing Systems (NeurIPS) , 14, 2001. Anastasios Manganaris, Vittorio Giammarino, and Ahmed H Qureshi. Automaton constrained q-learning. arXiv preprint arXiv:2510.05061 , 2025. Mayank Mittal, Pascal Roth, James Tigue, Antoine Richard, Octi Zhang, Peter Du, Antonio Serrano-Muñoz, Xinjie Yao, René Zurbrügg, Nikita Rudin, Lukasz Wawrzyniak, Milad Rakhsha, Alain Denzler, Eric Heiden, Ales Borovicka, Ossama Ahmed, Iretiayo Akinola, Abrar Anwar, Mark T. Carlson, Ji Yuan Feng, Animesh Garg, Renato Gasoto, Lionel Gulich, Yijie Guo, M. Gussert, Alex Hansen, Mihir Kulkarni, Chenran Li, Wei Liu, Viktor Makoviychuk, Grzegorz Malczyk, Hammad Mazhar, Masoud Moghani, Adithyavairavan Murali, Michael Noseworthy, Alexander Poddubny, Nathan Ratliff, Welf Rehberg, Clemens Schwarke, Ritvik Singh, James Latham Smith, Bingjie Tang, Ruchik Thaker, Matthew Trepte, Karl Van Wyk, Fangzhou Yu, Alex Millane, Vikram Ramasamy, Remo Steiner, Sangeeta Subramanian, Clemens Volk, CY Chen, Neel Jawale, Ashwin Varghese Kuruttukulam, Michael A. Lin, Ajay Mandlekar, Karsten Patzwaldt, John Welsh, Huihua Zhao, Fatima Anes, Jean-Francois Lafleche, Nicolas Moënne-Loccoz, Soowan Park, Rob Stepinski, Dirk Van Gelder, Chris Amevor, Jan Carius, Jumyung Chang, Anka He Chen, Pablo de Heras Ciechomski, Gilles Daviet, Mohammad Mohajerani, Julia von Muralt, Viktor Reutskyy, Michael Sauter, Simon Schirm, Eric L. Shi, Pierre Terdiman, Kenny Vilella, Tobias Widmer, Gordon Yeoman, Tiffany Chen, Sergey Grizan, Cathy Li, Lotus Li, Connor Smith, Rafael Wiltz, Kostas Alexis, Yan Chang, David Chu, Linxi "Jim" Fan, Farbod Farshidian, Ankur Handa, Spencer Huang, Marco Hutter, Yashraj Narang, Soha Pouya, Shiwei Sheng, Yuke Zhu, Miles Macklin, Adam Moravanszky, Philipp Reist, Yunrong Guo, David Hoeller, and Gavriel State. Isaac lab: A gpu-accelerated simulation framework for multi-modal robot learning. arXiv preprint arXiv:2511.04831 , 2025. URL https://arxiv.org/abs/2511.04831 .Jan Peters and Stefan Schaal. Reinforcement learning by reward-weighted regression for operational space control. In Proceedings of the 24th international conference on Machine learning , pages 745–750, 2007. John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 , 2017. Ameesh Shah, Cameron Voloshin, Chenxi Yang, Abhinav Verma, Swarat Chaudhuri, and Sanjit A Seshia. Ltl-constrained policy optimization with cycle experience replay. arXiv preprint arXiv:2404.11578 , 2024. Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Yang Wu, et al. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. 
+
+arXiv preprint arXiv:2402.03300 , 2024. Salomon Sickert, Javier Esparza, Stefan Jaax, and Jan Kˇ retínsk` y. Limit-deterministic büchi automata for linear temporal logic. In International Conference on Computer Aided Verification , pages 312–332. Springer, 2016. Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin. Attention is all you need. Advances in neural information processing systems , 30, 2017. Cameron Voloshin, Abhinav Verma, and Yisong Yue. Eventual discounting temporal logic counterfactual experience replay. In International Conference on Machine Learning , pages 35137–35150. PMLR, 2023. Yu Wang, Alper Kamil Bozkurt, and Miroslav Pajic. Reinforcement learning with temporal logic constraints for partially-observable markov decision processes. arXiv preprint arXiv:2104.01612 , 2021. 11 A Proof of Lemma 1 
+
+Given sk “ ˜sk1 “ s and ωpτkq “ ωp˜τk1 q “ b, the success probabilities of τ and ˜τ are the same because they have the same probability distribution over the automaton states at termination, so the success probabilities are the same, or 
+
+Pμ pD m ą k, ω pτmq P B˚ | sk “ s, b kq “ Pμ
+
+´
+
+Dm1 ą k1, ω p˜τm1 q P B˚ | ˜sk1 “ s, ˜bk1
+
+¯
+
+“ p, 
+
+which implies that 
+
+|σ `ϕθpτkqJw˘ ´ p| ď ϵ and |σ `ϕθp˜τk1 qJw˘ ´ p| ď ϵ, 
+
+by the triangle inequality ˇˇσpϕθpτkqJwq ´ σpϕθp˜τk1 qJwqˇˇ ď 2ϵ. 
+
+Now given sk “ ˜sk1 “ s with a well-trained model, we have 
+
+ˇˇσ `ϕJ 
+
+> θ
+
+pτkqw˘ ´ Pμ pD m ą k, ω pτmq P B˚ | sk “ s, b kqˇˇ ď ϵ (9) and 
+
+ˇˇˇσ `ϕJ 
+
+> θ
+
+p˜τk1 qw˘ ´ Pμ
+
+´
+
+Dm1 ą k1, ω p˜τm1 q P B˚ | ˜sk1 “ s, ˜bk1
+
+¯ˇ ˇˇ ď ϵ, (10) applying the triangle inequality again 
+
+ˇˇˇPμ pD m ą k, ω pτmq P B˚ | sk “ s, b kq ´ Pμ
+
+´
+
+Dm1 ą k1, ω p˜τm1 q P B˚ | ˜sk1 “ s, ˜bk1
+
+¯ ˇ ˇˇ ď 4ϵ, (11) which implies that ωpτkq “ ωp˜τk1 q.
+
+# B Experimental Details 
+
+B.1 Hardware 
+
+All experiments were performed on a single NVIDIA RTX PRO 6000 Blackwell. 
+
+B.2 Details 
+
+We began from standard Proximal Policy Optimization (PPO) and Adam defaults, together with the values reported in the Cycler Experience Replay (CyclER) paper, and adjusted them to perform well across all algorithms. All experiments in both the grid world and Quadruped environments were run with random seeds 0–4. One-step temporal-difference (TD) returns were used to estimate the advantage for vanilla PPO and PPO with Eventual Discounting. PPO with Eventual Discounting was used with the reward shaping of CyclER and LTL-guided Counterfactual Experience Replay (LCER). 
+
+Grid World The grid world had a batch size of 4096 environments, the maximum that fit on a single NVIDIA RTX PRO 6000 Blackwell. We tested time horizons of {350, 400, 500, 600, 700} and found 400 to be the shortest horizon that consistently scaled with n. The actor learning rate was swept over {2e-5, 4e-5, 6e-5, 8e-5, 1e-4, 3e-4, 5e-4}. The entropy bonus was swept over {1e-5, 1e-4, 1e-3, 5e-3, 1e-2}. The clip ratio was tested over {0.1, 0.2, 0.3}, and PPO epochs over {2, 3}. The discount factors tested were 0.99 and 0.999. β was tested at {1,2,4,6,7,8,10,12}, with 12 β “ 10 giving the best performance. We used a Lagrangian λ of 10, guided by the original CyclER paper. Final values for each algorithm are reported in Table 2. Parameter AP CyclER GRPO PPO Actor lr 4e-5 4e-5 4e-5 4e-5 Critic lr – 1e-3 – 1e-3 Predictor lr 1e-3 – – –Entropy bonus α 5e-3 5e-3 5e-3 5e-3 Clip ratio ϵ 0.2 0.2 0.2 0.2 PPO epochs 3 3 3 3Discount γ – 0.99 – 0.99 
+
+β 10 – – –Max grad. norm None 0.5 None None Lagrangian λ – 10 – –Table 2: Hyperparameters for each algorithm in the grid world environment. All experiments use the grid world configuration described in the Experiments section. CyclER uses an MLP actor and critic, each with three hidden layers of size 128, 64, and 64. We evaluated three predictor architectures for the actor: Mamba, Transformer, and Long Short-Term Memory (LSTM). The Mamba predictor uses a local temporal convolution of width 4, a state dimension of 8, and an internal expansion factor of 1. The Transformer predictor uses a 4-head transformer with Rotary Positional Embeddings (RoPE), 4-dimensional query and value projections, and a feed-forward layer expanded by a factor of 4. The LSTM predictor is single-layer with a hidden state size of 416 and an intermediate convolution of width 4. The actor for all AP (Actor-Predictor) methods uses two hidden layers of sizes 128 and 64. GRPO and PPO both use a Mamba actor with a state dimension of 8, a convolution of width 4, and an expansion factor of 1. PPO uses a Mamba-based critic with the same configuration as the actor. 
+
+Quadruped In the Quadruped environment, parameters not explicitly swept below were adopted from the grid world. The control frequency was 5 Hz. The time horizons for φ1 and φ3 were both 135 s (675 steps), while the time horizon for φ2 was 150 s (750 steps). We found that shorter time horizons made the reward too sparse. We set the batch size to 512, which allowed 1000 training iterations to complete in reasonable time on a single NVIDIA RTX PRO 6000 Blackwell. We selected the actor learning rate by starting at 1e-4 and increasing in steps of 1e-4, choosing the highest value that maintained stable training (3e-4). We swept the entropy bonus over {1e-5, 1e-4, 1e-3, 1e-2, 5e-2}, PPO epochs over {1, 2, 3}, and the clip ratio ϵ over {0.1, 0.2, 0.3}, selecting the values that gave the most stable training. No Lagrangian λ is needed for CyclER, as there are no MDP rewards. Final values for each algorithm are reported in Table 3. 13 Parameter AP CyclER LCER Actor lr 3e-4 3e-4 3e-4 Critic lr – 1e-3 1e-3 Predictor lr 1e-3 – –Entropy bonus α 1e-4 1e-4 1e-4 Clip ratio ϵ 0.2 0.2 0.2 PPO epochs 3 3 3Discount γ – 0.99 0.99 
+
+β 10 – –Max grad. norm None 0.5 0.5 Table 3: Hyperparameters for each algorithm in the Quadruped environment. All experiments use the Quadruped task configurations described in the Experiments Section. The CyclER and LCER methods use an MLP actor and critic, each with three hidden layers of size 64. AP uses a single Mamba layer to make predictions. The Mamba predictor uses a local temporal convolution of width 4, a state dimension of 8, and an internal expansion factor of 1. The actor has two hidden layers, each of size 64. 14
