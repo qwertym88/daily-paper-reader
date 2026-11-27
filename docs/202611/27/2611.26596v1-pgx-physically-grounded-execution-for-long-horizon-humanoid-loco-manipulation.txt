@@ -1,0 +1,1203 @@
+PGX: Physically Grounded Execution for Long-Horizon Humanoid
+Loco-Manipulation
+Kai Lu1, Chenyang Ma2, Ioannis Havoutis1
+Abstract— Robotic vision-language-action (VLA) models can
+execute diverse individual manipulation skills, yet they still
+struggle with long-horizon loco-manipulation tasks, where tem-
+poral structure, skills, and precision are tightly coupled within a
+monolithic model. We propose Physically Grounded Execution
+(PGX), a framework that offloads temporal and precision con-
+trol to two classical training-free components, allowing the VLA
+to focus on stage-specific skill dynamics. PGX decomposes long-
+horizon loco-manipulation into three layers: (i) a predicate-
+based state machine governs task progression, using physical
+predicates to gate phase transitions, trigger recovery, and
+coordinate navigation and waiting. Shared predicate semantics
+connect offline demonstration segmentation, online execution,
+and stage-wise evaluation; (ii) VLA skills operate within active
+manipulation phases, with flat or stage-trained models con-
+centrating on task-relevant actions; and (iii) world-coordinate
+locking (WCL) maintains spatial consistency through base
+station keeping, object-relative positioning, and world-anchored
+contact targets. We demonstrate the effectiveness of PGX with
+extensive experiments conducted on three simulated tasks and
+one real-world task using a Unitree G1 humanoid robot for
+long-horizon loco-manipulation, showing improvements in stage
+progression and task success rates. Project page is available at
+https://kl-research.github.io/pgx.
+I. INTRODUCTION
+Humanoid loco-manipulation for long-horizon tasks is
+central to embodied intelligence and generalist robotics, with
+applications in domestic assistance, healthcare, and industrial
+logistics. Yet even seemingly routine tasks in these domains
+demand complex, extended coordination between locomotion
+and manipulation. For instance, fetching a coffee or clearing
+a table interleaves walking, contact-rich manipulation, and
+precise object-part interaction over long action sequences.
+The challenge lies in jointly addressing three tightly coupled
+aspects: temporal structure, skill dynamics, and precise con-
+trol, all of which must be grounded in physical interaction
+and integrated within a unified visuomotor control framework
+(see Fig. 1).
+Traditional methods for loco-manipulation separate these
+concerns across modules: task and motion planning or be-
+havior trees control timing [1]–[3], model-based whole-body
+control owns precision, and manipulation is realized by hand-
+designed motion primitives. These systems are transparent
+and precise, but every skill must be engineered for a specific
+object and scene, and contact-rich skills remain brittle.
+1K. Lu and I. Havoutis are with the Oxford Robotics Institute,
+University of Oxford. kai.lu@oxfordrobotics.institute,
+ioannis@robots.ox.ac.uk
+2C. Ma is with the Department of Computer Science, University of
+Oxford. chenyang.ma@cs.ox.ac.uk
+1. approach
+2. grasp
+3. transport
+4. place
+5. press
+6. wait
+7. re-grasp
+8. deliver
+Executor:
+navigation
+VLA skill
+world-anchored primitive
+wait
+TIMING
+which stage, when to switch,
+how long to wait
+SKILLS
+contact-rich
+manipulation
+PRECISION
+maintaining stable pose
+while the body moves 
+Flat VLA
+PGX (ours)
+fails: wrong skill, never reaches the machine
+success
+Long-horizon Loco-manipulation Tasks
+Fig. 1: Humanoid long-horizon loco-manipulation. This
+work studies humanoid loco-manipulation tasks: with the
+same VLA model, the flat policy fails before the machine,
+whereas our method PGX completes the task by keeping
+timing and world-frame precision outside the network, and
+the VLA executes only the manipulation stages.
+Learning-based methods offer a more generalizable al-
+ternative: Vision-Language-Action models (VLAs) [4]–[9]
+and learned whole-body controllers [10]–[12] acquire trans-
+ferable manipulation skills and locomotion behaviors from
+data, reducing the need for task- or object-specific pro-
+gramming. However, learning and executing the entire long-
+horizon loco-manipulation task with a single policy in-
+troduces difficulties in maintaining task progress, coordi-
+nating reference frames, and handling highly imbalanced
+demonstrations. Without an explicit representation of task
+progress, visually similar observations from different stages
+can lead to incorrect skill execution [13]. Moreover, actions
+represented relative to the moving pelvis frame make precise
+manipulation difficult, since the action reference changes as
+the humanoid moves. Long-horizon demonstrations are also
+highly imbalanced: walking and low-motion segments dom-
+inate the trajectory, which can bias imitation learning toward
+conservative or near-static actions (e.g., standing still). Thus,
+arXiv:2611.26596v1  [cs.RO]  19 Nov 2026
+
+
+these challenges remain major obstacles to reliable end-to-
+end long-horizon loco-manipulation, despite rapid progress
+in humanoid whole-body control [11], [12], [14] and VLAs.
+To this end, we aim to establish a physically grounded
+framework bridging robot foundation models (i.e., VLAs)
+and structured robot planning and control. Our insight is
+that the aspects a flat VLA handles least reliably, deciding
+when and where to act, can often be resolved directly from
+physical quantities, whereas learning how to execute a skill
+is precisely where VLAs are most effective. PGX therefore
+uses physical structure to determine task progress, skill initi-
+ation, and spatial grounding, while leaving the execution of
+transferable manipulation skills to the VLA. By decoupling
+timing and world-frame precision from the learned policy,
+we hypothesize that the same foundation-model backbone
+can execute long-horizon loco-manipulation more reliably.
+Building on this insight, we introduce PGX (Physically
+Grounded eXecution), a training-free execution framework
+that separates deciding when and where to act from learning
+how to act. Rather than modifying the VLA, introducing a
+learned planner to infer sub-tasks from images [15]–[17], or
+folding temporal structure into the policy itself [18], [19],
+PGX assigns task progression and spatial precision to physi-
+cally grounded components while preserving the VLA as the
+manipulation skill executor. Specifically, PGX decomposes
+long-horizon loco-manipulation into three layers. 1) Timing:
+a predicate-gated finite state machine (FSM) maintains task
+progress and memory, representing each stage as a tuple
+of instruction, executor, guard predicate, timeout, and retry
+policy. 2) Skills: the VLA operates only within manipulation
+stages, while the execution layer re-establishes the start-
+ing conditions under which each skill was trained; failed
+guards trigger retries, and reverse transitions recover from
+prematurely entered stages. 3) Precision: world-coordinate
+locking (WCL) computes navigation goals from the current
+object pose, holds the base at its manipulation-entry position,
+and anchors precise contact targets in the world frame. In
+this way, physical structure governs task progression and
+spatial precision, allowing the VLA to focus on transferable
+manipulation dynamics.
+We evaluate PGX in Isaac Lab Arena on three tasks (box
+transport, mug placement, and coffee fetching) and in a real-
+world coffee task using a Unitree G1 Humanoid Robot. We
+fine-tuned the state-of-the-art foundational VLA models π0.5
+and GR00T N1.6 on collected human demonstrations. On
+coffee fetching, PGX improves the task success rate of a fine-
+tuned VLA from 35% to 80% with unchanged weights, and
+improves stage progression and success on all three tasks for
+both backbones. The real humanoid G1 experiment further
+demonstrates the effectiveness of the execution structure.
+In summary, the main contributions of our work are:
+• We propose PGX, a physically grounded execution
+framework that incorporates VLA models with a
+predicate-gated state machine and a world-coordinate
+locking layer, improving long-horizon capability.
+• We develop predicate-gated stage sequencing with retry
+and reverse transitions, together with WCL components,
+and show that the decoupled layers supply structured
+robot behaviors and generalize across VLA backbones.
+• We evaluate the effectiveness of PGX on three simulated
+loco-manipulation tasks and on a real humanoid, where
+it turns near-failing flat policies into reliable long-
+horizon execution.
+II. RELATED WORK
+A. Humanoid Loco-Manipulation
+Recent progress on humanoids builds on learned whole-
+body controllers that track retargeted human motion or tele-
+operation commands [10], [14], [20]–[23], with decoupled
+upper-body and locomotion interfaces that expose velocity
+and joint targets to a higher-level policy [11], [12]. On
+top of such controllers, generalist VLAs [4]–[7], [24] and
+humanoid-specific policies [8], [9], [25] learn manipulation
+and locomotion from demonstrations, while data-generation
+pipelines synthesize demonstrations in simulation through
+whole-body planning or procedural motion generation [26]–
+[28]. These works primarily improve the controller, the data,
+or the skill policy. Alternatively, our work takes a tuned VLA
+and a whole-body control stack as given and studies how to
+organize their skills into a long loco-manipulation task.
+B. Long-Horizon Manipulation with VLAs
+Many recent works tackle long-horizon tasks by decom-
+posing them into sub-tasks, with the active sub-task inferred
+by an LLM or VLM planner [15], [16], [29], [30], by the
+VLA itself through embodied reasoning [6], [31], or by
+a learned success or failure detector [32]. A second line
+strengthens the temporal representation inside the policy,
+through phase-aware input masking [18], explicit mem-
+ory [19], or action chunking and flow-based decoders [5],
+[33]. A third line chains separately learned skills, regulariz-
+ing terminal states so that one skill starts where the previous
+one ends [13], [34]–[37]. These methods leave task progress,
+the switching decision, and the initial condition of each skill
+to a network or a semantic model, whereas PGX chooses to
+keep task progress in an external state machine and switch
+skills on physical events rather than inferred semantics.
+C. Structured Robotic Execution and Hybrid Control
+Combining task structure with continuous control has been
+studied for years, and recent work replaces parts of this
+pipeline with learned or language-based components. Lan-
+guage models now generate the task structure as programs
+or plans and delegate execution to a library of learned
+skills [29], [30], [38]. [17] tracks progress from images with
+a foundation model and adjusts the stance with a VLM before
+manipulation, while our approach gates stages on physical
+predicates rather than image-based inference. Hybrid plan-
+ners chain learned skills under feasibility checks [35], [37].
+These build on the classical machinery of task and motion
+planning [1], [3] and behavior trees [2], which make the
+discrete structure explicit and hand execution to model-based
+control. On humanoids, large learned whole-body controllers
+now expose one command interface to teleoperation and
+
+
+FSM
+time
+memory
+VLA
+skills
+WCL
+precision
+walk
+at-stance
+Skill 1: grasp
+grasped
+walk
+at-stance
+Skill 2: place
+placed ∧retreated
+Skill 3: press
+triggered
+wait
+t
+stage 𝑠!=(ℓ!, 𝑐!, 𝑔!, 𝜏!, 𝜌!)
+ guards 𝑔! read physical state only
+reverse: grasped ∧¬ triggered
+retry on timeout 𝜌! 
+WC
+𝑎"
+station keeping
+lock base
+𝑝# → 𝑝#
+∗
+WC
+𝑎"
+object-relative stance
+counter
+stance
+stance = 𝑇!"# · Δ$%&!
+refreshed per attempt
+stance error does not
+become start error
+WC
+𝑎"
+world-anchored targets
+𝑇',$
+)
+= 𝑇)
+* +,𝑇',$
+*
+target stored in W,
+re-expressed in B 
+→ IK
+lock!
+ℓ: “grasp
+the mug”
+𝑜! 
+ℓ: “place 
+the mug”
+𝑜! 
+ℓ: “press
+the button”
+𝑜! 
+A
+B
+Tasks
+PGX Framework
+A
+B
+Coffee Fetching
+Box Transport
+Mug Placement
+Coffee (Real)
+Fig. 2: Overall framework of PGX. FSM (top): stages separated by predicate gates, with walking and waiting handled
+by the executor; retry and reverse edges for failed guards and stage confusion. VLA (middle): within a manipulation stage,
+the policy maps images and the stage prompt to an action chunk from an executor-prepared start state. WCL (bottom):
+world-frame references for station keeping, object-relative stance, and contact targets. Right: the loco-manipulation tasks.
+VLA policies alike [22], [23]. For mobile manipulators,
+the standing position from which a skill starts is known to
+dominate its success, motivating coupled base-arm imitation
+policies [39], mostly on fixed or wheeled bases that do not
+drift during manipulation. Our work targets a biped whose
+stance is less stable than these bases, and builds the interface
+between learned skills and the legged control stack.
+III. PHYSICALLY GROUNDED EXECUTION
+Our goal is to use a hierarchical execution structure
+to address the key challenges of long-horizon humanoid
+loco-manipulation, including task progress, spatial precision,
+and highly imbalanced demonstrations. The overall frame-
+work of PGX is shown in Fig. 2. A long-horizon loco-
+manipulation task is executed by three layers: a predicate
+state machine decides which stage is active and who executes
+it, the VLA acts inside manipulation stages, and a world-
+coordinate locking (WCL) layer keeps the base, the carried
+object, and device targets consistent in the world frame.
+The three layers are a division of responsibility rather than
+three networks that every action must pass through. This
+decomposition separates stages with distinct dynamics and
+learning requirements, preventing long locomotion and low-
+motion segments from dominating manipulation learning. We
+state the problem in Sec. III-A, describe the three layers
+in Secs. III-B–III-D, and show in Sec. III-C how the same
+predicates segment demonstrations for training.
+A. Problem Statement
+We consider a long-horizon task given as a stage graph
+G = (S, E), a trained VLA policy πθ, and a whole-body
+control stack. The graph contains the nominal progression
+path and the retry or reverse edges triggered by failure states.
+The goal is to complete the task within a time budget.
+We distinguish the policy observation ot, which contains
+camera images and proprioception, from the executor state
+zt, which additionally contains estimates of the base and
+task-object poses, grasp evidence, and device states, provided
+by the robot’s state estimation. The executor state is used
+only for gating, navigation, and geometric control. Given ot
+and the stage instruction ℓk, the VLA outputs an action chunk
+of length H:
+At = πθ(ot, ℓk),
+At = (at, . . . , at+H−1),
+(1)
+which a model-specific interface maps to upper-body joint
+targets, base velocity commands, and hand commands,
+tracked by the whole-body controller. PGX does not change
+the network or its parameters θ; at every control period it
+selects, constrains, or replaces individual action channels
+according to the stage and the physical state.
+B. Predicate-Gated Stage Machine
+Stage representation. Each stage is written as a tuple
+sk = (ℓk, ck, gk, τk, ρk),
+(2)
+denoting its instruction, executor, completion guard, time
+budget, and recovery policy. Walking stages are executed
+by a navigation controller while the arms hold a ready
+or carry posture; manipulation stages are executed by the
+VLA while the executor manages the base; device waits are
+handled by a state check or a timer, so the VLA never has
+to generate a waiting behavior. In this work, the coffee task
+has eight stages: approach, grasp, transport, place, press, re-
+grasp, transport, and deliver, of which five are manipulation
+
+
+stages, and the wait between press and re-grasp belongs to
+the executor. Every stage exits on a physical outcome, never
+on the end of an action chunk or a preset duration.
+Predicate interface. Five predicates form the basic set:
+grasped, placed, triggered, at-stance, and dropped. grasped
+combines the hand state, the wrist–object distance, and a lift
+above the object’s rest height,
+grasped ⇔closed∧∥pW −pO∥< dg ∧zO −zrest > hg, (3)
+so that closing an empty hand is not mistaken for a grasp.
+placed requires the object to be inside the target region,
+slower than vp, and released; for intermediate placements
+it also requires the wrist to have retreated, leaving room
+for the next interaction. triggered reads the device state, at-
+stance compares the base pose with the stage’s reference
+stance, and dropped fires when a held object leaves the hand
+outside a placement region. Each predicate must hold for a
+minimum duration, with hysteresis, so that one noisy frame
+cannot advance the stage.
+The key design choice is that one rule serves three
+purposes. The same predicate determines skill boundaries in
+demonstrations offline (Sec. III-C), gates transitions online,
+and records task progress at evaluation. The training target,
+the execution condition, and the metric are therefore tied
+to one physical event; each use only sets thresholds and
+hold times according to its sensor source, and nothing has
+to redefine what “grasped” or “placed” means.
+Recovery and reverse transitions. Each manipulation
+stage receives a bounded number of attempts. When the
+guard fails, the executor restores the stance and requests
+a fresh action chunk, without releasing a held object and
+without opening the hand close to the object. For stage
+confusion the machine allows reverse transitions: if during
+press the mug is grasped again while the device has not been
+triggered, the executor returns to place and re-establishes the
+pre-press condition, changing only the stage and the prompt.
+An unrecoverable drop terminates the episode. Algorithm 1
+summarizes the execution of one stage.
+C. Skill Execution with Fine-Tuned VLAs
+PGX treats the VLA as a policy that manipulates under
+local conditions, not as the sole controller of the whole task.
+Before a manipulation stage, the navigation controller brings
+the robot to a stance relative to the target, the executor waits
+for the stopping transient to decay and selects an arm posture
+compatible with the coming skill: an empty-hand grasp starts
+from the ready posture, a placement with an object starts
+from the carry posture, and consecutive manipulations keep
+a compatible end-effector state.
+Two kinds of skill model are supported. A flat model is
+trained on full demonstrations with one task-level instruction,
+kept for every manipulation stage inside PGX. A stage model
+is trained on manipulation segments cut from the same
+demonstrations by the same predicates that gate execution: a
+segment starts when effective hand motion begins after the
+last base adjustment and ends on the grasp, release, or retreat
+Algorithm 1 Execution of one stage sk in PGX
+Require: sk = (ℓk, ck, gk, τk, ρk), frozen πθ, executor state
+zt
+1: if ck is VLA then
+2:
+PREPARE(sk)
+▷stance, still base, arm posture
+3: end if
+4: while ¬gk(zt) and t < τk do
+5:
+if ck is VLA then
+6:
+At ←πθ(ot, ℓk); act At, base channel masked
+7:
+else
+8:
+STEP(ck)
+▷navigation or wait
+9:
+end if
+10:
+WCL(zt)
+▷Eqs. (4), (5)
+11:
+if dropped(zt) then
+12:
+return ABORT
+13:
+end if
+14:
+if timeout or confusion then
+15:
+RECOVER(ρk)
+▷retry or reverse
+16:
+end if
+17: end while
+18: return ADVANCE if gk(zt) else FAIL
+event, keeping the trailing motion that completes the hand-
+over. Walking and waiting are excluded, so training concen-
+trates on the manipulation itself, and each segment starts
+from the state the executor re-establishes at deployment.
+D. World-Coordinate Locking
+WCL reduces the influence of base motion on skill inputs
+and on interaction targets by maintaining task-relevant ref-
+erences in the world frame. It acts on the stance and on fine
+contact separately, rather than locking the end-effector for
+all manipulation.
+1) Object-relative stance. For skills whose start depends
+on where the object currently is, the navigation goal is
+expressed relative to the object rather than to the map:
+the executor composes the current object estimate with the
+relative stance observed in demonstrations, and refreshes this
+goal before every attempt and retry, so that a placement error
+does not carry over as a start-state error of the same size.
+Fixed devices use a task reference stance.
+2) Base station keeping. During consecutive manipula-
+tions at one workstation the executor keeps a single world-
+frame stance reference, instead of re-anchoring per stage and
+accumulating error. A correction starts when the base drift
+exceeds an outer threshold and stops inside an inner one,
+correct ←∥pB −p∗
+B∥> dout,
+stop ←∥pB −p∗
+B∥< din.
+(4)
+The reason for masking rather than blending the VLA’s
+base channel during manipulation is that a flat policy’s base
+commands are the main source of drift in our trajectories.
+3) World-anchored contact targets. For contacts whose
+tolerance is far below the base motion, such as a button, the
+target pose is stored in the world frame and re-expressed in
+
+
+TABLE I: Coffee fetching: stage progress and success (%).
+Lift: mug lifted; Press: machine button triggered; Succ.: mug
+delivered after brewing. Avg.: row and column means.
+Nominal (C0)
+Random init. (C1)
+Model
+Lift
+Press Succ.
+Lift
+Press Succ. Avg.
+Flat VLA π0.5
+20
+0
+0
+10
+0
+0
+5.0
+FSM only π0.5
+92
+48
+32
+95
+55
+50
+62.0
+PGX π0.5
+100
+70
+60
+100
+65
+55
+75.0
+PGX + WCL-P π0.5
+100
+98
+70
+100
+95
+70
+88.8
+Flat VLA GR00T
+70
+35
+35
+40
+25
+20
+37.5
+FSM only GR00T
+95
+80
+65
+90
+80
+75
+80.8
+PGX GR00T
+100
+85
+80
+100
+90
+80
+89.2
+PGX + WCL-P GR00T
+100
+100
+80
+100
+95
+70
+90.8
+Avg.
+84.6
+64.5
+52.8
+79.4
+63.1
+52.5
+66.1
+the base frame at every control period,
+T B
+E,d(t) =
+ T W
+B (t)
+−1 T W
+E,d(t),
+(5)
+where W, B, and E denote the world, base, and end-
+effector frames, and the updated target is converted to joint
+commands by inverse kinematics. The same rule underlies
+the stance reference in 2): what is locked is the target in the
+world, not the joint configuration, so the arm keeps aiming
+at the same point while the body sways. The same reference
+can also drive such a stage geometrically, which we evaluate
+as a separate variant.
+IV. EXPERIMENTAL RESULTS
+In this section, we analyze long-horizon task performance
+and stage progression, demonstrate the improvements of
+PGX across multiple loco-manipulation tasks, evaluate the
+effectiveness of execution structure and stage-wise training,
+and conduct an ablation study of world-frame locking. We
+further validate PGX on a real Unitree G1 humanoid robot.
+A. Experimental Setups
+1) Environments and tasks. Simulation experiments are
+performed in Isaac Lab Arena [40] with a Unitree G1
+humanoid, Dex-3 hands, and the corresponding whole-body
+control stack; the actions of each model are mapped to a
+common executor interface. We choose three tasks covering
+bimanual transport, single-hand object transfer, and long-
+horizon manipulation with device interaction. Box transport:
+take a box from a shelf and carry it to a target container, with
+100 official MimicGen demonstrations (200 manipulation
+segments after cutting). Mug placement: take a mug from a
+counter and transfer it to a target region, with 30 teleoperated
+demonstrations (60 segments). Coffee fetching: take the mug,
+operate the coffee machine, re-grasp, and deliver, with 50
+Quest-teleoperated demonstrations (250 segments); this is the
+main testbed. The real-robot task is to grasp a mug, place it
+in the machine region, re-grasp, and deliver, with 44 Quest
+demonstrations (176 segments). The real G1 uses the Dex-3
+left hand; Vicon provides the poses of the robot, and head
+and wrist cameras provide policy observations. Simulation
+and real data (50 Hz and 30 Hz) are trained and deployed
+separately.
+0
+25
+50
+75
+100
+episodes (%)
+at the counter
+at the machine
+at the table
+(a) π0.5
+approach
+grasp
+transp.
+place
+press
+re-grasp
+transp.
+deliver
+success
+0
+25
+50
+75
+100
+episodes (%)
+at the counter
+at the machine
+at the table
+(b) GR00T N1.6
+Flat VLA
+FSM only
+PGX
+PGX + WCL-P
+Fig. 3: Stage survival on coffee fetching with (a) π0.5 and
+(b) GR00T N1.6. Each line gives the share of episodes that
+reach a stage. We further visualize the difference in Fig. 4.
+19.5 s  passes the machine
+20.5 s  turns away
+21.5 s  heads to the container
+23.5 s  places the mug
+(a) Flat π0.5
+10.5 s  grasps the mug
+14.5 s  approaches the machine
+17.5 s  under the spout
+18.3 s  releases
+(b) Flat GR00T
+Fig. 4: Where the flat policies differ. Head-camera frames
+with episode time. (a) Flat π0.5 passes the coffee machine
+with the mug and delivers it without brewing. (b) Flat GR00T
+reaches the machine and places the mug under the spout; its
+losses occur later, at the button and the re-grasp.
+2) Policies. We use π0.5 and GR00T N1.6 as skill back-
+bones, fine-tuned on the same demonstrations. Both output
+upper-body joint targets, a base-height command, and a 3-D
+base-velocity command in chunks of 16 steps: GR00T N1.6
+predicts a 35-D action (arm and hand joints, waist joints, and
+base commands), and π0.5 a 32-D action without the waist,
+which the whole-body controller holds instead. The executor
+maps both to the same command interface, keeps the joint
+and base-height channels, and takes over the base-velocity
+channel during manipulation, so the execution structure is
+shared across backbones. Locomotion is provided by a
+learned whole-body controller that tracks these commands:
+HOMIE [11] in simulation and the decoupled GR00T-WBC
+policy [41] on the real robot.
+3) Comparison methods. To separate the contributions
+of execution structure, skill training, and spatial control, we
+compare four configurations:
+• Flat VLA: a flat model directly issues locomotion and
+manipulation commands;
+• FSM only (PGX w/o WCL): stage gating and recovery
+are kept, but nominal stances are used, and object-
+
+
+TABLE II: Stage progress and success on the three simulated
+tasks (%). GR: GR00T. Lift: object lifted; Suc: task success.
+Nom.: nominal initial pose; Rand.: random initial pose.
+Box transport
+Mug placement
+Coffee fetching
+Nom.
+Rand.
+Nom.
+Rand.
+Nom.
+Rand.
+Model
+Lift
+Suc
+Lift
+Suc
+Lift
+Suc
+Lift
+Suc
+Lift
+Suc
+Lift
+Suc
+Avg
+Flat GR
+95
+55
+25
+20
+35
+15
+5
+5
+70
+35
+40
+20
+35.0
+PGX GR
+100
+75
+65
+45
+80
+65
+75
+70
+100
+80
+100
+80
+77.9
+Flat π0.5
+95
+10
+60
+5
+0
+0
+5
+0
+20
+0
+10
+0
+17.1
+PGX π0.5
+100
+90
+75
+60
+90
+75
+90
+90
+100
+60
+100
+55
+82.1
+Flat (avg)
+95.0
+32.5 42.5
+12.5
+17.5
+7.5
+5.0
+2.5
+45.0
+17.5
+25.0
+10.0 26.0
+PGX (avg)
+100.0
+82.5
+70.0 52.5 85.0
+70.0
+82.5 80.0 100.0 70.0 100.0
+67.5
+80.0
+relative stance and station keeping are switched off;
+• PGX: the full execution structure with the applicable
+WCL components, manipulation by the VLA;
+• PGX + WCL-P: the same, with the button stage driven
+from the world-anchored primitive instead of the VLA.
+On box transport and mug placement, PGX uses the stage
+models of both backbones; on coffee fetching it uses the
+stage model for π0.5 and the flat model for GR00T, and
+within one backbone the FSM-only and WCL-P variants
+keep the same skill model. Sec. IV-D reports both skill
+models to separate the executor from segmentation.
+4) Conditions and metrics. Each task is evaluated under a
+nominal initial pose (C0) and a randomized initial pose (C1)
+that adds uniform offsets of ±0.30 m in both translation axes
+and ±30◦in yaw; demonstrations were all recorded from the
+nominal pose, so C1 is a start the flat policies have never
+seen. Comparisons within a task share the time budget (40 s,
+60 s, and 110 s for box, mug, and coffee) and the success
+criterion, with at least 20 evaluation episodes per cell; coffee
+requires the device to be triggered and the mug finally placed
+and released, so delivering the mug directly does not count.
+We record end-to-end success, per-episode stage progress
+(the farthest stage reached, to attribute end-to-end losses),
+and base drift during manipulation.
+B. Long-Horizon Task: Coffee Fetching
+Table I reports stage progress and success on coffee
+fetching, and Fig. 3 shows, per stage, the share of episodes
+that survive. PGX lifts π0.5 from 0% under both initial
+conditions to 60% and 55%, and GR00T from 35% / 20%
+to 80% / 80%. The GR00T gain is obtained with unchanged
+policy weights, indicating that the manipulation ability a
+VLA already has can be turned into long-horizon success
+by organizing its execution. The FSM-only rows separate
+the two contributions: the state machine alone already lifts
+the mug in 90–95% of the episodes, and adding world-frame
+locking raises the press rate further (to 65–70% for π0.5 and
+85–90% for GR00T) and the end-to-end success by up to 28
+points.
+The flat π0.5 policy never completes the machine inter-
+action and in several episodes skips the device to deliver
+the mug directly; PGX makes the dependency explicit, so
+a later stage is entered only when its physical precondition
+holds. Executing the button stage with the world-anchored
+primitive (WCL-P) raises the press rate to 95–100% for both
+TABLE III: Execution structure versus skill training on
+coffee fetching success (%). Avg: row and column means.
+Backbone / cond.
+Flat
+PGX flat
+PGX stage
+Avg.
+π0.5 C0
+0
+60
+60
+40.0
+π0.5 C1
+0
+60
+55
+38.3
+GR00T C0
+35
+80
+35
+50.0
+GR00T C1
+20
+80
+35
+45.0
+Avg.
+13.8
+70.0
+46.3
+43.3
+grasp
+place
+press
+0
+20
+40
+60
+p90 max base drift (cm)
+6
+5
+20
+8
+54
+9
+(a) base drift per stage
+w/o
+with
+0
+50
+100
+placement completed (%)
+74
+97
+(b) placement
+w/o WCL
+with WCL
+Fig. 5: Station keeping under sustained base disturbance
+(π0.5, C0). (a) p90 of the per-stage maximum base drift with
+and without WCL. (b) Completed placement attempts.
+backbones and the success of π0.5 to 70%, confirming that
+what remains at the button is a matter of millimeter precision
+rather than of sequencing; GR00T presses the button reliably
+already, and its remaining losses lie at the re-grasp.
+The funnels make the attribution visible. With the flat
+policies the losses are spread over the early stages (GR00T)
+or concentrated before the machine (π0.5, which skips the
+machine, Fig. 4); inside PGX, every episode reaches the
+machine, and once the primitive handles the press, the main
+remaining loss is the re-grasp from the machine tray, a
+property of the skill rather than the execution.
+C. Effectiveness on Multiple Loco-Manipulation Tasks
+Table II reports stage progress and task success under both
+conditions. On all three tasks, PGX lifts both backbones
+from near failure to reliable execution: across the six task-
+condition settings, the average of stage progress and success
+rises from 35% to 78% for GR00T and from 17% to 82% for
+π0.5. The failure modes differ across tasks: on box transport
+the flat policies lift the box but lose it on the way, whereas
+on coffee fetching the flat π0.5 passes the machine.
+On mug placement, the flat policies rarely get past the
+grasp: GR00T lifts the mug in 35% of the nominal episodes
+and places it in 15%, and π0.5 in none. Inside PGX, GR00T
+reaches 65% and 70% under the nominal and random poses,
+and π0.5 reaches 75% and 90%, showing improved task
+completion with both backbones. The random initial pose
+costs PGX nothing here, because the object-relative stance
+and station keeping re-establish the same start state before
+every grasp.
+Box transport uses the official demonstrations, and the
+same executor applies despite the different task structure.
+The lift column separates arriving at the box from carrying
+it: under the nominal pose both flat policies lift the box in
+95% of the episodes but deliver it in only 55% (GR00T) and
+
+
+Delivery
+Area
+Mug
+Coffee
+Machine
+Wrist
+Camera
+Dex-3 Hand
+Head Camera
+Fig. 6: Real-robot setup. The Unitree G1 with Dex-3 hands
+and head and wrist cameras at the workstation with the mug,
+the coffee machine, and the delivery area.
+grasp
+place
+re-grasp
+deliver
+0
+25
+50
+75
+100
+completion (%)
+simulation
+real robot
+Fig. 7: Per-stage completion on the real G1 compared with
+the same stages in simulation (PGX π0.5 stage model, C0).
+10% (π0.5), because the box is lost during transport; under
+the random initial pose the lift rate falls to 25% and 60%.
+PGX lifts the box in every nominal episode and delivers it
+in 75% and 90%, and under the random pose it more than
+doubles the flat success rates, showing that navigating to
+a standard manipulation stance absorbs the change of the
+starting point before it reaches the skill.
+D. Execution Structure versus Stage-Wise Training
+This section and Sec. IV-E form the ablation of the
+executor: the ladder flat →+ execution structure →+ spatial
+stabilization, crossed with the two skill models. To isolate the
+executor itself, we place the flat model inside PGX and keep
+the same task-level instruction in every manipulation stage.
+The first two columns of Table III therefore hold the weights
+and the language input fixed and change only the execution;
+the third column replaces the model by the stage-trained one.
+For both backbones the executor brings a large gain
+without retraining the policy. Stage-wise training, in contrast,
+is a secondary and model-dependent factor: for π0.5 it
+changes success by at most 5 points, and for GR00T the
+flat weights are the stronger skill model on coffee. PGX
+therefore separates execution structure from skill weights,
+so that whichever model has the stronger local skill can be
+used directly, without retraining a stage model.
+On the π0.5 training frames we inspected, replacing the
+stage instruction by a mismatched one changes the output
+little. Together with the same-weight ablation, this indicates
+that stage prompts alone do not explain the gain of PGX:
+segmentation changes the distribution of manipulation data,
+1. approach
+2. grasp
+3. transport
+4. arrive at the machine
+5. place
+6. wait
+7. re-grasp
+8. transport
+9. deliver
+Executor:
+navigation
+VLA skill
+wait
+Fig. 8: Real-robot coffee task on the Unitree G1. External-
+camera frames of one episode, with the executor of each
+stage marked below the frame. Predicates read Vicon and
+joint states; the executor and its stage definitions are trans-
+ferred from simulation.
+whereas the executor provides the stage organization and
+start-state control. This also suggests that a planner that only
+switches the prompt would not by itself recover this gain.
+E. Effect of World-Frame Stabilization
+Stance and drift. Switching off spatial stabilization (the
+FSM-only rows of Table I) drops π0.5 on coffee from 60%
+/ 55% to 32% / 50% and GR00T from 80% / 80% to 65%
+/ 75%. This comparison removes object-relative stance and
+station keeping together, and reflects their joint contribution.
+To observe drift within a stage, we inject a base displacement
+in a fixed direction every 3 s during manipulation. Fig. 5
+shows that station keeping bounds the accumulated drift and
+raises the completion ratio of placement attempts.
+Without injected disturbance the natural drift of a standing
+humanoid is 3–4 cm, within the station-keeping band, so
+the benefit comes from the object-relative stance that re-
+establishes the start state before each skill; under sustained
+disturbance the error would otherwise accumulate across
+consecutive manipulations, and station keeping reduces the
+p90 of per-stage maximum drift to 9 cm, compared with
+54 cm without it. Millimeter-level contact under such distur-
+bance additionally requires the base to come to rest, which
+the executor enforces before the button stage. The predicate
+interface itself tolerates state noise: on the mug task, per-
+episode object-position biases of 2, 3, and 5 cm with per-
+frame jitter keep success at 75–90%.
+Fine pressing. Over 14 evaluation runs without sustained
+disturbance (two backbones, two skill models, and primitive
+versions), the world-anchored primitive completed 243 of
+245 entries into the button stage (99%), against 72–100%
+
+
+when the stage is left to the VLA inside the full PGX, both
+conditioned on reaching the stage.
+F. Real-Robot Experiments
+Fig. 6 shows our real experiment setup. We deploy PGX
+on a G1 with a transferred stage graph and predicates from
+simulation; the predicates read motion capture and joint
+states, and the VLA is fine-tuned on 44 real demonstrations.
+The task keeps the structure of the simulated one: the robot
+walks to the counter, grasps the mug, carries it to the coffee
+machine, places it, waits, re-grasps, and delivers it (Fig. 8).
+Fig. 7 reports the completion rates of the four manipulation
+stages, all executed by the PGX π0.5 stage model; each rate
+is computed over the episodes that reach that stage. Grasping
+transfers best among these stages, and the differences from
+simulation concentrate at the two contact-rich stages, placing
+and re-grasping. These gaps reflect the precision of the
+fine-tuned skills on the real hand rather than the execution
+structure.
+V. CONCLUSION
+In this work, we study long-horizon loco-manipulation
+on a humanoid robot and propose PGX, which composes
+existing VLA skills into a long task through predicate-driven
+stage progression, skill execution under controlled start con-
+ditions, and world-frame spatial stabilization. Experiments
+on three simulated tasks and two backbones show that ex-
+plicit execution structure raises task completion substantially,
+while stage-wise training and precision control contribute
+at different levels. We also validate our method on a real
+G1 humanoid. PGX thus provides an effective and general
+framework bridging robot foundation models and classical
+control for loco-manipulation tasks.
+Limitation and Future Work. PGX achieves higher
+success rates yet costs longer execution time for stage
+transitions, which we will improve in future work, together
+with extending the framework to richer skills and tasks.
+REFERENCES
+[1] C. R. Garrett, R. Chitnis, et al., “Integrated task and motion planning,”
+Annual Review of Control, Robotics, and Autonomous Systems, vol. 4,
+2021.
+[2] M. Colledanchise and P. ¨Ogren, Behavior Trees in Robotics and AI:
+An Introduction.
+CRC Press, 2018.
+[3] M. Ciebielski, V. Dh´edin, and M. Khadiv, “Task and motion planning
+for humanoid loco-manipulation,” in IEEE-RAS International Confer-
+ence on Humanoid Robots (Humanoids), 2025.
+[4] M. J. Kim, K. Pertsch, et al., “OpenVLA: An open-source vision-
+language-action model,” in Conference on Robot Learning (CoRL),
+2024.
+[5] K. Black, N. Brown, et al., “π0: A vision-language-action flow model
+for general robot control,” arXiv preprint arXiv:2410.24164, 2024.
+[6] Physical Intelligence, K. Black, et al., “π0.5: A vision-language-
+action
+model
+with
+open-world
+generalization,”
+arXiv
+preprint
+arXiv:2504.16054, 2025.
+[7] J. Bjorck, F. Casta˜neda, et al., “GR00T N1: An open foundation model
+for generalist humanoid robots,” arXiv preprint arXiv:2503.14734,
+2025.
+[8] P. Ding, J. Ma, et al., “Humanoid-VLA: Towards universal humanoid
+control with visual integration,” arXiv preprint arXiv:2502.14795,
+2025.
+[9] H. Xue, X. Huang, et al., “LeVERB: Humanoid whole-body
+control
+with
+latent
+vision-language
+instruction,”
+arXiv
+preprint
+arXiv:2506.13751, 2025.
+[10] Z. Fu, Q. Zhao, et al., “HumanPlus: Humanoid shadowing and
+imitation from humans,” in Conference on Robot Learning (CoRL),
+2024.
+[11] Q. Ben, F. Jia, et al., “HOMIE: Humanoid loco-manipulation with
+isomorphic exoskeleton cockpit,” in Robotics: Science and Systems
+(RSS), 2025.
+[12] J. Li, X. Cheng, et al., “AMO: Adaptive motion optimization for
+hyper-dexterous humanoid whole-body control,” in Robotics: Science
+and Systems (RSS), 2025.
+[13] C. Ma, Y. Yang, et al., “FurnitureVLA: Learning long-horizon bi-
+manual furniture assembly with vision-language-action model,” arXiv
+preprint arXiv:2607.01212, 2026.
+[14] X. Cheng, Y. Ji, et al., “Expressive whole-body control for humanoid
+robots,” in Robotics: Science and Systems (RSS), 2024.
+[15] W. Huang, F. Xia, et al., “Inner monologue: Embodied reasoning
+through planning with language models,” in Conference on Robot
+Learning (CoRL), 2022.
+[16] L. X. Shi, B. Ichter, et al., “Hi robot: Open-ended instruction following
+using hierarchical vision-language-action models,” in International
+Conference on Machine Learning (ICML), 2025.
+[17] H. Yuan, Y. Bai, et al., “Being-0: A humanoid robotic agent
+with vision-language models and modular skills,” arXiv preprint
+arXiv:2503.12533, 2025.
+[18] Y. Fan, S. Bai, et al., “Long-VLA: Unleashing long-horizon capability
+of vision language action model for robot manipulation,” in Confer-
+ence on Robot Learning (CoRL), 2025.
+[19] H. Shi, B. Xie, et al., “MemoryVLA: Perceptual-cognitive memory in
+vision-language-action models for robotic manipulation,” in Interna-
+tional Conference on Learning Representations (ICLR), 2026.
+[20] T. He, Z. Luo, et al., “OmniH2O: Universal and dexterous human-to-
+humanoid whole-body teleoperation and learning,” in Conference on
+Robot Learning (CoRL), 2024.
+[21] Y. Ze, Z. Chen, et al., “TWIST: Teleoperated whole-body imitation
+system,” in Conference on Robot Learning (CoRL), 2025.
+[22] J. P. Sleiman, H. Li, et al., “ZEST: Zero-shot embodied skill transfer
+for athletic robot control,” arXiv preprint arXiv:2602.00401, 2026.
+[23] Z. Luo, Y. Yuan, et al., “SONIC: Supersizing motion tracking for nat-
+ural humanoid whole-body control,” arXiv preprint arXiv:2511.07820,
+2025.
+[24] NVIDIA, “GR00T-N1.6-3B model card,” 2025.
+[25] Y. Hu, H. Zhu, et al., “OpenHLM: An empirical recipe for whole-body
+humanoid loco-manipulation,” arXiv preprint arXiv:2606.22174, 2026.
+[26] A. Mandlekar, S. Nasiriany, et al., “MimicGen: A data generation
+system for scalable robot learning using human demonstrations,” in
+Conference on Robot Learning (CoRL), 2023.
+[27] K. Lin, A. Mandlekar, et al., “HumanoidMimicGen: Data genera-
+tion for loco-manipulation via whole-body planning,” arXiv preprint
+arXiv:2605.27724, 2026.
+[28] H. Kim, T. Chen, et al., “LEGS: Fine-tuning teleop-free VLAs
+for humanoid loco-manipulation in an embodied Gaussian splatting
+world,” arXiv preprint arXiv:2606.01458, 2026.
+[29] M. Ahn, A. Brohan, et al., “Do as I can, not as I say: Grounding
+language in robotic affordances,” in Conference on Robot Learning
+(CoRL), 2022.
+[30] J. Liang, W. Huang, et al., “Code as policies: Language model
+programs for embodied control,” in IEEE International Conference
+on Robotics and Automation (ICRA), 2023.
+[31] M. Zawalski, W. Chen, et al., “Robotic control via embodied chain-of-
+thought reasoning,” in Conference on Robot Learning (CoRL), 2024.
+[32] Y. Du, K. Konyushkova, et al., “Vision-language models as success
+detectors,” arXiv preprint arXiv:2303.07280, 2023.
+[33] C. Chi, S. Feng, et al., “Diffusion policy: Visuomotor policy learning
+via action diffusion,” in Robotics: Science and Systems (RSS), 2023.
+[34] Y. Lee, J. J. Lim, et al., “Adversarial skill chaining for long-horizon
+robot manipulation via terminal state regularization,” in Conference
+on Robot Learning (CoRL), 2021.
+[35] C. Agia, T. Migimatsu, et al., “STAP: Sequencing task-agnostic poli-
+cies,” in IEEE International Conference on Robotics and Automation
+(ICRA), 2023.
+[36] J. Zhang, J. Zhang, et al., “Bootstrap your own skills: Learning to
+solve new tasks with large language model guidance,” in Conference
+on Robot Learning (CoRL), 2023.
+
+
+[37] S. Cheng and D. Xu, “LEAGUE: Guided skill learning and abstrac-
+tion for long-horizon manipulation,” IEEE Robotics and Automation
+Letters, 2023.
+[38] K. Lu, C. Ma, et al., “KitchenVLA: Iterative vision-language cor-
+rections for robotic execution of human tasks,” in Proceedings of the
+IEEE International Conference on Robotics and Automation Workshop
+on Safely Leveraging Vision-Language Foundation Models in Robotics
+(SafeLVMs@ICRA), May 2025.
+[39] Z. Fu, T. Z. Zhao, and C. Finn, “Mobile ALOHA: Learning bimanual
+mobile manipulation with low-cost whole-body teleoperation,” in
+Conference on Robot Learning (CoRL), 2024.
+[40] NVIDIA Isaac Lab-Arena Contributors, “Isaac lab-arena: Composable
+environment creation and policy evaluation for robotics,” 2025.
+[Online]. Available: https://github.com/isaac-sim/IsaacLab-Arena
+[41] NVIDIA,
+“GR00T-WholeBodyControl:
+Humanoid
+whole-body
+controllers,”
+https://github.com/NVlabs/GR00T-WholeBodyControl,
+2025.
