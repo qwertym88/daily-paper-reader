@@ -1,0 +1,3411 @@
+Curvature-Equilibrated Policy Optimization for Deep
+Reinforcement Learning
+Gang Chen
+School of Engineering and Computer Science
+Victoria University of Wellington
+Wellington, New Zealand
+aaron.chen@ecs.vuw.ac.nz
+Abstract
+Gradient-based actor optimization is central to deep reinforcement learning. How-
+ever, conventional first-order optimizers do not explicitly exploit the local curvature
+of neural actor losses. We propose EQUIP (Curvature-Equilibrated Gradients for
+Policy Search), a novel approach that seeks to balance local contraction and expan-
+sion of the actor parameter space by equilibrating positive and negative curvature.
+EQUIP constructs a trajectory-informed search subspace and uses the projected
+Hessian of actor loss to build a bounded local metric for curvature equilibration.
+First-order loss matching preserves the approximated first-order decrease in actor
+loss. Meanwhile, gradient mixing and curvature-based gradient selection adjust
+the gradient applied for actor optimization. We establish the geometric properties
+of curvature equilibration, derive bounds on gradient alignment and magnitude,
+and identify conditions for improved actor loss reduction and convergence toward
+stationarity under direct gradient updates. We integrate EQUIP into Soft Actor–
+Critic (SAC) without modifying its actor loss, critic learning, or replay mechanism.
+Experiments on 6 MuJoCo continuous control benchmarks show that the resulting
+EQUIP-SAC achieves higher mean sample efficiency than SAC and two second-
+order policy optimization baselines. Ablation studies further highlight the benefits
+of curvature equilibration and trajectory-informed geometry for policy training.
+1
+Introduction
+Gradient-based policy optimization is fundamental to deep reinforcement learning (DRL). Actor–
+critic algorithms, such as DDPG, TD3, and SAC, optimize neural policies using actor-loss gradients
+guided by learned action-value functions (Lillicrap et al., 2016; Fujimoto et al., 2018; Haarnoja
+et al., 2018a). Despite their success, actor optimization remains challenging because neural actor
+losses are highly nonconvex and evolve as critics and training data change. Common first-order actor
+optimizers do not explicitly exploit the local curvature of the actor loss. Yet, curvature information can
+help identify more promising actor update directions (Maniyar et al., 2024; Khorasani et al., 2025),
+offering valuable opportunities for greater loss reduction and more effective policy optimization.
+Geometry-aware and second-order methods seek to exploit such information. For example, natural
+policy gradient uses the Fisher information matrix to adjust policy updates (Kakade, 2001), while
+Hessian-based methods use local curvature to construct actor optimization directions (Maniyar et al.,
+2024; Kordabad et al., 2025). However, curvature computations can be expensive for neural actors
+with a large number of trainable parameters. Moreover, negative or near-zero Hessian eigenvalues
+may cause inverse-curvature updates to produce ascent directions or excessively large actor parameter
+changes (Dauphin et al., 2014). These limitations demand for alternative approaches that exploit
+curvature information efficiently and reliably.
+Preprint.
+arXiv:2611.31680v1  [cs.LG]  23 Nov 2026
+
+
+A promising direction arises from the local geometry of gradient-based actor optimization. For
+sufficiently small gradient updates, positive and negative curvature contribute respectively to local
+contraction and expansion of the actor parameter space (Dauphin et al., 2014; Chen and Huang, 2023).
+While both effects can benefit optimization, excessive contraction or expansion may undermine
+optimization performance and stability.
+We take a new geometric perspective by considering the balance between these competing effects as
+a way to guide actor optimization. Rather than suppressing curvature or approximating its inverse, we
+investigate how equilibrating positive and negative curvature can lead to more effective and reliable
+actor updates.
+Motivated by this geometric insight, we propose EQUIP (Curvature-Equilibrated Gradients for
+Policy Search), a general mechanism for curvature-aware actor optimization. EQUIP constructs a
+low-dimensional policy search subspace from recent actor gradients. It then estimates the projected
+Hessian using Hessian–vector products and constructs a bounded local metric to equilibrate positive
+and negative curvature, enabling curvature-aware gradient adjustments without computing or inverting
+the full Hessian. Periodically refreshing and reusing the local geometry further reduces computational
+overhead.
+Since curvature equilibration alone does not guarantee improved actor updates, EQUIP further intro-
+duces first-order loss matching, gradient mixing, and curvature-based gradient selection techniques.
+First-order loss matching preserves the approximated first-order decrease in actor loss achievable
+by the raw gradient, while gradient mixing controls the adjustment strength and bounds the mixed
+gradient norm. Gradient selection then favors the mixed gradient when the local curvature suggests
+a greater decrease in actor loss than the raw gradient. Together, these mechanisms exploit local
+curvature while maintaining controlled actor updates.
+We integrate EQUIP into SAC (Haarnoja et al., 2018a), resulting in EQUIP-SAC. EQUIP modifies
+only the gradient supplied to the actor optimizer, while preserving SAC’s actor loss, critic learning
+procedure, and replay mechanism. Experiments on 6 MuJoCo continuous-control benchmarks
+demonstrate that EQUIP-SAC achieves higher mean sample efficiency and evaluation returns than
+SAC and two second-order policy optimization baselines under the same environment-interaction
+budget. Ablation studies further support the effectiveness of the key algorithmic components, while
+parameter sensitivity analyses provide additional evidence for the integrated design of EQUIP.
+The main contributions of this work are summarized as follows.
+• We propose EQUIP as a curvature-equilibration mechanism for gradient-based policy opti-
+mization. It constructs a bounded local metric from the projected actor-loss Hessian within
+a search subspace formed from recent actor gradients, enabling efficient use of positive and
+negative curvature without computing or inverting the full Hessian.
+• We develop a gradient adjustment mechanism combining first-order loss matching, gradient
+mixing, and curvature-based selection. The resulting policy updates preserve the predicted
+first-order decrease in actor loss, control gradient magnitude, and can achieve greater actor
+loss reduction than raw-gradient updates under suitable conditions.
+• We establish theoretical properties of EQUIP, including the geometric interpretation and
+feasibility of curvature equilibration, gradient alignment and norm bounds, and conditions
+for improved actor optimization. We further derive stationarity guarantees for direct actor
+updates under fixed and changing actor losses, and relate actor-loss stationarity to the
+entropy-regularized return under bounded approximation errors.
+2
+Related Work
+We review related research in four areas: actor–critic policy optimization, policy geometry and
+second-order methods, efficient curvature estimation and gradient subspaces, and geometry-aware
+policy optimization approaches. We then summarize the key differences between EQUIP and existing
+methods.
+Actor–critic policy optimization.
+Policy-gradient methods optimize policies using gradients of
+the expected return (Sutton et al., 1999; Silver et al., 2014). Actor–critic methods employ learned
+2
+
+
+value functions to guide actor optimization. DDPG and TD3 optimize deterministic policies through
+critic-based action gradients (Lillicrap et al., 2016; Fujimoto et al., 2018), while SAC learns stochastic
+policies through an entropy-regularized actor loss (Haarnoja et al., 2018a).
+Recent advances in off-policy reinforcement learning focus on improving value estimation, training
+efficiency, and neural network architectures. REDQ combines critic ensembles with frequent updates
+(Chen et al., 2021). CrossQ uses batch normalization to simplify critic learning without target
+networks (Bhatt et al., 2024), while SimBa employs normalization and residual connections to
+support larger networks (Lee et al., 2025).
+Policy geometry and second-order optimization.
+Natural policy gradient adjusts policy updates
+using the inverse Fisher information matrix (Kakade, 2001). TRPO constrains policy updates
+through KL divergence, while PPO uses a clipped probability-ratio objective to limit policy changes
+(Schulman et al., 2015, 2017). ACKTR approximates natural-gradient updates using Kronecker-
+factored curvature information (Wu et al., 2017). These methods primarily exploit the geometry of
+policy distributions or constrain policy changes.
+Another line of research uses Hessian information to construct second-order policy updates. Maniyar
+et al. (2024) estimate policy gradients and Hessians from sampled trajectories and employ cubic-
+regularized Newton updates to escape saddle points. Khorasani et al. (2025) propose VR-SCP, which
+combines Hessian–vector products, variance reduction, and cubic-regularized optimization to improve
+the sample efficiency of reaching second-order stationary points. Sun et al. (2025) further develop
+a variance-reduced cubic-regularized Newton method based on Hessian estimation of the expected
+return. Recent studies also investigate second-order optimization for actor–critic learning (Kordabad
+et al., 2025; Manivannan and Venkataraman, 2026).
+Among these methods, VR-SCP provides a recent second-order policy optimization approach with a
+publicly available implementation. We therefore include it in our experimental comparisons.
+Efficient curvature estimation and gradient subspaces.
+Several optimization methods use cur-
+vature estimates or structured gradient statistics to improve training efficiency. Sophia periodically
+estimates diagonal curvature and clips its updates (Liu et al., 2024), while SOAP applies Adam
+(Kingma and Ba, 2015) in a rotated coordinate system derived from Shampoo preconditioning
+(Vyas et al., 2025). In deep reinforcement learning, Creus Castanyer et al. (2025) investigate gradi-
+ent degradation in large networks and improve learning using residual connections and structured
+preconditioning.
+Low-dimensional curvature approximations offer another way to reduce computational costs.
+SketchySGD uses randomized curvature estimates to construct preconditioners (Frangella et al.,
+2024), while CAO periodically updates a low-rank Hessian approximation for damped inverse-
+curvature scaling (Du, 2025). For policy optimization, Schneider et al. (2024) find that PPO and SAC
+gradients often concentrate in low-dimensional subspaces spanned by leading Hessian eigenvectors,
+which can remain similar across multiple policy updates.
+Geometry-aware policy optimization approaches.
+Sharpness-aware minimization (SAM) seeks
+parameters with low loss under nearby parameter perturbations (Foret et al., 2021). In reinforce-
+ment learning, Q-SAM extends sharpness-aware optimization to offline policy learning to improve
+generalization of trained policies (Wang et al., 2026).
+Another approach uses a local metric to control policy-search geometry. Specifically, Chen and
+Huang (2023) propose a method that trains a dedicated metric tensor network to reduce the absolute
+divergence of the policy-gradient field. They demonstrate its effectiveness with SAC and TD3.
+Key distinctions and contributions of EQUIP.
+Existing studies provide several ways to exploit
+policy geometry and curvature information, including natural-gradient updates, Newton-type opti-
+mization, curvature-based preconditioning, and sharpness-aware learning. Compared to these works,
+EQUIP introduces a different approach that explicitly equilibrates positive and negative curvature
+within a trajectory-informed search subspace.
+Unlike Newton-type methods that use curvature to construct second-order update directions, EQUIP
+directly constructs a bounded local metric from the projected actor-loss Hessian to adjust actor
+gradients. Unlike metric-based approaches that train an additional network, metric is computed
+3
+
+
+directly in EQUIP from local curvature information. EQUIP further integrates first-order actor loss
+matching, gradient mixing, and curvature-based gradient selection to preserve the predicted first-order
+decrease in actor loss and control gradient adjustments. These components can be incorporated into
+many existing actor–critic algorithms without modifying their policy optimization objectives or critic
+learning procedures.
+Furthermore, our theoretical analysis establishes the feasibility of curvature equilibration under
+bounded metric weights and provides bounds on gradient alignment and magnitude. It also identifies
+conditions under which mixed gradients achieve greater actor loss reduction than raw gradients. We
+further derive convergence guarantees toward stationarity under direct actor updates for fixed actor
+losses, along with conditional stationarity bounds for changing actor losses.
+3
+Reinforcement Learning and Policy Search Preliminaries
+3.1
+Problem formulation
+We consider an agent interacting with an environment described by a discounted Markov decision
+process (MDP), M = (S, A, P, R, ρ0, γ). Here, S and A are the state and action spaces. The
+distribution P(· | s, a) describes the next state after taking action a in state s, and R(s, a) is the
+expected bounded reward. The initial state follows ρ0, and γ ∈(0, 1) is the discount factor.
+The agent follows a differentiable neural policy πθ as its actor, which is parameterized by θ ∈Rp,
+where p is the number of trainable parameters in the neural actor. Starting from s0 ∼ρ0, it samples
+ak ∼πθ(· | sk) and then observes sk+1 ∼P(· | sk, ak). Policy search aims to find actor parameters
+that maximize the expected discounted return,
+J(θ) = Eπθ,P,ρ0
+" ∞
+X
+k=0
+γkR(sk, ak)
+#
+.
+(1)
+For a policy π, the state value V π(s) is the expected return starting from s. The action value Qπ(s, a)
+is the expected return after taking a in s and following π thereafter:
+V π(s) = Eπ,P
+" ∞
+X
+k=0
+γkR(sk, ak) | s0 = s
+#
+, Qπ(s, a) = R(s, a) + γEs′∼P (·|s,a)V π(s′).
+We summarize the states visited by πθ using its normalized discounted state distribution,
+dθ(s) = (1 −γ)
+∞
+X
+k=0
+γkpθ,k(s),
+(2)
+where pθ,k(s) is the probability mass or density of the state at step k. The factor 1 −γ makes dθ a
+probability distribution. This distribution determines how states are weighted in the policy-gradient
+formula in Equation (5) below.
+We also consider entropy-regularized policy search, which encourages stochastic policies by adding
+an entropy term to the return:
+Jα(θ) = Eπθ,P,ρ0
+" ∞
+X
+k=0
+γk R(sk, ak) −α log πθ(ak | sk)
+
+#
+.
+(3)
+The coefficient α > 0 controls the balance between environmental reward and policy entropy. For
+continuous actions, π(a | s) denotes the policy’s probability density. The corresponding soft value
+functions are
+Qπ
+α(s, a) = R(s, a) + γEs′∼P (·|s,a)V π
+α (s′),
+V π
+α (s) = Ea∼π(·|s)[Qπ
+α(s, a) −α log π(a | s)].
+(4)
+Thus, Qπ
+α includes the immediate reward and future soft value, while V π
+α also includes the action-
+selection entropy of the current state. These definitions are used in the SAC critic target in Equa-
+tion (49) and the actor loss in Equation (52) in Section 6.
+In this work, we aim to improve gradient-based policy search through EQUIP as a general mechanism,
+with SAC as one application. We use k for environment steps and t for actor/policy updates. These
+counters can advance at different rates because actor updates can reuse data from a replay buffer.
+4
+
+
+3.2
+From policy gradients to actor–critic optimization
+The policy-gradient theorem expresses the gradient of the expected return with respect to the actor
+parameters (Sutton et al., 1999):
+∇θJ(θ) =
+1
+1 −γ Es∼dθ, a∼πθ[∇θ log πθ(a | s)Qπθ(s, a)].
+(5)
+This provides the foundation for gradient-based policy optimization. In actor–critic methods, a
+learned critic estimates action values or advantages to guide actor updates. Different algorithms
+construct their actor losses differently. For example, DDPG and TD3 optimize deterministic policies
+using critic-based action gradients (Lillicrap et al., 2016; Fujimoto et al., 2018), while PPO uses
+a clipped policy-gradient objective (Schulman et al., 2017). SAC combines critic-based policy
+optimization with entropy regularization (Haarnoja et al., 2018a).
+Despite these differences, gradient-based actor–critic methods share a common optimization process:
+they update actor parameters using gradients of an actor loss. EQUIP builds on this process
+by incorporating local curvature information to adjust the actor gradient without changing the
+underlying actor loss or critic learning procedure. This makes EQUIP potentially applicable to
+different actor–critic algorithms, provided that their actor losses support the required gradient and
+curvature computations. In this study, we focus on SAC as a representative application.
+3.3
+Why apply EQUIP to SAC?
+SAC combines entropy-regularized policy optimization with off-policy actor–critic learning (Haarnoja
+et al., 2018a,b). It provides a suitable framework for EQUIP because its actor loss is directly related
+to policy improvement and supports the gradient and curvature computations required by our method.
+To establish this connection, consider a fixed state s, an action-value function q, and an entropy
+temperature α > 0. Define the Gibbs policy
+pq(a | s) = exp(q(s, a)/α)
+Zq(s)
+,
+Zq(s) =
+Z
+A
+exp(q(s, a)/α) dν(a),
+where ν is a fixed reference measure and Zq(s) is assumed finite. The entropy-regularized actor loss
+at state s can be expressed as
+Ea∼π[α log π(a | s) −q(s, a)] = αDKL(π(· | s)∥pq(· | s)) −α log Zq(s).
+(6)
+Since Zq(s) does not depend on π, minimizing the actor loss is equivalent to minimizing the KL
+divergence between the current policy π and the Gibbs policy pq. This provides a direct connection
+between actor loss minimization and entropy-regularized policy improvement. Specifically, we extend
+the soft policy-improvement argument of Haarnoja et al. (2018a, Lemma 2) to account for critic
+approximation and imperfect actor optimization, as formalized below.
+Proposition 3.1 (Exact and approximate soft policy improvement). Let π and π′ denote the current
+and updated policies, respectively, and let q = Qπ
+α be the exact soft action-value function of π.
+Assume the soft value functions and entropy expectations are uniformly bounded. Suppose an
+estimated critic bq satisfies ∥bq −q∥∞≤ϵQ and, for every state s,
+Ea∼π′[bq(s, a) −α log π′(a | s)] ≥Ea∼π[bq(s, a) −α log π(a | s)] −ϵopt,
+where ϵopt ≥0. Then, for every state s,
+V π′
+α (s) ≥V π
+α (s) −2ϵQ + ϵopt
+1 −γ
+.
+(7)
+In particular, with an exact critic (ϵQ = 0) and no loss of improvement (ϵopt = 0), the updated policy
+satisfies V π′
+α (s) ≥V π
+α (s).
+The proof is provided in Appendix A.1. Proposition 3.1 shows that reducing the actor loss can
+improve the policy’s soft value, while critic approximation and imperfect actor optimization limit
+this guarantee. This motivates applying EQUIP to enhance the optimization of the actor loss in SAC.
+Proposition 3.1 establishes the connection between actor loss minimization and policy improvement
+5
+
+
+under a state-wise condition. Since EQUIP operates on sampled actor losses, we separately analyze
+its gradient adjustments and optimization properties in Section 5.
+SAC is also well suited to the implementation and evaluation of EQUIP. Its reparameterized actor
+loss allows gradients and Hessian–vector products to be computed using the same replay minibatch,
+actor noise, and frozen critics. Moreover, EQUIP modifies only the actor gradient, preserving SAC’s
+critic learning procedure and replay mechanism. This enables a controlled comparison between SAC
+and EQUIP-SAC (see Section 7.2) under the same environment interaction budgets.
+4
+EQUIP: Curvature-Equilibrated Gradients for Policy Search
+4.1
+Algorithm overview
+We introduce EQUIP, (Curvature-Equilibrated Gradients for Policy Search), a general mechanism
+for curvature-aware actor optimization. The central idea is to construct a bounded local metric
+that equilibrates positive and negative curvature within a search subspace, followed by gradient
+rescaling and mixing to approximately preserve the predicted first-order decrease in actor loss. This
+curvature-equilibration approach is applicable to a broad range of gradient-based policy optimization
+algorithms, with its integration into SAC detailed in Section 6.
+For any base actor-critic algorithm such as SAC, let the current actor update be t. The base algorithm
+provides a differentiable actor loss ℓt. Its raw gradient gt and Hessian Ht are
+ℓt(θ) = ℓ(θ; Bt, ξt, ζt),
+gt = ∇θℓt(θt),
+Ht = ∇2
+θℓt(θt),
+(8)
+where Bt denotes the data batch and ξt represents the sampled actor noise. The term ζt collects
+additional quantities required by the base algorithm, such as critic parameters, advantage estimates,
+or reference-policy outputs. With Bt, ξt, and ζt fixed, Ht measures the curvature of the actor loss
+ℓt(θ).
+To make curvature calculations tractable for neural actors, EQUIP constructs a low-dimensional
+policy search subspace from the current raw gradient gt as well as recent gradients utilized for actor
+optimization (Subsection 4.2). Within this subspace, it constructs a bounded local metric to reduce
+the imbalance between positive and negative curvature contributions (Subsection 4.3; Equation (12)).
+The metric-adjusted gradient is then rescaled to match the approximated first-order decrease in actor
+loss achieved by a direct raw-gradient update (Subsection 4.4; Equation (14)) and mixed with gt.
+A gradient-selection mechanism (Subsection 4.5) chooses between the mixed and raw gradients,
+yielding the final gradient ut as input to the actor optimizer O. We use Adam (Kingma and Ba,
+2015) as O in our experiments, while the theoretical analysis in Section 5 considers the direct update
+θt+1 = θt −ηtut for simplicity. Algorithm 1 summarizes the complete procedure. Subsection 4.6
+further analyzes EQUIP’s computational and memory complexity.
+4.2
+Forming a search subspace from recent gradient directions
+Forming the full p × p Hessian of the actor loss is computationally prohibitive. Instead, EQUIP
+estimates curvature within a low-dimensional search subspace constructed from recent actor gradients.
+At actor update t, we retain the gradient vectors used in the previous h completed actor updates and
+combine them with the current raw gradient gt. Including gt ensures that the search subspace captures
+the current gradient direction, which may not be adequately represented by historical gradients. We
+normalize these vectors and apply Gram–Schmidt orthogonalization to remove linearly dependent
+directions, followed by a reduced QR decomposition to improve numerical orthonormality. The
+resulting rt orthonormal vectors qj (1 ≤j ≤rt) form the basis Qt = [q1, . . . , qrt] ∈Rp×rt of the
+search subspace. If rt < rmin, the subspace is not sufficiently ranked, and the actor is updated using
+the raw gradient gt.
+When rt ≥rmin, we compute a Hessian–vector product (HVP) Htqj for each basis vector qj,
+requiring rt HVPs in total. All HVPs are evaluated using the same actor loss, with the same batch Bt,
+actor noise ξt, and auxiliary quantities ζt held fixed. The HVPs and the resulting projected Hessian
+6
+
+
+At are computed as
+Htqj = ∇θ
+
+(∇θℓt(θ))⊤qj
+
+θ=θt ,
+At = 1
+2
+ Q⊤
+t HtQt + (Q⊤
+t HtQt)⊤
+= Ut diag(µt)U ⊤
+t .
+(9)
+By treating the basis vectors as fixed during differentiation, these HVPs can be computed without
+explicitly forming the full Hessian (Pearlmutter, 1994). We symmetrize the projected Hessian to
+eliminate numerical asymmetry and compute its eigendecomposition in double precision. Each
+eigenvalue µt,i represents the curvature of the actor loss along a direction within the search subspace,
+identified by the corresponding column of QtUt. Positive eigenvalues indicate upward curvature,
+while negative eigenvalues indicate downward curvature.
+4.3
+Local curvature equilibration with a non-Euclidean metric
+A local metric determines how actor parameter changes are measured within the search subspace.
+Any such change can be expressed as Qtv, where v ∈Rrt contains its coordinates in the orthonormal
+basis Qt. A positive-definite metric G ∈Rrt×rt defines the squared length of this change as
+∥v∥2
+G = v⊤Gv.
+The Euclidean metric G = Irt treats all directions within the search subspace equally, whereas a
+non-Euclidean metric assigns different weights to different directions. Let B = G−1 denote the
+inverse metric. For any raw actor gradient gt ∈Rp, the corresponding metric-adjusted gradient in
+the original actor parameter space is (Ip −QtQ⊤
+t )gt + QtBQ⊤
+t gt. This adjustment reweights the
+gradient within the search subspace while preserving its component outside the subspace.
+Let At = Ut diag(µt)U ⊤
+t be the projected Hessian in Equation (9). We construct the inverse metric
+Bt using the same eigenvectors as At, with a positive weight bt,i assigned to each eigenvector:
+Bt = Ut diag(bt)U ⊤
+t ,
+bt,i ∈[m, M],
+0 < m ≤1 ≤M.
+(10)
+Under the local metric Gt = B−1
+t
+, the i-th eigenvector of At has a squared metric length of 1/bt,i.
+Since Bt scales the gradient component along this eigenvector by bt,i, larger weights increase its
+contribution to the metric-adjusted gradient, while smaller weights reduce it. Bounding the weights
+within [m, M] ensures that Bt remains positive definite and limits gradient rescaling.
+The curvature along the i-th eigenvector, measured per unit squared length under Gt, is therefore
+bt,iµt,i. Since At and Bt share the same eigenvectors, we have
+BtAt = Ut diag(bt,1µt,1, . . . , bt,rtµt,rt)U ⊤
+t .
+The trace of BtAt sums these signed curvature contributions under Gt. As established in Propo-
+sition 5.1, this metric-scaled trace determines the first-order local volume change under a metric-
+adjusted gradient update. A positive trace indicates local contraction, while a negative trace indicates
+expansion. Although both effects can benefit optimization, excessive contraction may restrict explo-
+ration of the actor loss landscape, whereas excessive expansion may undermine optimization stability.
+To balance these competing effects, EQUIP aims to equilibrate positive and negative curvature
+contributions by targeting
+tr(BtAt) =
+X
+i
+bt,iµt,i = 0.
+(11)
+To approach this curvature-equilibration target, we compute
+κt =
+P
+i µt,i
+P
+i µ2
+t,i + εm
+,
+bt,i = clip(1 −κtµt,i, m, M),
+(12)
+where εm > 0 prevents division by zero, and clip bounds the weights within [m, M]1. When the
+metric-scaled trace is positive, this rule reduces the weights on positive-curvature directions and
+increases those on negative-curvature directions. The reverse occurs when the trace is negative.
+Without regularization or weight bounds, Equation (12) achieves exact curvature equilibration with
+the smallest squared deviation from the unit weights bt,i = 1. Regularization and clipping may
+1We use m = 1/3 and M = 3 in our experiments and evaluate their impact on reinforcement learning performance.
+7
+
+
+prevent exact equilibration, as further analyzed in Proposition 5.2. We therefore use Bt only when
+both curvature signs are present and when the metric-scaled trace is sufficiently reduced:
+max
+i
+µt,i > τµ,
+min
+i
+µt,i < −τµ,
+| P
+i bt,iµt,i|
+| P
+i µt,i| + εm
+< ρtr,
+(13)
+where τµ = max(10−8, 10−5 maxi |µt,i|) and ρtr = 0.9 in our experiments. The first two conditions
+in Equation (13) require positive and negative curvature beyond numerical tolerance, while the last
+requires a reduction in trace imbalance relative to the Euclidean metric. If any condition fails, we
+update the actor using the raw gradient gt.
+Importantly, equilibrating the overall curvature does not necessarily reduce curvature along the final
+actor update direction. We therefore compare the raw and adjusted gradients within the same search
+subspace and accept the adjustment only when it lowers the overall curvature in the local quadratic
+loss model (see Equation (57)).
+4.4
+First-order actor loss matching and gradient mixing
+The local metric can change the magnitude and direction of the metric-adjusted gradient. To preserve
+the first-order decrease in actor loss, we must rescale the metric-adjusted gradient.
+Let Q be the current search basis, B the inverse metric, and zt = Q⊤gt the raw gradient in subspace
+coordinates. For zt̸ = 0, we define the scaling factor χt and the adjusted gradient dt as
+χt = ∥zt∥2
+z⊤
+t Bzt
+,
+dt = (I −QQ⊤)gt + χtQBzt.
+(14)
+The adjusted gradient dt preserves the gradient component of gt outside the search subspace while
+reweighting and rescaling the component within it. If zt = 0, we set dt = gt.
+The scaling factor χt ensures that g⊤
+t dt = ∥gt∥2 . Consequently, for the same step size ηt, direct
+actor updates along −dt and −gt both yield an expected first-order decrease in actor loss of ηt ∥gt∥2.
+We then mix the adjusted and raw gradients to obtain
+eut = (1 −λ)gt + λdt,
+λ ∈[0, 1].
+(15)
+The mixing weight λ controls the strength of the curvature adjustment, from the raw gradient (λ = 0)
+to the fully adjusted gradient (λ = 1). Since g⊤
+t eut = ∥gt∥2, the mixed gradient also preserves the
+first-order decrease in actor loss. Theorem 5.3 establishes these properties and quantifies the matching
+error introduced by numerical regularization. Implementation details are provided in Appendix B.1.
+4.5
+Gradient selection
+EQUIP selects the mixed gradient to update the actor based on its projected curvature. Let zt = Q⊤gt
+and ezt = Q⊤eut denote the subspace coordinates of the raw and mixed gradients, respectively, and let
+A be the most recently computed projected Hessian. We compare their curvature terms:
+Kraw
+t
+= z⊤
+t Azt,
+Kmix
+t
+= ez⊤
+t Aezt,
+Kmix
+t
+< Kraw
+t
+.
+(16)
+Since the two gradients have matched first-order decrease in actor loss, this condition favors the
+mixed gradient when it has a smaller quadratic term in the projected actor loss. We accept the mixed
+gradient only if this condition is satisfied. Otherwise, we use the raw gradient. The final input to the
+actor optimizer O is therefore
+ut =
+eut,
+if the adjustment is accepted,
+gt,
+otherwise.
+(17)
+Proposition 5.4 establishes conditions under which the projected curvature comparison in Equa-
+tion (16) also guarantees a lower Hessian quadratic form for the mixed gradient under the current
+actor loss in the full actor parameter space. Detailed numerical acceptance criteria are provided in
+Appendix B.2.
+8
+
+
+Algorithm 1 EQUIP: curvature-equilibrated gradients for policy search
+Require: Actor loss ℓt, parameters θt, gradient history Ht, stored geometry (Q, A, B), base opti-
+mizer O, refresh interval K, mixing weight λ
+1: Compute the raw gradient gt = ∇θℓt(θt)
+2: ut ←gt
+3: if a refresh is due (initially and every K actor updates) then
+4:
+Build an orthonormal search basis Q from recent gradients in Ht and gt
+5:
+if the search subspace has sufficient rank then
+6:
+Compute the projected Hessian A through Equation (9)
+7:
+Construct the inverse metric B with bounded weights through Equation (12)
+8:
+end if
+9:
+Store the refreshed geometry; mark it unusable if any check in Equation (13) fails
+10: end if
+11: if the stored geometry is usable then
+12:
+Re-weight and rescale the current gradient to obtain dt through Equation (14)
+13:
+Mix with the raw gradient: eut ←(1 −λ)gt + λdt
+14:
+Compute the curvature terms Kraw
+t
+and Kmix
+t
+through Equation (16)
+15:
+if Kmix
+t
+< Kraw
+t
+then
+16:
+ut ←eut
+17:
+end if
+18: end if
+19: Update the actor using O with gradient ut
+20: Store ut in the gradient history Ht+1 and retain the most recent h gradients
+21: return θt+1
+4.6
+Computational and memory complexity
+EQUIP refreshes the search subspace and local metric every K actor updates, reusing them between
+refreshes. The mixed gradient is still computed from the current raw gradient at each actor update.
+Reusing the local geometry avoids repeated HVPs, although the cached curvature may become
+outdated. Proposition 5.4 analyzes the effect of such changes, and detailed refresh procedures are
+explained in Appendix B.3.
+Let Cbase denote the cost of a standard actor update, including gradient computation and parameter
+optimization, and let CHVP denote the cost of one HVP. For a search subspace of dimension
+r ≤rmax ≪p (p refers to the number of trainable policy parameters), each refresh requires r HVPs,
+O(pr2
+max) operations for basis construction and Hessian projection (assuming h = O(rmax)), and
+O(r3) operations for eigendecomposition. Computing and checking the mixed gradient requires an
+additional O(pr) operations per actor update. Since r ≤rmax ≪p, the average computational cost
+per actor update is
+O
+
+Cbase + pr + rCHVP + pr2
+max
+K
+
+.
+(18)
+The three terms represent the standard actor-update cost, the per-update gradient adjustment cost,
+and the amortized geometry-refresh cost, respectively. No additional HVPs are required between
+refreshes. Furthermore, EQUIP does not introduce additional environment interactions. The additional
+memory required to store the gradient history, search basis, and local geometry is O(ph + pr + r2).
+When r ≪p and h = O(r), the additional memory scales linearly with p, avoiding the quadratic
+storage cost of the full Hessian. Moreover, the computational overhead is controlled by the small
+subspace dimension r and amortized over K actor updates. These properties help keep the additional
+computational and memory costs manageable, supporting the scalability of EQUIP to large neural
+actors.
+5
+Theoretical Analysis
+In this section, we theoretically analyze EQUIP. We first examine how the local metric in EQUIP
+equilibrates positive and negative curvature and establish the conditions for achieving exact curvature
+equilibration (Subsection 5.1). We then establish first-order actor loss matching and gradient norm
+9
+
+
+bounds (Subsection 5.2), followed by an analysis of the projected curvature comparison and its
+implications for local actor loss (Subsection 5.3). Finally, we derive conditional stationarity bounds
+for direct actor updates θt+1 = θt −ηut under fixed (Subsection 5.4) and changing actor losses
+(Subsection 5.5), and relate these results to entropy-regularized policy optimization. Complete proofs
+are provided in Appendix A.
+In a nutshell, our theoretical results show that EQUIP can equilibrate positive and negative curvature
+within the search subspace under bounded metric weights (Propositions 5.1 and 5.2). Through
+first-order loss matching and gradient mixing, EQUIP can effectively reduce the actor loss, while
+bounding the norm of the mixed gradient relative to the raw gradient (Theorem 5.3). Under suitable
+conditions, the mixed gradient can also achieve a greater decrease in actor loss than the raw gradient
+(Corollary 5.5). Furthermore, we establish convergence toward first-order stationarity for direct
+actor updates under standard smoothness assumptions for fixed actor losses (Theorem 5.7), together
+with conditional stationarity bounds for changing actor losses (Theorem 5.10). We finally show that
+convergence toward stationarity of the expected actor loss implies approximate stationarity of the
+entropy-regularized return, subject to suitable assumptions (Proposition 5.11).
+5.1
+Local curvature equilibration under bounded weights
+We analyze the actor loss at a single update, holding the data batch, actor noise, and auxiliary
+quantities fixed. For simplicity, we omit the update index and write ℓ(θ) for the resulting actor loss.
+Let Q ∈Rp×r be the orthonormal search basis and f(z) = ℓ(θ + Qz) the actor loss restricted to the
+search subspace. The projected Hessian is A = ∇2f(0) = Q⊤∇2ℓ(θ)Q. We consider a fixed inverse
+metric B ≻0, with G = B−1.
+Proposition 5.1 (Local geometry under a fixed metric). Suppose f is C3 near 0. Then
+divG(B∇f)(0) = tr(BA),
+(19)
+Ev∼Unif(Sr−1)f(ρB1/2v) = f(0) + ρ2
+2r tr(BA) + O(ρ3).
+(20)
+For the gradient update TB(z) = z −ηB∇f(z) with sufficiently small η,
+log | det DTB(0)| = −η tr(BA) −η2
+2 tr((BA)2) + O(η3).
+(21)
+Thus, the curvature-equilibrated target tr(BA) = 0 eliminates the local divergence, the quadratic
+term in the average actor loss over a sphere under G, and the first-order local volume change.
+The points ρB1/2v in Equation (20) lie on a sphere of radius ρ under the local metric G. These
+geometric properties apply to the metric-adjusted gradient before rescaling and mixing. Whenever
+the rescaling factor χ varies with θ, the divergence becomes
+div(χB∇f) = χ tr(B∇2f) + ∇χ⊤B∇f.
+(22)
+Assuming that χ is fixed, mixing with the raw gradient gives Bλ = (1 −λ)Ir + λχB, for which
+tr(BλA) = (1 −λ) tr(A) + λχ tr(BA) need not vanish. In the full parameter space, including the
+unchanged gradient component outside the search subspace, the corresponding operator is
+Pλ = Ip + λQ(χB −Ir)Q⊤≻0,
+tr(PλH) = tr(H) + λ tr((χB −Ir)Q⊤HQ),
+(23)
+where H = ∇2ℓ(θ). Therefore, the curvature-equilibrated target applies to the local metric before
+rescaling and mixing, and does not generally imply zero divergence for the final mixed gradient used
+for actor training.
+Proposition 5.2 (Exact curvature equilibration under bounded weights). Let µi denote the eigenvalues
+of A, and define S+ = P
+µi>0 µi and S−= P
+µi<0 |µi|. Exact curvature equilibration P
+i biµi = 0
+with bi ∈[m, M] is feasible if and only if
+mS+ −MS−≤0 ≤MS+ −mS−.
+(24)
+When S+, S−> 0, this is equivalent to S+/S−∈[m/M, M/m]. When exact curvature equilibration
+is feasible, we seek the curvature-direction weights bi that deviate the least from the Euclidean metric
+(i.e., bi = 1 for all i):
+min
+b∈[m,M]r
+1
+2 ∥b −1∥2
+subject to
+µ⊤b = 0.
+(25)
+10
+
+
+This optimization problem has a unique solution b∗
+i = clip(1 −τµi, m, M), where the scalar τ is
+chosen to satisfy the equality constraint. For µ = 0, the solution is b∗= 1.
+For the weights bi determined according to Equation (12), let S = P
+i µi and D = P
+i µ2
+i . The
+remaining weighted curvature sum is
+X
+i
+biµi =
+Sεm
+D + εm
++
+X
+i
+µi
+
+bi −(1 −κµi)
+
+.
+(26)
+Equation (26) separates the effects of regularization and clipping on curvature equilibration, motivat-
+ing the trace-reduction check in Equation (13). For a nonzero projected Hessian, exact equilibration
+with positive weights requires both positive and negative curvature, together with the bounded-weight
+feasibility condition in Equation (24).
+5.2
+First-order actor loss matching and gradient norm bounds
+We analyze the mixed gradient with respect to an orthonormal search basis Q and a bounded inverse
+metric mI ⪯B ⪯MI. Let g denote the raw actor gradient, a = Q⊤g its subspace coordinates, and
+g⊥= (I −QQ⊤)g its component outside the search subspace. The analysis also applies when the
+local geometry is reused between refreshes (also see Section 4.6). We use u to denote the proposed
+mixed gradient before gradient selection.
+Theorem 5.3 (First-order loss matching and bounded gradient norm). For a̸ = 0, let χ =
+∥a∥2 /(a⊤Ba + εs), d = g⊥+ QχBa, and u = (1 −λ)g + λd, where εs ≥0 and λ ∈[0, 1].
+Define
+δ =
+εs ∥a∥2
+a⊤Ba + εs
+,
+KB = M + m
+2
+√
+mM
+,
+C2
+λ = 1 + λ2(K2
+B −1).
+(27)
+Then
+g⊤d = ∥g∥2 −δ,
+g⊤u = ∥g∥2 −λδ ≥(1 −λ) ∥g∥2 ,
+(28)
+∥u∥2 = ∥g∥2 −2λδ + λ2 ∥d −g∥2 ,
+∥u∥2 ≤C2
+λ ∥g∥2 .
+(29)
+When εs = 0, first-order loss matching is exact: g⊤u = ∥g∥2. Moreover, d −g is orthogonal to g,
+with ∥d −g∥2 ≤(K2
+B −1) ∥a∥2. Consequently, for g̸ = 0,
+1 ≤∥u∥
+∥g∥≤Cλ,
+cos(g, u) ≥C−1
+λ .
+In our experiments, m = 1/3, M = 3, and λ = 0.3, giving Cλ =
+√
+1.16 ≈1.077 and cos(g, u) ≥
+0.928. These bounds show that gradient mixing limits changes in magnitude and direction while
+preserving the predicted first-order decrease in actor loss. The theoretical norm bound also falls
+below the numerical acceptance limit of 1.1 specified in Appendix B.2. If gradient selection rejects
+the mixed gradient, the actor optimizer receives the raw gradient g, which satisfies the same norm
+bound and exact first-order matching.
+5.3
+Projected curvature comparison and local actor loss
+Let Q denote the local search subspace basis, constructed at the most recent geometry refresh and
+reused between refreshes. Let A be the corresponding stored projected Hessian and H = ∇2ℓ(θ) the
+Hessian of the current actor loss. Let g be the raw gradient and u the gradient selected for the current
+actor update. Define their subspace coordinates a = Q⊤g and c = Q⊤u, their common component
+outside the search subspace g⊥= (I −QQ⊤)g, and the difference between the current and stored
+projected Hessians E = Q⊤HQ −A.
+Proposition 5.4 (Curvature comparison under reused local geometry). Let ∆cache = c⊤Ac −a⊤Aa.
+The difference between the second-order terms of the local actor loss along u and g satisfies
+∆H = u⊤Hu −g⊤Hg
+(30)
+= ∆cache + (c −a)⊤E(c + a) + 2(g⊥)⊤HQ(c −a),
+(31)
+∆H ≤∆cache + ∥E∥∥c −a∥∥c + a∥+ 2
+Q⊤Hg⊥ ∥c −a∥.
+(32)
+11
+
+
+At a refresh using the current actor loss, the stored projected Hessian is exact (i.e., E = 0), and
+the search basis contains g (i.e., g⊥= 0). Thus, accepting a mixed gradient with lower projected
+curvature guarantees ∆H < 0. Between refreshes, a sufficient condition for ∆H < 0 is
+−∆cache > ∥E∥∥c −a∥∥c + a∥+ 2
+Q⊤Hg⊥ ∥c −a∥.
+(33)
+Thus, the reduction in projected curvature measured using the stored Hessian must outweigh the
+effects of changes in the projected Hessian and interactions with the gradient component outside the
+search subspace.
+The last two error terms in Equation (32) account for the difference E = Q⊤HQ −A between the
+current and stored projected Hessians, and the interaction Q⊤Hg⊥between the search subspace and
+the gradient component outside it. If the actor loss ℓremains unchanged, its Hessian is LH-Lipschitz
+continuous, and A = Q⊤∇2ℓ(θrefresh)Q, then ∥E∥≤LH ∥θt −θrefresh∥. During actor–critic
+training, changes in the critic, data batch, and actor noise can also change the actor loss, introducing
+additional differences not captured by this bound. These effects motivate periodic refreshes of the
+local geometry.
+Corollary 5.5 (Local actor loss comparison with a raw-gradient update). Let g = ∇ℓ(θ) and u = eu
+be the accepted mixed gradient from Theorem 5.3. Assume that ℓhas an LH-Lipschitz Hessian along
+the line segments from θ to θ −ηu and θ −ηg, where η > 0. Then
+ℓ(θ −ηu) −ℓ(θ −ηg) ≤ηλδ + η2
+2 ∆H + LHη3
+6
+ ∥u∥3 + ∥g∥3
+.
+(34)
+For a quadratic actor loss with exact first-order matching (εs = 0), ∆H < 0 guarantees a lower loss
+for the mixed-gradient update than for the raw-gradient update, regardless of the step size η > 0.
+For a nonquadratic loss, the negative curvature difference must outweigh the Taylor remainder and,
+when εs > 0, the first-order matching error to guarantee the same result.
+Corollary 5.5 compares two direct updates from the same actor parameters using the same actor loss.
+Since first-order matching preserves the descent direction, a sufficiently small step size ensures a
+decrease in actor loss. Corollary 5.5 further identifies conditions under which the mixed-gradient
+update achieves a lower loss than the raw-gradient update.
+5.4
+Convergence conditions for fixed actor losses
+We first analyze convergence for a fixed actor loss ℓunder direct gradient updates. Let gt = ∇ℓ(θt)
+denote the raw actor gradient at actor update step t. Convergence toward a stationary point is validated
+through ∥gt∥.
+Assumption 5.6 (Conditions for direct actor updates). The actor loss ℓis lower bounded by ℓ∗and
+has an L-Lipschitz gradient. At each actor update, the selected gradient ut satisfies
+⟨gt, ut⟩≥c0 ∥gt∥2 ,
+∥ut∥≤C0 ∥gt∥,
+(35)
+where c0 > 0 and C0 ≥1. The actor parameters are updated by θt+1 = θt −ηut.
+Theorem 5.7 (Stationarity and conditional linear convergence). Under Assumption 5.6, let 0 < η <
+2c0/(LC2
+0) and aη = ηc0 −Lη2C2
+0/2. Then
+min
+0≤t<T ∥gt∥2 ≤1
+T
+T −1
+X
+t=0
+∥gt∥2 ≤ℓ(θ0) −ℓ∗
+Taη
+.
+(36)
+If ℓadditionally satisfies the Polyak–Łojasiewicz (PL) inequality
+1
+2 ∥∇ℓ(θ)∥2 ≥µPL(ℓ(θ) −ℓ∗),
+then, provided 0 ≤1 −2µPLaη < 1,
+ℓ(θT ) −ℓ∗≤(1 −2µPLaη)T  ℓ(θ0) −ℓ∗
+
+.
+(37)
+Theorem 5.3 shows that the mixed gradient remains aligned with the raw gradient and has a bounded
+norm. With exact first-order loss matching (εs = 0), Equation (35) holds with c0 = 1 and C0 = Cλ.
+12
+
+
+When the denominator regularizer εs > 0 is introduced in the matching scale (Equation (54)), the
+norm bound remains unchanged, while c0 = 1 −λ > 0 provides a conservative alignment bound
+for λ < 1. These bounds also hold when the raw gradient is selected instead of the mixed gradient.
+Hence, under Assumption 5.6, the direct actor updates converge toward first-order stationarity at a
+rate of O(1/T) in the average squared gradient norm. Linear convergence additionally requires the
+PL inequality, which is not assumed to hold for general neural actor losses.
+Proposition 5.8 (Accumulated improvement from accepted mixed gradients). Suppose ℓsatisfies
+Assumption 5.6 and the direct actor updates additionally satisfy
+ℓ(θt+1) ≤ℓ(θt −ηgt) −Itst,
+where It ∈{0, 1} indicates whether the mixed gradient is accepted, st ≥0 denotes its additional
+loss decrease relative to the raw-gradient update, and 0 < η < 2/L. Then
+(η −Lη2/2)
+X
+t<T
+∥gt∥2 +
+X
+t<T
+Itst ≤ℓ(θ0) −ℓ∗.
+(38)
+The term P
+t<T Itst quantifies the accumulated additional loss decrease from accepted mixed
+gradients along the training trajectory. Corollary 5.5 provides sufficient conditions for st > 0.
+5.5
+Convergence conditions for changing actor losses
+In deep reinforcement learning, the actor loss changes as the critic and replay data evolve. Let Ft
+denote the information available before performing the current actor update. We use ¯ℓt(θ) to denote
+the conditional expected actor loss under the current replay distribution and frozen critic. Its gradient
+is ¯gt = ∇¯ℓt(θt), whereas gt = ∇ℓt(θt) is the raw gradient computed from the sampled actor loss.
+Assumption 5.9 (Conditions for changing actor losses). Each ¯ℓt has an L-Lipschitz gradient and
+shares a common lower bound ℓ∗. For the selected gradient ut, assume
+E[⟨¯gt, ut⟩| Ft] ≥c0 ∥¯gt∥2 −βt,
+(39)
+E[∥ut∥2 | Ft] ≤C2
+0 ∥¯gt∥2 + σ2
+t ,
+(40)
+E[¯ℓt+1(θt+1) −¯ℓt(θt+1) | Ft] ≤vt,
+(41)
+where c0 > 0, C0 ≥1, and βt, σ2
+t , vt ≥0 are integrable and Ft-measurable. Here, βt bounds the
+expected alignment error, σ2
+t bounds the extra expected squared gradient norm, and vt bounds the
+change in the expected actor loss. The direct actor update is θt+1 = θt −ηut.
+Theorem 5.10 (Conditional stationarity for changing actor losses). Under Assumption 5.9, if aη =
+ηc0 −Lη2C2
+0/2 > 0, then
+1
+T
+X
+t<T
+E ∥¯gt∥2 ≤E¯ℓ0(θ0) −ℓ∗+ P
+t<T E[vt + ηβt + (Lη2/2)σ2
+t ]
+Taη
+.
+(42)
+For a fixed expected actor loss with βt = vt = 0 and uniformly bounded σ2
+t , choose η proportional
+to T −1/2. This gives an O(T −1/2) stationarity bound. Persistent alignment errors and variations of
+the expected actor loss can weaken the convergence guarantee toward stationarity.
+First-order loss matching ensures alignment of the mixed gradient with the sampled raw gradient gt,
+whereas Equation (39) requires alignment with the expected gradient ¯gt. To examine this distinction,
+suppose gt is conditionally unbiased and write ut = gt+ht, where ht captures the gradient adjustment.
+Then
+¯g⊤
+t E[ut | Ft] = ∥¯gt∥2 + E[(¯gt −gt)⊤ht | Ft] + E[g⊤
+t ht | Ft].
+(43)
+Exact first-order matching eliminates the last term, but the gradient adjustment ht may still be
+correlated with the sampling error gt −¯gt. Reusing the same batch for critic and actor updates can
+also affect the unbiasedness of gt. Therefore, first-order matching with gt does not guarantee the
+expected-gradient alignment required by Equation (39).
+We can bound this effect without assuming independence. Suppose gt is conditionally unbiased, the
+gradient adjustment ht = ut −gt satisfies exact first-order matching g⊤
+t ht = 0 for every sampled
+actor gradient, and
+E[∥gt −¯gt∥2 | Ft] ≤σ2
+g,t.
+13
+
+
+By Theorem 5.3, ∥ht∥≤κh ∥gt∥, where κh = λ
+p
+K2
+B −1. Then, for any ϵ ∈(0, 1),
+E[¯g⊤
+t ut | Ft] ≥(1 −ϵ) ∥¯gt∥2 −
+
+κh + κ2
+h
+4ϵ
+
+σ2
+g,t,
+(44)
+and
+E[∥ut∥2 | Ft] ≤C2
+λ(∥¯gt∥2 + σ2
+g,t).
+These bounds quantify how sampling variability affects gradient alignment and norm in Assump-
+tion 5.9.
+Proposition 5.11 (Relation to the entropy-regularized return). Assume a differentiable action reparam-
+eterization aθ(s, ξ) and the regularity conditions of the soft policy-gradient theorem. The distribution
+of ξ is independent of θ. For each state, assume that the sampled actor loss is differentiable with
+respect to θ almost surely when the critic is held fixed. Assume also that differentiation can be
+interchanged with expectation over ξ. Using the exact critic Qπθ
+α and the policy’s discounted state
+distribution dθ, the actor gradient satisfies
+g∗
+θ = Es∼dθ,ξ∇θ
+
+α log πθ(aθ(s, ξ) | s) −Qπθ
+α (s, aθ(s, ξ))
+
+Qfixed = −(1 −γ)∇Jα(θ),
+(45)
+where Jα(θ) is the expected entropy-regularized return defined in Equation (3). Here, differentia-
+tion passes through the sampled action while treating the critic as fixed with respect to the actor
+parameters.
+In contrast, ¯gt is the expected actor gradient computed using the replay state distribution and a
+learned critic. We define its difference from the exact actor gradient as
+et =
+¯gt −g∗
+θt
+ = ∥¯gt + (1 −γ)∇Jα(θt)∥.
+Then
+1
+T
+X
+t<T
+E[∥∇Jα(θt)∥2] ≤
+2
+(1 −γ)2
+"
+1
+T
+X
+t<T
+E[∥¯gt∥2] + 1
+T
+X
+t<T
+E[e2
+t]
+#
+.
+(46)
+Furthermore, suppose the exact state-wise actor gradient has norm at most Gψ, the action Jacobian
+satisfies ∥Dθaθ∥≤Aθ, and the learned critic’s action-gradient error is uniformly bounded by ϵQ,t.
+Then
+et ≤2GψDTV(νreplay
+t
+, dθt) + AθϵQ,t,
+(47)
+where νreplay
+t
+denotes the replay state distribution and DTV is the total variation distance.
+Equation (45) follows the soft policy-gradient theorem (Shi et al., 2019). Equation (47) bounds the
+gradient error arising from replay distribution mismatch and critic’s action-gradient error. Since SAC
+uses the minimum of two learned critics, this bound holds whenever the minimum is differentiable
+and both critics satisfy the assumed error bound.
+Together, Theorem 5.10 and Proposition 5.11 provide a conditional stationarity bound for the entropy-
+regularized return, provided that gradient alignment errors, sampling variability, critic errors, replay
+distribution mismatch, and changes in the expected actor loss can be properly controlled.
+6
+EQUIP-SAC: Integration with Soft Actor–Critic
+We integrate EQUIP into Soft Actor–Critic (SAC) (Haarnoja et al., 2018a,b), resulting in EQUIP-SAC.
+The integration modifies only the gradient supplied to the actor optimizer, leaving the critic learning,
+replay sampling, and environment interaction procedures unchanged.
+6.1
+SAC actor and critic optimization
+EQUIP-SAC follows the learning framework of SAC, with a stochastic actor πθ, two learned action-
+value functions Qω1 and Qω2, their target networks Qω1 and Qω2, and a replay buffer D. The entropy
+temperature α > 0 is fixed.
+The actor uses a squashed Gaussian policy with differentiable action sampling:
+xθ(s, ξ) = µθ(s) + σθ(s) ⊙ξ,
+ξ ∼N(0, I),
+aθ(s, ξ) = cact tanh(xθ(s, ξ)),
+(48)
+14
+
+
+where µθ and σθ are the actor’s predicted mean and standard deviation, and cact is the action
+scaling factor 2. Since the tanh transformation changes the probability density of the Gaussian
+actions, the action log-probability is computed from the original Gaussian density with a Jacobian
+correction (Haarnoja et al., 2018a).
+For a minibatch Bt = {(si, ai, ri, s′
+i)}N
+i=1 sampled from D, the critic target is
+yi = ri + γ
+
+min
+j=1,2 Qωj(s′
+i, a′
+i) −α log πθt(a′
+i | s′
+i)
+
+,
+(49)
+where a′
+i = aθt(s′
+i, ξ′
+i) is sampled from the current actor. The two critics minimize the sum of their
+mean squared Bellman errors:
+LQ(ω1, ω2) = 1
+N
+N
+X
+i=1
+2
+X
+j=1
+ Qωj(si, ai) −yi
+2 .
+(50)
+The target critics are updated using Polyak averaging:
+ωj ←ρωj + (1 −ρ)ωj,
+j ∈{1, 2},
+(51)
+where ρ ∈(0, 1) controls the update rate. After updating the critics, their parameters are held fixed
+during actor optimization. Using the states from the same minibatch and newly sampled actor noise,
+the SAC actor loss is
+ℓSAC
+t
+(θ) = 1
+N
+N
+X
+i=1
+
+α log πθ(aθ(si, ξi) | si) −min
+j=1,2 Qωj(si, aθ(si, ξi))
+
+.
+(52)
+This loss approximates the soft policy improvement objective in Equation (6). The reparameterized
+actions allow actor loss gradients and HVPs to be computed with respect to the actor parameters
+while keeping the critic parameters fixed.
+6.2
+Integration of EQUIP into SAC actor updates
+At actor update t, EQUIP takes the SAC actor loss ℓSAC
+t
+in Equation (52) as input and computes the
+raw gradient gt = ∇θℓSAC
+t
+(θt). Algorithm 1 then uses the stored local geometry to construct and
+select the gradient ut, which is supplied to the actor’s Adam optimizer.
+Whenever the local geometry is refreshed, EQUIP constructs the search subspace from the current
+gradient and gradient history, and computes the projected Hessian using HVPs (see Section 4). All
+HVPs are computed using the same replay minibatch, sampled actor noise, and frozen critics as the
+raw gradient, ensuring that they correspond to the same actor loss. Between refreshes, the stored
+local geometry is reused, and only the current actor gradient is computed. After each successful
+actor update, the selected gradient ut is added to the gradient history. Algorithm 2 summarizes the
+complete training procedure.
+As evidenced in Algorithm 2, EQUIP adjusts the gradient supplied to the actor optimizer while
+preserving the original SAC actor loss and critic learning procedure. This approach also makes
+EQUIP applicable to other gradient-based actor–critic algorithms, provided that their actor losses
+support the required gradient and curvature computations.
+Detailed implementation settings are presented in Appendix B.4, while the configurations used in our
+experiments are reported in Section 7.
+7
+Experiments
+In this section, we conduct experiments to evaluate the sample efficiency and learning performance of
+EQUIP-SAC over 300,000 environment interactions. We compare EQUIP-SAC with SAC (Haarnoja
+et al., 2018a), an adapted projected saddle-free Newton (PN) baseline following Dauphin et al.
+(2014), and VR-SCP (Khorasani et al., 2025), a recent second-order policy optimization method. We
+also conduct ablation studies to investigate the effectiveness of first-order loss matching, trajectory-
+informed search subspaces, and curvature-based gradient selection mechanisms. Finally, we examine
+the impact of curvature estimation effort, parameter sensitivity, and gradient adjustment acceptance
+on learning performance.
+2Following the Spinning Up SAC implementation, cact is set to the common symmetric action bound of each environment.
+It is 1 for HalfCheetah, Walker2d, Ant, and Swimmer, 0.4 for Humanoid, and 2 for Pusher.
+15
+
+
+Algorithm 2 EQUIP-SAC: SAC with curvature-equilibrated actor optimization
+Require: Actor θ, critics ω1, ω2, target critics, replay buffer D, fixed temperature α, Adam optimiz-
+ers, and EQUIP state
+1: for each environment interaction k do
+2:
+Sample an action using the initial random-exploration policy or the current actor πθ
+3:
+Execute the action and store the transition in D
+4:
+if an update burst is scheduled after warmup then
+5:
+for each actor–critic update do
+6:
+Sample a minibatch Bt from D
+7:
+Compute critic targets using Equation (49)
+8:
+Update both critics using Equation (50)
+9:
+Freeze the updated critics and sample actor noise ξ
+10:
+Evaluate the actor loss ℓSAC
+t
+using Equation (52)
+11:
+Apply Algorithm 1 to update the actor using Adam with the selected gradient ut
+12:
+Store ut in the gradient history
+13:
+Update target critics using Equation (51)
+14:
+end for
+15:
+end if
+16: end for
+7.1
+Experimental setup
+Benchmark problems and SAC-based methods.
+We conduct experiments on 6 MuJoCo-v5
+continuous control benchmarks, including HalfCheetah, Walker2d, Ant, Humanoid, Swimmer, and
+Pusher (Todorov et al., 2012). SAC, EQUIP-SAC, and projected saddle-free Newton (PN) share the
+same PyTorch SAC implementation, adapted from OpenAI Spinning Up (Achiam, 2018)3.
+We also follow the default hyper-parameter settings provided by OpenAI Spinning Up. Specifically,
+the actor and twin critics each use two 256-unit ReLU hidden layers, with a tanh-squashed Gaussian
+policy for the actor. We use Adam with a learning rate of 10−3 for both actor and critic optimization,
+a discount factor of γ = 0.99, a fixed entropy temperature of α = 0.2, and Polyak retention of
+0.995. Actor and critic updates use minibatches of 100 transitions randomly sampled from the replay
+buffer. Actor–critic training begins after 1,000 environment steps, with 50 gradient updates performed
+after every 50 steps of environmental interactions. Furthermore, SAC, EQUIP-SAC, and PN takes
+random actions during the first 10,000 environmental steps before switching to the learned policy for
+subsequent environmental explorations.
+EQUIP configuration.
+While SAC passes the raw actor gradient to Adam, EQUIP-SAC adjusts
+it using Algorithm 1. We follow a gradient mixing weight of λ = 0.3 and request an adjustment at
+every actor update. Only adjustments satisfying the metric eligibility conditions in Subsection 4.3
+(Equation (13)) and the gradient-selection criterion in Subsection 4.5 (Equation (16)) are accepted.
+Otherwise, the raw gradient is used.
+VR-SCP baseline and implementation.
+We experimentally compare EQUIP-SAC with VR-SCP,
+a recent second-order policy optimization method proposed by Khorasani et al. (2025). Unlike PN,
+VR-SCP is an independent policy optimization algorithm rather than an adaptation of SAC. This
+comparison allows us to evaluate EQUIP-SAC against a recent method that also exploits curvature
+information to improve policy optimization and sample efficiency, but adopts a different design
+strategy. We adapt the authors’ released implementation to our PyTorch/Gymnasium MuJoCo-v5
+environment (Paszke et al., 2019; Towers et al., 2025) while preserving its optimization procedure
+and key algorithmic components.
+We use the hyperparameter settings in the authors’ released code4, as summarized in Table 1. All
+training interactions are counted toward the same environment-step budget as EQUIP-SAC. We have
+verified the numerical behavior of all key components against the original implementation. Thus, our
+3Implementation details and default hyper-parameters are available at https://spinningup.openai.com/en/latest/
+algorithms/sac.html.
+4The original VR-SCP implementation is available at https://github.com/sadegh16/VR-SCP.
+16
+
+
+Table 1: VR-SCP hyper-parameters for the 6 benchmark tasks.
+Task
+l
+ro
+S
+Inner iterations
+KL limit
+Walker2d
+50
+50
+2
+250
+0.01
+Humanoid
+400
+1
+5
+1000
+0.10
+Other four tasks
+100
+1
+3
+100
+0.10
+Note. The other four tasks are HalfCheetah, Ant, Swimmer, and Pusher. Parameter ro controls the cubic regularization penalty.
+baseline faithfully follows the proposed VR-SCP algorithm, with adaptations limited to the runtime
+and evaluation settings to ensure a fair comparison with EQUIP-SAC.
+Projected saddle-free Newton baseline.
+The projected saddle-free Newton (PN) baseline is an
+adapted version of the saddle-free Newton algorithm Dauphin et al. (2014) for second-order actor
+optimization in SAC. PN follows the same trajectory-informed search subspace construction, first-
+order loss matching, gradient mixing and gradient selection mechanisms as EQUIP-SAC. The main
+difference lies in how the projected Hessian is used to adjust the actor gradient.
+While EQUIP-SAC seeks to equilibrate positive and negative curvature, PN aims to reduce the
+influence of those directions with large curvature magnitudes. Given the eigenvalues {µt,i}rt
+i=1 of the
+projected actor-loss Hessian, PN computes
+sPN
+t
+= max
+ s
+1
+rt
+X
+i
+µ2
+t,i, 10−8
+!
+,
+δPN
+t
+= 10−8 + 0.1sPN
+t
+,
+bPN
+t,i = clip
+
+sPN
+t
+|µt,i| + δPN
+t
+, m, M
+
+.
+(53)
+Here, sPN
+t
+normalizes the curvature scale, δPN
+t
+prevents excessively large weights near zero eigenval-
+ues, and the bounds [m, M] limit gradient rescaling. The computed weights in Equation (53) define
+the inverse metric BPN
+t
+= Ut diag(bPN
+t
+)U ⊤
+t , which rescales the actor gradient along the eigenvector
+directions of the projected Hessian.
+In our experiments, PN uses the same metric eligibility checks as EQUIP-SAC. Similar to EQUIP-
+SAC, we set the maximum search subspace rank rmax = 32 and history capacity h = 32 for all 6
+benchmark tasks. Meanwhile, the refresh interval K = 64. Both methods follow the same subspace
+construction procedure, although their actual subspaces may differ as training progresses.
+Evaluation settings.
+We evaluate each learned policy every 4,000 environment interactions using
+10 deterministic episodes. All results are reported over the first 300,000 environment interactions.
+Our primary measure of sample efficiency is the area under the evaluation-return curve (AUC),
+averaged over the 300,000-step training window. We also compare the evaluation returns achieved
+by all competing algorithms at 300,000 environment steps.
+Each algorithm uses 10 training seeds per benchmark task. For paired comparisons, we use matching
+seed IDs. Evaluation returns are averaged across episodes within each training seed. We report the
+mean performance together with 95% Student-t confidence intervals across training seeds. The ±
+values in the experimental result tables represent confidence intervals, rather than standard deviations.
+For learning curves, we apply a five-checkpoint moving average to each seed after truncating the data
+to 300,000 steps. The curves show mean evaluation returns with point-wise 95% confidence intervals.
+All reported AUC and final-return values are computed from raw performance data obtained through
+our experiments.
+7.2
+Main benchmark results
+Comparison with SAC and PN.
+Table 2 shows that EQUIP-SAC achieves the highest mean
+AUC among the four competing methods on all 6 benchmark tasks. The largest relative gain over
+SAC occurs on Walker2d, where mean AUC increases from 1151.50 to 1537.51, an improvement
+of 33.52%. HalfCheetah, Ant, and Humanoid achieve smaller mean AUC gains over SAC of
+approximately 5.2%, 5.65%, and 8.1%, respectively. Swimmer and Pusher show more modest
+improvements of about 1.4% and 1.9%.
+17
+
+
+Table 2: Evaluation-return AUC over the first 300k environment interactions. Higher values indicate
+better sample efficiency. Entries are means ± 95% Student-t confidence intervals.
+Task
+SAC PN (adapted SFN)
+VR-SCP
+EQUIP-SAC
+HalfCheetah 6434.03 ± 157.50 6485.50 ± 194.87 −587.09 ± 86.30 6766.84 ± 219.91
+Walker2d
+1151.50 ± 97.85 1289.20 ± 140.92
+80.21 ± 19.48 1537.51 ± 137.58
+Ant
+949.70 ± 66.72
+949.27 ± 49.07
+−85.25 ± 6.52
+1003.32 ± 60.11
+Humanoid
+641.13 ± 32.30
+639.43 ± 24.07
+113.11 ± 8.59
+693.05 ± 37.03
+Swimmer
+38.54 ± 0.38
+38.26 ± 0.42
+0.26 ± 5.94
+39.09 ± 0.63
+Pusher
+−30.73 ± 0.68
+−31.45 ± 0.55
+−87.21 ± 5.98
+−30.13 ± 0.43
+Table 3: Evaluation returns at 300k environment interactions. Higher is better. Entries are means ±
+95% Student-t confidence intervals.
+Task
+SAC PN (adapted SFN)
+VR-SCP
+EQUIP-SAC
+HalfCheetah 8874.63 ± 349.27 8924.06 ± 379.16 −576.05 ± 146.34 9425.10 ± 377.90
+Walker2d
+2219.67 ± 435.98 2922.54 ± 312.80
+205.91 ± 37.97 3191.98 ± 428.85
+Ant
+1858.24 ± 270.17 1909.79 ± 173.76
+−54.10 ± 13.78 2232.58 ± 293.21
+Humanoid
+783.11 ± 42.34 1003.72 ± 113.55
+121.53 ± 10.47 1312.27 ± 305.57
+Swimmer
+40.65 ± 0.33
+40.16 ± 0.36
+−1.55 ± 8.51
+41.25 ± 0.39
+Pusher
+−25.76 ± 0.85
+−28.07 ± 1.68
+−117.74 ± 13.57
+−25.41 ± 0.44
+The evaluation returns in Table 3 show a similar pattern, with EQUIP-SAC achieving the highest mean
+return at 300k on all 6 benchmark tasks. The improvements are particularly pronounced on Walker2d,
+Ant, and Humanoid. Compared with SAC, the mean return increases from 2219.67 to 3191.98
+on Walker2d, from 1858.24 to 2232.58 on Ant, and from 783.11 to 1312.27 on Humanoid. These
+results also exceed those of PN, which achieves 2922.54, 1909.79, and 1003.72 on the respective
+tasks. HalfCheetah shows a smaller improvement over SAC, from 8874.63 to 9425.10. The gains on
+Swimmer and Pusher are more modest, although EQUIP-SAC still achieves the highest mean return
+on both tasks.
+The key difference between EQUIP-SAC and PN lies in their spectral weighting strategies. While
+EQUIP-SAC equilibrates positive and negative curvature, PN uses inverse-absolute-curvature weight-
+ing following the saddle-free Newton approach. As shown in Tables 2 and 3, EQUIP-SAC achieves
+higher mean AUC and evaluation returns than PN on majority of the benchmark tasks. These re-
+sults demonstrate that curvature-equilibration weighting can outperform Newton-inspired spectral
+weighting for actor optimization.
+Comparison with VR-SCP.
+Compared with SAC and PN, EQUIP-SAC demonstrates a substan-
+tially larger performance advantage over VR-SCP. It achieves higher mean AUC and evaluation
+returns at 300k on all 6 benchmark tasks. The matched-seed AUC analysis, covering all 60 compar-
+isons, confirms that EQUIP-SAC significantly outperforms VR-SCP at the 0.05 significance level,
+providing strong evidence of its sample efficiency under the same environment-interaction budget.
+However, this is an end-to-end comparison of different policy optimization algorithms. VR-SCP uses
+a different training objective, sampling scheme, and update procedure. We follow the hyper-parameter
+settings provided by Khorasani et al. (2025), using the recommended settings without performing any
+additional hyper-parameter fine-tuning.
+Learning curves.
+Figure 1 illustrates how the performance differences develop throughout training.
+On HalfCheetah, EQUIP-SAC gradually gains an advantage over SAC and PN as training progresses.
+Walker2d shows the clearest improvement, with EQUIP-SAC learning faster and achieving increas-
+ingly higher returns during the second half of training. On Ant and Humanoid, the three SAC-based
+methods perform similarly during much of early training, but EQUIP-SAC achieves higher mean
+returns toward 300k steps. On Swimmer, all three methods quickly reach similar returns, while their
+performance differences on Pusher remain small. In contrast, VR-SCP consistently achieves lower
+returns than the SAC-based methods across all 6 benchmark tasks. Overall, these curves demonstrate
+the effectiveness of EQUIP-SAC.
+18
+
+
+0
+100
+200
+300
+Training steps (k)
+0
+4000
+8000
+Test return
+n=10/10/10/10
+HalfCheetah
+0
+100
+200
+300
+Training steps (k)
+0
+1500
+3000
+Test return
+n=10/10/10/10
+Walker2d
+0
+100
+200
+300
+Training steps (k)
+0
+800
+1600
+2400
+Test return
+n=10/10/10/10
+Ant
+0
+100
+200
+300
+Training steps (k)
+500
+1000
+1500
+Test return
+n=10/10/10/10
+Humanoid
+0
+100
+200
+300
+Training steps (k)
+-20
+0
+20
+40
+Test return
+n=10/10/10/10
+Swimmer
+0
+100
+200
+300
+Training steps (k)
+-120
+-80
+-40
+Test return
+n=10/10/10/10
+Pusher
+SAC
+PN (adapted SFN)
+EQUIP-SAC
+VR-SCP
+Figure 1: Evaluation-return curves for SAC, PN (adapted SFN), VR-SCP, and EQUIP-SAC on 6
+MuJoCo-v5 tasks over the first 300k environment interactions. Curves are smoothed separately for
+each training seed using a centered five-checkpoint moving average. Lines show mean returns across
+seeds, and shaded bands indicate point-wise 95% Student-t confidence intervals. Each checkpoint
+averages 10 deterministic evaluation episodes. All methods use 10 training seeds.
+Table 4: Component ablations of EQUIP-SAC over 300k environment interactions. Entries are mean
+AUC ± 95% Student-t confidence intervals.
+Variant
+HalfCheetah
+Walker2d
+Full EQUIP-SAC
+6766.8 ± 219.9
+1537.5 ± 137.6
+Without first-order matching
+6384.7 ± 269.0
+1044.4 ± 54.0
+Without curvature selection
+6487.9 ± 227.2
+1443.7 ± 121.9
+Random historical gradients
+6032.7 ± 189.7
+1491.4 ± 169.4
+7.3
+Controlled comparisons and ablations
+We investigate three key components of EQUIP through ablation studies on HalfCheetah and Walker2d,
+comparing the full EQUIP-SAC with three variants. The first variant removes first-order loss matching
+by setting the matching scale χt = 1 and disabling the corresponding matching checks. The second
+variant removes curvature-based gradient selection while retaining the other safety checks. The
+third variant replaces historical actor-gradient directions with random directions while preserving the
+current raw gradient in the search subspace. All variants follow the same hyper-parameter settings as
+the main experiments of EQUIP-SAC.
+Table 4 and Figure 2 present the ablation results. The full EQUIP-SAC achieves the highest mean
+AUC on both HalfCheetah and Walker2d.
+First-order loss matching.
+Removing first-order loss matching substantially reduces performance
+on Walker2d. The mean AUC decreases from 1537.5 to 1044.4, a reduction of 32.1%. The paired
+AUC difference is 493.1, with a 95% confidence interval of [317.9, 668.3]. The effect also extends to
+the later stages of training, where the mean return over the last five evaluation checkpoints decreases
+from 3191.7 to 2324.1. On HalfCheetah, removing first-order loss matching also reduces mean AUC,
+but at a more moderate scale. These results highlight the importance of first-order loss matching.
+19
+
+
+Table 5: Effect of averaging projected Hessians across four minibatches. Values show the mean AUC
+differences (ncurv = 4 minus ncurv = 1), with 95% Student-t confidence intervals.
+Task
+Mean ∆AUC
+95% CI
+Positive/negative
+HalfCheetah
+−584.5
+[−873.1, −296.0]
+3/7
+Walker2d
+26.3
+[−154.4, 206.9]
+6/4
+Ant
+−74.4
+[−144.0, −4.8]
+3/7
+Humanoid
+−94.4
+[−133.1, −55.8]
+2/8
+Swimmer
+−0.397
+[−0.753, −0.040]
+3/7
+Pusher
+−1.652
+[−2.075, −1.229]
+1/9
+0
+100k
+200k
+300k
+Environment steps
+0
+2500
+5000
+7500
+10000
+Evaluation return
+HalfCheetah
+0
+100k
+200k
+300k
+Environment steps
+0
+800
+1600
+2400
+3200
+Evaluation return
+Walker2d
+EQUIP-SAC
+w/o first-order matching
+w/o curvature selection
+random historical actor gradients
+Figure 2: Learning curves of EQUIP-SAC and its component ab-
+lations on HalfCheetah and Walker2d over 300k environment in-
+teractions. Lines show mean evaluation returns with shaded 95%
+Student-t confidence intervals. A five-checkpoint moving average
+is applied within each seed for visualization.
+Trajectory-informed search
+subspace.
+We examine the
+contribution of historical ac-
+tor
+gradients
+by
+replacing
+them with random directions
+while retaining the current
+raw gradient.
+On HalfChee-
+tah, this reduces mean AUC
+from 6766.8 to 6032.7,
+a
+decrease of 10.85%.
+The
+paired difference is 734.1,
+with a 95% confidence inter-
+val of [484.0, 984.3].
+The
+mean return over the last
+five checkpoints also decreases
+from 9425.8 to 8408.2.
+On
+Walker2d, however, the differ-
+ence in mean AUC is much
+smaller. While the full EQUIP-
+SAC achieves a slightly higher AUC, the random-history variant obtains a slightly higher mean final
+evaluation return. These results suggest that trajectory-informed search subspaces can improve actor
+optimization, but their benefits may be task-dependent.
+Curvature-based gradient selection.
+We evaluate the contribution of curvature-based gradient
+selection by removing the criterion in Equation (16), while retaining all other safety checks. Given
+the approximately matched first-order decrease in actor loss, this criterion favors the mixed gradient
+when the projected quadratic model predicts a lower actor loss than the raw gradient. Removing this
+criterion reduces mean AUC from 6766.8 to 6487.9 on HalfCheetah and from 1537.5 to 1443.7 on
+Walker2d. These results suggest that curvature-based gradient selection can potentially improve actor
+optimization, with no observed reduction in mean AUC in our experiments.
+Curvature estimation effort.
+The projected Hessian is estimated from sampled actor losses,
+which may introduce substantial estimation variance. Averaging projected Hessians across multiple
+minibatches may reduce this variance and potentially improve the reliability of curvature-based
+gradient adjustments. We investigate whether increasing the curvature estimation effort (i.e., the
+number of minibatches used for computing the projected Hessian) may allow EQUIP-SAC to perform
+better. Let ncurv denote the number of curvature minibatches. We compare the standard single-
+minibatch estimation (ncurv = 1) with four-minibatch averaging (ncurv = 4), using the same search
+subspace. For each benchmark task, both settings follow identical configurations adopted in our main
+experiments reported in Section 7.2.
+Table 5 shows that averaging projected Hessians across four minibatches reduces mean AUC on five
+of the 6 benchmark tasks. The largest decrease occurs on HalfCheetah, while Walker2d is the only
+task showing a small improvement. Overall, these results indicate that averaging multiple projected
+Hessians does not offer substantial performance benefit, supporting the use of the simpler and more
+efficient single-minibatch estimation in EQUIP-SAC.
+20
+
+
+Table 6: Sensitivity of EQUIP-SAC to search subspace and refresh settings on Ant and Swimmer.
+Entries are means ± 95% Student-t confidence intervals over 10 seeds. The configuration is given as
+rmax/h/K.
+Task
+rmax/h/K
+AUC
+Return at 300k
+Ant
+8/16/20
+1016.8 ± 70.4 1883.0 ± 254.6
+16/32/10
+852.5 ± 20.2 1480.3 ± 115.8
+16/32/40
+900.9 ± 53.0 1615.8 ± 217.6
+32/32/50
+1003.3 ± 60.1 2232.6 ± 293.2
+32/32/64
+923.5 ± 53.9 1391.5 ± 199.2
+Swimmer 32/{32, 64}/32 38.615 ± 0.454 40.839 ± 0.351
+32/{32, 64}/50 38.591 ± 0.609 40.380 ± 0.499
+32/{32, 64}/64 39.094 ± 0.634 41.252 ± 0.395
+7.4
+Parameter sensitivity
+0
+100k
+200k
+300k
+Environment steps
+0
+600
+1200
+1800
+Evaluation return
+Ant
+r / h / K
+8/16/20
+16/32/10
+16/32/40
+32/32/50
+32/32/64
+0
+100k
+200k
+300k
+Environment steps
+25
+30
+35
+40
+Evaluation return
+Swimmer
+r / h / K
+32/(32,64)/32
+32/(32,64)/50
+32/(32,64)/64
+Figure 3: Learning curves for EQUIP-SAC with different search
+subspace and refresh settings on Ant and Swimmer over 300k en-
+vironment interactions. Legends denote rmax/h/K. Lines show
+mean evaluation returns across 10 seeds, with shaded bands indi-
+cating point-wise 95% Student-t confidence intervals. Curves are
+smoothed using a five-checkpoint moving average per seed. On
+Swimmer, h = 32 and h = 64 yield identical curves and are shown
+together for each K.
+We investigate how the search
+subspace and geometry refresh
+settings affect the performance
+of EQUIP-SAC on Ant and
+Swimmer. The maximum sub-
+space rank rmax limits the
+number of independent direc-
+tions used to construct the
+search subspace, within which
+the projected Hessian of ac-
+tor loss is estimated. The his-
+tory capacity h determines how
+many gradients from previous
+actor updates are stored. The
+search subspace is constructed
+from the current raw gradient
+and up to rmax −1 recent his-
+torical gradients. The refresh
+interval K determines how of-
+ten the search subspace and
+projected Hessian are recom-
+puted, measured in actor up-
+dates. Between refreshes, the
+stored local geometry is reused.
+We vary these parameters while keeping all other SAC and EQUIP settings unchanged. Each con-
+figuration is denoted by rmax/h/K and evaluated using 10 training seeds over 300k environment
+interactions. Table 6 reports the mean AUC and evaluation return at 300k, while Figure 3 presents
+the corresponding learning curves.
+Maximum subspace rank rmax.
+Increasing the maximum subspace rank rmax allows more linearly
+independent gradient directions to be included in the search subspace, but configurations with higher
+rmax do not necessarily achieve better learning performance. On Ant, the 8/16/20 configuration
+achieves the highest mean AUC, slightly exceeding the 32/32/50 configuration. However, their
+paired AUC difference is only 13.5, with a 95% confidence interval of [−102.0, 129.0]. Meanwhile,
+the latter configuration achieves a higher mean return at 300k (2232.6 versus 1883.0). These results
+suggest that a relatively small search subspace may be sufficient for achieving competitive sample
+efficiency.
+History capacity h.
+Increasing h beyond rmax−1 does not introduce additional historical directions
+into the search subspace, regardless of the benchmark task. Consistent with this design, h = 32
+and h = 64 produce identical evaluation results on Swimmer for all tested refresh intervals with
+rmax = 32. Their learning curves therefore overlap in Figure 3. This indicates that storing more
+21
+
+
+historical gradients than needed for the maximum subspace rank provides no additional performance
+benefit under the current subspace construction procedure.
+Geometry refresh interval K.
+The effect of refresh frequency varies slightly across tasks and
+search subspace configurations. On Ant, with rmax = 32 and h = 32, K = 50 achieves a higher
+mean AUC than K = 64 by 79.8, with a paired 95% confidence interval of [12.5, 147.1]. With
+rmax = 16 and h = 32, increasing K from 10 to 40 also improves mean AUC, although the paired
+confidence interval [−10.2, 106.8] includes zero.
+On Swimmer, with rmax = 32, K = 64 achieves the highest mean AUC (39.094), exceeding
+K = 32 and K = 50 by 0.479 and 0.504, respectively. Their paired 95% confidence intervals are
+[0.047, 0.911] and [0.001, 1.006]. Nevertheless, the learning curves remain close throughout much of
+training.
+Refresh frequency also affects computational cost. Each geometry refresh requires up to rmax
+HVPs, giving a nominal average of rmax/K HVPs per actor update. For example, with rmax = 32,
+increasing K from 32 to 64 reduces this nominal average from one HVP to 0.5. More frequent
+refreshes do not consistently improve sample efficiency, despite requiring additional curvature
+computations.
+0
+100k
+200k
+300k
+Environment steps
+0
+600
+1200
+1800
+2400
+Evaluation return
+Ant
+0
+100k
+200k
+300k
+Environment steps
+0
+600
+1200
+1800
+2400
+Evaluation return
+Ant
+0
+100k
+200k
+300k
+Environment steps
+20
+25
+30
+35
+40
+45
+Evaluation return
+Swimmer
+0
+100k
+200k
+300k
+Environment steps
+20
+25
+30
+35
+40
+45
+Evaluation return
+Swimmer
+λ
+0.1
+0.3
+0.5
+0.7
+0.9
+[m, M]
+[1/2, 2]
+[1/3, 3]
+[1/5, 5]
+[1/10, 10]
+Figure 4: Sensitivity to the gradient mixing weight λ (left) and
+spectral bounds [m, M] (right) on Ant and Swimmer. Curves show
+mean returns, with shaded 95% Student-t confidence intervals across
+10 seeds. Blue curves indicate the default settings.
+Gradient mixing weight λ.
+The mixing weight λ con-
+trols the contribution of the
+curvature-adjusted gradient rel-
+ative to the raw gradient, rang-
+ing from no adjustment (λ =
+0) to full adjustment (λ = 1).
+To examine its effect, we vary
+λ
+∈
+{0.1, 0.3, 0.5, 0.7, 0.9}
+on Ant and Swimmer, using
+the same geometry configura-
+tions as our main experiments
+and fixing the spectral bounds
+at [1/3, 3]. Each configuration
+is evaluated over 300k envi-
+ronment interactions using 10
+training seeds.
+As shown in Figure 4, on
+Ant, mean AUC varies non-
+monotonically with λ. Com-
+pared with the default setting
+(λ = 0.3), λ = 0.7 increases
+mean AUC by 5.2%, whereas
+λ = 0.9 reduces mean AUC
+by 15.6% and mean return at
+300k by 39.0%.
+On Swim-
+mer, performance differences
+are smaller, with mean AUC varying by at most 2.5% relative to the default, which achieves the
+highest mean AUC and return at 300k.
+Spectral bounds [m, M].
+The spectral bounds constrain the metric weights defined in Equa-
+tions (10) and (12), preventing excessive amplification or suppression of gradient components
+along different curvature directions. We examine four spectral ranges, [1/2, 2], [1/3, 3], [1/5, 5],
+and [1/10, 10], while fixing λ = 0.3 and retaining the geometry configurations used in the main
+experiments.
+The default range [1/3, 3] achieves the highest mean AUC among the four tested ranges on both
+tasks. On Ant, alternative ranges reduce mean AUC by approximately 6.9%–8.0%, whereas the
+corresponding reductions on Swimmer are smaller, ranging from 0.3% to 1.5%. Thus, neither tighter
+nor wider spectral bounds consistently improve learning performance.
+22
+
+
+Further examination of the metric weights shows that clipping occurs primarily at the lower bound.
+For upper bounds of 3, 5, and 10, no upper clipping occurs, while an upper bound of 2 is only
+occasionally activated. Therefore, the observed performance differences mainly reflect changes in the
+lower bound.
+Overall, the tested configurations support the use of rmax = 32, h = 32, refresh intervals around
+50–64, λ = 0.3, and spectral bounds [1/3, 3] as competitive settings for EQUIP-SAC.
+7.5
+Empirical use of curvature adjusted gradients
+We investigate how frequently EQUIP-SAC accepts curvature-adjusted gradients during actor training
+and how this relates to policy performance. According to Algorithm 2, EQUIP-SAC requests a
+gradient adjustment at every actor update. An adjustment is accepted only when the metric satisfies
+the curvature-equilibration conditions in Equation (13) and the mixed gradient passes the curvature-
+based selection criterion in Equation (16), together with the additional numerical safeguards described
+in Appendix B.2. Otherwise, the raw actor gradient is used. We define the acceptance fraction as the
+number of accepted adjustments divided by the total number of requests.
+Over 300k environment interactions, the acceptance fractions are 56.6% on HalfCheetah, 82.6% on
+Walker2d, 94.2% on Swimmer, and 100.0% on Pusher. Interestingly, higher acceptance does not
+necessarily lead to greater performance improvements. Pusher accepts nearly all adjusted gradients
+but achieves only a 1.9% mean AUC improvement over SAC. In contrast, Walker2d achieves a much
+larger improvement of 33.5% despite its lower acceptance fraction.
+These findings suggest that the effectiveness of curvature-based gradient adjustments depends not
+only on their acceptance frequency, but also on the magnitude and direction of the adjustments.
+Both are influenced by the bounded spectral weights and gradient mixing. In particular, clipping
+the spectral weights may prevent exact equilibration of positive and negative curvature. The metric
+eligibility conditions in Equation (13) therefore require a sufficient reduction in curvature imbalance.
+Consequently, accepting more adjusted gradients does not necessarily imply stronger curvature
+equilibration or greater improvement in actor optimization.
+7.6
+Exploratory extensions to EQUIP
+We also investigated several extensions to EQUIP to examine whether alternative gradient-adjustment
+schedules and curvature estimation strategies could further improve actor optimization. These
+experiments are detailed in Appendix C.
+First, we investigate whether the frequency and timing of curvature-based gradient adjustments
+affect policy optimization. Our experiment on HalfCheetah compares two settings. In the first,
+curvature-based gradient adjustments are requested at every actor update. In the second, such
+adjustments are requested only during several short, predefined periods of training. Our experiments
+show that continuous requests can improve sample efficiency, but require substantially more gradient
+adjustments and computational effort.
+Second, we investigate whether combining different spectral weighting strategies could further
+improve learning performance. We specifically develop a hybrid approach that uses EQUIP’s curvature-
+equilibration weights when both positive and negative curvature are present, and PN’s inverse-
+absolute-curvature weights when the projected Hessian is positive definite. Although this hybrid
+design achieves higher mean AUC on Walker2d, it does not consistently outperform the standard
+EQUIP across all tested benchmark tasks.
+Finally, we examine whether reusing historical curvature information could improve the estimation of
+the projected Hessian. Specifically, we investigate whether averaging projected Hessians computed
+at different stages of actor training can improve curvature estimation. Since the search subspace
+evolves during training, historical curvature estimates can only be reused when their subspaces are
+sufficiently compatible with the current one. Our experiments show that this compatibility condition
+is rarely satisfied. Hence, temporal averaging is seldom applicable and offers little opportunity to
+improve learning performance.
+Overall, these experiments suggest that performing curvature-based gradient adjustments throughout
+training can improve sample efficiency. In contrast, hybrid spectral weighting and temporal averaging
+23
+
+
+of projected Hessians may not consistently provide additional performance gains. We therefore retain
+the simpler EQUIP design in our main experiments.
+7.7
+Summary
+Our empirical findings in this section indicate that curvature equilibration can improve the sample
+efficiency of SAC actor training. Comparisons with PN as well as controlled component ablations
+provide further evidence for the proposed design of EQUIP. Moreover, increasing the search subspace
+rank, refreshing the geometry information more frequently, or averaging more curvature minibatches
+does not consistently improve learning performance. These results support a relatively simple and
+computationally efficient approach to curvature estimation for actor optimization.
+In addition to all the reported experimental results, it is worthwhile to mention that the baseline
+comparisons have some limitations. In particular, PN is an adaptation of saddle-free Newton
+for reinforcement learning and may not fully reflect the potential of the original method, which
+was evaluated on various other machine learning problems (Dauphin et al., 2014). Furthermore,
+VR-SCP uses a different policy optimization framework and was originally tuned for MuJoCo-v2
+benchmarks (Khorasani et al., 2025). Although these benchmarks are similar to the MuJoCo-v5 tasks
+used in our experiments, we did not fine-tune VR-SCP’s hyper-parameters specifically for the v5
+tasks. These limitations should be considered upon interpreting the experimental results.
+8
+Conclusion
+In this paper, we introduced EQUIP, a novel curvature-based approach to actor optimization in
+deep reinforcement learning. Unlike conventional second-order methods that primarily rescale
+gradients according to curvature magnitude, EQUIP explicitly seeks to equilibrate positive and
+negative curvature within a trajectory-informed search subspace. Its key innovations include a
+bounded local metric for curvature equilibration, first-order loss matching to preserve the predicted
+decrease in actor loss, and curvature-based gradient selection to determine when gradient adjustments
+should be applied. Together, these components provide a principled and practical way to exploit local
+curvature information without modifying the underlying policy optimization objective.
+We integrated EQUIP into SAC and demonstrated its effectiveness on 6 MuJoCo-v5 benchmarks.
+EQUIP-SAC consistently achieved higher mean AUC than SAC, PN, and VR-SCP across all 6
+benchmark tasks under the same environment interaction budget. Further ablation and parameter
+sensitivity analyses provided additional evidence for the proposed design and demonstrated that more
+extensive curvature computation does not necessarily improve learning performance.
+The significance of this work extends beyond the performance improvements achieved by EQUIP-
+SAC. Our findings demonstrate that the complex geometry of the actor loss landscape provides
+valuable information for improving policy learning. A promising direction for future research is to
+make EQUIP more adaptive as actor training progresses. This could be realized by dynamically se-
+lecting the search subspace, scheduling curvature updates, and controlling the strength and frequency
+of gradient adjustments. Further research could also explore more efficient curvature estimation and
+reuse strategies, as well as the integration of curvature equilibration techniques into other policy
+optimization algorithms. Together, these directions offer exciting opportunities for advancing the
+effectiveness, efficiency, and applicability of geometry-aware reinforcement learning.
+References
+Joshua Achiam, et al. Spinning Up in Deep Reinforcement Learning. OpenAI, 2018. https://
+github.com/openai/spinningup.
+Joshua Achiam. Spinning Up in Deep Reinforcement Learning. OpenAI, 2018. https://github.
+com/openai/spinningup.
+Aditya Bhatt, Daniel Palenicek, Boris Belousov, Max Argus, Artemij Amiranashvili, Thomas
+Brox,
+and Jan Peters. CrossQ: Batch normalization in deep reinforcement learning
+for greater sample efficiency and simplicity. In International Conference on Learning
+Representations, 2024. https://proceedings.iclr.cc/paper_files/paper/2024/hash/
+f381114cf5aba4e45552869863deaaa7-Abstract-Conference.html.
+24
+
+
+Gang Chen and Victoria Huang. Deep metric tensor regularized policy gradient. arXiv:2305.11017,
+2023. https://arxiv.org/abs/2305.11017.
+Xinyue Chen, Che Wang, Zijian Zhou, and Keith Ross. Randomized ensembled double Q-learning:
+Learning fast without a model. In International Conference on Learning Representations, 2021.
+https://arxiv.org/abs/2101.05982.
+Roger Creus Castanyer, Johan Obando-Ceron, Lu Li, Pierre-Luc Bacon, Glen Berseth,
+Aaron Courville,
+and Pablo Samuel Castro. Stable gradients for stable learning at
+scale in deep reinforcement learning. In Advances in Neural Information Process-
+ing Systems, 38, 2025. https://papers.neurips.cc/paper_files/paper/2025/file/
+32375260090404f907ceae19f3564a7e-Paper-Conference.pdf.
+Yann N. Dauphin, Razvan Pascanu, Caglar Gulcehre, Kyunghyun Cho, Surya Ganguli, and
+Yoshua Bengio. Identifying and attacking the saddle point problem in high-dimensional
+non-convex optimization. In Advances in Neural Information Processing Systems, 27, pp.
+2933–2941, 2014. https://proceedings.neurips.cc/paper_files/paper/2014/hash/
+04192426585542c54b96ba14445be996-Abstract.html.
+Wenzhang Du. CAO: Curvature-adaptive optimization via periodic low-rank Hessian sketching.
+arXiv:2511.12548, 2025. https://arxiv.org/abs/2511.12548.
+Pierre Foret, Ariel Kleiner, Hossein Mobahi, and Behnam Neyshabur. Sharpness-aware minimization
+for efficiently improving generalization. In International Conference on Learning Representations,
+2021. https://arxiv.org/abs/2010.01412.
+Zachary Frangella, Pratik Rathore, Shipu Zhao, and Madeleine Udell. SketchySGD: Reliable stochas-
+tic optimization via randomized curvature estimates. SIAM Journal on Mathematics of Data
+Science, 6(4):1173–1204, 2024. https://doi.org/10.1137/23M1575330.
+Scott Fujimoto, Herke van Hoof, and David Meger. Addressing function approximation error in
+actor-critic methods. In International Conference on Machine Learning, pp. 1587–1596, 2018.
+https://proceedings.mlr.press/v80/fujimoto18a.html.
+Tuomas Haarnoja, Aurick Zhou, Pieter Abbeel, and Sergey Levine. Soft actor-critic: Off-policy
+maximum entropy deep reinforcement learning with a stochastic actor. In International Confer-
+ence on Machine Learning, pp. 1861–1870, 2018. https://proceedings.mlr.press/v80/
+haarnoja18b.html.
+Tuomas Haarnoja, Aurick Zhou, Kristian Hartikainen, George Tucker, Sehoon Ha, Jie Tan, Vikash
+Kumar, Henry Zhu, Abhishek Gupta, Pieter Abbeel, and Sergey Levine. Soft actor-critic algorithms
+and applications. arXiv:1812.05905, 2018. https://arxiv.org/abs/1812.05905.
+Sham M. Kakade. A natural policy gradient. Advances in Neural Information Processing
+Systems, 14, 2001. https://proceedings.neurips.cc/paper_files/paper/2001/hash/
+4b86abe48d358ecf194c56c69108433e-Abstract.html.
+Mohammadsadegh Khorasani, Saber Salehkaleybar, Negar Kiyavash, Niao He, and Matthias Gross-
+glauser. Efficiently escaping saddle points for policy optimization. In Proceedings of the Forty-first
+Conference on Uncertainty in Artificial Intelligence, Proceedings of Machine Learning Research,
+286:2143–2162, 2025. https://proceedings.mlr.press/v286/khorasani25a.html.
+Diederik P. Kingma and Jimmy Ba. Adam: A method for stochastic optimization. In International
+Conference on Learning Representations, 2015. https://arxiv.org/abs/1412.6980.
+Arash Bahari Kordabad, Dean Brandner, Sebastien Gros, Sergio Lucia, and Sadegh Soudjani. Quasi-
+Newton compatible actor-critic for deterministic policies. arXiv:2511.09509, 2025. https://
+arxiv.org/abs/2511.09509.
+Hojoon Lee, Dongyoon Hwang, Donghu Kim, Hyunseung Kim, Jun Jet Tai, Kaushik Subrama-
+nian, Peter Wurman, Jaegul Choo, Peter Stone, and Takuma Seno. SimBa: Simplicity bias for
+scaling up parameters in deep reinforcement learning. In International Conference on Learning
+Representations, 2025. https://proceedings.iclr.cc/paper_files/paper/2025/hash/
+741aab8b41a2987867acc9939ad50383-Abstract-Conference.html.
+25
+
+
+Timothy P. Lillicrap, Jonathan J. Hunt, Alexander Pritzel, Nicolas Heess, Tom Erez, Yuval Tassa,
+David Silver, and Daan Wierstra. Continuous control with deep reinforcement learning. In Interna-
+tional Conference on Learning Representations, 2016. https://arxiv.org/abs/1509.02971.
+Hong Liu, Zhiyuan Li, David Hall, Percy Liang, and Tengyu Ma. Sophia: A scalable stochastic
+second-order optimizer for language model pre-training. In International Conference on Learning
+Representations, 2024. https://proceedings.iclr.cc/paper_files/paper/2024/hash/
+06960915ba8674c7a898ec0b472b80ff-Abstract-Conference.html.
+Sanjeev Manivannan and Shuban Venkataraman. Second-order actor-critic methods for discounted
+MDPs via policy Hessian decomposition. arXiv:2605.14982v2, 2026. https://arxiv.org/abs/
+2605.14982v2.
+Mizhaan P. Maniyar, Prashanth L.A., Akash Mondal, and Shalabh Bhatnagar. A cubic-regularized
+policy Newton algorithm for reinforcement learning. In International Conference on Artificial
+Intelligence and Statistics, pp. 4708–4716, 2024. https://proceedings.mlr.press/v238/
+maniyar24a.html.
+Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan,
+Trevor Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, Alban Desmaison, An-
+dreas Kopf, Edward Yang, Zachary DeVito, Martin Raison, Alykhan Tejani, Sasank Chila-
+murthy, Benoit Steiner, Lu Fang, Junjie Bai, and Soumith Chintala. PyTorch: An imperative
+style, high-performance deep learning library. In Advances in Neural Information Processing
+Systems, 32, 2019. https://proceedings.neurips.cc/paper_files/paper/2019/hash/
+bdbca288fee7f92f2bfa9f7012727740-Abstract.html.
+Barak A. Pearlmutter. Fast exact multiplication by the Hessian. Neural Computation, 6(1):147–160,
+1994. https://doi.org/10.1162/neco.1994.6.1.147.
+Jan Schneider, Pierre Schumacher, Simon Guist, Le Chen, Daniel Häufle, Bernhard Schölkopf, and
+Dieter Büchler. Identifying policy gradient subspaces. In International Conference on Learning
+Representations, 2024. https://arxiv.org/abs/2401.06604.
+John Schulman, Sergey Levine, Pieter Abbeel, Michael I. Jordan, and Philipp Moritz. Trust region
+policy optimization. In International Conference on Machine Learning, pp. 1889–1897, 2015.
+https://proceedings.mlr.press/v37/schulman15.html.
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy
+optimization algorithms. arXiv:1707.06347, 2017. https://arxiv.org/abs/1707.06347.
+Wenjie Shi, Shiji Song, and Cheng Wu. Soft policy gradient method for maximum entropy deep
+reinforcement learning. In International Joint Conference on Artificial Intelligence, pp. 3425–3431,
+2019. https://doi.org/10.24963/ijcai.2019/475.
+David Silver, Guy Lever, Nicolas Heess, Thomas Degris, Daan Wierstra, and Martin Riedmiller.
+Deterministic policy gradient algorithms. In International Conference on Machine Learning, pp.
+387–395, 2014. https://proceedings.mlr.press/v32/silver14.html.
+Cheng Sun, Zhen Zhang, and Shaofu Yang. A variance-reduced cubic-regularized Newton for policy
+optimization. arXiv:2507.10120, 2025. https://arxiv.org/abs/2507.10120.
+Richard S. Sutton, David A. McAllester, Satinder P. Singh, and Yishay Mansour. Policy gra-
+dient methods for reinforcement learning with function approximation. Advances in Neural
+Information Processing Systems, 12, 1999. https://papers.nips.cc/paper/1999/hash/
+464d828b85b0bed98e80ade0a5c43b0f-Abstract.html.
+Emanuel Todorov, Tom Erez, and Yuval Tassa. MuJoCo: A physics engine for model-based control.
+In IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS), pp. 5026–5033,
+2012. https://doi.org/10.1109/IROS.2012.6386109.
+Mark Towers, Ariel Kwiatkowski, John Balis, Gianluca De Cola, Tristan Deleu, Manuel Goulão,
+Andreas Kallinteris, Markus Krimmel, Arjun KG, Rodrigo Perez-Vicente, Jordan K. Terry, Andrea
+Pierré, Sander Schulhoff, Jun Jet Tai, Hannah Tan, and Omar G. Younis. Gymnasium: A standard
+interface for reinforcement learning environments. In Advances in Neural Information Processing
+Systems, 38, 2025. https://doi.org/10.52202/085713-4916.
+26
+
+
+Nikhil Vyas,
+Depen Morwani,
+Rosie Zhao,
+Itai Shapira,
+David Brandfonbrener,
+Lu-
+cas
+Janson,
+and
+Sham
+Kakade.
+SOAP:
+Improving
+and
+stabilizing
+Shampoo
+using
+Adam
+for
+language
+modeling.
+In
+International
+Conference
+on
+Learning
+Represen-
+tations,
+2025.
+https://proceedings.iclr.cc/paper_files/paper/2025/hash/
+e988664070e9591f93fdcf605f7dc623-Abstract-Conference.html.
+Da Wang, Yi Ma, Ting Guo, Lin Li, Wei Wei, and Jiye Liang. Q-SAM: Unlocking sharpness-aware
+minimization for generalization in offline reinforcement learning. In International Conference
+on Machine Learning, pp. 128919–128936, 2026. https://proceedings.mlr.press/v306/
+wang26fo.html.
+Yuhuai Wu, Elman Mansimov, Roger B. Grosse, Shun Liao, and Jimmy Ba. Scalable trust-region
+method for deep reinforcement learning using Kronecker-factored approximation. In Advances in
+Neural Information Processing Systems, 30, 2017. https://papers.nips.cc/paper_files/
+paper/2017/hash/361440528766bbaaaa1901845cf4152b-Abstract.html.
+27
+
+
+A
+Detailed Proofs
+A.1
+Soft policy improvement
+Proof of Proposition 3.1. For a fixed policy π, define the soft Bellman operator
+(Bπ
+αV )(s) = Ea∼π(·|s)
+
+R(s, a) −α log π(a | s) + γEs′∼P (·|s,a)V (s′)
+
+.
+This operator is monotone and a γ-contraction. Let q = Qπ
+α. Under the exact policy improvement
+condition, we have
+Bπ′
+α V π
+α ≥V π
+α .
+Repeated application of Bπ′
+α therefore produces a nondecreasing sequence converging to V π′
+α , proving
+V π′
+α ≥V π
+α .
+For approximate policy improvement, define
+Iπ(q)(s) = Ea∼π(·|s)[q(s, a) −α log π(a | s)].
+The critic error bound ∥bq −q∥∞≤ϵQ implies that, for both the current policy π and the updated
+policy π′,
+|Ieπ(bq)(s) −Ieπ(q)(s)| ≤ϵQ,
+eπ ∈{π, π′}.
+Together with the approximate improvement condition, this gives
+Bπ′
+α V π
+α = Iπ′(q)
+≥Iπ′(bq) −ϵQ
+≥Iπ(bq) −ϵQ −ϵopt
+≥V π
+α −2ϵQ −ϵopt.
+Let ϵ = 2ϵQ + ϵopt and W = V π
+α −ϵ/(1 −γ). Since the Bellman operator satisfies
+Bπ′
+α (V −c) = Bπ′
+α V −γc
+for any constant c, we obtain Bπ′
+α W ≥W. By monotonicity and contraction, V π′
+α
+≥W, proving
+Equation (7).
+A.2
+Local metric identities
+Proof of Proposition 5.1. For the fixed local metric G = B−1, the Riemannian divergence of a vector
+field X in the search subspace is
+divG X = |G|−1/2 X
+i
+∂zi(|G|1/2Xi) =
+X
+i
+∂ziXi,
+where the second equality follows because G is constant. Setting X = B∇f, its i-th component is
+Xi(z) = Pr
+j=1 Bij∂zjf(z). Since B is constant, taking the divergence gives
+divG(B∇f)(z) =
+r
+X
+i=1
+∂zi
+
+
+r
+X
+j=1
+Bij∂zjf(z)
+
+
+=
+r
+X
+i,j=1
+Bij
+∂2f(z)
+∂zi∂zj
+= tr(B∇2f(z)),
+where the last equality follows from the symmetry of the Hessian. Evaluating at z = 0 and using
+A = ∇2f(0) yields
+divG(B∇f)(0) = tr(BA),
+proving Equation (19).
+28
+
+
+Next, let v be uniformly distributed on the unit sphere Sr−1. Since E[v] = 0 and E[vv⊤] = Ir/r, a
+Taylor expansion around z = 0 gives
+f(ρB1/2v) = f(0) + ρ∇f(0)⊤B1/2v
++ ρ2
+2 v⊤B1/2AB1/2v + O(ρ3).
+Taking expectations, the first-order term vanishes because E[v] = 0. For the quadratic term, using
+v⊤Cv = tr(Cvv⊤) and E[vv⊤] = Ir/r, we obtain
+Ev[v⊤B1/2AB1/2v]
+= tr
+
+B1/2AB1/2E[vv⊤]
+
+= 1
+r tr(B1/2AB1/2)
+= 1
+r tr(BA),
+where the last equality follows from the cyclic property of the matrix trace. Consequently,
+Ev[f(ρB1/2v)] = f(0) + ρ2
+2r tr(BA) + O(ρ3),
+proving Equation (20).
+For the gradient update TB(z) = z −ηB∇f(z), the Jacobian at z = 0 is DTB(0) = Ir −ηBA.
+Since BA is similar to the symmetric matrix B1/2AB1/2, its eigenvalues are real. For sufficiently
+small η, expanding the log-determinant gives
+log | det DTB(0)| = log det(Ir −ηBA)
+= −η tr(BA) −η2
+2 tr((BA)2) + O(η3).
+This proves Equation (21). In particular, the curvature-equilibration condition tr(BA) = 0 eliminates
+the first-order local volume change, but higher-order changes may remain.
+When the scaling factor χ = χ(z) varies with position, while B remains fixed, applying the product
+rule gives
+div(χB∇f) =
+r
+X
+i=1
+∂zi
+
+χ
+r
+X
+j=1
+Bij∂zjf
+
+
+=
+r
+X
+i,j=1
+Bij
+ ∂ziχ ∂zjf + χ ∂zi∂zjf
+
+= ∇χ⊤B∇f + χ tr(B∇2f),
+proving Equation (22).
+Next, consider the mixed gradient in the full actor parameter space, with Q, B, and χ held fixed.
+From Equations (14) and (15), the mixed gradient can be expressed as
+u = (1 −λ)g + λ
+
+(Ip −QQ⊤)g + χQBQ⊤g
+
+=
+
+Ip + λQ(χB −Ir)Q⊤
+g
+= Pλg.
+Since g = ∇ℓ(θ) and H = ∇2ℓ(θ), the divergence of this mixed gradient field is tr(PλH) when Pλ
+is held fixed. Using the definition of Pλ and the cyclic property of the matrix trace, we obtain
+tr(PλH) = tr(H) + λ tr
+ Q(χB −Ir)Q⊤H
+
+= tr(H) + λ tr
+ (χB −Ir)Q⊤HQ
+
+,
+proving Equation (23).
+These results show that gradient rescaling and mixing can alter the divergence of the gradient field.
+Consequently, the curvature-equilibration condition tr(BA) = 0 does not generally imply zero
+divergence for the final mixed gradient.
+29
+
+
+A.3
+Feasibility and bounded metric construction
+Proof of Proposition 5.2. Let A = U diag(µ)U ⊤be the projected Hessian and B = U diag(b)U ⊤
+the inverse metric, where bi ∈[m, M]. The curvature-equilibration target is tr(BA) = µ⊤b = 0.
+We first determine when exact curvature equilibration is feasible. Since µ⊤b = P
+i µibi is linear in b,
+its minimum over [m, M]r is obtained by assigning bi = m to positive eigenvalues and bi = M to
+negative eigenvalues. The maximum is obtained by reversing these assignments. Thus,
+min
+b∈[m,M]r µ⊤b = mS+ −MS−,
+max
+b∈[m,M]r µ⊤b = MS+ −mS−,
+where S+ = P
+µi>0 µi and S−= P
+µi<0 |µi|. Because [m, M]r is convex and µ⊤b is continuous
+and linear, every value between these extrema is attainable. Therefore, exact curvature equilibration
+is feasible if and only if
+mS+ −MS−≤0 ≤MS+ −mS−,
+proving Equation (24). When S+, S−> 0, dividing these inequalities by the positive quantities gives
+S+/S−∈[m/M, M/m].
+Next, consider the optimal bounded weights defined by Equation (25). The objective 1
+2 ∥b −1∥2 is
+strictly convex, so the problem has a unique solution whenever the equality constraint is feasible.
+Introducing a Lagrange multiplier τ for µ⊤b = 0, we obtain the Lagrangian
+L(b, τ) = 1
+2 ∥b −1∥2 + τµ⊤b.
+For a fixed τ, minimizing L over b ∈[m, M]r separates into independent problems:
+bi(τ) = arg min
+m≤x≤M
+1
+2(x −1)2 + τµix
+
+.
+The unconstrained minimum satisfies x −1 + τµi = 0, giving x = 1 −τµi. Applying the weight
+bounds yields
+bi(τ) = clip(1 −τµi, m, M).
+To satisfy the curvature-equilibration constraint, define
+ϕ(τ) =
+X
+i
+µi clip(1 −τµi, m, M).
+The function ϕ(τ) is continuous and nonincreasing, since each unclipped weight changes with τ at a
+rate −µi. Furthermore,
+lim
+τ→−∞ϕ(τ) = MS+ −mS−,
+lim
+τ→+∞ϕ(τ) = mS+ −MS−.
+Under the feasibility condition, these limits lie on opposite sides of zero or include zero. Hence, a
+finite τ exists such that ϕ(τ) = 0. The resulting weights minimize the Lagrangian and satisfy the
+equality constraint, so they solve Equation (25). Their uniqueness follows from strict convexity. If
+µ = 0, the unique solution is b = 1.
+Finally, consider the practical bounded weights in Equation (12). Let S = P
+i µi, D = P
+i µ2
+i , and
+κ = S/(D + εm). Before clipping, the weights are ebi = 1 −κµi, giving
+X
+i
+ebiµi =
+X
+i
+µi −κ
+X
+i
+µ2
+i
+= S −
+SD
+D + εm
+=
+Sεm
+D + εm
+.
+30
+
+
+The implemented weights are bi = clip(ebi, m, M). Their remaining weighted curvature sum is
+therefore
+X
+i
+biµi =
+X
+i
+ebiµi +
+X
+i
+µi(bi −ebi)
+=
+Sεm
+D + εm
++
+X
+i
+µi
+
+bi −(1 −κµi)
+
+,
+proving Equation (26). The first term represents the effect of denominator regularization, while the
+second captures the effect of clipping on curvature equilibration.
+If A ⪰0 and A̸ = 0, then
+tr(BA) = tr(B1/2AB1/2) > 0
+for every B ≻0. Similarly, if A ⪯0 and A̸ = 0, then tr(BA) < 0. Thus, for a nonzero projected
+Hessian, exact curvature equilibration with positive weights requires both positive and negative
+curvature.
+A.4
+First-order loss matching and gradient norm bounds
+Proof of Theorem 5.3. Let Q⊤Q = Ir and mIr ⪯B ⪯MIr. The raw gradient can be decomposed
+as g = Qa + g⊥, where a = Q⊤g and g⊥= (Ip −QQ⊤)g. Since Q⊤g⊥= 0, we have ∥g∥2 =
+∥a∥2 +
+g⊥2.
+We first establish the first-order loss matching property. From the definition of the adjusted gradient
+d = g⊥+ QχBa, where χ = ∥a∥2 /(a⊤Ba + εs), we obtain
+g⊤d =
+g⊥2 + χa⊤Ba
+=
+g⊥2 + ∥a∥2 a⊤Ba
+a⊤Ba + εs
+= ∥g∥2 −
+εs ∥a∥2
+a⊤Ba + εs
+= ∥g∥2 −δ.
+For the mixed gradient u = (1 −λ)g + λd, it follows that
+g⊤u = (1 −λ) ∥g∥2 + λg⊤d
+= ∥g∥2 −λδ.
+Since 0 ≤δ ≤∥a∥2 ≤∥g∥2, we obtain g⊤u ≥(1−λ) ∥g∥2. Furthermore, writing u = g +λ(d−g)
+gives
+∥u∥2 = ∥g∥2 + 2λg⊤(d −g) + λ2 ∥d −g∥2
+= ∥g∥2 −2λδ + λ2 ∥d −g∥2 .
+These identities prove the first-order matching in actor loss and the gradient norm conditions in
+Equations (28) and (29).
+We next establish the upper bound on ∥u∥. First, consider exact first-order matching with εs = 0. Let
+B = U diag(b)U ⊤, where bi ∈[m, M], and define ba = U ⊤a. Since χ = ∥a∥2 /(a⊤Ba), we have
+∥χBa∥2
+∥a∥2
+= ∥a∥2 a⊤B2a
+(a⊤Ba)2
+=
+P
+i wib2
+i
+(P
+i wibi)2 ,
+where wi = ba2
+i / ∥a∥2 satisfies wi ≥0 and P
+i wi = 1.
+Let x = P
+i wibi ∈[m, M]. Since m ≤bi ≤M, we have
+(bi −m)(bi −M) ≤0,
+which implies b2
+i ≤(M + m)bi −mM. Multiplying by wi and summing over i gives
+X
+i
+wib2
+i ≤(M + m)x −mM.
+31
+
+
+Consequently,
+∥χBa∥2
+∥a∥2
+≤(M + m)x −mM
+x2
+≤(M + m)2
+4mM
+= K2
+B,
+where the second inequality follows by maximizing the expression over x ∈[m, M], with its
+maximum attained at x = 2mM/(M + m).
+Define the adjustment within the search subspace as e = χBa −a. Under exact first-order matching,
+a⊤e = χa⊤Ba −∥a∥2 = 0.
+Thus, e is orthogonal to a, and
+∥e∥2 = ∥χBa∥2 −∥a∥2
+≤(K2
+B −1) ∥a∥2 .
+Since d = g + Qe, the mixed gradient becomes u = g + λQe. Using g⊤Qe = a⊤e = 0 and
+Q⊤Q = Ir, we obtain
+∥u∥2 = ∥g∥2 + λ2 ∥e∥2
+≤∥g∥2 + λ2(K2
+B −1) ∥a∥2
+≤[1 + λ2(K2
+B −1)] ∥g∥2
+= C2
+λ ∥g∥2 .
+Moreover, ∥u∥2 ≥∥g∥2, and g⊤u = ∥g∥2. Therefore, for g̸ = 0,
+1 ≤∥u∥
+∥g∥≤Cλ,
+cos(g, u) = ∥g∥
+∥u∥≥C−1
+λ .
+This establishes the gradient norm and alignment bounds under exact first-order matching.
+Finally, consider εs > 0. Define
+χ0 = ∥a∥2
+a⊤Ba,
+q =
+a⊤Ba
+a⊤Ba + εs
+∈(0, 1).
+Then χ = qχ0. Using e = χ0Ba −a, which satisfies a⊤e = 0, we have χBa = q(a + e). The
+mixed gradient can therefore be written as
+u = g⊥+ Q
+
+(1 −λ + λq)a + λqe
+
+.
+By orthogonality,
+∥u∥2 =
+g⊥2 + (1 −λ + λq)2 ∥a∥2 + λ2q2 ∥e∥2 .
+Since 0 < q < 1 and 0 ≤λ ≤1, both 1 −λ + λq ≤1 and q ≤1. Hence,
+∥u∥2 ≤
+g⊥2 + ∥a∥2 + λ2 ∥e∥2
+≤∥g∥2 + λ2(K2
+B −1) ∥a∥2
+≤C2
+λ ∥g∥2 .
+Thus, the same upper gradient norm bound holds when the denominator regularizer εs > 0 is used,
+although exact first-order matching is no longer guaranteed.
+Meanwhile, whenever the algorithm selects the raw gradient u = g, the stated bounds can also be
+satisfied.
+32
+
+
+A.5
+Reused local geometry and actor loss comparisons
+Proof of Proposition 5.4. Let Q be the orthonormal search basis stored at the most recent geometry
+refresh, and let H = ∇2ℓ(θ) be the Hessian of the current actor loss. Since the gradient adjustment
+lies within the search subspace, the raw gradient g and selected gradient u share the same component
+outside the subspace:
+g = g⊥+ Qa,
+u = g⊥+ Qc,
+where a = Q⊤g, c = Q⊤u, and g⊥= (Ip −QQ⊤)g.
+Expanding the Hessian quadratic forms gives
+u⊤Hu = (g⊥)⊤Hg⊥+ 2(g⊥)⊤HQc + c⊤Q⊤HQc,
+g⊤Hg = (g⊥)⊤Hg⊥+ 2(g⊥)⊤HQa + a⊤Q⊤HQa.
+Subtracting these expressions, the common quadratic term involving g⊥cancels, yielding
+∆H = u⊤Hu −g⊤Hg
+= c⊤Q⊤HQc −a⊤Q⊤HQa + 2(g⊥)⊤HQ(c −a).
+Let A be the stored projected Hessian and E = Q⊤HQ −A. Substituting Q⊤HQ = A + E gives
+∆H = c⊤Ac −a⊤Aa + c⊤Ec −a⊤Ea + 2(g⊥)⊤HQ(c −a)
+= ∆cache + (c −a)⊤E(c + a) + 2(g⊥)⊤HQ(c −a),
+where the last equality follows from the symmetry of E. This proves Equation (31).
+Applying the operator-norm and Cauchy–Schwarz inequalities, we have
+|(c −a)⊤E(c + a)| ≤∥E∥∥c −a∥∥c + a∥,
+|2(g⊥)⊤HQ(c −a)| ≤2
+Q⊤Hg⊥ ∥c −a∥.
+Combining these inequalities with Equation (31) yields
+∆H ≤∆cache + ∥E∥∥c −a∥∥c + a∥+ 2
+Q⊤Hg⊥ ∥c −a∥,
+proving Equation (32).
+At a geometry refresh, if the stored projected Hessian is computed from the current actor loss without
+numerical error, then A = Q⊤HQ and hence E = 0. Since the refreshed search basis contains the
+current raw gradient g, we also have g⊥= 0. Consequently, ∆H = ∆cache, so accepting a mixed
+gradient with ∆cache < 0 guarantees ∆H < 0.
+Between refreshes, a sufficient condition for ∆H < 0 is
+−∆cache > ∥E∥∥c −a∥∥c + a∥+ 2
+Q⊤Hg⊥ ∥c −a∥.
+Thus, the reduction in the Hessian quadratic form measured using the stored projected Hessian must
+outweigh the effects of changes in projected curvature and interactions with the gradient component
+outside the search subspace.
+Proof of Corollary 5.5. Let g = ∇ℓ(θ), H = ∇2ℓ(θ), and let u be the accepted mixed gradient.
+Assume that the Hessian of ℓis LH-Lipschitz continuous along the line segments from θ to θ −ηu
+and to θ −ηg.
+For either update direction v ∈{u, g}, a second-order Taylor expansion around θ gives
+ℓ(θ −ηv) = ℓ(θ) −ηg⊤v + η2
+2 v⊤Hv + Rv,
+where the Taylor remainder satisfies
+|Rv| ≤LHη3
+6
+∥v∥3 .
+33
+
+
+Applying this expansion to the mixed-gradient and raw-gradient updates, then subtracting, yields
+ℓ(θ −ηu) −ℓ(θ −ηg)
+= −ηg⊤(u −g) + η2
+2 (u⊤Hu −g⊤Hg) + Ru −Rg.
+From Theorem 5.3, first-order loss matching gives
+g⊤u = ∥g∥2 −λδ.
+Therefore,
+−ηg⊤(u −g) = ηλδ.
+By the definition of ∆H,
+u⊤Hu −g⊤Hg = ∆H.
+Finally, using the Taylor remainder bounds,
+Ru −Rg ≤|Ru| + |Rg|
+≤LHη3
+6
+ ∥u∥3 + ∥g∥3
+.
+Combining these results gives
+ℓ(θ −ηu) −ℓ(θ −ηg) ≤ηλδ + η2
+2 ∆H + LHη3
+6
+ ∥u∥3 + ∥g∥3
+,
+proving Equation (34).
+For a quadratic actor loss, the Taylor remainders vanish. Under exact first-order matching (εs = 0),
+we also have δ = 0. The loss difference therefore reduces to
+ℓ(θ −ηu) −ℓ(θ −ηg) = η2
+2 ∆H.
+Hence, ∆H < 0 guarantees that the mixed-gradient update achieves a lower actor loss than the
+raw-gradient update for any η > 0.
+For a nonquadratic actor loss, the same conclusion holds whenever
+−η2
+2 ∆H > ηλδ + LHη3
+6
+ ∥u∥3 + ∥g∥3
+.
+This condition shows that the reduction in the Hessian quadratic form must outweigh the Taylor
+remainder and any first-order matching error.
+A.6
+Convergence for a fixed actor loss and accumulated improvement
+Proof of Theorem 5.7. Let gt = ∇ℓ(θt) and consider the direct actor update θt+1 = θt −ηut. Since
+ℓhas an L-Lipschitz gradient, the descent lemma gives
+ℓ(θt+1) ≤ℓ(θt) −ηg⊤
+t ut + Lη2
+2
+∥ut∥2 .
+By Assumption 5.6, the selected gradient satisfies g⊤
+t ut ≥c0 ∥gt∥2 and ∥ut∥≤C0 ∥gt∥. Substituting
+these bounds yields
+ℓ(θt+1) ≤ℓ(θt) −ηc0 ∥gt∥2 + Lη2C2
+0
+2
+∥gt∥2
+= ℓ(θt) −aη ∥gt∥2 ,
+where aη = ηc0 −Lη2C2
+0/2 > 0 for 0 < η < 2c0/(LC2
+0).
+Summing over t = 0, . . . , T −1, we obtain
+aη
+T −1
+X
+t=0
+∥gt∥2 ≤
+T −1
+X
+t=0
+[ℓ(θt) −ℓ(θt+1)]
+= ℓ(θ0) −ℓ(θT )
+≤ℓ(θ0) −ℓ∗,
+34
+
+
+where the last inequality follows from the lower bound ℓ(θT ) ≥ℓ∗. Dividing by Taη and using the
+fact that the minimum is no greater than the average gives
+min
+0≤t<T ∥gt∥2 ≤1
+T
+T −1
+X
+t=0
+∥gt∥2 ≤ℓ(θ0) −ℓ∗
+Taη
+,
+proving Equation (36).
+Next, suppose ℓsatisfies the Polyak–Łojasiewicz (PL) inequality
+1
+2 ∥gt∥2 ≥µPL
+ ℓ(θt) −ℓ∗
+
+.
+Combining this inequality with the descent bound gives
+ℓ(θt+1) −ℓ∗≤ℓ(θt) −ℓ∗−aη ∥gt∥2
+≤(1 −2µPLaη)
+ ℓ(θt) −ℓ∗
+
+.
+When 0 ≤1 −2µPLaη < 1, repeated application yields
+ℓ(θT ) −ℓ∗≤(1 −2µPLaη)T  ℓ(θ0) −ℓ∗
+
+,
+proving the conditional linear convergence rate in Equation (37).
+Proof of Proposition 5.8. Let gt = ∇ℓ(θt). For a direct update using the raw gradient, the descent
+lemma gives
+ℓ(θt −ηgt) ≤ℓ(θt) −η ∥gt∥2 + Lη2
+2
+∥gt∥2
+= ℓ(θt) −
+
+η −Lη2
+2
+
+∥gt∥2 .
+Since 0 < η < 2/L, the coefficient η −Lη2/2 is positive.
+By the additional loss improvement condition in Proposition 5.8, the selected actor update satisfies
+ℓ(θt+1) ≤ℓ(θt −ηgt) −Itst,
+where It indicates whether the mixed gradient is accepted and st ≥0 denotes its additional loss
+decrease relative to the raw-gradient update.
+Combining the two inequalities gives
+ℓ(θt+1) ≤ℓ(θt) −
+
+η −Lη2
+2
+
+∥gt∥2 −Itst.
+Rearranging and summing over t = 0, . . . , T −1, we obtain
+
+η −Lη2
+2
+ T −1
+X
+t=0
+∥gt∥2 +
+T −1
+X
+t=0
+Itst
+≤
+T −1
+X
+t=0
+[ℓ(θt) −ℓ(θt+1)]
+= ℓ(θ0) −ℓ(θT )
+≤ℓ(θ0) −ℓ∗.
+This proves Equation (38). The quantity PT −1
+t=0 Itst measures the accumulated additional decrease
+in actor loss obtained by using accepted mixed gradients along the actor optimization trajectory.
+35
+
+
+A.7
+Convergence for changing actor losses
+Proof of Theorem 5.10. Let ¯ℓt denote the conditional expected actor loss and ¯gt = ∇¯ℓt(θt) its
+gradient. Consider the direct actor update θt+1 = θt −ηut.
+Since ¯ℓt has an L-Lipschitz gradient, the descent lemma gives
+¯ℓt(θt+1) ≤¯ℓt(θt) −η¯g⊤
+t ut + Lη2
+2
+∥ut∥2 .
+Taking conditional expectations with respect to Ft, we obtain
+E[¯ℓt(θt+1) | Ft] ≤¯ℓt(θt) −ηE[¯g⊤
+t ut | Ft] + Lη2
+2 E[∥ut∥2 | Ft].
+By Assumption 5.9, the expected gradient alignment and squared norm satisfy
+E[¯g⊤
+t ut | Ft] ≥c0 ∥¯gt∥2 −βt,
+E[∥ut∥2 | Ft] ≤C2
+0 ∥¯gt∥2 + σ2
+t .
+Substituting these bounds gives
+E[¯ℓt(θt+1) | Ft]
+≤¯ℓt(θt) −
+
+ηc0 −Lη2C2
+0
+2
+
+∥¯gt∥2 + ηβt + Lη2
+2 σ2
+t
+= ¯ℓt(θt) −aη ∥¯gt∥2 + ηβt + Lη2
+2 σ2
+t ,
+where aη = ηc0 −Lη2C2
+0/2 > 0.
+Next, the expected actor loss may change between updates. By Equation (41),
+E[¯ℓt+1(θt+1) | Ft] ≤E[¯ℓt(θt+1) | Ft] + vt.
+Combining this inequality with the preceding descent bound and taking full expectations yields
+E[¯ℓt+1(θt+1)] ≤E[¯ℓt(θt)] −aηE ∥¯gt∥2 + E
+
+vt + ηβt + Lη2
+2 σ2
+t
+
+.
+Summing over t = 0, . . . , T −1, the expected actor loss values telescope:
+aη
+T −1
+X
+t=0
+E ∥¯gt∥2 ≤E[¯ℓ0(θ0)] −E[¯ℓT (θT )] +
+T −1
+X
+t=0
+E
+
+vt + ηβt + Lη2
+2 σ2
+t
+
+.
+Since ¯ℓT (θT ) ≥ℓ∗, dividing by Taη gives
+1
+T
+T −1
+X
+t=0
+E ∥¯gt∥2 ≤E[¯ℓ0(θ0)] −ℓ∗+ PT −1
+t=0 E[vt + ηβt + (Lη2/2)σ2
+t ]
+Taη
+,
+proving Equation (42).
+For a fixed expected actor loss with βt = vt = 0 and uniformly bounded σ2
+t , the bound simplifies to
+1
+T
+T −1
+X
+t=0
+E ∥¯gt∥2 = O
+ 1
+Tη + η
+
+,
+for sufficiently small η. Choose η proportional to T −1/2, with aη > 0. Then 1/(Tη) and η are both
+O(T −1/2), giving the stated stationarity bound.
+Derivation of Equation (44). Let gt be the sampled raw actor gradient and ¯gt its conditional expecta-
+tion. Under conditional unbiasedness, write
+gt = ¯gt + ζt,
+E[ζt | Ft] = 0,
+36
+
+
+where ζt denotes the gradient sampling error. Assume that
+E[∥ζt∥2 | Ft] ≤σ2
+g,t.
+The selected gradient can be written as ut = gt + ht, where ht is the gradient adjustment. Under
+exact first-order matching, g⊤
+t ht = 0. Therefore,
+¯g⊤
+t E[ut | Ft]
+= ¯g⊤
+t E[gt + ht | Ft]
+= ∥¯gt∥2 + E[(gt −ζt)⊤ht | Ft]
+= ∥¯gt∥2 −E[ζ⊤
+t ht | Ft].
+By Theorem 5.3, the adjustment satisfies ∥ht∥≤κh ∥gt∥, where κh = λ
+p
+K2
+B −1. Applying the
+conditional Cauchy–Schwarz inequality gives
+E[ζ⊤
+t ht | Ft]
+
+≤
+q
+E[∥ζt∥2 | Ft]
+q
+E[∥ht∥2 | Ft]
+≤κhσg,t
+q
+E[∥gt∥2 | Ft].
+Since gt = ¯gt + ζt and E[ζt | Ft] = 0, we have
+E[∥gt∥2 | Ft] = ∥¯gt∥2 + E[∥ζt∥2 | Ft]
+≤∥¯gt∥2 + σ2
+g,t.
+Consequently,
+¯g⊤
+t E[ut | Ft]
+≥∥¯gt∥2 −κhσg,t
+q
+∥¯gt∥2 + σ2
+g,t
+≥∥¯gt∥2 −κhσg,t ∥¯gt∥−κhσ2
+g,t,
+where the last inequality uses
+p
+x2 + y2 ≤x + y for x, y ≥0.
+For any ϵ ∈(0, 1), Young’s inequality gives
+κhσg,t ∥¯gt∥≤ϵ ∥¯gt∥2 + κ2
+h
+4ϵ σ2
+g,t.
+Substituting this bound yields
+E[¯g⊤
+t ut | Ft] ≥(1 −ϵ) ∥¯gt∥2 −
+
+κh + κ2
+h
+4ϵ
+
+σ2
+g,t,
+proving Equation (44).
+Finally, Theorem 5.3 also gives ∥ut∥≤Cλ ∥gt∥. Taking conditional expectations,
+E[∥ut∥2 | Ft] ≤C2
+λE[∥gt∥2 | Ft]
+≤C2
+λ(∥¯gt∥2 + σ2
+g,t).
+Thus, the expected alignment and norm bounds in Assumption 5.9 can be satisfied with c0 = 1 −ϵ,
+βt = (κh + κ2
+h/(4ϵ))σ2
+g,t, C0 = Cλ, and σ2
+t = C2
+λσ2
+g,t.
+A.8
+From actor loss optimization to the soft policy gradient
+Proof of Proposition 5.11. We first establish the relationship between the exact actor gradient and
+the entropy-regularized return Jα(θ) defined in Equation (3).
+From Equation (4), the soft state-value function satisfies
+V πθ
+α (s) = Ea∼πθ(·|s) [Qπθ
+α (s, a) −α log πθ(a | s)] .
+37
+
+
+Differentiating with respect to θ gives
+∇θV πθ
+α (s) = Ea∼πθ
+h
+∇θ log πθ(a | s)
+ Qπθ
+α (s, a) −α log πθ(a | s)
+i
++ Ea∼πθ [∇θQπθ
+α (s, a)] ,
+where the additional term −αEa∼πθ[∇θ log πθ(a | s)] vanishes because the policy density integrates
+to one. To simplify the derivation, define the exact state-wise actor-loss gradient
+ψ∗
+θ(s) = −Ea∼πθ
+h
+∇θ log πθ(a | s) ·
+ Qπθ
+α (s, a) −α log πθ(a | s)
+i
+.
+From the soft action-value definition,
+Qπθ
+α (s, a) = R(s, a) + γEs′∼P (·|s,a)V πθ
+α (s′),
+we have
+∇θQπθ
+α (s, a) = γEs′∼P (·|s,a)∇θV πθ
+α (s′).
+Consequently,
+∇θV πθ
+α (s) = −ψ∗
+θ(s) + γEa∼πθ, s′∼P (·|s,a)∇θV πθ
+α (s′).
+Recursively expanding this equation and taking the expectation over the initial state distribution ρ0
+yields
+∇Jα(θ) = −
+∞
+X
+k=0
+γkEsk∼pθ,k[ψ∗
+θ(sk)]
+= −
+1
+1 −γ Es∼dθ[ψ∗
+θ(s)],
+where dθ is the normalized discounted state distribution in Equation (2).
+With the exact critic held fixed, the expected actor loss can be expressed using either a ∼πθ(· | s)
+or a = aθ(s, ξ). Differentiating the first expression gives ψ∗
+θ(s). For the second, the assumed
+interchange of differentiation and expectation gives
+ψ∗
+θ(s) = Eξ∇θ
+h
+α log πθ(aθ(s, ξ) | s) −Qπθ
+α (s, aθ(s, ξ))
+i
+Qfixed
+.
+Here, we treat the exact critic as fixed while allowing gradients to propagate through its action input
+to the actor. The effect of policy changes on future values is already accounted for by the preceding
+Bellman recursion. Therefore, the exact actor gradient satisfies
+g∗
+θ = Es∼dθ[ψ∗
+θ(s)]
+= −(1 −γ)∇Jα(θ),
+proving Equation (45).
+Next, we relate the expected actor gradient ¯gt to the exact actor gradient g∗
+θt. By the definition of the
+gradient error et,
+¯gt −g∗
+θt
+ = et.
+Since g∗
+θt = −(1 −γ)∇Jα(θt), we obtain
+(1 −γ)2 ∥∇Jα(θt)∥2
+=
+g∗
+θt
+2
+=
+¯gt −(¯gt −g∗
+θt)
+2
+≤2 ∥¯gt∥2 + 2e2
+t,
+where the last inequality uses ∥x + y∥2 ≤2 ∥x∥2 + 2 ∥y∥2. Taking expectations and averaging over
+T actor updates gives
+1
+T
+X
+t<T
+E[∥∇Jα(θt)∥2] ≤
+2
+(1 −γ)2
+"
+1
+T
+X
+t<T
+E[∥¯gt∥2] + 1
+T
+X
+t<T
+E[e2
+t]
+#
+,
+proving Equation (46).
+38
+
+
+Finally, we establish an upper bound on et. For a fixed critic q, define the state-wise actor gradient
+ψθ(s; q) = Eξ∇θ [α log πθ(aθ(s, ξ) | s) −q(s, aθ(s, ξ))]qfixed .
+Let bQt denote the learned critic used in the SAC actor loss. Then
+¯gt = Es∼νreplay
+t
+[ψθt(s; bQt)],
+g∗
+θt = Es∼dθt[ψθt(s; Q
+πθt
+α )].
+Adding and subtracting the expectation of the exact state-wise gradient under the replay distribution,
+then applying the triangle inequality, gives
+et ≤
+Es∼νreplay
+t
+[ψθt(s; bQt) −ψθt(s; Q
+πθt
+α )]
+
++
+Es∼νreplay
+t
+[ψθt(s; Q
+πθt
+α )] −Es∼dθt[ψθt(s; Q
+πθt
+α )]
+.
+The first quantity measures the effect of critic approximation. Since the entropy term is identical for
+both critics, their state-wise gradient difference depends only on the action-value gradients. Under
+the assumed bounds ∥Dθaθ∥≤Aθ and
+∇a bQt(s, a) −∇aQ
+πθt
+α (s, a)
+ ≤ϵQ,t,
+we have
+ψθt(s; bQt) −ψθt(s; Q
+πθt
+α )
+
+≤Eξ
+h
+∥Dθaθt∥
+∇a bQt −∇aQ
+πθt
+α
+
+i
+≤AθϵQ,t.
+The second quantity measures the effect of replay distribution mismatch. Since
+ψθt(s; Q
+πθt
+α )
+ ≤Gψ
+for every state, the total variation inequality gives
+Es∼νreplay
+t
+[ψθt(s; Q
+πθt
+α )] −Es∼dθt[ψθt(s; Q
+πθt
+α )]
+ ≤2GψDTV(νreplay
+t
+, dθt).
+Combining the two bounds yields
+et ≤2GψDTV(νreplay
+t
+, dθt) + AθϵQ,t,
+proving Equation (47). For SAC, bQt is the minimum of the two learned critics (i.e., action-value
+functions). The derivation applies where this minimum is differentiable, provided that both critics
+satisfy the assumed action-gradient error bound.
+B
+Implementation Details
+This appendix describes the numerical checks and geometry-refresh rules used to implement EQUIP
+in SAC. EQUIP-SAC keeps the original SAC actor loss, critic updates, replay buffer, and Adam
+optimizer. It changes only the gradient supplied to the actor optimizer, as defined in Equation (17).
+The search subspace is constructed from recent gradients supplied to the actor optimizer, and the
+projected Hessian is computed using the same actor loss and fixed actor noise as the current gradient,
+with the critics held fixed. The implementation uses double precision for the small projected-Hessian
+eigendecomposition, while the actor and its optimizer retain their usual precision.
+B.1
+Numerical first-order loss matching
+Let gt be the current raw actor gradient, and let Q, U, µ, and b denote the search basis, curvature
+eigenvectors, eigenvalues, and metric weights stored at the most recent geometry refresh. To
+implement Equation (14), we compute
+zt = Q⊤gt,
+at = U ⊤zt,
+vt = b ⊙at,
+χt =
+∥at∥2
+a⊤
+t vt + εs
+,
+(54)
+39
+
+
+where ⊙denotes elementwise multiplication and εs = 10−12 prevents division by zero. The adjusted
+gradient is dt = gt+Q
+ U(χtvt)−zt
+
+. We require a⊤
+t vt > 10−12, a finite scaling factor 0 < χt ≤10,
+and
+g⊤
+t dt −∥gt∥2 ≤10−5 1 + ∥gt∥2
+.
+(55)
+These numerical stability checks ensure that the adjusted gradient approximately preserves the
+predicted first-order decrease in actor loss. If any check fails, we use the raw gradient gt instead to
+update the actor.
+B.2
+Curvature-based gradient selection and safety checks
+When the local metric satisfies Equation (13) and first-order matching succeeds, we form the mixed
+gradient eut using Equation (15). Its coordinates in the stored curvature eigenbasis are ct = (1 −
+λ)at + λχtvt. The two curvature terms in Equation (16) can therefore be calculated as
+Kraw
+t
+=
+X
+i
+µia2
+t,i,
+Kmix
+t
+=
+X
+i
+µic2
+t,i.
+(56)
+We select the mixed gradient only if it satisfies the numerical margin:
+Kmix
+t
+−Kraw
+t
++ 10−4
+ X
+i
+|µi|a2
+t,i + 10−12
+!
+< 0.
+(57)
+This criterion requires Kmix
+t
+to be lower than Kraw
+t
+by a numerical margin. With exact first-order
+loss matching (εs = 0), the stored projected quadratic model predicts a lower loss for the direct
+mixed-gradient update. With regularized matching (εs > 0), a lower predicted loss also requires the
+curvature reduction to outweigh the first-order matching error. Corollary 5.5 gives the corresponding
+loss comparison for direct actor updates.
+The mixed gradient must also be finite and satisfy
+g⊤
+t eut
+∥gt∥∥eut∥+ 10−12 ≥0.05,
+0.9 ≤
+∥eut∥
+∥gt∥+ 10−12 ≤1.1,
+g⊤
+t eut
+∥gt∥2 + 10−12 ≥0.05.
+(58)
+These checks limit changes in gradient direction and magnitude. The final norm bound is checked
+again before the actor update. If the metric, matching, curvature-selection, or safety checks fail,
+Adam receives ut = gt; otherwise, it receives ut = eut. These criteria govern gradient selection using
+the stored local geometry. They do not guarantee a lower actor loss after an Adam update.
+B.3
+Geometry refresh and gradient history
+EQUIP-SAC requests a gradient adjustment at every actor update. The search basis, projected Hessian,
+and local metric are computed at the first request and refreshed every K requests thereafter. At each
+refresh, the search subspace is constructed from the current raw gradient and at most rmax −1 recent
+gradients stored in a history buffer of capacity h. Numerically dependent directions are removed
+during orthogonalization. HVPs are computed only if the resulting rank satisfies rt ≥rmin. If the
+rank is too small, another refresh is attempted at the next actor update. Other invalid geometry results
+leave the stored geometry unusable until the next scheduled refresh.
+Between refreshes, the search basis Q, curvature eigenvectors U, eigenvalues µ, and metric weights b
+remain fixed. However, the raw gradient, matching scale, mixed gradient, and selection checks are
+recomputed at every actor update. Rejecting a mixed gradient does not trigger an extra refresh. After
+a successful actor update, the history stores a detached copy of the gradient ut supplied to the actor
+optimizer.
+40
+
+
+Table 7: Common SAC and EQUIP settings.
+Quantity
+Setting
+SAC
+Actor and critic networks
+Two 256-unit ReLU hidden layers
+Actor and critic optimizers
+Adam, learning rate 10−3
+Discount factor and entropy temperature
+γ = 0.99, α = 0.2 (fixed)
+Replay capacity and minibatch size
+106 transitions, 100
+Initial random actions
+104 environment interactions
+Update schedule
+Start after 103 interactions; 50 updates per 50 in-
+teractions
+Target-network Polyak retention
+0.995
+EQUIP
+Minimum subspace rank
+rmin = 4
+Curvature minibatches per refresh
+ncurv = 1
+Spectral weight bounds
+m = 1/3, M = 3
+Gradient mixing ratio
+λ = 0.3
+Trace reduction threshold
+ρtr = 0.9
+Numerical regularizers
+εm = εs = 10−12
+Request schedule
+Every actor update
+B.4
+EQUIP-SAC implementation settings
+We implement EQUIP-SAC in Python by extending the PyTorch implementation of Soft Actor–Critic
+(SAC) from OpenAI Spinning Up (https://github.com/openai/spinningup). Our implemen-
+tation retains the original SAC training framework, including the actor and critic networks, experience
+replay, and Adam optimizers. The proposed EQUIP components are implemented separately and
+integrated into actor training without modifying SAC’s objectives for critic and actor update. The
+SAC and PN baselines use the same underlying SAC codebase.
+Our experiments use Python 3.10.20 and PyTorch 2.13.0 for neural network training, automatic
+differentiation, and HVPs. We use Gymnasium 1.3.0 to provide the MuJoCo-v5 continuous-control
+environments. The software environment also includes NumPy 2.2.6 and SciPy 1.15.3. Neural
+network computations use single-precision floating-point arithmetic, while the eigendecomposition
+of the projected Hessian is performed in double precision to improve numerical stability.
+Our experiments were conducted on CPU nodes of the university’s computing grid, with jobs managed
+through the Sun Grid Engine. Python dependencies were managed using Micromamba. The grid
+contains different CPU models, and the computing resources were not identical across all runs.
+Consequently, we evaluate learning performance primarily in terms of environment interactions rather
+than wall-clock training time.
+Table 7 summarizes the common SACand EQUIP settings used in our experiments. We evaluate the
+learned policies every 4,000 environment interactions using 10 deterministic evaluation episodes.
+The maximum episode length is 1,000 steps, subject to the termination conditions of each benchmark
+task. No additional observation or reward normalization is applied. Separate random seeds are used
+for training environments, evaluation environments, and replay sampling.
+C
+Exploratory Extensions to EQUIP
+We examine three extensions to EQUIP that aim to improve actor optimization through different
+gradient adjustment schedules or curvature estimation strategies. These studies are conducted over
+300k environment interactions and are separate from the main experiments on the standard EQUIP-
+SAC.
+C.1
+Scheduled versus continuous gradient adjustments
+We first examine whether curvature-based gradient adjustments should be requested throughout
+training or only at selected stages. In our experiments on HalfCheetah, we compare two schedules.
+41
+
+
+Table 8: Comparison of curvature-adjustment schedules on HalfCheetah. Values show AUC and
+final-return differences relative to SAC, with paired 95% Student-t confidence intervals across five
+training seeds.
+Request schedule
+∆AUC [95% CI]
+∆Return at 300k [95% CI]
+Scheduled requests
+12.9 [−9.8, 35.7]
+−35.4 [−326.2, 255.4]
+Continuous requests
+257.5 [7.6, 507.3]
+1029.1 [550.2, 1507.9]
+Table 9: Hybrid spectral weighting compared with standard EQUIP-SAC under the same geometry
+configuration. Values are paired AUC differences (hybrid minus standard) over 300k environment
+interactions, with 95% Student-t confidence intervals.
+Task
+Mean ∆AUC [95% CI]
+Positive/negative
+HalfCheetah
+−84.7 [−366.6, 197.2]
+4/6
+Walker2d
+133.0 [−45.6, 311.6]
+6/4
+Ant
+35.4 [−30.0, 100.8]
+7/3
+Humanoid
+−21.5 [−42.9, 0.0]
+5/5
+Swimmer
+−0.041 [−0.481, 0.399]
+4/6
+Pusher
+−0.632 [−1.315, 0.051]
+5/5
+The continuous schedule requests an adjustment at every actor update, subject to the usual eligibility
+and selection checks. The scheduled variant requests gradient adjustments during 20 actor updates
+beginning at each of 120k, 160k, 200k, 240k, and 280k environment interactions, for 100 requests in
+total.
+Both variants follow identical hyper-parameter settings, including rmax = 8, h = 16, K = 50, and
+λ = 0.3. Each is compared with the SAC baseline using the same five training seeds (0–4). In our
+experiment, the minimum subspace rank is two and the permitted candidate norm ratio is [0.1, 10].
+Hence, the experiment results are not identical to the main benchmark runs.
+Table 8 shows that continuous requests achieve greater improvements over SAC in both mean
+AUC and evaluation return at 300k. In contrast, the scheduled variant provides little improvement.
+Continuous requests also improve the mean return over the last five evaluation checkpoints by 808.4,
+with a paired 95% confidence interval of [428.4, 1188.5].
+C.2
+Hybrid spectral weighting
+We next test whether combining two spectral weighting rules improves actor optimization. Specif-
+ically, the hybrid method uses the curvature-equilibration weights of EQUIP when the projected
+Hessian has robust positive and negative curvature. When the projected Hessian is robustly positive
+definite, it instead uses the inverse-absolute-curvature weights of PN (Equation (53)).
+Both the hybrid and standard EQUIP-SAC use the same hyper-parameter settings, including rmax =
+32, h = 32, K = 64, and λ = 0.3. As shown in Table 9, the hybrid method achieves a higher
+mean AUC on Walker2d (1670.5 versus 1537.5). Ant also shows a positive mean difference, whereas
+the other tasks do not. Overall, the hybrid method does not consistently improve on the standard
+EQUIP-SAC. We therefore do not include it in the main experiment results in Section 7.2.
+C.3
+Temporal averaging of projected Hessians
+Finally, we investigate whether curvature information from earlier stages of actor training can improve
+the estimation of the current projected Hessian. Since the actor loss changes during training, averaging
+projected Hessians computed at different stages may reduce estimation variance and provide more
+reliable curvature information for actor optimization.
+However, EQUIP constructs its search subspace from recent actor gradients, which evolve during
+training. Consequently, projected Hessians computed at different stages may correspond to different
+search subspaces and cannot be directly averaged. We therefore develop a basis-aligned temporal
+averaging mechanism.
+42
+
+
+Let Qt ∈Rp×rt denote the basis of the current search subspace. At each geometry refresh, we first
+compute the average projected Hessian over ncurv curvature minibatches:
+bAt =
+1
+ncurv
+ncurv
+X
+j=1
+Q⊤
+t H(j)
+t
+Qt,
+(59)
+where H(j)
+t
+is the actor loss Hessian computed from the j-th minibatch. All projected Hessians use
+the same current search subspace.
+Let Qt−denote the basis of the search subspace at the previous geometry refresh, and let eAt−denote
+the projected Hessian estimate stored at that refresh. Before combining this stored estimate with the
+current estimate bAt, we express it in the current search subspace coordinates:
+Rt = Q⊤
+t Qt−, At−→t = Rt eAt−R⊤
+t .
+(60)
+Here, Rt relates the previous and current search bases, while At−→t represents the stored curvature
+estimate in the current subspace coordinates.
+Following the subspace-overlap measure used by Schneider et al. (2024), we measure the overlap
+between the two search subspaces as
+ot = ∥Q⊤
+t Qt−∥2
+F
+rt
+,
+(61)
+where ∥· ∥F denotes the Frobenius norm. For subspaces of equal rank, ot ranges from zero for
+orthogonal subspaces to one for identical subspaces.
+When the two subspaces are sufficiently compatible (ot ≥0.5), we combine the current and historical
+curvature estimates:
+eAt = (1 −βot) bAt + βotAt−→t,
+(62)
+where β ∈[0, 1] controls the strength of temporal averaging. The historical estimate receives a weight
+of βot, which decreases as the overlap between the subspaces decreases.
+Temporal averaging is applied only when the two subspaces have the same rank and their overlap
+satisfies ot ≥0.5. Otherwise, we use the current projected Hessian estimate, setting eAt = bAt. The
+resulting estimate is then used to construct the local metric and adjust the actor gradient following the
+standard EQUIP procedure.
+Experimental settings.
+We evaluate temporal averaging using a maximum subspace rank of
+rmax = 32, history capacity h = 32, refresh interval K = 64, and gradient mixing weight λ = 0.3.
+Each geometry refresh uses ncurv = 4 curvature minibatches. We examine three temporal averaging
+weights, β ∈{0.25, 0.50, 0.75}. For comparison, we use the same four-minibatch curvature estimator
+without temporal averaging. All other settings remain unchanged. The experiments cover 6 MuJoCo
+benchmarks using 10 training seeds per task, with performance evaluated over 300k environment
+interactions.
+Experimental results.
+Compared with the four-minibatch estimator without temporal averaging,
+the temporal variants improve mean AUC on Pusher by 0.079–0.373 across the three values of β.
+However, no consistent improvements are observed on the other benchmark tasks. Overall, temporal
+averaging does not consistently improve sample efficiency across the 6 benchmark tasks.
+To understand these results, we examine how frequently historical curvature estimates satisfy the
+conditions required for temporal averaging. During 300k environment interactions, none of the
+geometry refreshes on HalfCheetah, Walker2d, or Ant satisfy these conditions. On Humanoid,
+Swimmer, and Pusher, fewer than 0.2% of refreshes allow temporal averaging. Consequently, the
+algorithm almost always relies on the current projected Hessian estimate.
+These findings suggest that the trajectory-informed search subspaces change substantially during
+actor training, making historical curvature information difficult to reuse. Given how rarely temporal
+averaging is applied, these results do not demonstrate a clear benefit from reusing historical curvature
+information.
+43

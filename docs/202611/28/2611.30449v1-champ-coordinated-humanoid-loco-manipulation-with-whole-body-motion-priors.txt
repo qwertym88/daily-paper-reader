@@ -1,0 +1,2340 @@
+CHAMP: Coordinated Humanoid Loco-Manipulation
+with Whole-Body Motion Priors
+Lijun Han1,*
+Muyuan Ma2,*
+Zichen Wang1,*
+Siyuan Liu2,*
+Yuxi Liu1
+Yutong Wang1
+Bohao Zhang1
+Heng Zhou1
+Wei Sui1,†
+1D-Robotics
+2Institute of Automation, Chinese Academy of Sciences
+*Equal contribution.
+†Corresponding author.
+Project page: https://han-li-jun.github.io/CHAMP/index.html
+A
+Heterogeneous data
+B
+Training framework
+Motion prediction data
+Hands
+Body
+Body + hands
+Available-target supervision
+Robot action data
+Real robot motion
+SONIC replay
+SONIC token
+Hands
+1 Motion prediction pretraining
+Lift the cushion
+Wrist/pelvis pose
+VLM
+Qwen3-VL
+Future motion targets
+Body
+Fingertips
+Root
+t
++0.2 s
++0.4 s
++0.6 s
++0.8 s
++1.0 s
+2 Robot action grounding
+VLM layers
+Coordination-oriented action expert
+Route & fuse
+DiT
+3 Task fine-tuning
+Updated policy
+C
+Representative tasks
+Simulation
+Bend handover
+Open oven
+Real-world
+Bed making
+Laundry loading
+Long-horizon
+Popcorn serving
+Transfer motion representations
+Figure 1. Overview of CHAMP. CHAMP pretrains a VLM on heterogeneous human and robot data to predict future body and hand
+motion. The Coordination-oriented Action Expert adaptively extracts and fuses multi-layer features for robot action grounding, followed
+by task-specific fine-tuning. Representative tasks span simulation and real-world settings, including long-horizon popcorn serving.
+Abstract
+Coordinating locomotion and dexterous manipulation is
+fundamental to humanoid robots operating in human en-
+vironments.
+A key challenge is learning motion priors
+from diverse data and using them effectively for coor-
+dinated robot control.
+We present CHAMP, a unified
+framework for humanoid loco-manipulation that combines
+whole-body motion pretraining with adaptive feature ex-
+traction. CHAMP pretrains a vision-language model to pre-
+dict future body and hand motion from approximately 2,298
+hours of heterogeneous human and robot data. A shared
+1
+arXiv:2611.30449v1  [cs.RO]  23 Nov 2026
+
+
+motion representation enables unified whole-body motion
+learning across embodiments from datasets with body an-
+notations, hand annotations, or both. To ground these mo-
+tion priors in robot control, we introduce a Coordination-
+oriented Action Expert (CAE) and train it on replay data
+generated using the target controller. Through sparse rout-
+ing, CAE adaptively selects, transforms, and fuses features
+from multiple layers of the pretrained model to jointly gen-
+erate body and hand actions.
+In experiments, CHAMP
+achieves overall success rates of 84.8% on seven simulated
+tasks and 91.4% on seven real-world tasks with a Unitree
+G1, outperforming the evaluated baselines in both settings.
+In particular, CHAMP achieves 70.0% success on the long-
+horizon popcorn-serving task, compared with 40.0% for the
+best-performing baseline.
+1. Introduction
+Humanoid robots hold the promise of assisting people
+across a wide range of everyday activities [8, 10, 26]. Ful-
+filling this promise requires a broad repertoire of motor
+skills. A key capability is loco-manipulation, which inte-
+grates locomotion and object manipulation through whole-
+body coordination [6, 13]. Locomotion and manipulation
+are tightly coupled.
+Body motion enables the hands to
+reach and interact with objects, while the demands of ma-
+nipulation shape how the robot moves and maintains bal-
+ance [12]. These dependencies evolve throughout execu-
+tion, requiring a policy to coordinate body and hand mo-
+tion over time. We therefore aim to enable coordinated hu-
+manoid loco-manipulation by learning whole-body motion
+priors that capture these relationships and integrating them
+into robot policies.
+Learning such priors requires diverse examples of body
+and hand motion, yet collecting demonstrations on physical
+humanoids is costly and difficult to scale [22, 35]. Exist-
+ing human and robot motion datasets offer a broader source
+of supervision beyond demonstrations collected for a tar-
+get robot [5, 15, 25]. Ψ0 pretrains a vision-language model
+(VLM) to predict wrist poses and fingertip positions [28],
+while WholeBodyWAM learns body-motion priors by pre-
+dicting the future rotations of 21 body joints [31]. Despite
+these advances, these methods do not jointly model body
+motion and fine-grained hand motion during pretraining.
+This motivates us to learn unified whole-body motion pri-
+ors that explicitly capture body–hand coordination through
+joint motion prediction, using heterogeneous datasets with
+annotations for body motion, hand motion, or both.
+Translating these whole-body motion priors into coor-
+dinated robot behavior requires adapting representations
+learned for motion prediction to robot action generation.
+Ψ0 conditions its action expert on final-layer VLM fea-
+tures [28]. GR00T N1.6 [19] and N1.7 [21] instead use
+intermediate VLM features.
+DiT4DiT [18] and Motion-
+WAM [34] use features from a fixed video-model layer for
+action generation, with DiT4DiT reporting better perfor-
+mance using intermediate rather than final-layer features.
+These methods use features from a source layer selected
+in advance. However, as the task or observation changes,
+the features most suitable for robot control may come from
+different layers. We therefore investigate whether jointly
+learning which layers to read and how to adapt their fea-
+tures, under robot-action supervision, can better support co-
+ordinated whole-body control.
+To achieve coordinated whole-body control for hu-
+manoid loco-manipulation, we present CHAMP, a unified
+framework that combines whole-body motion pretraining
+with adaptive motion feature extraction (Fig. 1). First, we
+pretrain a VLM to predict future body and hand motion
+from heterogeneous human and robot data, supervising only
+the motion targets available in each sample. Second, we
+use SONIC-replayed robot trajectories [17] to ground the
+learned representations in robot control. In this stage, we
+introduce a Coordination-oriented Action Expert (CAE)
+that adaptively selects and fuses features from the pretrained
+VLM. Through joint layer–expert routing, CAE uses the
+fused features to condition flow-matching generation of
+SONIC motion latents and hand actions. Finally, we fine-
+tune the policy with task-specific demonstrations collected
+through whole-body teleoperation. Our contributions are
+threefold:
+• We propose CHAMP, a unified framework for coordi-
+nated humanoid loco-manipulation. It learns whole-body
+motion priors from heterogeneous human and robot mo-
+tion data and transfers the learned priors to robot control.
+• We introduce CAE to adaptively extract motion features
+from the VLM pretrained for whole-body motion predic-
+tion. It jointly selects source layers and projection experts
+for each input token, transforming and fusing these fea-
+tures for coordinated whole-body control.
+• Experiments demonstrate CHAMP’s effectiveness for co-
+ordinated humanoid loco-manipulation, including long-
+horizon execution.
+CHAMP achieves overall success
+rates of 84.8% on seven simulated tasks and 91.4% on
+seven real-world tasks, outperforming the evaluated base-
+lines in both settings.
+2. Related Work
+2.1. Humanoid Loco-Manipulation
+Humanoid loco-manipulation requires coordinated locomo-
+tion, posture adjustment, and object interaction. Whole-
+BodyVLA [10] and Ψ0 [28] use high-level VLA policies
+to generate upper-body actions together with locomotion
+and posture commands, while low-level RL controllers han-
+dle lower-body execution.
+This division leaves detailed
+2
+
+
+A Motion pretraining
+RGB
+Prompt
+Task +
+Wrist/pelvis pose
+Qwen3-VL
+Future motion tokens
+Hands
+H1…Hm
+Body
+B1…Bn
+Token cross-entropy
+Available targets only
+Init.
+B Robot action grounding
+Coordination-oriented Action Expert (CAE)
+Action generation
+RGB
+Prompt
+Task +
+Wrist/pelvis pose
+Qwen3-VL
+Layer 4
+Layer 12
+Layer 20
+Layer 28
+Routing & fusion
+Router
+Gating weights
+Linear experts
+α1
+α2
+α3
+α4
+Action chunk
+SONIC token + hands
+Noise
+States
+Action DiT
+Flow matching
+Figure 2. Model architecture. (A) Qwen3-VL is pretrained to predict future body and hand motion tokens using available annotations. (B)
+Robot action grounding freezes the VLM and trains CAE, which adaptively selects, projects, and fuses multi-layer VLM features through
+sparse layer–expert routing. The fused features and robot state condition a flow-matching DiT for coordinated whole-body control.
+leg motion to the locomotion controller, limiting how di-
+rectly the task policy can specify lower-body behavior.
+CoorDex [12] learns separate body and hand control pri-
+ors and coordinates them through reinforcement learning
+with task-specific rewards. Motion-tracking models such as
+SONIC [17] provide a reusable foundation for whole-body
+execution, supporting diverse movements through a shared
+controller.
+Building on this foundation, OpenHLM [9]
+adapts a VLA to generate full-body joint targets tracked by
+SONIC. WholeBodyWAM [13] connects pretrained world–
+action models to whole-body controllers through a unified
+interface. To achieve more coordinated whole-body con-
+trol for humanoid loco-manipulation, CHAMP focuses on
+learning unified body and hand motion priors and adap-
+tively extracting features from the motion-pretrained VLM
+for robot control.
+2.2. Learning Whole-Body Motion Priors
+Human and robot motion datasets provide heterogeneous
+resources for learning motion priors, with different embod-
+iments, motion coverage, and annotations. Human datasets
+such as Motion-X [15], EgoDex [7], ARCTIC [5], and
+Xperience-10M [25] provide annotations of body motion,
+hand motion, or both. Robot datasets such as HIW-500 [2]
+and Humanoid Everyday [33] contain real-world humanoid
+demonstrations of locomotion and manipulation. Ψ0 [28]
+and λ0 [11] learn motion priors by predicting future hand
+motion during pretraining and subsequently ground these
+priors in robot control. WholeBodyWAM [31] learns body-
+motion priors by predicting future rotations of 21 body
+joints. WB-WAM [24] learns whole-body motion priors
+from heterogeneous body and hand data in a robot-specific
+action space. In contrast, CHAMP jointly predicts 3D body-
+joint and fingertip positions, together with root motion, in a
+shared motion representation across humans and multiple
+robot embodiments. These shared targets support motion-
+prior learning without requiring all sources to be mapped to
+a single robot’s joint-angle space.
+2.3. Pretrained Representations for Robot Control
+The interface between a pretrained backbone and an action
+policy determines how learned knowledge supports control.
+GR00T models such as N1.6 [19] and N1.7 [21] extract fea-
+tures from a fixed intermediate VLM layer. DiT4DiT [18]
+and MotionWAM [34] condition action generation on fea-
+tures extracted from fixed video-model depths. Although
+these methods use attention to combine features, they ex-
+tract those features from a fixed layer. ω-0 [14] extracts
+a summary feature from the final VLM layer. Motion and
+video queries then integrate this summary with additional
+visual and language features. WholeBodyWAM [31] mod-
+els video, motion, and actions through three branches that
+interact via attention at each transformer layer. CAE ex-
+tracts features adaptively from the motion-pretrained VLM.
+For each input token, it jointly selects source layers and
+layer-specific projection experts. By combining this adap-
+tive selection with feature projection and fusion, the policy
+learns both where to access motion knowledge and how to
+adapt it for whole-body control.
+3. Method
+To
+enable
+coordinated
+humanoid
+loco-manipulation,
+CHAMP combines whole-body motion pretraining with
+adaptive extraction of motion features.
+As illustrated in
+Figure 2, a VLM learns to predict body and hand motion
+from heterogeneous data, and CAE adaptively extracts
+3
+
+
+its internal features for coordinated body and hand action
+generation. We first define the control task (Sec. 3.1), then
+describe motion prediction pretraining (Sec. 3.2), robot
+action grounding (Sec. 3.3), and task fine-tuning (Sec. 3.4).
+3.1. Problem Formulation
+We formulate humanoid loco-manipulation as the genera-
+tion of coordinated body and hand actions conditioned on
+multimodal inputs. At time t, the policy receives a single
+RGB image It, a language instruction ℓ, the poses of both
+wrists and the pelvis (collectively denoted by pt), and body
+and hand joint angles st. The VLM receives It and a text
+prompt encoding ℓand pt, while st separately conditions
+the action expert.
+Each action at includes a SONIC motion latent zt and
+commands uL
+t and uR
+t for the left and right end effectors:
+at = [zt; uL
+t ; uR
+t ] ∈Rda,
+At = [at, . . . , at+Ta−1]T ∈RTa×da,
+(1)
+where Ta is the action horizon and da is the action dimen-
+sion. The policy, parameterized by θ, predicts this action
+chunk as
+At ∼πθ( · | It, ℓ, pt, st).
+(2)
+3.2. Heterogeneous Motion Prediction Pretraining
+We pretrain Qwen3-VL [1] to predict future body and hand
+motion (Fig. 2A), using heterogeneous human and robot
+data. Shared motion targets let datasets with different em-
+bodiments and annotations contribute to the same VLM,
+without requiring a common robot joint-angle space.
+Pretraining data.
+We use heterogeneous motion data
+from humans, real robots, and simulation for pretraining.
+Human data come from EgoDex [7], Xperience-10M [25],
+and ARCTIC [5]. EgoDex provides hand-only annotations,
+while Xperience-10M and ARCTIC provide both body and
+hand annotations. Real-robot data come from HIW-500 [2],
+PSI-Real [28], RoboCOIN [30], HumanoidEveryday [33],
+and UnifoLM-WBT [27].
+HIW-500 provides body-only
+annotations because its robots use grippers. PSI-Real and
+the RoboCOIN subset recorded on Unitree G1 robots with
+Dex3 hands provide hand-only annotations because their
+recordings lack complete leg-joint states.
+HumanoidEv-
+eryday provides body and hand annotations from Unitree
+G1 and H1 robots with dexterous hands. UnifoLM-WBT
+includes Unitree G1 recordings with different end effec-
+tors. Its Dex1 gripper subset provides body-only annota-
+tions, while the BrainCo and Inspire dexterous-hand sub-
+sets provide both body and hand annotations. GR00T-X-
+Embodiment-Sim [20] provides body and hand annotations
+from simulated Fourier GR1 robots equipped with dexter-
+ous hands.
+H
+u
+m
+an
+42
+.8
+%
+Re
+al
+ro
+bo
+t
+17
+.0
+%
+Si
+m
+ul
+at
+io
+n
+40
+.1
+%
+2,298 h
+EgoDex
+28.5%
+Xperience-10M
+14.2%
+HIW-500
+14.6%
+GR00T-X-Embodiment-Sim
+40.1%
+HumanoidEveryday
+UnifoLM-WBT
+PSI-Real
+RoboCOIN
+ARCTIC
+H
+a
+n
+d
+2
+9
+.
+0
+%
+B
+o
+d
+y
+1
+4
+.
+6
+%
+H
+a
+n
+d
++
+B
+o
+d
+y
+5
+6
+.
+4
+%
+Figure 3. Motion pretraining data. The outer and middle rings
+show data domains and sources. The inner ring independently
+summarizes available motion annotations, without assigning its
+sectors to individual sources.
+Together, these nine datasets provide approximately
+2,298 hours of motion data. Figure 3 shows that human,
+real-robot, and simulation data account for 42.8%, 17.0%,
+and 40.1% of the total duration, respectively. Both body
+and hand annotations are available for 56.4% of the data,
+while 29.0% have hand-only annotations and 14.6% have
+body-only annotations.
+Motion representation and prediction.
+Humans and dif-
+ferent humanoid robot embodiments have key body parts in
+common, including the pelvis, shoulders, elbows, wrists,
+hips, knees, and ankles.
+For embodiments with dexter-
+ous hands, wrist and fingertip motion can likewise describe
+hand movement.
+We therefore use the motion of these
+shared body and hand structures to define a common motion
+representation across embodiments. Body motion mbody
+comprises the pelvis position and orientation, together with
+the 3D positions of 12 body joints, six on each side. Hand
+motion mhand comprises the positions and orientations of
+both wrists, together with fingertip positions per hand.
+Each pretraining sample contains a single RGB image
+It, an instruction ℓ, and current pose information pt. Let
+Ct denote the sample’s annotated motion types, which may
+be body motion, hand motion, or both. The corresponding
+pose input pt contains the pelvis pose, wrist poses, or both,
+respectively. For each c ∈Ct, we define the future motion
+sequence
+Mc
+t = (mc
+t+1, . . . , mc
+t+Tm),
+(3)
+where each prediction step corresponds to 0.2 seconds and
+Tm = 5 steps cover the next 1 second.
+4
+
+
+We express body-joint positions relative to the pelvis and
+fingertip positions relative to the corresponding wrist. The
+pelvis and wrist positions and orientations are expressed in
+the same reference frame within each trajectory. We ex-
+press future positions and orientations relative to their cur-
+rent values, encode rotations using a 6D representation, and
+normalize the resulting motion sequences before tokeniza-
+tion. Source-specific coordinate transformations and nor-
+malization details are provided in the supplementary mate-
+rial (Secs. A.1 and A.2).
+We train separate FAST tokenizers [23] for body and
+hand motion, each with its own vocabulary of 8,192 to-
+kens. These tokenizers encode the motion sequences Mc
+t
+into a token sequence yt = (yt,1, . . . , yt,Nt), where Nt is
+the number of tokens.
+The VLM is trained to autoregressively predict this token
+sequence yt conditioned on It, ℓ, and pt. For a minibatch
+B, we optimize the token-level cross-entropy loss
+Lmotion = −
+X
+t∈B
+Nt
+X
+n=1
+log pϕ(yt,n | yt,<n, It, ℓ, pt)
+X
+t∈B
+Nt
+,
+(4)
+where ϕ denotes the VLM parameters and yt,<n denotes the
+first n −1 tokens of yt. We fine-tune all 2.16B VLM pa-
+rameters using this objective for 250,000 steps with a global
+batch size of 768. The learning rate is 10−4 for the language
+model and 10−5 for the visual modules. Training takes ap-
+proximately 150 hours on 48 NVIDIA H20 GPUs.
+3.3. Robot Action Grounding
+Robot action data.
+To ground the pretrained motion prior
+in the control of a target robot, we select robot datasets
+whose body trajectories can be tracked by that robot. We
+use Unitree G1 as the target platform.
+The data come
+from HIW-500 [2], HumanoidEveryday [33], and UnifoLM
+datasets, spanning grippers and dexterous hands. We use
+SONIC’s motion encoder [17] to convert the recorded body
+trajectories into motion latents. Using these latents, we re-
+play the body motions on a simulated G1 with the SONIC
+controller to screen for instability and excessive drift. After
+quality filtering, we retain 40,016 trajectory segments total-
+ing approximately 254.5 hours. Each action in a retained
+segment contains a 64-dimensional motion latent and the
+corresponding end-effector commands. The resulting ac-
+tion sequences are paired with RGB observations, instruc-
+tions, and robot states. Motion encoding, simulation replay,
+and data filtering are detailed in Sec. A.3.
+Coordination-oriented Action Expert.
+To generate co-
+ordinated robot actions from the pretrained motion repre-
+sentations, we freeze the VLM and train CAE on replayed
+robot data (Fig. 2B). CAE combines a sparse mixture-of-
+experts (MoE) module for cross-layer feature projection and
+fusion with a diffusion transformer (DiT) for robot action
+generation. Unlike conventional MoE, whose experts pro-
+cess features from the same depth, our MoE associates each
+expert group with a distinct VLM depth. For each token,
+a joint router selects layer–expert pairs, determining both
+which motion representations to use and how to transform
+and fuse them into the DiT hidden space. CAE has approx-
+imately 589M trainable parameters.
+The MoE reads features from N candidate layers L =
+{r1, . . . , rN}, each paired with E affine projection experts
+that map the layer’s features into the DiT hidden space. For
+each VLM input token i, we denote its feature at layer r ∈L
+by h(r)
+i
+∈Rdv, where dv is the VLM hidden dimension. A
+joint router ρθ, implemented as a two-layer MLP, takes the
+concatenated features of the same input token across candi-
+date layers and produces an N × E matrix of layer–expert
+scores
+Gi = ρθ
+
+[h(r1)
+i
+; . . . ; h(rN)
+i
+]
+
+∈RN×E,
+(5)
+where [ ; ] denotes concatenation and G(r,e)
+i
+scores expert e
+at candidate layer r. For each input token, we select the two
+highest-scoring experts in each candidate layer and denote
+the selected set by E(r)
+i
+. We then use these expert scores to
+compute a layer score
+b(r)
+i
+= log
+X
+e∈E(r)
+i
+exp
+
+G(r,e)
+i
+
+.
+(6)
+We select the two layers with the highest b(r)
+i
+and keep the
+two selected experts from each, forming the active set Si
+of four layer–expert pairs. For these four pairs, a single
+softmax over their original expert scores G(r,e)
+i
+yields the
+fusion weights
+α(r,e)
+i
+=
+exp(G(r,e)
+i
+)
+P
+(k,j)∈Si exp(G(k,j)
+i
+)
+,
+(r, e) ∈Si.
+(7)
+Each selected expert projects its own layer’s feature, and the
+weighted outputs are fused as
+fi =
+X
+(r,e)∈Si
+α(r,e)
+i
+(Wr,eh(r)
+i
++ br,e),
+(8)
+where Wr,e ∈Rdf ×dv and br,e ∈Rdf are the learnable
+weight and bias of expert (r, e). The projected feature di-
+mension df matches the DiT hidden dimension. The re-
+sulting features Ft = [f1, . . . , fM]T ∈RM×df preserve the
+M input-token positions, where M is the input sequence
+length. The routing configuration is provided in Sec. B.1.
+Conditioned on the fused features Ft and a token encod-
+ing the current robot state st, the DiT generates the action
+5
+
+
+(a) BendPick
+(b) BendHandover
+(c) OpenFaucet
+(d) OpenOven
+(e) OpenTrashcan
+(f) CloseDoor
+(g) PushOfficeChair
+Figure 4. Simulation task settings. Rendered demonstration frames from SIMPLE illustrate the seven tasks.
+Table 1. Successful trials on seven SIMPLE tasks (30 per task, 10 per randomization level). Overall success is reported as successful/total
+trials and a percentage. Best and second-best results are bold and underlined, respectively.
+Method
+Bend
+Pick
+Bend
+Handover
+Open
+Faucet
+Open
+Oven
+Open
+Trashcan
+Close
+Door
+Push Office
+Chair
+Overall success
+Count
+Rate (%)
+π0.5 [3]
+18/30
+2/30
+22/30
+18/30
+8/30
+25/30
+27/30
+120/210
+57.1
+GR00T N1.6 [19]
+24/30
+17/30
+10/30
+9/30
+25/30
+21/30
+24/30
+130/210
+61.9
+Ψ0 [28]
+16/30
+13/30
+16/30
+19/30
+20/30
+17/30
+22/30
+123/210
+58.6
+ω-0 [14]
+22/30
+3/30
+12/30
+9/30
+23/30
+13/30
+24/30
+106/210
+50.5
+DP [4]
+0/30
+16/30
+2/30
+10/30
+19/30
+3/30
+20/30
+70/210
+33.3
+ACT [32]
+19/30
+8/30
+15/30
+18/30
+20/30
+24/30
+18/30
+122/210
+58.1
+CHAMP (ours)
+25/30
+23/30
+23/30
+28/30
+21/30
+29/30
+29/30
+178/210
+84.8
+chunk At. We train CAE using conditional flow match-
+ing [16], which regresses a velocity field along a linear path
+between action chunks and Gaussian noise.
+The overall
+training objective is
+Lground = LFM + λLLL
+bal + λELE
+bal,
+(9)
+where LFM is the flow-matching loss, the layer-level loss
+LL
+bal discourages repeated selection of the same few candi-
+date layers, and the expert-level loss LE
+bal discourages re-
+peatedly choosing the same few projection experts within
+each selected layer. The coefficients λL and λE weight the
+layer- and expert-level losses, respectively. Detailed loss
+definitions and training settings are provided in the supple-
+mentary material (Secs. B.2 and B.3).
+3.4. Task Fine-tuning
+For each task, we fine-tune the policy learned during robot
+action grounding using simulation or real-world demonstra-
+tions. Demonstrations are collected in both environments
+using a PICO headset and handheld controllers for whole-
+body teleoperation of a Unitree G1 equipped with Dex3
+hands.
+The demonstrations provide aligned RGB obser-
+vations, instructions, robot states, and body and hand ac-
+tion sequences. For the G1 robot with Dex3 hands, each
+action contains a 64-dimensional motion latent and seven
+joint commands per hand, giving da = 78. We keep the
+VLM frozen and fine-tune CAE with the objective in Eq. 9
+to adapt both feature selection and action generation to
+each task. Collection details are provided in Supplementary
+Sec. C.
+4. Experiments
+4.1. Experimental Setup
+Tasks and environments.
+We evaluate CHAMP in both
+simulation and real-world environments. In simulation, we
+use seven humanoid loco-manipulation tasks from SIM-
+PLE [29], illustrated in Fig. 4. BendPick and BendHan-
+dover emphasize whole-body grasping and bimanual coor-
+dination, respectively. OpenFaucet, OpenOven, and Open-
+Trashcan involve articulated-object manipulation. Close-
+Door and PushOfficeChair involve locomotion with object
+interaction. Whole-body motion demonstrations for these
+tasks are collected through teleoperation.
+We evaluate seven real-world tasks on a Unitree G1
+6
+
+
+equipped with Dex3 hands, including the long-horizon pop-
+corn serving task (Fig. 5). The tasks span kitchens, bed-
+rooms, living rooms, restaurants, laundry rooms, and in-
+dustrial settings. Fruit collection and bag shelving combine
+walking with object pickup and placement. Bed making
+and table wiping involve coordinated torso and arm mo-
+tion. Cola dispensing involves positioning a cup under a dis-
+penser, while laundry loading combines door operation and
+clothes handling with repeated adjustments of foot place-
+ment. Detailed task procedures are provided in Sec. C of
+the supplementary material.
+Baselines and evaluation.
+We compare CHAMP with
+six baselines.
+π0.5 [3] and GR00T N1.6 [19] are gen-
+eralist vision-language-action models.
+Ψ0 [28] and ω-
+0 [14] target humanoid loco-manipulation, while Diffusion
+Policy (DP) [4] and Action Chunking with Transformers
+(ACT) [32] are conventional imitation-learning methods.
+We train all baselines using their official implementations,
+adapted to the target robot’s control interface. For each task,
+all methods use the same 100 demonstrations and number of
+training steps.
+We run 30 trials per simulation task, with 10 at each of
+three environment randomization levels, and 10 trials per
+real-world task. Overall success is the mean of per-task suc-
+cess rates across seven tasks in each setting.
+4.2. Simulation Results
+CHAMP achieves the highest overall success rate of 84.8%
+and ranks first on six of the seven simulation tasks (Ta-
+ble 1). It outperforms the best-performing baseline, GR00T
+N1.6 (61.9%), by 22.9 percentage points. CHAMP also
+outperforms the humanoid loco-manipulation baselines Ψ0
+(58.6%) and ω-0 (50.5%). On OpenOven, which requires
+body adjustments during object manipulation, CHAMP
+succeeds in 28 of 30 trials compared with 19 for Ψ0, yield-
+ing the largest gain over the best baseline across tasks. On
+bimanual BendHandover, CHAMP succeeds in 23 of 30 tri-
+als, compared with 17 for GR00T N1.6. It also succeeds in
+29 of 30 trials on each of CloseDoor and PushOfficeChair,
+which combine locomotion with object interaction.
+The
+only exception is OpenTrashcan, where CHAMP succeeds
+in 21 of 30 trials compared with 25 for GR00T N1.6.
+4.3. Real-World and Long-Horizon Results
+CHAMP achieves a mean success rate of 91.4% across the
+seven real-world tasks in Table 2, completing 64 of 70 tri-
+als. It outperforms GR00T N1.6 (74.3%) by 17.1 percent-
+age points and ranks first on every task. CHAMP also out-
+performs the humanoid loco-manipulation baselines Ψ0 and
+ω-0, which achieve mean success rates of 57.1% and 61.4%,
+respectively.
+On laundry loading, CHAMP succeeds in 9 of 10 trials
+compared with 6 for GR00T N1.6. During laundry loading,
+the robot must repeatedly adjust its foot placement to open
+the washing machine door, move closer to load clothes,
+and step backward while closing the door, requiring flexible
+lower-body control. During fruit collection, which requires
+walking to the table and then grasping the fruits, CHAMP
+succeeds in 9 of 10 trials compared with 7 for GR00T N1.6.
+These gains span different coordination demands, including
+body adjustment in bed making and walking while carrying
+objects in bag shelving.
+Interestingly, we observed adaptive responses that were
+absent from the task demonstrations.
+When an experi-
+menter wiped up the cola spill as the robot reached for a
+cleaning cloth, the robot withdrew its hand instead of pro-
+ceeding with wiping. During fruit collection, if the robot
+failed to grasp the fruit, it would autonomously try several
+more times to complete the task. These qualitative observa-
+tions suggest that CHAMP can adjust its ongoing behavior
+in response to scene changes and failed interactions.
+Long-horizon task.
+Popcorn serving requires the robot to
+grasp a scoop, pick up a bucket with its other hand, scoop
+popcorn, and pour it into the bucket (Fig. 5g). It then walks
+to a table while carrying the filled bucket and sets it down.
+This sequence involves multiple object interactions and bi-
+manual coordination. The robot must also place the bucket
+securely on the table to avoid spilling the popcorn. A trial is
+successful only if the robot completes the entire sequence.
+CHAMP completes the full task in 7 of 10 trials, compared
+with 4 for GR00T N1.6 and 3 each for Ψ0 and ω-0. The
+conventional imitation-learning baselines DP and ACT suc-
+ceed in 0 and 1 of 10 trials, respectively.
+In one of CHAMP’s three failed trials, an unsuitable
+scoop grip prevented scooping popcorn.
+In the other
+two, excessive scoop–bucket contact force during pouring
+caused the robot to lose its grip. Such interactions are dif-
+ficult to control, and similar failures can occur even during
+teleoperation because no force feedback is available.
+4.4. Ablation Studies
+To assess the contributions of whole-body motion pretrain-
+ing, robot action grounding, and CAE’s multi-layer feature
+extraction, we conduct ablation experiments on the seven
+SIMPLE tasks (Table 3). The variant without motion pre-
+training initializes the VLM from the original Qwen3-VL
+checkpoint and retains robot action grounding and task fine-
+tuning. Its overall success rate falls from 84.8% to 71.9%,
+indicating that body and hand motion pretraining provides
+useful knowledge for downstream control.
+The variant without robot action grounding retains the
+motion-pretrained VLM but skips CAE training on replay
+data.
+We fine-tune the policy directly on teleoperated
+7
+
+
+(a) Fruit collection
+(b) Bed making
+(c) Bag shelving
+(d) Table wiping
+(e) Cola dispensing
+(f) Laundry loading
+(g) Popcorn serving
+Figure 5. Real-world task settings. Images from our robot recordings illustrate the seven tasks. (g) shows successive stages of long-
+horizon popcorn serving.
+Table 2. Successful trials on seven real-world tasks (10 per task). Overall success is reported as successful/total trials and a percentage.
+Best and second-best results are bold and underlined, respectively.
+Method
+Fruit
+collection
+Bed
+making
+Bag
+shelving
+Table
+wiping
+Cola
+dispensing
+Laundry
+loading
+Popcorn
+serving
+Overall success
+Count
+Rate (%)
+π0.5 [3]
+5/10
+6/10
+4/10
+6/10
+6/10
+4/10
+2/10
+33/70
+47.1
+GR00T N1.6 [19]
+7/10
+9/10
+8/10
+9/10
+9/10
+6/10
+4/10
+52/70
+74.3
+Ψ0 [28]
+3/10
+7/10
+6/10
+9/10
+7/10
+5/10
+3/10
+40/70
+57.1
+ω-0 [14]
+5/10
+7/10
+7/10
+8/10
+8/10
+5/10
+3/10
+43/70
+61.4
+DP [4]
+0/10
+2/10
+6/10
+0/10
+3/10
+0/10
+0/10
+11/70
+15.7
+ACT [32]
+4/10
+7/10
+8/10
+6/10
+1/10
+4/10
+1/10
+31/70
+44.3
+CHAMP (ours)
+9/10
+10/10
+9/10
+10/10
+10/10
+9/10
+7/10
+64/70
+91.4
+task demonstrations. This variant achieves an overall suc-
+cess rate of 73.8%. This result indicates that robot action
+grounding helps apply the learned motion priors to robot
+control and improves task success rates after fine-tuning.
+We then evaluate CAE’s feature extraction using four
+fixed-layer variants. All four variants retain motion pre-
+training and robot action grounding, but replace CAE with
+a standard action DiT conditioned on features from a fixed
+VLM layer (4, 12, 20, or 28). They achieve success rates of
+62.4–78.6%, with layer 4 performing best among the tested
+layers. The full model outperforms the best fixed-layer vari-
+ant (layer 4) and the final-layer variant (layer 28) by 6.2 and
+22.4 percentage points, respectively. These results show
+that CAE’s adaptive multi-layer feature extraction achieves
+higher task success rates than the fixed-layer variants. Fur-
+ther routing analyses appear in Supplementary Sec. D.2.
+5. Conclusion
+To enable coordinated locomotion and dexterous manipu-
+lation, we presented CHAMP, a unified framework for hu-
+manoid loco-manipulation. CHAMP pretrains a VLM on
+Table 3. Ablations on seven SIMPLE tasks (210 trials per variant).
+Decrease denotes the success-rate drop from full CHAMP in per-
+centage points, computed from trial counts.
+Variant
+Success (%)
+Decrease
+w/o motion pretraining
+71.9
+12.9
+w/o robot action grounding
+73.8
+11.0
+Fixed layer 4
+78.6
+6.2
+Fixed layer 12
+74.3
+10.5
+Fixed layer 20
+65.2
+19.5
+Fixed layer 28
+62.4
+22.4
+CHAMP (full)
+84.8
+—
+heterogeneous human and robot data to learn whole-body
+motion priors through body and hand motion prediction.
+We introduce CAE and train it on replayed robot data to
+ground the learned motion priors in robot control. This ac-
+tion expert adaptively selects, transforms, and fuses features
+from the motion-pretrained VLM to generate coordinated
+body and hand actions. CHAMP achieves overall success
+8
+
+
+rates of 84.8% on seven simulated tasks and 91.4% on seven
+real-world tasks, including 70.0% on long-horizon popcorn
+serving. Ablation studies further demonstrate the benefits
+of motion pretraining and robot action grounding, as well
+as the advantage of CAE over fixed-layer feature extrac-
+tion. Together, these results highlight the value of combin-
+ing whole-body motion learning with adaptive feature ex-
+traction for coordinated humanoid loco-manipulation.
+Limitations and future work.
+Our motion pretraining
+focuses on body and hand kinematics without explicit su-
+pervision of object dynamics or contact forces.
+Control
+evaluation is also limited to a single humanoid platform
+with task-specific fine-tuning.
+Future work will explore
+object- and contact-aware motion priors and generalization
+across embodiments and unseen tasks.
+LLM Usage Statement
+We worked closely with OpenAI’s ChatGPT and Codex
+to draft and iteratively refine the writing throughout the
+manuscript, improving clarity, precision, and coherence.
+These tools also assisted with figure preparation and code
+development for data analysis and visualization. The au-
+thors take full responsibility for the accuracy and integrity
+of the final manuscript.
+References
+[1] Shuai Bai, Yuxuan Cai, Ruizhe Chen, Keqin Chen, Xionghui
+Chen, Zesen Cheng, Lianghao Deng, Wei Ding, Chang Gao,
+Chunjiang Ge, Wenbin Ge, Zhifang Guo, Qidong Huang,
+Jie Huang, Fei Huang, Binyuan Hui, Shutong Jiang, Zhao-
+hai Li, Mingsheng Li, Mei Li, Kaixin Li, Zicheng Lin, Jun-
+yang Lin, Xuejing Liu, Jiawei Liu, Chenglong Liu, Yang Liu,
+Dayiheng Liu, Shixuan Liu, Dunjie Lu, Ruilin Luo, Chenxu
+Lv, Rui Men, Lingchen Meng, Xuancheng Ren, Xingzhang
+Ren, Sibo Song, Yuchong Sun, Jun Tang, Jianhong Tu, Jian-
+qiang Wan, Peng Wang, Pengfei Wang, Qiuyue Wang, Yux-
+uan Wang, Tianbao Xie, Yiheng Xu, Haiyang Xu, Jin Xu,
+Zhibo Yang, Mingkun Yang, Jianxin Yang, An Yang, Bowen
+Yu, Fei Zhang, Hang Zhang, Xi Zhang, Bo Zheng, Humen
+Zhong, Jingren Zhou, Fan Zhou, Jing Zhou, Yuanzhi Zhu,
+and Ke Zhu. Qwen3-VL technical report. arXiv preprint
+arXiv:2511.21631, 2025.
+[2] BitRobot, Unitree, and Hugging Face.
+HIW-500:
+Hu-
+manoids in-the-wild dataset for robot learning. https://
+bitrobot-foundation.github.io/humanoids-
+in-the-wild-500-hours/, 2026. Dataset.
+[3] Kevin Black, Noah Brown, James Darpinian, Karan Dha-
+balia, Danny Driess, Adnan Esmail, Michael Robert Equi,
+Chelsea Finn, Niccolo Fusai, Manuel Y. Galliker, Dibya
+Ghosh, Lachy Groom, Karol Hausman, Brian Ichter, Szy-
+mon Jakubczak, Tim Jones, Liyiming Ke, Devin LeBlanc,
+Sergey Levine, Adrian Li-Bell, Mohith Mothukuri, Suraj
+Nair, Karl Pertsch, Allen Z. Ren, Lucy Xiaoyang Shi, Laura
+Smith, Jost Tobias Springenberg, Kyle Stachowicz, James
+Tanner, Quan Vuong, Homer Walke, Anna Walling, Haohuan
+Wang, Lili Yu, and Ury Zhilinsky. π0.5: a vision-language-
+action model with open-world generalization. In Proceed-
+ings of The 9th Conference on Robot Learning, pages 17–40.
+PMLR, 2025.
+[4] Cheng Chi, Siyuan Feng, Yilun Du, Zhenjia Xu, Eric
+Cousineau, Benjamin CM Burchfiel, and Shuran Song. Dif-
+fusion policy: Visuomotor policy learning via action dif-
+fusion. In Proceedings of Robotics: Science and Systems,
+2023.
+[5] Zicong Fan, Omid Taheri, Dimitrios Tzionas, Muhammed
+Kocabas, Manuel Kaufmann, Michael J. Black, and Ot-
+mar Hilliges. ARCTIC: A dataset for dexterous bimanual
+hand-object manipulation. In Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition
+(CVPR), pages 12943–12954, 2023.
+[6] Tairan He, Zi Wang, Haoru Xue, Qingwei Ben, Zhengyi
+Luo, Wenli Xiao, Ye Yuan, Xingye Da, Fernando Casta˜neda,
+Shankar Sastry, Changliu Liu, Guanya Shi, Linxi Fan, and
+Yuke Zhu. VIRAL: Visual sim-to-real at scale for humanoid
+loco-manipulation. In Proceedings of the IEEE/CVF Confer-
+ence on Computer Vision and Pattern Recognition (CVPR),
+pages 13430–13441, 2026.
+[7] Ryan Hoque, Peide Huang, David J. Yoon, Mouli Sivapu-
+rapu, and Jian Zhang. EgoDex: Learning dexterous manip-
+ulation from large-scale egocentric video. In International
+Conference on Learning Representations, 2026.
+[8] Songbo Hu,
+Qiayuan Liao,
+Yufeng Chi,
+Kevin Za-
+kka, Yakun Sophia Shao, Pieter Abbeel, and Koushil
+Sreenath.
+Workhorse:
+Learning robust whole-body hu-
+manoid loco-manipulation from human data. arXiv preprint
+arXiv:2610.09117, 2026.
+[9] Yingdong Hu, Haodong Zhu, Boyuan Zheng, Yihang Hu,
+Tong Zhang, Zunhao Chen, Junming Zhao, Ruiqian Nai,
+and Yang Gao.
+OpenHLM: An empirical recipe for
+whole-body humanoid loco-manipulation.
+arXiv preprint
+arXiv:2606.22174, 2026. Accepted at CoRL 2026.
+[10] Haoran Jiang, Jin Chen, Qingwen Bu, Li Chen, Modi Shi,
+Yanjie Zhang, Delong Li, Chuanzhe Suo, Chuang Wang,
+Zhihui Peng, and Hongyang Li. WholeBodyVLA: Towards
+unified latent VLA for whole-body loco-manipulation con-
+trol. In International Conference on Learning Representa-
+tions, 2026.
+[11] Lambda-humanoid Team. λ0: Scaling open-world egocen-
+tric human data for humanoid loco-manipulation.
+arXiv
+preprint arXiv:2610.18950, 2026.
+[12] Sikai Li, Shuning Li, Zhenyu Wei, Yunchao Yao, Chen-
+ran Li, and Mingyu Ding.
+CoorDex: Coordinating body
+and hand priors for continuous dexterous humanoid loco-
+manipulation. arXiv preprint arXiv:2606.23680, 2026.
+[13] Zhuo Li, Yiming Yao, Jim Tan, Mengjie Jing, Zhipeng
+Dong,
+and Fei Chen.
+WholeBodyWAM: Generaliz-
+ing pre-trained world-action priors to humanoid loco-
+manipulation via WBC-grounded coordination.
+arXiv
+preprint arXiv:2609.16644, 2026.
+[14] Zhe Li, Zhenzhe Zhang, Yangyang Wei, Wenjie Zhang, Xi-
+chen Yuan, Peiyuan Zhi, Gen Li, Xinying Guo, Fengjie Gao,
+9
+
+
+Jianfei Yang, and Shanghang Zhang.
+ω-0: A latent pre-
+dictive world action model for concurrent humanoid loco-
+manipulation. arXiv preprint arXiv:2608.06375, 2026.
+[15] Jing Lin, Ailing Zeng, Shunlin Lu, Yuanhao Cai, Ruimao
+Zhang, Haoqian Wang, and Lei Zhang. Motion-X: A large-
+scale 3D expressive whole-body human motion dataset. In
+Advances in Neural Information Processing Systems, pages
+25268–25280, 2023.
+[16] Yaron Lipman, Ricky T. Q. Chen, Heli Ben-Hamu, Maxim-
+ilian Nickel, and Matthew Le. Flow matching for generative
+modeling. In International Conference on Learning Repre-
+sentations, 2023.
+[17] Zhengyi Luo, Ye Yuan, Tingwu Wang, Chenran Li, Fernando
+Casta˜neda, Sirui Chen, Zi-Ang Cao, Jiefeng Li, David Mi-
+nor, Qingwei Ben, Jinhyung Park, David Sami, Zi Wang,
+Xingye Da, Runyu Ding, Cyrus Hogg, Lina Song, Edy Lim,
+Eugene Jeong, Tairan He, Haoru Xue, Wenli Xiao, Simon
+Yuen, Jan Kautz, Yan Chang, Umar Iqbal, Linxi ”Jim” Fan,
+and Yuke Zhu. SONIC: Supersizing motion tracking for nat-
+ural humanoid whole-body control.
+Science Robotics, 11
+(117):eaed4592, 2026.
+[18] Teli Ma, Jia Zheng, Zifan Wang, Chunli Jiang, Andy Cui,
+Junwei Liang, and Shuo Yang.
+DiT4DiT: Jointly model-
+ing video dynamics and actions for generalizable robot con-
+trol. arXiv preprint arXiv:2603.10448, 2026. Accepted at
+NeurIPS 2026.
+[19] NVIDIA. GR00T-N1.6-3B. https://huggingface.
+co/nvidia/GR00T-N1.6-3B, 2025. Model card. Ac-
+cessed November 1, 2026.
+[20] NVIDIA.
+PhysicalAI-Robotics-GR00T-X-Embodiment-
+Sim.
+https : / / huggingface . co / datasets /
+nvidia / PhysicalAI - Robotics - GR00T - X -
+Embodiment-Sim, 2025. Dataset.
+[21] NVIDIA. GR00T-N1.7-3B. https://huggingface.
+co/nvidia/GR00T-N1.7-3B, 2026. Model card. Ac-
+cessed November 11, 2026.
+[22] Huimin Pan, Yufan Ren, Kunpeng Song, Siyang Wang, Xi-
+wen Zhang, Xiaoyun Hu, Zhuoxu Duan, Hanrui Zheng,
+Jialeng Ni,
+Nathan Zhao,
+Sibo Ma,
+Zhenxuan Fan,
+Zhongyang Che, Danny Bao, Jiacheng Wei, Jerry Bai, Xi-
+aoyu Yue, Xiaoyang Guo, and Chenyi Chen. IronMind: Scal-
+ing humanoid dexterous manipulation via camera-space ego-
+centric pretraining. arXiv preprint arXiv:2609.39403, 2026.
+[23] Karl Pertsch, Kyle Stachowicz, Brian Ichter, Danny Driess,
+Suraj Nair, Quan Vuong, Oier Mees, Chelsea Finn, and
+Sergey Levine.
+FAST: Efficient action tokenization for
+vision-language-action models. In Proceedings of Robotics:
+Science and Systems, 2025.
+[24] Chuan Qin, Shaoting Zhu, Siyuan Luo, Siqiao Huang,
+Hongyu Zhao, Shanaka Baduge, and Hang Zhao.
+WB-
+WAM: Heterogeneous body-hand pre-training for humanoid
+loco-manipulation. arXiv preprint arXiv:2609.34199, 2026.
+[25] Ropedia. Xperience-10M: A large-scale egocentric multi-
+modal dataset with structured 3D/4D annotations. https:
+/ / huggingface . co / datasets / ropedia - ai /
+xperience-10m, 2026. Dataset.
+[26] Modi Shi, Shijia Peng, Jin Chen, Haoran Jiang, Tianyu Li,
+Ping Luo, Di Huang, Hongyang Li, and Li Chen. Unlock-
+ing in-the-wild loco-manipulation with robot-free egocentric
+demonstration. In Proceedings of Robotics: Science and Sys-
+tems, 2026.
+[27] Unitree
+Robotics.
+UnifoLM-WBT-Dataset.
+https : / / huggingface . co / collections /
+unitreerobotics/unifolm-wbt-dataset, 2026.
+Dataset collection.
+[28] Songlin Wei, Hongyi Jing, Boqian Li, Zhenyu Zhao, Jia-
+geng Mao, Zhenhao Ni, Sicheng He, Sheng Zang, Xiawei
+Liu, Kaidi Kang, Jie Liu, Weiduo Yuan, Marco Pavone, Di
+Huang, and Yue Wang. Ψ0: An open foundation model to-
+wards universal humanoid loco-manipulation. In Proceed-
+ings of Robotics: Science and Systems, 2026.
+[29] Songlin Wei, Zhenhao Ni, Jie Liu, Zhenyu Zhao, Junjie Ye,
+Hongyi Jing, Junkai Xia, Xiawei Liu, Michael Leong, Liang
+Heng, Di Huang, and Yue Wang.
+SIMPLE: Simulation-
+based policy learning and evaluation for humanoid loco-
+manipulation. arXiv preprint arXiv:2606.08278, 2026. Ac-
+cepted at CoRL 2026.
+[30] Shihan Wu, Xuecheng Liu, Shaoxuan Xie, Pengwei Wang,
+Xinghang Li, Bowen Yang, Zhe Li, Kai Zhu, Hongyu Wu,
+Yiheng Liu, Zhaoye Long, Runtian Xu, Yue Wang, Chong
+Liu, Dihan Wang, Ziqiang Ni, Xiang Yang, You Liu, Ruox-
+uan Feng, Lei Zhang, Denghang Huang, Chenghao Jin, An-
+lan Yin, Xinlong Wang, Zhenguo Sun, Junkai Zhao, Mengfei
+Du, Mingyu Cao, Xiansheng Chen, Hongyang Cheng, Xi-
+aojie Zhang, Yankai Fu, Ning Chen, Cheng Chi, Sixiang
+Chen, Huaihai Lyu, Xiaoshuai Hao, Yequan Wang, Bo Lei,
+Dong Liu, Xi Yang, Yance Jiao, Tengfei Pan, Yunyan Zhang,
+Songjing Wang, Ziqian Zhang, Xu Liu, Ji Zhang, Caowei
+Meng, Zhizheng Zhang, Jiyang Gao, Song Wang, Xiaokun
+Leng, Zhiqiang Xie, Zhenzhen Zhou, Peng Huang, Wu Yang,
+Yandong Guo, Yichao Zhu, Suibing Zheng, Hao Cheng,
+Xinmin Ding, Yang Yue, Huanqian Wang, Chi Chen, Jin-
+grui Pang, YuXi Qian, Haoran Geng, Lianli Gao, Haiyuan
+Li, Bin Fang, Gao Huang, Yaodong Yang, Hao Dong, He
+Wang, Hang Zhao, Yadong Mu, Di Hu, Hao Zhao, Tiejun
+Huang, Shanghang Zhang, Yonghua Lin, Zhongyuan Wang,
+and Guocai Yao.
+RoboCOIN: An open-sourced bimanual
+robotic data collection for integrated manipulation.
+arXiv
+preprint arXiv:2511.17441, 2025.
+[31] Bowei Zhang, Qiyao Zhang, Shuanghao Bai, Xinhua Wang,
+Meng Li, Yilei Wang, Leiwang Zhang, Jian Tang, Lu Zhou,
+Lei Sun, and Zhengping Che. WholeBodyWAM: Learning
+whole-body world action models with scalable motion pri-
+ors. arXiv preprint arXiv:2609.18197, 2026.
+[32] Tony Z. Zhao, Vikash Kumar, Sergey Levine, and Chelsea
+Finn.
+Learning fine-grained bimanual manipulation with
+low-cost hardware. In Proceedings of Robotics: Science and
+Systems, 2023.
+[33] Zhenyu Zhao, Hongyi Jing, Xiawei Liu, Jiageng Mao, Abha
+Jha, Hanwen Yang, Rong Xue, Sergey Zakharov, Vitor
+Guizilini, and Yue Wang. Humanoid Everyday: A compre-
+hensive robotic dataset for open-world humanoid manipula-
+tion. In 2026 IEEE International Conference on Robotics
+and Automation (ICRA), pages 6415–6422, 2026.
+[34] Jia Zheng, Teli Ma, Yudong Fan, Zifan Wang, Shuo Yang,
+and Junwei Liang. MotionWAM: Towards foundation world
+10
+
+
+action models for real-time humanoid loco-manipulation.
+arXiv preprint arXiv:2606.09215, 2026.
+[35] Ruijie Zheng, Dantong Niu, Yuqi Xie, Jing Wang, Mengda
+Xu, Yunfan Jiang, Fernando Casta˜neda, Fengyuan Hu,
+You Liang Tan, Letian Fu, Trevor Darrell, Furong Huang,
+Yuke Zhu, Danfei Xu, and Linxi Fan. EgoScale: Scaling
+dexterous manipulation with diverse egocentric human data.
+arXiv preprint arXiv:2602.16710, 2026.
+11
+
+
+CHAMP: Coordinated Humanoid Loco-Manipulation
+with Whole-Body Motion Priors
+Supplementary Material
+A. Data Preparation and Supervision
+A.1. VLM Pretraining Data and Pose Representa-
+tion
+Data and temporal alignment.
+The first-stage VLM is
+pretrained to predict future motion from an RGB image,
+a language instruction, and pose inputs. We first convert
+the source recordings into a shared pose representation,
+from which the VLM inputs and prediction targets are con-
+structed. The nine sources in Table 4 contain 2,297.9 hours
+across 20 processed subsets. All trajectories are stored at
+30 Hz; resampling uses linear interpolation for positions
+and spherical interpolation for rotations.
+Pose representation for motion supervision.
+To con-
+struct the VLM’s motion targets, we represent pelvis and
+wrist poses relative to the camera pose at the start of each
+episode. This fixed reference frame is denoted by G = C0
+and remains unchanged as the camera moves. Its axes fol-
+low the OpenCV convention: +x right, +y down, and +z
+forward. Positions are measured in meters. A source pelvis
+or wrist pose at time u is converted to this reference frame
+as
+GTSu = (WTC0)−1WTSu,
+(10)
+where W is the source dataset’s world frame, Su is the
+pelvis or wrist frame, and ATB maps coordinates from B
+to A. We denote the resulting position and canonical ori-
+entation by rG
+u and Ru. Thus, W is used only to convert
+source poses into the fixed camera reference.
+Local articulation is represented separately: body-point
+coordinates are relative to the pelvis at the same timestamp,
+and fingertip coordinates are relative to the corresponding
+wrist at that timestamp. These coordinates, denoted by bu,
+describe body and finger configurations relative to their par-
+ent joints.
+We standardize these joint-attached axes across sources.
+The pelvis frame uses x forward, y left, and z up. In each
+wrist frame, x points distally toward the fingers and z ra-
+dially toward the thumb; y completes the right-handed ba-
+sis as z cross x. These directions define the joint-attached
+frames, rather than the fixed camera reference. A source-
+specific constant rotation converts each native joint basis to
+this convention. We right-multiply the native orientation
+by this rotation and apply its inverse to the local point co-
+ordinates, leaving the reconstructed positions in the fixed
+camera frame unchanged.
+The resulting body vector contains 45 values: pelvis po-
+sition (3), 6D rotation (6), and 12 local body points (36).
+The points are ordered as the left shoulder, elbow, wrist,
+hip, knee, and ankle, followed by the corresponding right-
+side joints. The hand vector contains 48 values, with the left
+hand before the right. Each hand contributes wrist position
+(3), 6D rotation (6), and five local fingertip positions (15),
+ordered thumb, index, middle, ring, and little.
+Source-specific processing.
+EgoDex provides ARKit-
+world wrist and fingertip transforms. ARCTIC uses person-
+alized SMPL-X and MANO models to recover body joints,
+wrists, and fingertip vertices. For Xperience-10M, captions
+define action intervals, while SLAM poses and calibrated
+stereo-left camera-to-device transforms determine camera
+poses. SMPL-H roots and keypoints provide body geom-
+etry; wrists and metacarpals define palm frames, and valid
+MANO annotations provide fingertip positions.
+HIW-500 uses matched G1/Dex1 forward kinematics
+from 29 motor positions and odometry pelvis poses, syn-
+chronized to head-image timestamps with a nominal D435
+camera mount. HumanoidEveryday uses matched G1/Dex3
+and H1/Inspire models with recorded arm, leg, and hand
+states.
+PSI-Real combines arm forward kinematics with
+recorded torso orientation and height. RoboCOIN aligns
+source end-effector poses with bilateral G1/Dex3 wrist
+forward kinematics before applying the nominal D435
+mount.
+UnifoLM-WBT uses floating-base poses and 29
+body joints, with matched BrainCo or Inspire hand mod-
+els and the wrist-yaw link as wrist root. The three GR00T-
+X-Embodiment-Sim subsets use Fourier GR1 forward kine-
+matics with complete leg coordinates.
+A.2. VLM Pretraining Inputs and Motion Targets
+Each VLM pretraining sample pairs an image, an instruc-
+tion, and pose inputs at the observation time with a sequence
+of future motion targets. We construct the targets from the
+pose representation above and encode them with FAST. The
+pose inputs describe wrist poses relative to the current cam-
+era and the recent relative motion of the pelvis.
+Relative motion targets.
+Motion prediction uses a 5 Hz
+grid, with prediction index t anchored at frame n = 6t of
+the processed 30 Hz trajectory. The five targets at n+6, n+
+12, n + 18, n + 24, n + 30 span the following second at
+0.2-second intervals, corresponding to t + 1, . . . , t + 5 in
+12
+
+
+Table 4. Pretraining data sources and motion annotations. Durations are rounded independently. UnifoLM-WBT contributes 6.37 hours
+with BrainCo hands, 7.11 hours with Inspire hands, and 1.14 hours with Dex1 grippers. The first two subsets provide body and hand
+targets, while Dex1 provides body targets only. The simulated GR1 data comprise the arms-only, arms-and-waist, and unified subsets.
+Source
+Domain / embodiment
+Hours
+Available targets
+EgoDex
+Human
+655.9
+Hand
+Xperience-10M
+Human
+326.3
+Body and hand
+ARCTIC
+Human
+1.8
+Body and hand
+HIW-500
+Unitree G1 with Dex1 grippers
+335.4
+Body
+HumanoidEveryday
+Unitree G1 with Dex3 / H1 with Inspire
+31.5
+Body and hand
+UnifoLM-WBT
+Unitree G1 with BrainCo / Dex1 / Inspire
+14.6
+Depends on end effector
+PSI-Real
+Unitree G1 with Dex3
+7.7
+Hand
+RoboCOIN
+Selected Unitree G1 with Dex3 recordings
+2.5
+Hand
+GR00T-X-Embodiment-Sim
+Simulated Fourier GR1
+922.1
+Body and hand
+Total
+2,297.9
+Eq. 3. The anchor frame provides the observation and ref-
+erence pose; windows with incomplete future horizons are
+excluded.
+For k ∈{1, . . . , 5}, pelvis and wrist translation targets
+are rG
+t+k −rG
+t , expressed in the fixed reference frame G.
+Local-point targets are bt+k −bt, with each term expressed
+in the canonical pelvis or wrist frame at the corresponding
+timestamp. These differences capture changes in local ar-
+ticulation. Relative orientations are represented by
+Rrel
+t,k = RT
+t Rt+k,
+r6(R) =
+
+R:,1
+R:,2
+
+.
+(11)
+The first two columns of each relative rotation matrix are
+concatenated to form the six-dimensional representation
+used for normalization and FAST encoding.
+Pose inputs to the VLM.
+Alongside the RGB image and
+instruction, the VLM receives the available wrist and pelvis
+features. Wrist inputs describe hand position and orienta-
+tion relative to the camera at observation time t. We de-
+note this current camera frame by Ct; unlike the fixed first-
+camera frame G, it follows the camera as it moves. For the
+canonical wrist frame Sh
+t of hand h ∈{L, R}, the input
+pose is
+CtTSh
+t = (GTCt)−1GTSh
+t .
+(12)
+The pelvis input represents the current pelvis pose relative
+to the pelvis frame 0.2s earlier. Let Pt denote the canonical
+pelvis frame at prediction index t. This input is the pose of
+Pt relative to Pt−1, the pelvis frame at the preceding point
+on the 5 Hz grid:
+Dt = (GTPt−1)−1GTPt,
+t ≥1,
+(13)
+with D0 set to the identity transform at the first prediction
+anchor. Each transform is represented by three translation
+coordinates and six rotation coordinates using Eq. 11, with
+the left wrist preceding the right.
+Normalization and FAST encoding.
+We fit separate
+body and hand tokenizers, each with its own normaliza-
+tion statistics and vocabulary, and reserve 10% of episodes
+for validation. For each modality, we sample 1% of eligi-
+ble training windows in proportion to the candidate count
+of each source, yielding 1,732,393 hand windows and
+1,482,427 body windows. A relative target value vd in di-
+mension d is normalized using its 1st and 99th percentiles,
+q0.01,d and q0.99,d:
+evd = clip
+vd −1
+2(q0.01,d + q0.99,d)
+1
+2(q0.99,d −q0.01,d)
+, −1, 1
+
+.
+(14)
+FAST applies an orthonormal temporal DCT to each nor-
+malized dimension, scales the coefficients by 10, rounds
+them to integers, and flattens them in time-major order. The
+resulting sequence is tokenized using byte-pair encoding
+with a vocabulary of 8,192 tokens per modality.
+A.3. SONIC Motion Encoding, Replay, and Data
+Filtering
+The second stage trains CAE on robot control targets
+while keeping the pretrained VLM frozen. For this action-
+grounding stage, we use HIW-500, HumanoidEveryday-
+G1, and UnifoLM, including the original UnifoLM-WBT
+subsets and additional G1 recordings with Inspire hands or
+Dex1 grippers.
+Motion encoding.
+We encode recorded body motion us-
+ing SONIC’s low-latency G1 encoder [17]. For each frame
+n on the 30 Hz trajectory, the encoder receives a ten-frame
+window beginning at n, containing 29 body-joint positions
+in the G1 joint order, finite-difference joint velocities, and
+root orientations. Root rotations are expressed relative to
+the first frame of the window:
+∆Rn,k = RT
+nRn+k,
+k ∈{0, . . . , 9},
+(15)
+13
+
+
+Table 5. Action-grounding corpus after episode-level screening.
+Durations are computed from retained frame counts and rounded
+independently. Actions comprise a 64-dimensional SONIC latent
+and source-specific end-effector channels.
+Source subset
+Segments
+Hours Action dim.
+HIW-500
+8,119
+93.27
+66
+HumanoidEveryday-G1
+1,514
+5.41
+78
+UnifoLM-WBT / BrainCo
+612
+4.68
+76
+UnifoLM-WBT / Inspire
+519
+4.15
+76
+UnifoLM-WBT / Dex1
+23
+0.18
+66
+UnifoLM-G1 / Inspire
+168
+1.97
+76
+UnifoLM-G1 / Dex1
+29,061 144.81
+66
+Total
+40,016 254.47
+–
+where Rn denotes the reference root rotation in the SONIC
+coordinate convention. The first two columns of each rela-
+tive rotation are flattened in row-major order to form a six-
+dimensional input. Windows extending beyond the segment
+boundary repeat the final frame. The encoder produces one
+64-dimensional latent zn per frame for body-action super-
+vision.
+Each latent is paired with source-derived end-effector
+targets: one channel per hand for grippers, six for BrainCo
+and Inspire hands, and seven Dex3 joint-angle channels for
+HumanoidEveryday-G1. The resulting action dimensions
+are 64 + 2 = 66, 64 + 12 = 76, and 64 + 14 = 78.
+State vectors concatenate 29 body-joint angles with the cor-
+responding end-effector states, giving dimensions of 31, 41,
+and 43. These heterogeneous interfaces are accommodated
+by the shared model described in Sec. B.2.
+Closed-loop screening.
+We screen segments for instabil-
+ity and excessive root displacement through closed-loop re-
+play in MuJoCo. A G1 initialized from the first reference
+body pose is driven by the precomputed latents through
+the SONIC controller at 50 Hz, with latents selected from
+the 30 Hz reference sequence by time index. Closed-loop
+replay determines which segments are retained; the corre-
+sponding source data are then used for training.
+Let dref and dsim be the magnitudes of the net horizontal
+root displacement in the reference and simulated trajecto-
+ries. A segment is rejected if the simulated root height falls
+below 0.35 m, if dref < 0.15 m and dsim > 0.25 m, or if
+dsim −dref > 0.5 m.
+The resulting grounding corpus contains 40,016 of
+60,686 candidate segments across seven subsets, compris-
+ing 27,482,899 frames at 30 Hz, or 254.47 hours (Table 5).
+Task-specific fine-tuning demonstrations are separate from
+this corpus.
+Table 6.
+CAE architecture and G1–Dex3 interfaces.
+State di-
+mensions correspond to measured joint angles; action dimensions
+comprise the SONIC latent and bilateral hand targets.
+Component
+Configuration
+VLM hidden dimension
+dv = 2048
+Candidate layers / experts per layer N = 4 / E = 8
+Router dimensions
+8192 →128 →32
+Each affine projection expert
+2048 →1536
+Active layers / experts per layer
+KL = 2 / KE = 2
+DiT blocks / hidden dimension
+6 / df = 1536
+Attention heads / head dimension
+24 / 64
+Action horizon
+Ta = 30
+G1–Dex3 state dimension
+43
+G1–Dex3 action dimension
+da = 64 + 7 + 7 = 78
+B. Implementation Details
+B.1. Model Architecture and Routing
+Backbone and feature readout.
+We use Qwen3-VL-2B-
+Instruct and extract the outputs of decoder blocks L =
+{4, 12, 20, 28}. Each output, including that of block 28,
+passes once through the backbone’s frozen final normaliza-
+tion. The normalized feature is shared by the router and the
+projection experts assigned to that layer.
+Routing and action generation.
+CAE connects the
+frozen VLM to the action DiT through sparse cross-layer
+projection (Table 6). Each expert is an independent affine
+map from one candidate layer to the action-conditioning
+space. This structure extends single-layer MoE projection,
+in which all experts receive features from the same depth,
+and layer-only fusion, which assigns a single projection to
+each layer.
+A joint two-layer MLP with SiLU activation concate-
+nates features at each token position across the candidate
+layers and scores all layer–expert pairs. Within each layer,
+it selects two experts and computes a layer score as the log-
+sum-exp of their scores. The two highest-scoring layers
+define four active pairs, whose scores are jointly normal-
+ized by a single softmax at temperature 1 (Eqs. 6–8). Only
+the selected experts are evaluated for each token.
+Their
+weighted sum directly produces a 1536-dimensional condi-
+tioning feature, preserving token order and sequence length.
+A linearly projected robot-state token is appended to the
+fused conditioning sequence. Noisy actions are embedded
+by an MLP with learned temporal position embeddings.
+Each DiT block applies noncausal joint attention to action
+and conditioning tokens, with separate query/key/value pro-
+jections for the two streams and masking of padded condi-
+tioning tokens. Flow time modulates adaptive normaliza-
+tion.
+14
+
+
+Table 7. Image resizing before the Qwen image processor. Motion
+pretraining and robot action grounding use the same resolution-
+dependent policy.
+Source resolution
+Resized resolution
+1920 × 1080
+480 × 270
+840 × 600
+420 × 300
+640 × 480
+320 × 240
+512 × 512
+256 × 256
+256 × 256
+256 × 256
+B.2. Training and Fine-tuning Configurations
+Optimization.
+Table 8 summarizes the settings for first-
+stage VLM pretraining, second-stage action grounding,
+and task-specific fine-tuning. VLM pretraining updates all
+VLM parameters while keeping the fitted FAST tokenizers
+fixed, using bfloat16 mixed precision, gradient checkpoint-
+ing, and DeepSpeed ZeRO-3. We clip the gradient norm to
+1.0 and use a maximum sequence length of 8192 tokens.
+Robot action grounding and simulation fine-tuning opti-
+mize CAE with Eq. 9 while keeping the VLM frozen. Both
+use AdamW with ϵ = 10−8, bfloat16 mixed precision, and
+gradient-norm clipping at 1.0. For each simulation task,
+CAE is initialized from the 100,000-step grounding check-
+point and the optimizer is reset. Router scores, probabilities,
+and balancing statistics are computed in float32.
+Real-world fine-tuning.
+Real-world task policies initial-
+ize CAE from the action-grounding checkpoint and retain
+the frozen motion-pretrained VLM. We optimize CAE us-
+ing eight GPUs with 16 samples per GPU, yielding a global
+batch size of 128. AdamW uses coefficients (0.95, 0.999),
+weight decay 10−6, and ϵ = 10−8. The learning rate in-
+creases during warmup to 10−4 and then follows cosine
+decay. Training uses bfloat16 precision and gradient-norm
+clipping at 1.0. All seven tasks retain the 43-dimensional
+state, 78-dimensional action, and 30-frame action horizon.
+Image preprocessing.
+For VLM pretraining and action
+grounding, images are resized with Lanczos interpolation
+according to their source resolution (Table 7), followed
+by patch-aligned resizing with the Qwen image processor
+within a pixel range of 1,024–129,600.
+Simulation frames are decoded at their aligned observa-
+tion indices, downsampled from 640×360 to 320×180 with
+Lanczos interpolation, and cached as RGB before augmen-
+tation. Training reads the shared cache and applies online
+color jitter, with brightness, contrast, and saturation factors
+in [0.8, 1.2] and hue shifts in [−0.05, 0.05].
+Heterogeneous action and state interfaces.
+The ground-
+ing datasets provide native action dimensions of 66, 76, or
+78 and state dimensions of 31, 41, or 43 (Sec. A.3). We
+accommodate all sources with a shared 78-dimensional ac-
+tion head and 43-dimensional state interface. Native vec-
+tors occupy the leading channels, with trailing channels
+zero-padded.
+Actions retain the source order of the 64-
+dimensional SONIC latent followed by left- and right-end-
+effector targets; states retain the 29 body-joint entries fol-
+lowed by the corresponding end-effector states.
+B.3. Flow-Matching and Load-Balancing Losses
+Action normalization.
+Grounding actions are normal-
+ized independently for each source and dimension to [−1, 1]
+using min–max bounds, with out-of-range values clipped.
+We denote a normalized, padded action chunk by ¯At ∈
+RTa×da, with da = 78.
+During grounding, the numerical joint-state vector is
+zero-padded to the shared state dimension and passed to the
+state projection without an additional min–max transform.
+This numerical input is distinct from the pose text supplied
+to the VLM.
+Flow-matching objective.
+For each grounding chunk, we
+sample independent standard-normal noise ϵ ∈RTa×da and
+a flow time
+σ = 0.01 + 0.99 ξ,
+ξ ∼Beta(1.5, 1).
+(16)
+The sampled flow time is shared by all action positions. The
+linear interpolation and target velocity are
+Xσ
+t = (1 −σ) ¯At + σϵ,
+Vt = ϵ −¯At.
+(17)
+The DiT predicts bVt = vθ(Xσ
+t , σ; Ft, st). We minimize
+LFM = E
+
+1
+da
+Ta−1
+X
+j=0
+da
+X
+c=1
+mt,j,c
+ bVt,j,c −Vt,j,c
+2
+
+,
+(18)
+where mt,j,c is a binary validity mask. For grounding, the
+mask is one for native action channels and zero for trailing
+padded channels at every position. We sample only com-
+plete action windows, so no temporal padding is needed.
+The loss sums over action positions and averages over sam-
+ples and the shared action dimension, rather than dividing
+by the number of valid channels.
+Simulation fine-tuning.
+For each task, we recompute
+per-dimension min–max bounds from its demonstrations
+and normalize both the 43-dimensional state and 78-
+dimensional action to [−1, 1], clipping values to this inter-
+val. Fine-tuning samples σ ∼U(0, 1) and a clean-prefix
+length d uniformly from {0, . . . , 7}. The first d actions re-
+main uncorrupted, while the remaining positions share the
+sampled flow time.
+15
+
+
+Table 8. Optimization settings for motion pretraining, action grounding, and per-task simulation fine-tuning. Fine-tuning uses a batch
+size of 16 per GPU without gradient accumulation. The pretraining and grounding columns describe the checkpoints used to initialize the
+subsequent stage.
+Setting
+Motion pretraining
+Robot action grounding
+Simulation fine-tuning
+Trainable parameters
+Full VLM
+CAE
+CAE
+AdamW (β1, β2)
+(0.9, 0.999)
+(0.9, 0.999)
+(0.95, 0.999)
+Weight decay
+0.01
+0
+10−6
+Language-model learning rate
+10−4
+Frozen
+Frozen
+Visual-module learning rate
+10−5
+Frozen
+Frozen
+CAE learning rate
+–
+10−4
+10−4
+Learning-rate schedule
+Constant
+Constant
+Warmup + cosine decay
+Warmup steps
+0
+0
+1000
+Global batch size
+768
+640
+128
+Training steps
+250,000
+100,000
+20,000
+Training GPUs
+48× NVIDIA H20
+40× NVIDIA H20
+8 GPUs
+Training time
+150 hours
+40 hours
+2 hours
+Real-world fine-tuning.
+For real-world tasks, actions
+are normalized using task-specific per-dimension min–max
+bounds and clipped to [−1, 1].
+The six tasks other than
+popcorn serving retain unscaled numerical joint states, as
+in grounding; popcorn serving instead applies task-specific
+min–max normalization and clipping to its state vector.
+Flow time follows the same rescaled Beta distribution as
+grounding, with a lower bound of 0.01. We also use a clean
+prefix of uniformly sampled length from 0 to 7 frames: pre-
+fix positions receive zero flow time and remain uncorrupted,
+while the remaining positions share the sampled flow time.
+Clean-prefix positions and action positions extending be-
+yond the episode boundary are excluded from the flow-
+matching loss. The layer- and expert-balancing coefficients
+remain unchanged.
+Routing statistics.
+Load balancing is computed over the
+set I of all valid VLM token occurrences across samples
+and devices in the current forward pass, with n = |I|.
+Each token selects KL = 2 layers and KE = 2 experts
+per selected layer. Let δir indicate whether layer r belongs
+to token i’s final active set Si. The layer count is mr =
+P
+i∈I δir, and cr,e counts tokens for which (r, e) ∈Si.
+Layer-level balancing.
+The layer scores b(r)
+i
+in Eq. 6 de-
+fine probabilities over all candidate layers. We combine
+their mean probabilities with slot-normalized selection fre-
+quencies to obtain
+pL
+i,r =
+exp(b(r)
+i )
+P
+k∈L exp(b(k)
+i
+)
+,
+f L
+r = mr
+nKL
+,
+P L
+r = 1
+n
+X
+i∈I
+pL
+i,r,
+LL
+bal = N
+X
+r∈L
+f L
+r P L
+r .
+(19)
+The selection frequencies satisfy P
+r f L
+r = 1.
+Expert-level balancing.
+Within each selected layer, bal-
+ancing uses probabilities over all E experts, conditioned on
+the tokens assigned to that layer. For mr > 0, we define
+pE
+i,r,e =
+exp(G(r,e)
+i
+)
+PE
+j=1 exp(G(r,j)
+i
+)
+,
+f E
+r,e =
+cr,e
+KEmr
+,
+P E
+r,e =
+1
+mr
+X
+i∈I
+δirpE
+i,r,e.
+(20)
+The frequencies satisfy P
+e f E
+r,e = 1.
+Per-layer expert
+losses are averaged in proportion to the number of assigned
+tokens:
+LE
+r = E
+E
+X
+e=1
+f E
+r,eP E
+r,e,
+LE
+bal =
+P
+r:mr>0 mrLE
+r
+P
+r∈L mr
+.
+(21)
+Layers with mr = 0 contribute zero. The losses encourage
+balance across the batch without requiring uniform routing
+16
+
+
+0
+50
+100
+Mean weight (%)
+Image
+Instruction
+Pose-text
+16
+64
+22
+35
+15
+12
+15
+24
+37
+21
+40
+E1 E2 E3 E4 E5 E6 E7 E8
+Image
+Instruction
+Pose-text
+38 8
+11
+L4
+E1 E2 E3 E4 E5 E6 E7 E8
+9
+5
+9
+5
+7
+L12
+E1 E2 E3 E4 E5 E6 E7 E8
+Image
+Instruction
+Pose-text
+7
+6
+L20
+E1 E2 E3 E4 E5 E6 E7 E8
+6
+14
+6
+10
+5
+10
+8
+L28
+0
+20
+40
+Global weight (%)
+(a) Layer weights
+(b) Expert weights
+L4
+L12
+L20
+L28
+Figure 6. Layer and expert fusion weights. Weights are averaged separately by token category and equally across the seven task models.
+(a) Layer weights sum to 100% within each category. (b) Expert weights sum to 100% across all 32 experts within each category and use
+a shared color scale; E1–E8 identify experts within each layer. Values are rounded percentages, with labels omitted below 5%.
+Table 9. Real-world task procedures. † marks the long-horizon
+task.
+Task
+Execution sequence
+Fruit collection
+Walk to table →pick up fruits →place in
+basket.
+Bed making
+Bend down →grasp blanket corner →pull
+blanket into place →stand up.
+Bag shelving
+Bend down →grasp bag →stand up →walk
+to shelf →place bag on shelf.
+Table wiping
+Pick up cloth →wipe up spilled cola on the
+table while rotating torso and moving arm →
+put cloth back.
+Cola dispensing
+Pick up cup →position under dispenser →
+fill with cola →pull cup back.
+Laundry loading
+Open washer door →lift clothes from basket
+→step closer and load clothes →step back
+and close door.
+Popcorn serving†
+Grasp scoop →pick up bucket with other
+hand →scoop and pour popcorn into bucket
+→walk to table carrying bucket →set
+bucket securely on table.
+for each token. We use λL = λE = 10−3 in Eq. 9.
+Selection frequency and fusion weight.
+Selection fre-
+quency measures how often a layer is included in the active
+set, whereas mean fusion weight measures its contribution
+to the projected features. For the valid token positions J of
+one observation and category, these quantities are
+qr =
+1
+|J |
+X
+i∈J
+δir,
+¯wr =
+1
+|J |
+X
+i∈J
+X
+e:(r,e)∈Si
+α(r,e)
+i
+.
+(22)
+The indicator δir is defined above, and observation- and
+task-level averaging follows Sec. D.2. Because each token
+selects two layers, P
+r qr = 2, while P
+r ¯wr = 1. Expert-
+pair inclusion frequencies similarly sum to four, whereas
+their mean weights sum to one. The slot-normalized fre-
+quencies f L
+r in Eq. 19 sum to one. Figures 6 and 7a report
+fusion weights.
+C. Task Demonstrations and Evaluation Proto-
+cols
+Simulation and real-world demonstrations are collected
+through whole-body teleoperation of a Unitree G1 with
+Dex3 hands using a PICO headset and handheld controllers.
+Each episode records RGB observations, an instruction,
+measured joint states, and body and hand action targets. The
+state comprises 29 body-joint angles and 14 hand-joint an-
+gles; the action comprises a 64-dimensional SONIC motion
+latent and 14 hand targets.
+For policy learning, episodes are represented on a 30 Hz
+timeline. RGB frames are paired with their state and ac-
+tion records by episode and frame index, with timestamps
+checked for alignment. A training sample uses the image
+and measured state at its observation frame, together with
+an action chunk starting at that frame. Image resizing and
+17
+
+
+0
+50
+100
+0
+30
+60
+BendPick
+0
+50
+100
+BendHandover
+0
+50
+100
+OpenFaucet
+0
+50
+100
+OpenOven
+0
+50
+100
+0
+30
+60
+OpenTrashcan
+0
+50
+100
+CloseDoor
+0
+50
+100
+PushOfficeChair
+Lines: mean
+Bands: ±1 s.d.
+L4
+L20
+L12
+L28
+0
+25
+50
+75
+100
+Comparisons (%)
+BendPick
+BendHandover
+OpenFaucet
+OpenOven
+OpenTrashcan
+CloseDoor
+PushOfficeChair
+All tasks
+19.9
+30.6
+17.8
+28.9
+15.9
+21.1
+32.6
+23.8
+27.0
+30.2
+28.4
+31.7
+29.3
+31.4
+35.0
+30.4
+53.1
+39.2
+53.9
+39.4
+54.8
+47.5
+32.4
+45.7
+0
+20
+40
+Total variation (×100)
+22.3
+32.5
+20.8
+29.7
+18.3
+24.7
+35.6
+26.3
+(a) Temporal layer weights
+Fusion weight (%)
+Normalized sampled time (%)
+(b) Changes in the active set
+(c) Weight variation
+Different layers
+Different experts only
+Same experts
+Sequence
+Task
+Figure 7. Temporal routing dynamics. (a) Mean and standard deviation of image-token layer weights across sampled sequences for each
+task, with time normalized within each sequence. (b) Mutually exclusive changes in the active set between adjacent sampled observations
+at corresponding image-grid positions. “Different experts only” denotes a change of experts with the layer pair retained. (c) Total variation
+of the 32 expert weights (×100), capturing changes in both selection and weighting. Circles denote sequence means, diamonds denote task
+means, and the final row pools all tasks.
+RGB caching preserve this temporal correspondence; aug-
+mentation is applied when the sample is loaded for training.
+Simulation evaluation comprises 10 trials at each of three
+randomization levels for each of seven tasks, yielding 30 tri-
+als per task and 210 per method. The execution sequences
+of the seven real-world tasks are summarized in Table 9.
+Each real-world task is evaluated over 10 trials, with suc-
+cess requiring completion without human intervention and
+without an imposed time limit. For both settings, we report
+per-task success rates and their mean across the seven tasks.
+D. Additional Results and Analyses
+D.1. Fixed-Layer Ablation Settings
+Fixed-layer architecture.
+The fixed-layer variants in Ta-
+ble 3 extract a single decoder-block output at r
+∈
+{4, 12, 20, 28} and project it directly from 2048 to 1536
+dimensions using one affine map. They retain CHAMP’s
+six-block action DiT but omit the router and expert bank.
+18
+
+
+Initialization and training.
+All four variants use the
+VLM checkpoint obtained after 250,000 motion-pretraining
+updates and keep it frozen during grounding and fine-
+tuning. Each variant undergoes 100,000 grounding updates
+with a global batch size of 640 and a constant learning rate
+of 10−4. Task fine-tuning initializes the linear projection
+and DiT from the corresponding layer-specific grounding
+checkpoint and resets the optimizer.
+Each task is fine-tuned for 20,000 updates with a global
+batch size of 128 and a peak learning rate of 10−4, using
+1000 warmup updates followed by cosine decay. Other opti-
+mization settings follow Table 8; action/state normalization
+and flow-time sampling follow Sec. B.3. The linear projec-
+tion and DiT are trained solely with the flow-matching loss.
+D.2. CAE Routing Analysis
+Measurement protocol.
+We analyze seven separately
+fine-tuned task models using sampled observations.
+Tokens are grouped by their positions in the multimodal
+sequence into image, instruction, and pose-text categories,
+excluding special tokens.
+Pose-text comprises wrist and
+pelvis information in the VLM prompt, distinct from the
+DiT’s robot-state token. We average weights within each
+sampled observation and token category, then across sam-
+ples and equally across the seven task models.
+Layer and expert allocation.
+Routing profiles differ
+across token categories at both the layer and expert levels
+(Fig. 6). Image tokens allocate 71.9% of their weight to
+layers 12 and 28, while instruction tokens allocate 64.1% to
+layer 4. Pose-text weights are more distributed, with layer
+28 receiving the largest share at 39.8%. Within layer 28,
+expert 5 receives 13.8% of image-token weight and 2.8% of
+pose-text weight, whereas expert 2 receives less than 0.1%
+and 10.0%, respectively.
+Temporal changes across samples.
+Routing also varies
+across temporally ordered samples within each task model
+(Fig. 7a). Between the initial and final thirds of each sam-
+pled sequence, image-token weight on layer 28 decreases
+by 15.4 percentage points for OpenFaucet and increases by
+4.6 for CloseDoor. In BendHandover, layer-28 weight re-
+mains nearly constant, while layer-4 weight decreases by
+4.7 points and layer-20 weight increases by 4.1 points.
+Route changes and their magnitude.
+We compare rout-
+ing at the same 60 image-grid positions between tempo-
+rally adjacent sampled observations. The selected layer pair
+changes in 23.8% of comparisons; in 30.4%, the layer pair
+is retained but the selected experts change; and in 45.7%,
+the expert set is unchanged (Fig. 7b). We quantify weight
+variation by 0.5∥w′ −w∥1, where each vector contains the
+weights of all 32 experts, with zeros for unselected experts.
+This measure lies in [0, 1], with task means ranging from
+18.3% to 35.6% when expressed as percentages (Fig. 7c).
+19

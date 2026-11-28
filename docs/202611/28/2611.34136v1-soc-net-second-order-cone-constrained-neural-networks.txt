@@ -1,0 +1,1210 @@
+SOC-Net: Second-Order-Cone-Constrained Neural Networks
+Seungseok Oh*
+SEUNGSEOK.OH@SNU.AC.KR
+Seoul National University, Seoul, South Korea
+Youngjae Min*
+YJM@MIT.EDU
+Massachusetts Institute of Technology, Cambridge, MA, USA
+Navid Azizan
+AZIZAN@MIT.EDU
+Massachusetts Institute of Technology, Cambridge, MA, USA
+Namhoon Cho†
+NAMHOON.CHO@SNU.AC.KR
+Seoul National University, Seoul, South Korea
+Abstract
+In many applications, neural networks must learn input–output maps that respect prior knowledge
+such as physical laws, safety requirements, and operating limits. These requirements constrain
+which outputs are admissible for a given input and often admit second-order cone (SOC) represen-
+tations, including norm bounds and robust linear inequalities. Examples in control include friction
+cones, thrust bounds, and input-robust control barrier function (CBF) conditions. However, exist-
+ing approaches to enforcing general input-dependent SOC constraints require a conic solver, an
+iterative scheme whose feasibility depends on convergence, or an interior feasible point for each
+input. We propose SOC-Net, a neural network architecture that enforces input-dependent SOC con-
+straints by construction for every input, even outside the training distribution. SOC-Net projects an
+affine lifting of the backbone output onto the reachable slice of a fixed product of Lorentz cones
+and maps the correction back to the output space. For separable constraints, this projection splits
+into one projection per cone, and each is available in closed form or reduces to a single scalar
+equation, regardless of the cone dimension. We prove that SOC-Net retains the expressive power
+of the backbone network under regularity conditions and accommodates end-to-end training by
+standard backpropagation with an explicit Jacobian. Experiments on contact force allocation with
+friction constraints and 3-D obstacle avoidance with an input-robust CBF demonstrate that SOC-
+Net satisfies the constraints at every evaluated input, with lower evaluation latency than the tested
+solver-based and iterative baselines.
+Keywords: Hard-constrained neural networks, HardNets, second-order cone constraints, learning
+to optimize, learning-based control, constrained control
+1. Introduction
+As neural networks proliferate across scientific and engineering applications, they are increasingly
+required to learn input–output maps that respect prior knowledge such as physical laws, safety re-
+quirements, and operating limits. This knowledge restricts which outputs are admissible for a given
+input. In control, such networks now serve as dynamics models (Shi et al., 2019), feedback policies
+(Levine et al., 2016), and optimization-based controllers (Chen et al., 2018) of physical systems.
+Because their outputs affect a physical system, the knowledge must also hold at deployment, where
+a single inadmissible output can be unsafe.
+Many of these requirements and limits can be written as second-order cone (SOC) constraints
+∥Ay + b∥2 ≤c⊤y + d on the output y. SOC constraints express norm bounds and robust linear
+inequalities (Lobo et al., 1998). Friction cones in contact force allocation (Boyd and Wegbreit, 2007)
+* These authors contributed equally.
+† Corresponding author
+1
+arXiv:2611.34136v1  [cs.LG]  25 Nov 2026
+
+
+OH MIN AZIZAN CHO
+and thrust and pointing limits in powered-descent guidance (Acikmese and Ploen, 2007) are SOC
+constraints. So are robust control barrier function (CBF) conditions, whose safety margin grows
+with the model uncertainty (Dean et al., 2021; Cosner et al., 2021; Taylor et al., 2021). In learning
+problems the coefficients A, b, c, d usually depend on the input x, so the feasible set changes from
+one evaluation to the next.
+A common way to impose such constraints is to penalize their violation in the training loss.
+Examples include fixed penalties, physics-informed residuals, augmented-Lagrangian terms, and
+primal–dual constrained learning (Raissi et al., 2019; Dener et al., 2020; Chamon and Ribeiro,
+2020; Fioretto et al., 2020). These methods reduce violations on the training distribution but do not
+guarantee that every output is feasible. Violations can remain on unseen inputs or before training
+has converged.
+Hard-constrained neural networks (HardNets) instead guarantee feasibility for every input by
+construction. HardNet-Cvx (Min and Azizan, 2025) enforces input-dependent convex constraints
+by projecting network outputs onto the feasible set using differentiable optimization layers (Amos
+and Kolter, 2017; Agrawal et al., 2019). Other hard-constrained architectures avoid a general-
+purpose solver by mapping the backbone output to a feasible point explicitly. For instance, HardNet-
+Aff (Min and Azizan, 2025) does so in closed form through metric projection but handles only
+affine constraints. ECO (Goertzen et al., 2026b) develops a closed-form projection layer for convex
+quadratic constraints. RAYEN supports SOC and LMI constraints through rays from an interior
+feasible point (Tordesillas et al., 2023). When the constraint depends on the input, this point must be
+supplied for every input. To avoid that, LMI-Net and ΠNet rely on iterative splitting or projection
+(Tang et al., 2026; Grontas et al., 2026). Their outputs are feasible only upon convergence, so
+truncated iterations may return infeasible outputs. HardNet++ (Goertzen et al., 2026a) addresses
+nonlinear equality and inequality constraints through differentiable, damped local linearizations.
+For general input-dependent SOC constraints, existing methods therefore rely on a conic solver, an
+iterative scheme, or an interior point computed for each input.
+We propose SOC-Net, a neural network architecture that enforces hard, input-dependent SOC
+constraints on its output. SOC-Net rewrites the constraints as M(x)y + h(x) ∈K for a fixed
+product K of Lorentz cones and projects the lifted backbone output onto the part of K reachable by
+some output (Fig. 1). When the constraints are separable, as for friction cones at distinct contacts,
+this projection splits into one projection per cone. When M(x) is surjective, this is the classical
+Lorentz-cone projection. When it is not, we show that projecting onto the reachable slice reduces
+to two coordinates and one monotone multiplier equation. This reduction holds regardless of the
+cone dimension and the rank of M(x). The correction therefore needs neither a conic solver nor
+a feasible anchor. It also remains feasible for any approximate root, unlike splitting layers whose
+feasibility is tied to convergence.
+Our contributions are as follows.
+• We propose SOC-Net, a neural network architecture whose output satisfies input-dependent
+SOC constraints by construction for every input. It needs only a closed-form projection or a
+single scalar root per constraint.
+• We prove that SOC-Net is feasible for every input even with an inexact root and leaves feasible
+outputs unchanged. Under explicit regularity conditions on the moving slice, it also retains
+universal approximation over continuous feasible targets. Its explicit Jacobian requires no
+iterations, so the whole network can be trained end-to-end by standard backpropagation.
+2
+
+
+SOC-NET
+Figure 1: Schematic of SOC-Net for a single-constraint case. The backbone output fθ(x) is lifted
+to w = M(x)fθ(x) + h(x), projected within the reachable affine subspace A(x) onto the
+slice A(x) ∩K, and pulled back through M(x)+, so that y ∈S(x) for every input x.
+• We evaluate SOC-Net on contact force allocation and on robust CBF-constrained control.
+Baselines include soft-penalty networks, other hard-constrained layers, and conic solvers.
+2. Problem Formulation
+Consider a neural network fθ : X ⊆Rnin →Rnout, parameterized by θ. We seek a constrained
+network x 7→y ∈Rnout, built from fθ, whose output satisfies the input-dependent SOC constraints
+∥Ai(x)y + bi(x)∥2 ≤ci(x)⊤y + di(x),
+i = 1, . . . , p,
+∀x ∈X,
+(1)
+where Ai(x) ∈Rki×nout, bi(x) ∈Rki, ci(x) ∈Rnout, and di(x) ∈R; let S(x) ⊆Rnout denote the
+feasible output set of (1) at x.
+For the ith constraint, define the lifting matrix and offset
+Mi(x) =
+ci(x)⊤
+Ai(x)
+
+∈R(ki+1)×nout,
+hi(x) =
+di(x)
+bi(x)
+
+∈Rki+1,
+(2)
+and the Lorentz cone Ki = {(t, z) ∈R × Rki : ∥z∥2 ≤t}, whose apex is the origin and whose
+axis is ei = (1, 0, . . . , 0)⊤. Then an output y satisfies the ith constraint of (1) if and only if its lifted
+image Mi(x)y + hi(x) lies in Ki. We stack the liftings vertically as
+M(x) =
+
+M1(x); . . . ; Mp(x)
+
+,
+h(x) =
+
+h1(x); . . . ; hp(x)
+
+,
+(3)
+where [ · ; · ] denotes vertical concatenation. Then (1) holds if and only if M(x)y + h(x) lies in the
+product cone K = K1 × · · · × Kp. We call A(x) = h(x) + range M(x) the set of lifted points
+reachable by some output, and Ai(x) = hi(x)+range Mi(x) the reachable set of the ith constraint.
+Assumption 1 (Feasibility and separability)
+For every x ∈X, each constraint is feasible, i.e.,
+Ai(x) ∩Ki̸ = ∅for i = 1, . . . , p. Moreover, the constraints are separable, that is,
+rank M(x) =
+p
+X
+i=1
+rank Mi(x).
+(4)
+3
+
+
+OH MIN AZIZAN CHO
+Remark 1
+The separability condition (4) concerns reachability in the lifted space so that any
+tuple of points from each reachable set is realizable by a common output. It allows rank-deficient
+liftings and covers constraints that share output variables. Moreover, the learning objective need
+not be separable: in Section 5.1, the per-contact friction constraints accompany a wrench-matching
+objective that couples the contact forces. For a single-constraint case, (4) holds trivially for any
+SOC constraint, including the non-surjective input-robust CBF constraint of Section 5.2.
+The constrained network should meet three requirements: (i) hard feasibility, i.e., the output
+lies in S(x) for every x ∈X, not merely on average or after training; (ii) differentiability almost
+everywhere of the map from fθ(x) to the output, so that θ can be trained end-to-end; and (iii) no
+loss of expressiveness, i.e., universal approximation over continuous functions satisfying (1).
+A natural way to meet (i) is the Euclidean projection
+P(fθ)(x) = arg min
+y∈S(x)
+1
+2∥y −fθ(x)∥2
+2,
+(5)
+which is feasible and leaves a feasible fθ(x) unchanged. However, (5) has no closed form in general,
+so every forward pass requires a conic solve and every backward pass requires differentiating the
+solver’s optimality conditions (Agrawal et al., 2019). We therefore seek a correction that meets
+(i)–(iii) without calling a conic solver in either pass.
+3. SOC-Net: Neural Networks with Hard Input-Dependent Second-Order Cone
+Constraints
+SOC-Net lifts the backbone output to a space in which the constraints become membership in a fixed
+cone, corrects it there, and maps the correction back to the output space, as illustrated in Fig. 1.
+For the raw output fθ(x), we call w = M(x)fθ(x) + h(x) the lifted point. A feasible output
+needs its lifted point in A(x) ∩K, which is nonempty under Assumption 1. The set A(x) ∩K is
+then closed and convex, so the Euclidean projection onto it,
+ΠA(x)∩K(w) = arg min
+v∈A(x)∩K
+1
+2∥v −w∥2
+2,
+(6)
+exists and is unique, and we define the SOC-Net correction by
+PSOC(fθ)(x) = fθ(x) + M(x)+ ΠA(x)∩K(w) −w
+
+,
+(7)
+where M(x)+ is the Moore–Penrose pseudoinverse. The lifted projection moves w as little as
+possible within A(x), and M(x)+ selects the minimum-norm output displacement realizing it.
+For the ith constraint, let wi = Mi(x)fθ(x)+hi(x) be its lifted point, so that w = (w1, . . . , wp).
+Under Assumption 1, the projection (6) then splits into one projection ΠAi(x)∩Ki(wi) per constraint.
+For intuition, we first consider a single cone without the index i in Sections 3.1 and 3.2 and then
+assemble the blocks in Section 3.3. If M(x) is surjective, every point in Rk+1 is reachable and
+A(x) ∩K = K (Section 3.1); otherwise, A(x) is a proper affine subspace and the correction must
+remain in the affine slice A(x) ∩K (Section 3.2).
+4
+
+
+SOC-NET
+(a) Surjective case
+(b) Paraboloid slice
+(c) Slice frame
+Figure 2: Projection geometry of SOC-Net. (a) Surjective case: w is projected directly onto K. (b)
+Non-surjective case: w ∈A(x) is projected within A(x) onto the slice A(x) ∩K, here a
+paraboloid. (c) Slice frame: w ∈A(x) has coordinates (α0, β0) in the frame (a, bn, bn⊥).
+3.1. Surjective case
+Suppose first that M(x) has full row rank for every x ∈X, i.e., rank M(x) = k + 1 ≤nout, so
+that M(x)M(x)+ = Ik+1. Then every lifted point is reachable, A(x) = Rk+1, and (7) reduces to
+the standard Lorentz-cone projection:
+PSOC(fθ)(x) = fθ(x) + M(x)+ ΠK(w) −w
+
+.
+(8)
+Writing w = (w0, ¯w) ∈R × Rk, the cone projection has the well-known closed form
+ΠK(w) =
+
+
+
+
+
+
+
+
+
+
+
+
+
+w,
+if ∥¯w∥2 ≤w0,
+0k+1,
+if ∥¯w∥2 ≤−w0,
+w0 + ∥¯w∥2
+2
+"
+1
+¯w/∥¯w∥2
+#
+,
+otherwise.
+(9)
+The three branches correspond to w lying in K, in its polar cone −K (projected onto the apex), and
+elsewhere (projected onto the nearest boundary ray), so (8) is computed in closed form.
+3.2. Non-surjective case
+When M(x) is not surjective (i.e., rank M(x) < k + 1), A(x) is a proper affine subspace, and
+A(x) ∩K is a conic section of K: an ellipsoid, a paraboloid, or one sheet of a hyperboloid (Fig. 2);
+degenerate slices are treated in Appendix A. For w ∈A(x), the cone projection ΠK(w) generally
+does not lie in A(x) and is therefore not reachable by any output, so SOC-Net instead projects
+directly onto the reachable conic section.
+With x fixed and dropped, let a be the point of A closest to the apex, and let bn and s be the
+unit direction and the length of the cone axis projected onto range M (Fig. 2(c)). In this frame, the
+raw lifted point is w = a + α0bn + β0bn⊥, with axial coordinate α0, transverse distance β0 ≥0, and
+unit transverse direction bn⊥(Appendix A.1). If w ∈K, the projection is w itself; otherwise, for a
+nondegenerate slice,
+ΠA(x)∩K(w) = a + α⋆bn +
+β0
+1 + λ⋆bn⊥.
+(10)
+5
+
+
+OH MIN AZIZAN CHO
+Because the slice is rotationally symmetric about bn, the projection stays in the plane of bn and bn⊥,
+and its KKT conditions reduce to one monotone scalar equation in the multiplier λ, whose form
+depends on the sign of µ = 1 −2s2 (Table 1). Each equation is a polynomial of degree at most
+four after clearing denominators, regardless of k and rank M(x), and the implementation solves it
+by a safeguarded Newton method. The derivation, degenerate slices, and a feasibility-preserving
+finite-accuracy reconstruction are in Appendix A.
+Table 1: Scalar equations for the projection onto a nondegenerate slice, with τ = e⊤a, αc = 2τs/µ,
+and qc = ∥a∥2
+2 −2τ 2/µ for µ̸ = 0: λ⋆> 0 is the unique positive root of the (unsquared)
+scalar equation, and α⋆is the corresponding axial coordinate in (10).
+Slice
+Scalar equation for λ⋆> 0
+Axial coordinate α⋆
+Ellipsoid (µ > 0)
+β2
+0
+(1 + λ)2 + µ(α0 −αc)2
+(1 + µλ)2
++ qc = 0
+αc + α0 −αc
+1 + µλ⋆
+Paraboloid (µ = 0)
+β2
+0
+(1 + λ)2 + ∥a∥2
+2 −2τ 2 −4τsα0 −8τ 2s2λ = 0
+α0 + 2τsλ⋆
+Hyperboloid (µ < 0)
+(1 + µλ)
+s
+β2
+0
+(1 + λ)2 + qc −√−µ (α0 −αc) = 0
+αc +
+s
+β2
+0/(1 + λ⋆)2 + qc
+−µ
+3.3. Multiple SOC constraints
+We now combine the single-cone projections of Sections 3.1 and 3.2 into a projection layer for
+multiple SOC constraints. This rests on the fact that, under Assumption 1, the reachable subspace
+is the product of the per-constraint reachable subspaces,
+range M(x) =
+p
+Y
+i=1
+range Mi(x).
+(11)
+The inclusion ⊆always holds, because the ith block of M(x)y is Mi(x)y ∈range Mi(x) for
+every output y. The reverse inclusion follows from the separability condition (4), which gives both
+subspaces the dimension P
+i rank Mi(x). Adding the offset h(x) to both sides of (11) gives
+A(x) =
+p
+Y
+i=1
+Ai(x),
+A(x) ∩K =
+p
+Y
+i=1
+ Ai(x) ∩Ki
+
+.
+(12)
+Any tuple of individually reachable lifted points is thus reached by a single output.
+With this factorization, the SOC-Net layer (7) for the stacked lifting becomes
+PSOC(fθ)(x) = fθ(x) + M(x)+
+
+
+ΠA1(x)∩K1(w1) −w1
+...
+ΠAp(x)∩Kp(wp) −wp
+
+.
+(13)
+Surjective and non-surjective constraints can therefore coexist in one layer. A block with surjective
+Mi(x) has Ai(x) = Rki+1 and uses the closed-form cone projection ΠKi(wi) in (9), while every
+other block uses the slice projection (10).
+6
+
+
+SOC-NET
+3.4. Optimization view
+SOC-Net does not compute the Euclidean projection (5), which has no closed form in general. Its
+output is instead the exact solution of a closely related nested projection problem, analogous to
+HardNet-Aff (Min and Azizan, 2025, Prop. 6); see Appendix C for a proof.
+Proposition 2 (Optimization characterization) Let Assumption 1 hold and fix x ∈X. Then the
+SOC-Net output (7) is the unique solution of the bilevel problem
+PSOC(fθ)(x) = arg min
+z∈Rnout ∥z −fθ(x)∥2
+s.t.
+z ∈arg min
+y∈S(x)
+M(x)
+ y −fθ(x)
+
+2.
+(14)
+Thus, (14) and (5) share the feasible set S(x) and differ only in how the correction y −fθ(x) is
+measured: (5) measures it in the output space, whereas the inner problem of (14) measures it in the
+lifted space, which reduces it to the block-wise cone or slice projections of Sections 3.1–3.3. When
+M(x) has a nontrivial null space, the inner problem has infinitely many solutions, which differ by
+elements of ker M(x), and SOC-Net chooses the one closest to fθ(x) in Euclidean distance.
+4. Feasibility, differentiability, and universal approximation
+We now show that SOC-Net meets (i)–(iii) of Section 2; proofs are in Appendices B–E.
+Theorem 3 (Exact feasibility) Let Assumption 1 hold. For every x ∈X, the SOC-Net output (7)
+is well defined and satisfies
+PSOC(fθ)(x) ∈S(x),
+i.e.,
+M(x)PSOC(fθ)(x) + h(x) = ΠA(x)∩K(w) ∈K.
+(15)
+Moreover, if fθ(x) ∈S(x), then PSOC(fθ)(x) = fθ(x).
+Feasibility thus holds for every input and parameter θ, independently of training. It also does
+not require solving the scalar equation in Table 1 exactly: SOC-Net maps any approximate root to a
+point on the boundary of the slice (Appendix A), so stopping the Newton iteration early makes the
+correction less accurate but never infeasible.
+Theorem 4 (Differentiability) Fix x with rank M(x) = r ≥1. Let σmax(M(x)) and σr(M(x))
+be the largest and smallest nonzero singular values of M(x), and define
+κ+(M(x)) = σmax(M(x))/σr(M(x)) ≥1.
+(16)
+The map fθ(x) 7→PSOC(fθ)(x) is κ+(M(x))-Lipschitz and hence differentiable almost every-
+where. Wherever ΠA(x)∩K is differentiable at w, the Jacobian is
+Dfθ(x)PSOC(fθ)(x) = I + M(x)+
+DwΠA(x)∩K(w) −I
+	
+M(x).
+(17)
+Theorem 4 meets requirement (ii): the gradient of any training loss passes through the correction
+to reach the backbone, so θ can be trained end-to-end by backpropagation. The backward pass is
+also cheap, since (17) requires only DwΠA(x)∩K(w). Block by block, this is the Jacobian of the
+closed form (9) in the surjective case, and in the non-surjective case it follows from the implicit
+function theorem applied to the scalar equation in Table 1, without unrolling the Newton iteration
+(Appendix D).
+7
+
+
+OH MIN AZIZAN CHO
+Theorem 5 (Universal approximation)
+Let X be compact, let M and h be continuous, and let
+rank M(x) = r ≥1 be constant on X. Suppose that the moving projector (x, w) 7→ΠA(x)∩K(w),
+w ∈A(x), is continuous. Let F ⊂C(X; Rnout) be a class of backbone networks that universally
+approximates (or is dense in) C(X; Rnout) in the uniform norm, and let κ = maxx∈X κ+(M(x)).
+Then, for every f ∈F, PSOC(f) is continuous and feasible, and for every continuous g with
+g(x) ∈S(x) for all x ∈X,
+∥PSOC(f) −g∥∞≤κ ∥f −g∥∞.
+(18)
+Consequently, PSOC(F) universally approximates every such g.
+Theorem 5 meets requirement (iii), since every continuous feasible target g is uniformly ap-
+proximated by some f ∈F and Theorem 5 shows that the correction preserves this approximation
+up to the factor κ. This factor follows from two facts: the correction leaves the feasible target g
+unchanged (Theorem 3), and it is κ-Lipschitz (Theorem 4). Therefore, the projection layer PSOC
+does not restrict which feasible maps the network can represent.
+5. Experiments
+We evaluate SOC-Net on two control tasks, one for each case of Section 3: contact force allocation,
+where several separable constraints each have a surjective lifting (Section 3.3), and safe control of
+a 3-D aircraft under actuation uncertainty, where a single constraint has a non-surjective lifting.
+Both use float64, with learned methods on an RTX 5090 GPU and conic solvers on one CPU core
+(Appendices F and G).
+5.1. Contact force allocation for grasping with friction constraints
+We consider a rigid object supported at four coplanar point contacts with parallel upward nor-
+mals (Fig. 4 in Appendix F). The task is to allocate contact forces y = (f1, . . . , f4) ∈R12,
+fi = (fix, fiy, fiz), that reproduce a given desired wrench x = (Fdes, τdes) ∈R6 while staying
+inside the friction cones to prevent slip. This allocation can be posed as an optimization problem
+with the friction cones as hard constraints and the wrench error as the objective,
+min
+y∈R12 ∥Gy −x∥2
+2
+s.t.
+∥(fix, fiy)∥2 ≤µffiz,
+i = 1, . . . , 4,
+(19)
+where the grasp map G ∈R6×12 gives Gy = (P
+i fi, P
+i ri × fi) for contact positions ri, and
+µf > 0 is the friction coefficient. Each friction cone is one constraint of (1) with hi = 0 and
+the lifting Mi ∈R3×12 given by Miy = (µffiz, fix, fiy). Since M = [M1; . . . ; M4] satisfies
+Assumption 1 and every Mi is surjective, we use the layer (13) with the closed-form cone projection
+(9) at each contact. We compare SOC-Net with a raw network and a soft-penalty network on the
+same backbone, and with per-instance solutions of (19) by the SOCP solvers ECOS and Clarabel.
+The penalty network still violates a friction cone on 0.19% of the test inputs, whereas SOC-
+Net’s largest violation is 2.9 × 10−16 N, which is floating-point round-off (Table 2). Because its
+correction is in closed form, SOC-Net also processes the test set in 0.179 ms, about 1.1 × 104 and
+1.4 × 104 times faster than ECOS and Clarabel.
+8
+
+
+SOC-NET
+Table 2: Contact force allocation on 4,096 test wrenches, mean over five seeds. The friction vio-
+lation of an output is its largest cone violation over the four contacts, and its rate counts
+inputs above 10−6 N (Appendix F).
+Method
+Wrench MSE
+Max (mean) friction
+viol. (N)
+Friction viol.
+rate (%)
+Ttest
+(ms)
+Ttrain
+(s)
+Raw NN
+6.47 × 10−4
+0.508 (4.62 × 10−2)
+31.46
+0.117
+2.27
+Penalty NN (λ = 100)
+2.333 × 10−3
+0.0423 (3.09 × 10−5)
+0.1855
+0.117
+3.31
+SOC-Net (Ours)
+2.585 × 10−3
+2.9 × 10−16 (5.4 × 10−17)
+0
+0.179
+4.60
+SOCP (Clarabel)
+9.41 × 10−19
+0 (0)
+0
+2,488
+–
+SOCP (ECOS)
+3.40 × 10−12
+0 (0)
+0
+2,052
+–
+5.2. 3-D aircraft obstacle avoidance under actuation uncertainty
+We consider a simplified 3-D aircraft with state x = (p, v) ∈R6 of position and velocity, and
+commanded acceleration u ∈R3. Its dynamics are given by ˙p = v, ˙v = (I + ∆)u + δ −gez
+with the unknown actuator gain error ∆∈R3×3, ∥∆∥2 ≤εg = 0.2 and the disturbance δ ∈R3,
+∥δ∥2 ≤εd = 0.5. Starting at rest, the vehicle must reach a goal p⋆that lies behind a spherical
+obstacle (Fig. 3a).
+We train a residual policy on top of a PD controller uPD(x). At each control instant k, the
+command uk = uPD(xk) + πNN(xk) is applied and held over a step of length ts. The neural
+network parameters of πNN are trained end-to-end through the layer to minimize the tracking cost
+of the nominal rollout with ∆= 0 and δ = 0,
+J =
+N−1
+X
+k=0
+ts
+ ∥pk −p⋆∥2
+Qp + ∥vk∥2
+Qv + ∥uk −gez∥2
+R
+
+,
+(20)
+where N is the horizon and ∥z∥2
+Q = z⊤Qz with weights Qp, Qv, R ≻0.
+The applied command must also avoid the obstacle under every admissible uncertainty, which
+we encode with a control barrier function (CBF) B(x) built from the obstacle distance. If every
+applied input satisfies ˙B + kBB ≥0 for a gain kB > 0, the set {B ≥0} is forward invariant, and
+the vehicle never enters the obstacle (Ames et al., 2017). Requiring the CBF condition for every
+admissible (∆, δ) yields the input-robust CBF constraint (Taylor et al., 2021)
+εg∥c(x)∥2∥u∥2 ≤c(x)⊤u + d(x),
+(21)
+which is an SOC constraint in u, with c(x) and d(x) derived in Appendix G. We therefore implement
+πNN as an SOC-Net, whose lifting here is the non-surjective case introduced in Section 3.2.
+Each policy is evaluated from 100 initial states under 102 uncertainty scenarios (the nominal
+one, a worst case that pushes the vehicle toward the obstacle at every step, and 100 random draws),
+and Jnom and Jwc denote the cost (20) of the nominal and worst-case rollouts. Baselines are a raw
+and a penalty network, the hard-constrained layers RAYEN, ΠNet, HardNet-Cvx, and LMI-Net,
+and SOCP safety filters that project the raw network’s or the PD controller’s command onto (21)
+online.
+SOC-Net satisfies (21) in every rollout, whereas ΠNet, LMI-Net, and the penalty network vio-
+late it in 68%, 23%, and 16% of rollouts (Table 3). Because SOC-Net projects onto the feasible set
+9
+
+
+OH MIN AZIZAN CHO
+Table 3: 3-D obstacle avoidance, mean ± std over five seeds. CBF violation is the largest violation
+of (21) along a rollout, at relative tolerance 10−9 for the rate. †Our implementation.
+Method
+Jnom
+Jwc
+Max (mean)
+CBF viol.
+CBF viol.
+rate (%)
+Ttest
+(ms)
+Ttrain
+(s)
+Raw NN
+127.1
+123.4
+3.7 × 102 (3.2 × 102)
+100
+0.31
+1422
+Penalty NN (λ = 103)
+187.2 ± 9.0
+172.4
+1.6 × 101 (3.9 × 10−1)
+15.6 ± 8.6
+0.31
+1617
+SOC-Net (Ours)
+167.7
+160.7
+2.3 × 10−13 (4.9 × 10−14)
+0
+1.03
+1873
+RAYEN
+169.0 ± 0.5
+168.9
+3.0 × 10−13 (8.7 × 10−14)
+0
+0.87
+2234
+ΠNet (100 it.)
+167.7
+160.6
+5.8 × 10−3 (1.4 × 10−5)
+67.8 ± 9.6
+3.2
+3401
+HardNet-Cvx
+167.7
+160.0
+2.1 × 10−8 (5.9 × 10−10)
+0
+21.6
+5391
+LMI-Net† (500 it.)
+167.7
+168.3
+2.2 × 10−5 (1.1 × 10−6)
+22.7 ± 2.1
+209
+61332
+Raw NN + SOCP filter
+195.4 ± 0.8
+183.1
+2.7 × 10−8 (7.8 × 10−10)
+0
+83.3
+–
+PD + SOCP filter
+231.3
+214.3
+1.0 × 10−8 (2.0 × 10−10)
+0
+47.2
+–
+instead of scaling toward an interior point as RAYEN does, it attains a lower cost than RAYEN and
+matches HardNet-Cvx, which computes the Euclidean projection with a conic solver. It does so in
+1.03 ms per batch, 21× and 81× faster than HardNet-Cvx and the SOCP filter (Fig. 3b).
+Figure 3: (a) Nominal trajectories from one test state (“SOCP filter” is Raw NN + SOCP filter) and
+SOC-Net’s random-uncertainty rollouts (thin blue). (b) Jnom against Ttest over five seeds.
+6. Conclusion
+SOC-Net is a novel neural network architecture whose output satisfies hard input-dependent SOC
+constraints for every input. Its projection layer is differentiable almost everywhere with an explicit
+Jacobian, so the whole network can be trained end-to-end while retaining universal approximation
+of continuous feasible maps. This makes it suited to applications where prior knowledge must hold
+exactly for every input and a conic solve per input is too slow, such as the control problems consid-
+ered here. It would be interesting to extend SOC-Net beyond the separable setting of Assumption 1
+to non-separable SOC constraints, which would make it applicable to problems such as trajectory
+optimization where many coupled cone constraints act on the same decision variables.
+10
+
+
+SOC-NET
+Generative AI Use
+Generative AI tools were used for drafting parts of the manuscript and implementing parts of the
+experiments. The authors reviewed and verified all AI-assisted content and take full responsibility
+for the final content of the paper.
+Acknowledgments
+We sincerely thank Andrea Goertzen and Sunbochen Tang for providing feedback during the early
+stages of this work. This work was supported in part by the National Research Foundation of
+Korea (NRF) grant from the Korean government (MSIT) (RS-2026-25504174), by the U.S. National
+Science Foundation under CAREER Award No.2544396, and by the MIT-Amazon Science Hub.
+References
+Behcet Acikmese and Scott R Ploen. Convex programming approach to powered descent guidance
+for Mars landing. Journal of Guidance, Control, and Dynamics, 30(5):1353–1366, 2007.
+Akshay Agrawal, Brandon Amos, Shane Barratt, Stephen Boyd, Steven Diamond, and J Zico Kolter.
+Differentiable convex optimization layers. Advances in Neural Information Processing Systems,
+32, 2019.
+Aaron D. Ames, Xiangru Xu, Jessy W. Grizzle, and Paulo Tabuada. Control barrier function based
+quadratic programs for safety critical systems. IEEE Transactions on Automatic Control, 62(8):
+3861–3876, 2017. doi: 10.1109/TAC.2016.2638961.
+Brandon Amos and J Zico Kolter. OptNet: Differentiable optimization as a layer in neural networks.
+In International Conference on Machine Learning, pages 136–145. PMLR, 2017.
+Stephen P Boyd and Ben Wegbreit. Fast computation of optimal contact forces. IEEE Transactions
+on Robotics, 23(6):1117–1132, 2007.
+Luiz F. O. Chamon and Alejandro Ribeiro. Probably approximately correct constrained learning.
+In Advances in Neural Information Processing Systems, 2020.
+Steven W Chen, Kelsey Saulnier, Nikolay Atanasov, Daniel D Lee, Vijay Kumar, George J Pappas,
+and Manfred Morari. Approximating explicit model predictive control using constrained neural
+networks. In 2018 Annual American Control Conference (ACC), pages 1520–1527. IEEE, 2018.
+Ryan K Cosner, Andrew W Singletary, Andrew J Taylor, Tamas G Molnar, Katherine L Bouman,
+and Aaron D Ames. Measurement-robust control barrier functions: Certainty in safety with un-
+certainty in state. In 2021 IEEE/RSJ International Conference on Intelligent Robots and Systems
+(IROS), pages 6286–6291. IEEE, 2021.
+Sarah Dean, Andrew Taylor, Ryan Cosner, Benjamin Recht, and Aaron Ames. Guaranteeing safety
+of learned perception modules via measurement-robust control barrier functions. In Conference
+on Robot Learning, pages 654–670. PMLR, 2021.
+11
+
+
+OH MIN AZIZAN CHO
+Alp Dener, Marco Andres Miller, Randy Michael Churchill, Todd Munson, and Choong-Seock
+Chang. Training neural networks under physical constraints using a stochastic augmented La-
+grangian approach. arXiv preprint arXiv:2009.07330, 2020.
+Ferdinando Fioretto, Terrence WK Mak, and Pascal Van Hentenryck. Predicting AC optimal power
+flows: Combining deep learning and Lagrangian dual methods. In Proceedings of the AAAI
+Conference on Artificial Intelligence, volume 34, pages 630–637, 2020.
+Andrea Goertzen, Kaveh Alim, Youngjae Min, and Navid Azizan. HardNet++: Nonlinear constraint
+enforcement in neural networks. IEEE Control Systems Letters, 2026a.
+Andrea Goertzen, Sunbochen Tang, and Navid Azizan. ECO: Energy-constrained operator learning
+for chaotic dynamics with boundedness guarantees.
+In Learning for Dynamics and Control,
+volume 331 of Proceedings of Machine Learning Research, pages 209–221. PMLR, 17–19 Jun
+2026b.
+Panagiotis D Grontas, Antonio Terpin, Efe C. Balta, Raffaello D’Andrea, and John Lygeros. Pinet:
+Optimizing hard-constrained neural networks with orthogonal projection layers. In International
+Conference on Learning Representations, 2026.
+Sergey Levine, Chelsea Finn, Trevor Darrell, and Pieter Abbeel. End-to-end training of deep visuo-
+motor policies. Journal of Machine Learning Research, 17(39):1–40, 2016.
+Miguel Sousa Lobo, Lieven Vandenberghe, Stephen Boyd, and Herv´e Lebret.
+Applications of
+second-order cone programming. Linear Algebra and its Applications, 284(1-3):193–228, 1998.
+Youngjae Min and Navid Azizan. HardNet: Hard-constrained neural networks with universal ap-
+proximation guarantees. arXiv preprint arXiv:2410.10807, 2025.
+Maziar Raissi, Paris Perdikaris, and George E Karniadakis. Physics-informed neural networks: A
+deep learning framework for solving forward and inverse problems involving nonlinear partial
+differential equations. Journal of Computational Physics, 378:686–707, 2019.
+Guanya Shi, Xichen Shi, Michael O’Connell, Rose Yu, Kamyar Azizzadenesheli, Animashree
+Anandkumar, Yisong Yue, and Soon-Jo Chung. Neural lander: Stable drone landing control
+using learned dynamics. In 2019 International Conference on Robotics and Automation (ICRA),
+pages 9784–9790. IEEE, 2019.
+Sunbochen
+Tang,
+Andrea
+Goertzen,
+and
+Navid
+Azizan.
+LMI-Net:
+Linear
+matrix
+inequality–constrained neural networks via differentiable projection layers.
+arXiv preprint
+arXiv:2604.05374, 2026.
+Andrew J Taylor, Victor D Dorobantu, Sarah Dean, Benjamin Recht, Yisong Yue, and Aaron D
+Ames. Towards robust data-driven control synthesis for nonlinear systems with actuation uncer-
+tainty. In IEEE Conference on Decision and Control (CDC), pages 6469–6476, 2021.
+Jesus Tordesillas, Victor Klemm, Jonathan P How, and Marco Hutter. RAYEN: Imposition of hard
+convex constraints on neural networks. arXiv preprint arXiv:2307.08336, 2023.
+12
+
+
+SOC-NET
+Appendix A. Derivation of the affine-slice projection
+Throughout this section, x is fixed and dropped from the notation, and M, h, K, and A denote the
+quantities of a single constraint, as in Sections 3.1–3.2.
+A.1. Slice frame and conic-section form
+Since MM+ is the orthogonal projector onto range M, the frame of Section 3.2 is
+a = h −MM+h,
+s = ∥MM+e∥2,
+bn = MM+e
+s
+,
+and every v ∈A has axial coordinate α(v) = bn⊤(v −a) and transverse distance β(v) = ∥v −a −
+α(v)bn∥2. In particular, the raw lifted point w = Mfθ + h decomposes as
+w = a + α0bn + β0bn⊥,
+α0 = α(w),
+β0 = β(w),
+bn⊥= w −a −α0bn
+β0
+.
+(22)
+When β0 = 0, the transverse direction is immaterial and every term containing β0bn⊥is understood
+as zero.
+Because a ⊥range M and e⊤ξ = s bn⊤ξ for every ξ ∈range M, every v ∈A satisfies
+∥v∥2
+2 = ∥a∥2
+2 + α(v)2 + β(v)2 and e⊤v = τ + sα(v) with τ = e⊤a. Writing K = {v : ∥v∥2
+2 −
+2(e⊤v)2 ≤0, e⊤v ≥0} and substituting these identities gives
+A ∩K =
+
+v ∈A : Q(α(v), β(v)) ≤0, τ + sα(v) ≥0
+	
+,
+Q(α, β) = β2 + µα2 −4τsα + ∥a∥2
+2 −2τ 2,
+µ = 1 −2s2,
+(23)
+so the slice is rotationally symmetric about the tilted axis {a+αbn : α ∈R}. For µ̸ = 0, completing
+the square gives Q(α, β) = β2+µ(α−αc)2+qc with the constants of Table 1. The slice is therefore
+an ellipsoid for µ > 0, nonempty if and only if qc ≤0; a paraboloid for µ = 0, where Assumption 1
+gives τ ≥0 with τ = 0 only if a = 0; and, for µ < 0, the sheet
+A ∩K =
+n
+v ∈A : α(v) −αc ≥
+p
+(β(v)2 + qc)/(−µ)
+o
+(24)
+of a two-sheeted hyperboloid, where qc ≥∥a∥2
+2 ≥0. For µ ≥0 and a̸ = 0, the sets A ∩K
+and A ∩(−K) are disjoint, closed, and have the convex union {Q ≤0}, so Assumption 1 gives
+{Q ≤0} = A ∩K and the sign condition in (23) is redundant.
+A.2. Scalar equations
+By rotational symmetry and uniqueness, the projection of w lies in the plane spanned by bn and bn⊥,
+so (6) reduces to
+min
+α,β
+1
+2
+
+(α −α0)2 + (β −β0)2	
+s.t.
+Q(α, β) ≤0, τ + sα ≥0.
+(25)
+We call the slice nondegenerate if s > 0 and, in addition, qc̸ = 0 when µ̸ = 0 or τ̸ = 0 when µ = 0;
+then a̸ = 0 and ∇Q̸ = 0 on {Q = 0}. For w /∈K, only Q ≤0 is active at the solution, and KKT
+stationarity with multiplier λ⋆> 0 gives
+β⋆=
+β0
+1 + λ⋆,
+(1 + µλ⋆)α⋆= α0 + 2τsλ⋆,
+(26)
+13
+
+
+OH MIN AZIZAN CHO
+where the second relation reads (1 + µλ⋆)(α⋆−αc) = α0 −αc for µ̸ = 0. Substituting (26) into
+Q = 0, or for µ < 0 into the boundary of (24), yields the equations FE, FP , and H of Table 1,
+which give (10). Each has exactly one positive root: it is positive at λ = 0 because w /∈K, tends to
+qc < 0, −∞, and −∞, respectively, as λ →∞, and is strictly decreasing,
+F ′
+E(λ) = −
+2β2
+0
+(1 + λ)3 −2µ2(α0 −αc)2
+(1 + µλ)3
+< 0,
+(27)
+F ′
+P (λ) = −
+2β2
+0
+(1 + λ)3 −8τ 2s2 < 0,
+(28)
+H′(λ) = −−µqc + (1 −µ)β2
+0/(1 + λ)3
+p
+β2
+0/(1 + λ)2 + qc
+< 0,
+(29)
+where the last inequality uses −µqc > 0. Clearing denominators, after squaring for H, gives a
+polynomial of degree at most four.
+Finite-accuracy reconstruction.
+Because the exact projection lies on the boundary of the slice,
+substituting an inexact root eλ into (26) does not by itself preserve feasibility. SOC-Net instead sets
+β = β0/(1 + eλ) and maps it to the boundary:
+µ > 0 :
+α = αc + α0 −αc
+1 + µeλ
+,
+ζ =
+s
+−qc
+µ(α −αc)2 + β
+2 ,
+eα = αc + ζ(α −αc),
+eβ = ζβ,
+µ = 0 :
+eα = β
+2 + ∥a∥2
+2 −2τ 2
+4τs
+,
+eβ = β,
+µ < 0 :
+eα = αc +
+s
+β
+2 + qc
+−µ
+,
+eβ = β.
+(30)
+For every eλ ≥0, the point a+ eαbn+ eβbn⊥lies in A∩∂K in exact arithmetic, so stopping the Newton
+iteration early affects the accuracy of the projection but not feasibility; in floating point, feasibility
+holds up to round-off.
+Degenerate slices.
+The remaining cases have explicit projections.
+• s = 0: the slice is perpendicular to the axis, the height e⊤v = τ is constant on A, and the
+slice is the ball {a + ξ : ξ ∈range M, ∥ξ∥2
+2 ≤2τ 2 −∥a∥2
+2} with τ ≥0. Its projection is
+a + min
+
+1,
+p
+2τ 2 −∥a∥2
+2/∥w −a∥2
+	
+(w −a).
+• µ > 0 and qc = 0: the slice is the single point a + αcbn.
+• µ = 0 and τ = 0: then a = 0, the slice is the ray {αbn : α ≥0}, and the projection is
+max{α0, 0} bn.
+• µ < 0 and qc = 0: then a = 0, and the slice is the circular cone {v ∈range M : β(v) ≤
+c α(v)} with c = √−µ. Its projection is w if β0 ≤c α0, the apex if α0 + cβ0 ≤0, and
+otherwise α0+cβ0
+1+c2 (bn + cbn⊥), which reduces to (9) when c = 1.
+These branches also include every projection onto the cone apex.
+14
+
+
+SOC-NET
+Appendix B. Proof of Theorem 3
+Let v⋆= ΠA(x)∩K(w). The projection exists and is unique because A(x) ∩K is nonempty, closed,
+and convex. Since v⋆, w ∈A(x), their difference belongs to range M(x). Therefore,
+M(x)PSOC(fθ)(x) + h(x) = w + M(x)M(x)+(v⋆−w) = v⋆∈K.
+If fθ(x) is feasible, then w ∈A(x) ∩K and hence v⋆= w. This proves the identity property.
+Applying the identity property to a corrected output proves idempotence. Finally,
+ I −M(x)+M(x)
+
+PSOC(fθ)(x) =
+ I −M(x)+M(x)
+
+fθ(x),
+because the correction belongs to range M(x)⊤.
+□
+Appendix C. Proof of Proposition 2
+Fix x and drop it from the notation; write f = fθ(x), w = Mf+h, and v⋆= ΠA∩K(w). As y ranges
+over Rnout, the lifted point v = My + h ranges over A, and ∥M(y −f)∥2 = ∥v −w∥2; moreover,
+y ∈S if and only if v ∈K. Hence the inner problem has optimal value minv∈A∩K ∥v−w∥2, attained
+exactly by the outputs y with My + h = v⋆. By Theorem 3, PSOC(f) is one such output, so the
+inner solution set is the nonempty closed affine set Y ⋆= PSOC(f) + ker M. The outer problem
+is the Euclidean projection of f onto Y ⋆, which is unique and is characterized by z ∈Y ⋆and
+z −f ∈(ker M)⊥= range M⊤. Since PSOC(f) −f = M+(v⋆−w) ∈range M+ = range M⊤,
+the point z = PSOC(f) satisfies both conditions.
+□
+Appendix D. Proof of Theorem 4
+For fixed x, let PSOC,x(y) denote the correction obtained from (7) by replacing fθ(x) with y.
+Lemma 6 (Fixed-input stability) Fix x with rank M(x) = r ≥1. Then, for every y1, y2 ∈Rnout,
+∥PSOC,x(y1) −PSOC,x(y2)∥2 ≤κ+(M(x))∥y1 −y2∥2,
+(31)
+where κ+ is defined in (16).
+Proof. Let δ = y1 −y2 and define wi = M(x)yi + h(x) and vi = ΠA(x)∩K(wi). The difference of
+the corrected outputs is
+PSOC,x(y1) −PSOC,x(y2) =
+ I −M(x)+M(x)
+
+δ + M(x)+(v1 −v2).
+(32)
+The two terms in (32) are orthogonal because they belong to ker M(x) and range M(x)⊤, respec-
+tively. Nonexpansiveness of the metric projector gives
+∥M(x)+(v1−v2)∥2 ≤∥w1 −w2∥2
+σr(M(x)) = ∥M(x)M(x)+M(x)δ∥2
+σr(M(x))
+≤κ+(M(x)) ∥M(x)+M(x)δ∥2.
+Consequently,
+∥PSOC,x(y1) −PSOC,x(y2)∥2
+2 ≤
+ I −M(x)+M(x)
+
+δ
+2
+2 + κ+(M(x))2∥M(x)+M(x)δ∥2
+2
+≤κ+(M(x))2∥δ∥2
+2,
+15
+
+
+OH MIN AZIZAN CHO
+since κ+(M(x)) ≥1. Taking square roots proves the result.
+□
+Lemma 6 gives the Lipschitz bound in Theorem 4, and Rademacher’s theorem gives differen-
+tiability almost everywhere. Differentiating (7) with respect to fθ(x) by the chain rule gives (17).
+Let G(λ, ϑ) = 0 denote the active scalar equation in Table 1, i.e., FE, FP , or H, where ϑ
+collects the differentiable inputs to the slice geometry. At every w /∈K with a nondegenerate slice,
+(27), (28), and (29) give ∂λG(λ⋆, ϑ) < 0. The implicit function theorem then gives
+Dλ⋆[ ˙ϑ] = −DϑG(λ⋆, ϑ)[ ˙ϑ]
+∂λG(λ⋆, ϑ)
+.
+(33)
+The derivative of the lifted projection follows by differentiating (10) with the reconstruction in
+Table 1. Thus, reverse-mode differentiation can differentiate the defining scalar equation without
+unrolling the numerical root solver.
+□
+Classical differentiability can fail at the feasible boundary, the cone apex, a degenerate slice, or
+a change of slice type. Differentiation with respect to M(x) and h(x) additionally requires locally
+constant rank and nonzero singular values bounded away from zero.
+Appendix E. Proof of Theorem 5
+Constant rank and continuity of M imply continuity of M+ on X. Together with the continuity of
+the moving projector, this shows that PSOC(f) is continuous whenever f is continuous. Theorem 3
+gives feasibility and identity on feasible functions. The positive singular values of a continuous
+constant-rank matrix field vary continuously. Compactness of X therefore implies that σr(M(x))
+is bounded away from zero and that κ is finite.
+Let g be continuous and feasible. Applying Lemma 6 pointwise and using PSOC(g) = g gives
+∥PSOC(f) −g∥∞= ∥PSOC(f) −PSOC(g)∥∞≤κ∥f −g∥∞,
+which is (18). Since F is dense, for any ϵ > 0 there exists f ∈F with ∥f −g∥∞< ϵ/κ, and then
+∥PSOC(f) −g∥∞< ϵ, which proves the density claim.
+□
+The continuity condition on the moving projector isolates the set-valued regularity required
+when the affine slice changes with x. It can be verified from the explicit branch formulas under
+suitable nondegeneracy or from a separate continuity condition on the set map x 7→A(x) ∩K.
+Appendix F. Details of the contact force allocation experiment
+Problem data.
+The four contacts sit at the corners of a unit square centered at the object center,
+with normals along +z (Fig. 4). The contact positions, friction coefficient, grasp map, and SOC
+16
+
+
+SOC-NET
+Figure 4: Contact geometry of the force allocation task.
+lifting are
+r1 =
+
+
+0.5
+0.5
+0
+
+,
+r2 =
+
+
+0.5
+−0.5
+0
+
+,
+r3 =
+
+
+−0.5
+0.5
+0
+
+,
+r4 =
+
+
+−0.5
+−0.5
+0
+
+,
+µf = 0.6,
+Gy =
+"
+P4
+i=1 fi
+P4
+i=1 ri × fi
+#
+,
+G ∈R6×12,
+Mi =
+
+03×3(i−1)
+¯
+M
+03×3(4−i)
+
+,
+¯
+M =
+
+
+0
+0
+µf
+1
+0
+0
+0
+1
+0
+
+,
+M = [M1; . . . ; M4] = blkdiag( ¯
+M, . . . , ¯
+M),
+h = 0,
+K = K1 × · · · × K4.
+(34)
+Data.
+Each target wrench is x = Gygen for a random allocation ygen strictly inside the friction
+cones, so every target can be matched with zero loss. Each contact force of ygen is drawn inde-
+pendently, with fiz ∼Unif(0.5, 2) and a tangential component of uniformly random direction and
+magnitude 0.8 µffiz Unif(0, 1). The training, validation, and test sets contain 16,384, 2,048, and
+4,096 wrenches, and ygen is never used as a training target.
+Network and training.
+Every learned method uses the backbone MLP 6 →64 →64 →12 with
+tanh activations and PyTorch’s default initialization, initialized identically across methods for each
+seed. Training minimizes the wrench MSE with Adam (learning rate 2 × 10−3, batch size 128) for
+3,000 updates, and the five seeds set the initialization and the batch order. The validation wrench
+MSE is evaluated every 25 updates, and the best checkpoint is kept.
+Baselines.
+The penalty network adds λ P4
+i=1
+
+∥(fix, fiy)∥2 −µffiz
+2
++, averaged over the batch, to
+the loss, with λ ∈{0.1, 1, 10, 102} selected by the lowest validation violation rate (λ = 102). The
+optimization references solve (19) for one input at a time through CVXPY with ECOS and Clarabel
+at tolerance 10−8.
+Evaluation.
+The friction violation of an output is maxi
+
+∥(fix, fiy)∥2 −µffiz
+
++; SOC-Net’s
+nonzero values are floating-point round-off from the pull-back by M−1. For the learned meth-
+ods, Ttest is the median over 200 calls, after 20 warm-up calls, of one batched forward pass on the
+whole test set; for the solvers, it is the median of three passes over the test set. Ttrain is the wall
+time of the 3,000 updates, excluding validation.
+17
+
+
+OH MIN AZIZAN CHO
+Appendix G. Details of the 3-D obstacle-avoidance experiment
+Problem data.
+The obstacle is a sphere centered at o = (−2.25, 0.2, 1.5) with radius 0.6 m, which
+we inflate by the vehicle radius 0.15 m to ro = 0.75 m; the goal is p⋆= (0, 0, 1.5), g = 9.81 m/s2,
+and the disturbance bound is εd = 0.5. The cost (20) uses Qp = 10I, Qv = I, R = 0.1I, N = 200,
+and ts = 0.02 s; the input is held constant over each step, and the dynamics are integrated by RK4
+with 10 substeps. The PD controller is the gravity-compensated law uPD = gez −4(p −p⋆) −3v,
+clipped to norm 2g; without a safety filter, it collides from every test state.
+Robust CBF constraint.
+The safe set is {ϕ ≥0} with ϕ(p) = ∥p −o∥2
+2/r2
+o −1. Because ϕ has
+relative degree two, the barrier is B = ˙ϕ + khϕ, with (kh, kB) = (3, 8) chosen from {1, 2, 3} ×
+{3, 5, 8} as the pair with the lowest validation cost among those for which PD + SOCP filter does
+not collide. Along the dynamics, ˙B = ℓ(x) + c(x)⊤ (I + ∆)u + δ
+
+with
+c(x) = 2(p −o)
+r2o
+,
+ℓ(x) = 2∥v∥2
+2
+r2o
++ kh c(x)⊤v −g cz(x).
+At a fixed state and commanded input,
+inf
+∥∆∥2≤εg
+c⊤∆u = −εg∥c∥2∥u∥2,
+inf
+∥δ∥2≤εd
+c⊤δ = −εd∥c∥2,
+attained at ∆= −εgcu⊤/(∥c∥2∥u∥2) and δ = −εdc/∥c∥2, so (21) with d(x) = ℓ(x) + kBB(x) −
+εd∥c(x)∥2 is the exact robust counterpart of ˙B + kBB ≥0 for all admissible (∆, δ), i.e., the
+input-robust CBF condition of Taylor et al. (2021). SOC-Net acts on the residual y = fθ(x), with
+u = uPD(x) + y, through
+M(x) =
+
+c(x)⊤
+εg∥c(x)∥2I3
+
+∈R4×3,
+h(x) =
+d(x) + c(x)⊤uPD(x)
+εg∥c(x)∥2uPD(x)
+
+.
+For every c(x)̸ = 0, the slice has s2 = 1/(1 + ε2
+g), µ = (ε2
+g −1)/(ε2
+g + 1), and κ+ =
+q
+1 + 1/ε2g,
+none of which depends on the state. We write rCBF(x, u) = c(x)⊤u + d(x) −εg∥c(x)∥2∥u∥2 for
+the signed robust margin.
+Feasibility and safety.
+On the safe set, ∥p−o∥2 ≥ro, so ∥c(x)∥2 ≥2/ro > 0 and M(x) has full
+column rank. Since εg < 1, the input u = βc(x) gives rCBF = β(1 −εg)∥c(x)∥2
+2 + d(x) > 0 for
+large enough β, so Assumption 1 holds at every safe state. Every start has v0 = 0 and ϕ(p0) > 0,
+so B(x0) = khϕ(p0) > 0; because SOC-Net satisfies (21) at every evaluation (Theorem 3), the
+standard higher-order CBF argument gives forward invariance of {ϕ ≥0} when the constraint is
+enforced in continuous time. The experiments enforce it only at the control instants under a zero-
+order hold; still, over all visited states ∥c(x)∥2 ≥4.05 > 2/ro = 2.67, every active query took the
+hyperboloid branch, no constrained method collided, and every learned constrained policy kept at
+least 0.36 m of clearance.
+Data.
+Initial positions are drawn uniformly from the box [−5, −4.5] × [−0.5, 0.5] × [1, 2] with
+v0 = 0 and rejection-sampled for ϕ(p0) > 0; the obstacle blocks every straight path from this box
+to the goal. The training, validation, and test sets contain 800, 100, and 100 initial states.
+18
+
+
+SOC-NET
+Network and training.
+Every learned method uses the backbone MLP 9 →200 →200 →3
+with ReLU activations on the input e(x) = (p −p⋆, v, p −o), initialized identically across methods
+for each seed. Training rolls out the nominal dynamics (∆= 0, δ = 0) and backpropagates J
+through the rollout and the constraint layer, using Adam (learning rate 3 × 10−3, batch size 100) for
+200 epochs (1,600 updates); the five seeds set the initialization and the batch order. The validation
+cost is evaluated every 10 epochs, and the best checkpoint is kept. The learning rate was chosen
+from {10−4, 3 × 10−4, 10−3, 3 × 10−3} on the unconstrained network’s validation cost.
+Baselines.
+The penalty network adds λ P
+k ts [−rCBF(xk, uk)]2
++ to J, with λ ∈{1, 10, 102, 103}
+selected by the lowest validation violation rate (λ = 103). RAYEN uses the interior anchor β(x)c(x)
+with β(x) = max{0, −d(x)/((1 −εg)∥c(x)∥2
+2)} + 0.1, ΠNet runs 100 iterations with an unrolled
+backward pass, and HardNet-Cvx computes (5) with cvxpylayers. LMI-Net, which has no pub-
+lic code, is our implementation with 500 Douglas–Rachford iterations. The SOCP filters solve
+minu 1
+2∥u −uref∥2
+2 subject to (21) through CVXPY with Clarabel at tolerance 10−10, where uref is
+the output of the trained unconstrained network or the PD controller uPD.
+Evaluation.
+The 102 scenarios are the nominal one, a state-dependent worst case, and 100 random
+ones shared by all methods. The worst case applies ˜u = u −(εg∥u∥2 + εd)c/∥c∥2, recomputed
+at every substep; each random scenario draws ∆= εgρ G/∥G∥2, with G a 3 × 3 standard normal
+matrix, and δ = εdρ′n, with n uniform on the unit sphere and ρ, ρ′ ∼Unif(0, 1), and keeps them
+fixed over the rollout. A rollout violates the constraint if rCBF < −10−9 max{|d|, ∥c∥2∥u∥2, 1}
+at some control instant, and its CBF violation is the largest [−rCBF]+ over its control instants;
+collisions are checked on a grid ten times finer than the substeps. Ttest is the median wall time over
+200 calls, after 20 warm-up calls, of one inference of the full policy (backbone and constraint layer
+or filter) on a batch of 1024 states sampled from SOC-Net’s nominal test rollouts; the solver calls
+of HardNet-Cvx and the SOCP filters run on the CPU inside this timed call. SOC-Net is compiled
+with torch.compile, and the other layers except LMI-Net run as released; HardNet-Cvx and
+the filters call the solver only when the raw output is infeasible, since a projection, like SOC-Net,
+leaves feasible outputs unchanged. Ttrain is 200 times the median wall time of one training epoch,
+excluding validation.
+19

@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-11-27</span>
+      <span class="dpr-home-dashboard-kicker">2026-11-28</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 23 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 21 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>9</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>7</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>14</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-11-27 02:36:38 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-11-28 02:03:59 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,10 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日扫描23篇论文，精读9篇、速读14篇，重点聚焦全身控制基准与最优控制。</p>
-<p>最值得看的是《LocoMuJoCo》全身控制模仿学习基准（9.0）和《A Sequential Quadratic Programming Perspective on Optimal Control》（9.0），速读中长时程人形控制、人形场景交互与自主搬运也值得关注。</p>
-<p>普通读者可先读两篇9分精读建立框架，再按兴趣跟进人形控制与搬运应用。</p>
+<p>今日共生成 21 篇推荐（精读 7 篇，速读 14 篇）</p>
+<p>精读：《Data-Driven Nonlinear Observer Design Using the Koopman Generator》（9.0/10）, 《$ζ_0$: A Framework for World Action Models with Joint Scene and Body Foresight in Humanoid Control》（8.0/10）</p>
+<p>速读：《Curvature-Equilibrated Policy Optimization for Deep Reinforcement Learning》（7.0/10）, 《POISE: Curvature-Aware Critic Regularization for Smooth Actor-Critic Control》（7.0/10）, 《BARE: Body-Aware Reflexive Evasion for Humanoid Robots》（7.0/10）</p>
+<p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +74,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">9 篇</strong>
+    <strong class="dpr-home-dashboard-count">7 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="LocoMuJoCo: A Comprehensive Imitation Learning Benchmark for Whole-Body Control">LocoMuJoCo: A Comprehensive Imitation Learning Benchmark for Whole-Body Control</span></li><li><span class="dpr-home-dashboard-paper-title" title="A Sequential Quadratic Programming Perspective on Optimal Control">A Sequential Quadratic Programming Perspective on Optimal Control</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning a Whole-Body Pivot-Walking Gait for Heavy-Box Transport with a Humanoid">Learning a Whole-Body Pivot-Walking Gait for Heavy-Box Transport with a Humanoid</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Data-Driven Nonlinear Observer Design Using the Koopman Generator">Data-Driven Nonlinear Observer Design Using the Koopman Generator</span></li><li><span class="dpr-home-dashboard-paper-title" title="$ζ_0$: A Framework for World Action Models with Joint Scene and Body Foresight in Humanoid Control">$ζ_0$: A Framework for World Action Models with Joint Scene and Body Foresight in Humanoid Control</span></li><li><span class="dpr-home-dashboard-paper-title" title="CHAMP: Coordinated Humanoid Loco-Manipulation with Whole-Body Motion Priors">CHAMP: Coordinated Humanoid Loco-Manipulation with Whole-Body Motion Priors</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>5</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>2</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>3</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>2</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -89,9 +90,9 @@
     <strong class="dpr-home-dashboard-count">14 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Into My Arms: Structured reinforcement learning for autonomous transport of objects and humans">Into My Arms: Structured reinforcement learning for autonomous transport of objects and humans</span></li><li><span class="dpr-home-dashboard-paper-title" title="Motion Mamba 2.0: Autoregressive Diffusion Mamba for Long-Horizon Humanoid Control">Motion Mamba 2.0: Autoregressive Diffusion Mamba for Long-Horizon Humanoid Control</span></li><li><span class="dpr-home-dashboard-paper-title" title="Ada-BFM: Adapting Behavior Foundation Models for Humanoid Scene Interaction">Ada-BFM: Adapting Behavior Foundation Models for Humanoid Scene Interaction</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Curvature-Equilibrated Policy Optimization for Deep Reinforcement Learning">Curvature-Equilibrated Policy Optimization for Deep Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="POISE: Curvature-Aware Critic Regularization for Smooth Actor-Critic Control">POISE: Curvature-Aware Critic Regularization for Smooth Actor-Critic Control</span></li><li><span class="dpr-home-dashboard-paper-title" title="BARE: Body-Aware Reflexive Evasion for Humanoid Robots">BARE: Body-Aware Reflexive Evasion for Humanoid Robots</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">hum-ctrl <strong>7</strong></span><span class="dpr-home-dashboard-tag">rl-control <strong>5</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">rl-control <strong>8</strong></span><span class="dpr-home-dashboard-tag">hum-ctrl <strong>4</strong></span><span class="dpr-home-dashboard-tag">koopman-rl <strong>1</strong></span><span class="dpr-home-dashboard-tag">neural-arch <strong>1</strong></span></div>
 </section>
 </div>
 

@@ -1,0 +1,1549 @@
+DiffGR00T: Execution-Aware Differentiable Training for
+Humanoid Whole-Body Vision-Language-Action Models
+Sichen Wu, Qian Sun, Mengfan Liu, Weikai Qin, Bike Zhu, and Hesheng Wang†
+Fig. 1: DiffGR00T teaser. The VLA action head is updated while SONIC and the world model are frozen; the world
+model replaces the simulator during training. Simulation-only average task success rises from 59.2% to 71.7%.
+Abstract—Vision-language-action (VLA) models have
+achieved strong results in arm-centric manipulation, yet
+humanoid whole-body control (WBC) requires dynamic
+balance and tightly coupled full-body coordination.
+Existing hierarchical humanoid VLAs typically decouple
+motion generation from physical execution, leaving
+tracking and balance errors unable to directly optimize
+the VLA generator. We propose DiffGR00T, an end-
+to-end differentiable training framework that couples
+GR00T N1.7 with SONIC, a pretrained whole-body
+behavior foundation model. To enable execution-aware
+differentiable training, we replace the non-differentiable
+simulator with a learned, action-conditioned world
+model, allowing multi-step body-execution losses to
+backpropagate through the frozen whole-body con-
+troller and the flow-matching sampler directly into the
+VLA action head. On four HumanoidArena simulation
+tasks, DiffGR00T improves average task success by
+12.5 percentage points over the supervised base VLA
+Sichen Wu, Qian Sun, Mengfan Liu, Weikai Qin, and Bike Zhu are
+with the Department of Automation, Shanghai Jiao Tong University,
+Shanghai 200240, China.
+†Hesheng Wang is with the Department of Automation, Shanghai
+Jiao Tong University, Shanghai 200240, China.
+(59.2% →71.7%), demonstrating that execution-aware
+gradients effectively align high-level motion generation
+with closed-loop whole-body dynamics.
+I. Introduction
+Vision-language-action (VLA) models have made remark-
+able progress in arm-centric manipulation, where predicted
+end-effector poses or joint-space targets can be executed
+through low-level servo controllers [1], [2]. Extending these
+capabilities to humanoid robots, however, introduces fun-
+damentally different control challenges. Unlike fixed-base
+manipulators, humanoids exhibit underactuated floating-
+base dynamics in which locomotion, manipulation, and
+posture regulation must be coordinated under changing
+contact and balance constraints. Directly predicting joint
+targets does not guarantee stable whole-body execution,
+while learning high-frequency stabilization directly inside a
+large VLA remains difficult. Consequently, many humanoid
+systems adopt a hierarchical architecture in which a VLA
+generates high-level motion intentions and a pretrained
+arXiv:2611.32665v2  [cs.RO]  25 Nov 2026
+
+
+behavior foundation model (BFM) or whole-body controller
+realizes them through proprioceptive feedback.
+This hierarchical paradigm has driven substantial
+progress in humanoid loco-manipulation. SONIC estab-
+lishes a generalizable whole-body motion foundation
+through a shared latent interface, while systems such
+as WholeBodyVLA and OpenHLM pair task-conditioned
+action generation with pretrained motion controllers [3]–[5].
+Because these architectures train the VLA to emit motion
+references and the controller to track them independently,
+the controller provides reactive whole-body stabilization at
+deployment, yet an action–execution training gap remains:
+tracking and balance errors have no direct gradient path
+back into the VLA’s motion-generation objective. Closing
+this gap via end-to-end differentiable training requires
+establishing a differentiable gradient pathway across the
+policy–controller interface.
+Bridging this gap is non-trivial because robust whole-
+body control and differentiable optimization have tradi-
+tionally followed separate training paradigms. Humanoid
+motion trackers are commonly trained with model-free
+reinforcement learning, where physical execution feedback
+arrives as scalar rewards rather than differentiable state
+transitions. Moreover, contact-rich humanoid dynamics
+involve non-smooth support switches, making direct dif-
+ferentiation through conventional rigid-body simulators
+numerically brittle and computationally expensive. Al-
+though differentiable physics methods such as DiffMimic
+have explored analytical motion-imitation gradients [6],
+scaling such optimization to high-dimensional whole-body
+control and large VLA generators remains computationally
+prohibitive.
+An alternative to differentiating through the simulator
+is to differentiate through a learned world model. Fitted
+to state transitions collected from the simulator or the
+robot, an action-conditioned neural world model is differ-
+entiable everywhere—including across contact transitions—
+allowing execution objectives to be backpropagated through
+predicted states without invoking a contact solver, while
+short rollout windows bound compounding prediction error.
+SuperMimic [7] demonstrates this paradigm for humanoid
+tracking by training a tracking policy with short-horizon
+backpropagation through time (BPTT) on a learned world
+model, and in a velocity-tracking experiment further routes
+gradients through a shared decoder into a lightweight goal
+encoder. Extending this execution-gradient pathway across
+a frozen token-conditioned controller and a multi-step flow-
+matching sampler into a humanoid VLA, however, remains
+largely unexplored.
+We present DiffGR00T, an end-to-end differentiable
+training framework that couples GR00T N1.7 with the
+pretrained SONIC behavior foundation model. We first
+fine-tune the GR00T N1.7 action head on HumanoidArena
+demonstrations carrying recorded SONIC motion tokens [8],
+[9] to align the VLA with SONIC’s latent motion interface.
+During execution-aware differentiable training, a learned
+action-conditioned world model supplies multi-step state
+transitions to evaluate a body-execution loss, allowing
+execution gradients to propagate through the world model,
+the frozen SONIC decoder, and the flow-matching sampler
+directly into the VLA action head.
+Our mechanism exploits the temporal structure of the
+VLA’s action chunks. The flow-matching VLA generates
+a 40-step motion-token sequence, of which the first 20
+tokens are executed in closed loop. At each 50 Hz control
+step, the frozen SONIC decoder maps the current token
+and proprioceptive history to 29 joint targets, and the
+world model predicts the resulting robot state, which is
+fed back as proprioception for the next step. Multi-step
+body-execution losses are then backpropagated through a
+ten-step rollout window, the frozen decoder, and the four-
+step flow-matching sampler to update only the VLA action
+head (via LoRA adapters and the output projection), while
+the world model and the training-only critic remain fixed
+throughout. On four HumanoidArena simulation tasks,
+DiffGR00T raises average task success by 12.5 percentage
+points over the supervised base VLA (59.2% →71.7%).
+Our main contributions are as follows:
+1) A differentiable world model for whole-body
+execution. We learn an action-conditioned dynam-
+ics model for a 29-DoF humanoid from controller-
+excitation replay and a small amount of closed-loop
+policy data, holding its parameters fixed during
+execution-aware differentiable training to serve as
+a differentiable surrogate for the simulator over short
+rollouts.
+2) Execution gradients into a flow-matching VLA.
+We backpropagate multi-step body-execution losses
+through the learned world model, the frozen SONIC
+decoder, and the four-step flow-matching sampler
+to update the VLA action head, while keeping the
+vision-language backbone, controller, world model,
+and training-only critic fixed.
+3) Execution-aligned supervision. We identify the
+key supervision terms required for effective humanoid
+execution feedback—root position and drift to curb
+per-window drift, transition-frame weighting for task-
+phase changes, and speed-coverage window sam-
+pling to retain locomotion in the gradient budget—
+calibrated to maintain scale consistency across objec-
+tives.
+II. Related Work
+A. Flow-Matching Policies and Policy Improvement
+π0 combines a pretrained vision-language backbone with
+a flow-matching action expert to generate continuous
+action chunks [1]. Building on this paradigm, recent work
+explores alternative gradient pathways for supervised policy
+learning: DIAL links the VLM and a reactive action
+expert through predicted visual intent, backpropagating
+the supervised flow-matching loss through this latent
+
+
+intent into trainable VLM components during joint fine-
+tuning [2]; VITA, a visuomotor policy mapping image
+encodings to latent actions, differentiates a supervised
+action-reconstruction loss directly through the Euler steps
+of the flow-matching ODE solver [10].
+A complementary line of research incorporates robot
+execution experience into flow-matching policy updates.
+RECAP fits a value function to execution rollouts and
+conditions supervised VLA updates on value-derived ad-
+vantage indicators [11], whereas Q-VGM learns an action-
+chunk critic from rollout rewards and converts critic
+gradients with respect to denoised action chunks into local
+velocity targets, avoiding backpropagation through the full
+denoising trajectory [12]. While these methods leverage
+ODE differentiation, advantage conditioning, or value
+guidance, none propagates a multi-step body-execution
+objective through a whole-body controller and learned
+action-conditioned dynamics into the flow-matching gener-
+ator.
+B. Humanoid Whole-Body Action Generation and Control
+Humanoid loco-manipulation systems span diverse inter-
+faces between high-level action generation and low-level
+control. SONIC learns a generalizable whole-body motion
+tracker from motion-capture data and demonstrates VLA-
+driven loco-manipulation with GR00T N1.5 through a
+shared motion-token interface [3]. HumanoidArena bench-
+marks hierarchical policy–tracker pairings and documents
+a direct prediction mode in which a VLA outputs 64-
+dimensional SONIC body latents [9], providing the interface
+and benchmark setting adopted in this work. Other hierar-
+chical frameworks rely on different intermediate representa-
+tions: WholeBodyVLA learns locomotion and manipulation
+latents from action-free egocentric video and decodes
+them into upper-body joint targets alongside locomotion
+commands executed by a reinforcement-learning controller
+[4], while OpenHLM combines joint-space teleoperation
+with heterogeneous data co-training to generate whole-
+body joint references tracked by an independent low-level
+policy [5].
+Beyond single-stage reference generation, HAF-VLA
+produces cumulative whole-body commands via stage-wise
+flow matching and cross-stage conditioning, with existing
+reinforcement-learning controllers executing locomotion
+and waist commands [13]. Departing from explicit reference
+tracking, SENTINEL clones a simulator-trained whole-
+body controller into a language-and-proprioception policy
+that predicts low-level action targets directly, then freezes
+that policy and trains a residual action head with PPO
+[14]. Across these interfaces—shared motion tokens, joint-
+space references, staged commands, and direct low-level
+targets—execution discrepancies are absorbed by down-
+stream trackers or a separate residual head rather than
+backpropagated through the controller to update the high-
+level VLA generator.
+C. Differentiable Whole-Body Control and Execution-Aware
+Learning
+Propagating physical execution gradients directly into
+policy learning has progressed from differentiable physics
+to learned dynamics surrogates. DiffMimic trains a hu-
+manoid motion-tracking policy by differentiating imitation
+losses through a differentiable rigid-body simulator [6].
+To avoid differentiating through contact solvers, Con-
+trolVAE optimizes task policies for simulated characters
+by backpropagating task losses through a frozen latent
+skill controller and a learned world model [15]. MoConVQ
+similarly uses a learned world model to train discrete
+motion representations and their decoder, while training its
+text-conditioned generator separately via token prediction
+[16].
+Closest to our humanoid setting are SuperMimic and
+HWAM. SuperMimic fits a differentiable world model
+from simulator transitions and trains a humanoid tracking
+policy via short-horizon imagined rollouts; in a downstream
+velocity-tracking experiment, execution gradients also pass
+through the world model and the shared decoder (with
+decoder weights frozen on that branch) into a velocity
+goal encoder [7]. HWAM incorporates physical execution
+by jointly modeling kinematic references and aligned
+measured post-execution states, coupled with auxiliary
+objectives that predict future video from joint trajectories
+and reconstruct joint trajectories from visual transitions
+[17].
+In contrast, DiffGR00T performs execution-aware differ-
+entiable training on a flow-matching humanoid VLA: multi-
+step body-execution losses are backpropagated through a
+short rollout of learned action-conditioned dynamics, the
+frozen SONIC decoder, and the four-step flow-matching
+sampler to update only the VLA action head (via LoRA
+adapters and the output projection), leaving both the VLM
+backbone and the controller fixed. We evaluate this pathway
+along three axes: gradient connectivity into the flow head,
+directional agreement with simulator returns, and closed-
+loop task performance in simulation.
+III. Method
+A. Overall Architecture and Control Interface
+As illustrated in Figure 2, the framework consists of three
+coupled components: a flow-matching VLA, a frozen whole-
+body foundation model SONIC, and an action-conditioned
+differentiable world model. The VLA maps egocentric
+observations, a language instruction, and robot state to a
+chunk of motion tokens; the BFM decodes each token,
+together with a proprioceptive history, into joint-level
+commands; and the world model predicts how the robot
+state evolves under those commands.
+The architecture is shared by all tasks and has two
+distinct execution modes. At deployment, only the VLA,
+the frozen SONIC decoder, and the hand interface run: the
+VLA produces an action chunk, SONIC decodes its body
+
+
+Fig. 2: DiffGR00T architecture. The GR00T N1.7 VLA action head is trained; the VLA backbone, the SONIC
+decoder, the action-conditioned world model, and the training-only critic are frozen. The execution loss is backpropagated
+through the world model, the SONIC decoder, and the four-step flow-matching sampler. The critic supplies a fixed tail
+value and is not part of the deployed controller. The world model is trained once from multi-source replay and replaces
+the simulator only during training; it is not used at inference.
+tokens and proprioceptive history into 29-dimensional joint
+commands, and the separate hand interface executes the 14
+finger commands. The world model and the training-only
+critic are absent, so the learned surrogate adds no inference
+cost.
+During training, the simulator is replaced by the action-
+conditioned world model. For the body branch, the same
+chunk is passed through the frozen SONIC decoder and
+the world model, and the resulting execution cost is
+backpropagated through the world model, the frozen
+decoder, and the four-step flow-matching sampler to the
+VLA action head. Because the frozen modules remain in
+the backward graph, their parameters do not change but
+their Jacobians do. This frozen-but-differentiable path is
+the central architectural difference from standard VLA fine-
+tuning. The world model is trained once from multi-source
+replay and is never deployed; the critic is training-only and
+summarizes the tail of the rollout.
+The VLA generates a 40-step chunk through a four-step
+flow-matching sampler. At time t, the chunk is
+At = [Zt, Ht] ∈R40×78,
+where the body part Zt
+∈
+R40×64 collects SONIC-
+compatible motion tokens zt+i|t ∈R64 for i = 0, . . . , 39,
+and the hand part Ht ∈R40×14 collects seven finger
+commands per hand for each step. Each step is therefore a
+78-dimensional vector: 64 body-token dimensions plus 14
+finger dimensions.
+For each body step j = t+i, the frozen body foundation
+model πψ takes the token zj and the ten-frame propriocep-
+tive history Oj ∈R10×93, and outputs a 29-dimensional
+normalized body action
+uj = πψ(zj, Oj).
+(1)
+The 29 entries of uj correspond one-to-one to the 29 body
+joints; they are normalized action coordinates, not joint
+angles yet. Each history frame in Oj stacks 29 joint-position
+offsets from the default configuration, 29 joint velocities,
+3 body angular-velocity components, 3 projected-gravity
+components, and the 29-dimensional previous action (29 +
+29 + 3 + 3 + 29 = 93).
+The normalized action is then converted into joint-
+position targets,
+qcmd
+j
+= qdefault + α ⊙uj,
+(2)
+where qdefault ∈R29 is the nominal joint configuration,
+α ∈R29 is the per-joint action scale, and ⊙is elementwise
+multiplication; low-level PD controllers track qcmd
+j
+. The 14
+
+
+finger commands are collapsed to HumanoidArena’s binary
+open–close convention and executed through a separate
+hand interface, so they do not enter the 29-dimensional
+body action.
+The VLA is initialized from GR00T N1.7 and fine-tuned
+on task demonstrations that carry recorded motion tokens,
+with the vision-language backbone and the BFM held fixed,
+so that only the action head is trained. This stage yields
+task-conditioned token chunks, but it never observes the
+physical consequence of executing them; Sec. III-C turns
+that consequence into a gradient.
+B. Differentiable World Model
+In training the simulator is replaced by an action-
+conditioned world model Fϕ that predicts the transition
+caused by a body action. The model predicts a one-
+step state increment rather than an absolute next state:
+an absolute target is dominated by the robot’s global
+pose, while the transition over a 20 ms step is small and
+approximately stationary. The network therefore outputs
+dt, and the next state is recovered by integration. Let I
+denote the integration operator that maps a state and a
+predicted increment to the next state. Then
+dt = Fϕ(st, at, ξ) ∈R70,
+ˆst+1 = I(st, dt),
+(3)
+where st ∈R71 denotes the root pose (position and a unit
+quaternion), the 29 joint positions, the root linear and
+angular velocities, and the 29 joint velocities. The action
+at ∈R29 is the normalized body action produced by the
+BFM, and ξ ∈R33 is a simulation-context vector (friction,
+encoder bias, and center-of-mass offset) held at nominal
+values at evaluation. The state is 71-dimensional and the
+increment is 70-dimensional because orientation is stored
+as a quaternion in st but predicted as a 3-D rotation vector
+in dt.
+Integration proceeds in two stages. First, the velocity
+increments produce the next root linear velocity, root
+angular velocity, and joint velocities. Second, these updated
+velocities advance the root position, root orientation, and
+joint angles over the 20 ms step. The predicted residual
+increments ∆p, ∆θ, ∆q are added as local corrections on
+top of this velocity-based update. For orientation, the 3-D
+rotation vector is converted into a rotation through an
+exponential map and composed with the current orienta-
+tion. Root-related increments are expressed in the current
+heading frame, so the target does not depend on the robot’s
+global position or yaw. The increment is therefore small
+and frame-local, while the full next state is recovered by
+integration.
+The action enters both through the MLP input and
+through a residual action head,
+Fϕ(st, at, ξ) = MLPϕ(st, at, ξ)
++ Gϕ(st) (at −aref),
+(4)
+TABLE I: World-model data mix. Stage lengths 880
+and 1650; the second stage uses K = 20 autoregressive
+windows. Shares are per batch.
+Source
+Stage 1
+Stage 2
+Role
+Clean A′
+0.15
+0.20
+nominal dynamics
+Token-perturbed A′
+0.28
+0.45
+off-trajectory states
+Closed-loop pairs
+0.27
+0.35
+deployment distribution
+Branch groups
+0.30
+0.00
+action contrast
+where aref is a reference action. The residual term gives the
+action a direct, state-dependent path that can be supervised
+on branch groups sharing a state but differing in action.
+The MLP retains nonlinear action dependence, while Gϕ
+captures a local linear correction around aref. Gϕ is zero-
+initialized, so training starts from the MLP and learns
+the residual correction. Held-out checks confirm that the
+learned action dependence exceeds the noise floor.
+The model is trained on four transition sources (Table I).
+We write A′ for the controller-excitation replay corpus col-
+lected from the frozen BFM; clean A′ and token-perturbed
+A′ are its two subsets. The first is clean controller-excitation
+replay: the frozen BFM is driven with reference tokens in
+simulation, and the resulting state–action–next-state triples
+are recorded without the VLA in the loop. It supplies
+the nominal tracking anchor and a broad transition pool.
+The second repeats the same collection with temporally
+correlated Gaussian token noise of 0.02, 0.05, and 0.10, held
+fixed for one 20-step chunk; because the BFM executes
+the perturbed token, the stored action is still the action
+that produced the transition. This broadens coverage to
+off-trajectory and recovery states. Periodic resets every
+28–37 steps, with up to 0.3 m displacement, add further
+recovery states. We perturb tokens rather than actions so
+the stored action still matches the executed transition.
+The third source is closed-loop pairs collected with the
+VLA in the loop. These cover the deployment distribution,
+including contact and drift. The fourth is branch groups:
+one state with four different token sequences, which provide
+same-state action contrast for the residual action head
+and the gain term. The reference motion library is not a
+dynamics source; it is used only to define reference frames.
+Training proceeds in two stages. In stage 1 we use single-
+step transitions (K = 1); in stage 2 we use K = 20
+autoregressive windows. For a rollout ˆs0, . . . , ˆsK started
+from s0, let R(q) and H(q) denote the rotation matrix and
+heading frame of the root quaternion. Let SO(3) denote
+the rotation group and Log : SO(3) →R3 the matrix
+logarithm, which maps a rotation matrix to its rotation
+vector. Then ∥Log(R(q)⊤R(ˆq))∥2 is the geodesic angle
+between the predicted and recorded orientations. Define
+
+
+the block-wise state error
+Err(ˆs, s) =
+
+
+H(q)⊤(ˆp −p)/σp
+Log
+ R(q)⊤R(ˆq)
+
+/σR
+(ˆqjoint −qjoint)/σq
+R(q)⊤(ˆv −v)/σv
+R(q)⊤(ˆω −ω)/σω
+(ˆ˙q −˙q)/σ ˙q
+
+
+,
+(5)
+where ˆp, ˆq, ˆv, ˆω, ˆqjoint, ˆ˙q are the predicted position, quater-
+nion, root linear velocity, root angular velocity, joint
+positions, and joint velocities. The state loss is
+Lstate = 1
+K
+K
+X
+j=1
+∥Err(ˆsj, sj)∥2
+2 ,
+(6)
+where σp, σR, σq, σv, σω, σ ˙q are the per-block normaliza-
+tions. The orientation block is a geodesic quaternion error,
+and positions and velocities are expressed in the frame-
+local convention. This avoids mixing metres, radians, and
+quaternion components in a single raw L2 norm.
+Branch groups add a gain loss. For a group with Kb = 4
+branches including the reference branch, let ˆs(k) and s(k) be
+the predicted and recorded states after executing branch
+k. The gain loss matches the predicted and true state
+differences relative to the first branch:
+Lgain = EB
+"
+1
+Kb
+Kb−1
+X
+k=1
+
+(ˆs(k) −ˆs(0)) −(s(k) −s(0))
+σ∆
+
+2
+2
+#
+,
+(7)
+where B denotes branch groups and σ∆is a per-block
+scale for positions, orientation, joints, and velocities. The
+gain loss is computed on the raw state increment in the
+recorded state coordinates. In the collected branch groups,
+quaternion signs are consistent with the reference branch,
+so no sign canonicalization is required in this setting. The
+total objective is
+LWM = Lstate + λg Lgain,
+(8)
+with λg = 2.0 and an EMA-adaptive loss mix over the four
+sources. The branch share is used only in stage 1 (Table I).
+The model is trained once, accepted only if multi-step error
+does not regress on held-out windows, and kept frozen
+while the policy is updated. We do not treat it as a precise
+simulator; it only needs to provide approximate execution
+gradients for the policy update.
+The world model is not updated on-policy. A refresh
+is not a single extra collection: it must be repeated as
+the policy moves, and each round requires closed-loop
+VLA inference across multiple tasks and many episodes,
+followed by world-model retraining and a new gate. A
+300-update run would therefore need multiple such rounds,
+making the total cost far larger than the one-hour fine-tune.
+Repeated refresh also makes the objective non-stationary
+and can degrade the action-effect calibration; an online-
+update variant did so in earlier tests. We therefore train the
+world model once and keep it fixed. Closed-loop pairs are a
+TABLE II: Cost of on-policy world-model refresh.
+A refresh is a repeated round, not a one-off: each round
+requires closed-loop VLA data across multiple tasks, WM
+retraining, and a new gate. The fixed world model is used
+for all reported numbers.
+Fixed
+On-policy
+Closed-loop VLA data
+–
+multi-task, many episodes
+WM retrain
+–
+per round
+WM gate
+–
+per round
+Policy updates
+59–66 min
+per round
+Refresh rounds
+0
+multiple
+Total for one run
+≈1 h
+≫1 h
+fixed calibration source, not a real-time update stream, and
+the fixed world model makes the closed-loop comparison
+attributable to the policy update.
+C. Execution-Aware Differentiable Training
+Differentiable training preserves the computation graph
+from the chunk through the BFM, the world model, and the
+sampler, so that an objective defined on imagined execution
+reaches the generator. Everything except the VLA’s action
+head is held fixed during the update: the BFM, the SONIC
+encoder, the world model, and the training-only critic keep
+their parameters. The critic supplies a fixed tail value, while
+the policy is the only module that changes the deployed
+controller.
+The execution objective is defined on a 0.4 s segment:
+at 50 Hz the policy executes a 20-step block, and the
+objective is evaluated on its 10-step differentiable prefix.
+The remaining 10 steps are not differentiated step by step;
+instead, a fixed, training-only critic estimates their tail
+return from the imagined state at step 10. This value enters
+the loss and remains differentiable with respect to the
+imagined state. The critic is held fixed after initialization;
+it is not updated during policy training. The reference
+is a local segment reference used only during training to
+define the drift target. At deployment the VLA receives
+neither the reference trajectory nor the critic. The policy
+therefore learns to reduce drift within each segment, rather
+than fitting a complete closed-loop trajectory to a global
+reference.
+Policy starts are drawn only from A′ segments. Reference-
+library frames are not used since they are idealized reference
+states rather than states the robot actually visited, so
+they have zero execution drift and do not cover the off-
+trajectory or recovery states needed for correction. Closed-
+loop VLA trajectories are also excluded because they do not
+provide an aligned local reference segment for each visited
+frame, which means the drift target cannot be formed. In
+addition, their drift accumulates over a full episode and
+cannot be corrected within a 0.4 s segment. Closed-loop
+data is therefore used to train the world model rather than
+as policy starts.
+A frame from A′ is eligible as a policy start if it was
+visited, its root offset from the segment reference is at
+
+
+most 0.10 m, at least 10 frames of history exist, and the
+20-step reference window stays inside the clip. We use
+only training clips, sample eligible frames with the training
+coverage weights, and read only frames and states, not
+actions. The 0.10 m bound is a trust region because a 10-
+step window can correct only a few centimeters; a larger
+offset would act as a nearly constant error. Frames outside
+the bound still train the world model, but they are not
+policy starts.
+a) Forward pass: An update is a single differentiable
+program. It samples a token chunk, decodes it through the
+frozen BFM, rolls out the world model, and evaluates an
+execution cost on the imagined states. Given a conditioning
+context ct and a noise sample ε, the token chunk is produced
+by four Euler steps,
+zk+1 = zk + ∆τk vθ(zk, τk, ct),
+k = 0, . . . , 3,
+(9)
+where zk is the chunk after step k, vθ is the flow-matching
+velocity field, and ∆τk is the step size. These four steps
+produce the 40-step chunk used by the policy.
+The body channels are then quantized to the 1/16 grid
+used by the BFM,
+˜z = z + sg
+ Q(z) −z
+
+,
+(10)
+where Q(z) is grid quantization and sg is the stop-gradient.
+The forward path uses the same quantized tokens as
+deployment, while the backward path treats the quantizer
+as identity. This is a straight-through estimator; the
+resulting gradient is therefore biased relative to the true
+quantized objective.
+Starting from the observed state st|t and history Ot|t,
+the BFM and world model are unrolled over the execution
+block. Writing ˆsi ≡ˆst+i|t and ˆOi ≡ˆOt+i|t,
+ui = πψ(˜zi, ˆOi),
+di = Fϕ(ˆsi, ui, ξt+i),
+ˆsi+1 = I(ˆsi, di),
+ˆOi+1 = U(ˆsi+1, ˆOi, ui),
+(11)
+for i = 0, . . . , H −1 with H = 10. The first line decodes the
+quantized token together with the proprioceptive history
+into the normalized body action ui ∈R29. The second
+line predicts the state increment with the world model
+and applies the integration operator I to obtain the next
+imagined state ˆsi+1 under that action and the simulation
+context ξt+i. The fourth line updates the proprioceptive
+history with the new state and action, so the next token is
+decoded under the same history convention as deployment.
+The policy update uses H = 10 steps. The fixed critic is
+evaluated at step H; its value summarizes the remaining
+K −H = 10 steps.
+The per-step cost aggregates normalized capped errors,
+ℓk,i = min(ek,i, κ σ2
+k)
+σ2
+k
+,
+ℓst,i = min(est,i, κ σ2
+st)
+σ2
+st
+,
+ci = w(ft+i) ∆t
+ X
+k∈A
+wk ℓk,i + wst ℓst,i
+!
+,
+J = −
+H−1
+X
+i=0
+γici,
+(12)
+where ci is a positive cost, J is the corresponding return,
+∆t = 0.02 s is the control period, γ is the discount factor,
+κ is the cap multiplier, and A is the active set of tracking
+terms. The seven candidate errors ek,i cover body position,
+body orientation, body linear and angular velocity, root
+position, root orientation, and root horizontal velocity;
+terms with zero weight are inactive. The transition weight
+is w(ft+i) = 1.5 at task transitions and 1 elsewhere. For
+root position, ℓk,i uses the same capped form but with a
+logarithmic tail beyond the cap, so its gradient does not
+vanish for large drift.
+The world model predicts all state channels, including
+velocities, because they are needed for integration. Its
+velocity channels are less reliable than positions: at H = 10
+the joint-velocity correlation is about 0.2, and the root
+speed is systematically overestimated. We therefore assign
+zero cost to angular velocity, root linear velocity, and yaw
+rate, and keep only a small body-linear-velocity weight.
+For the anti-stall term, we use the 3D root displacement,
+including its vertical component.
+The anti-stall error targets root-motion stalls. Let pi ∈
+R3 denote the root position at step i, and define
+mi = ∥pi −pi−1∥
+∆t
+,
+mref
+i
+= ∥pref
+i
+−pref
+i−1∥
+∆t
+,
+(13)
+where mi and mref
+i
+are the actual and reference root speeds.
+The anti-stall error is
+est,i =
+ min{[mref
+i
+−mi −δ]+, µst}
+2
+× 1{mref
+i
+> mgate}1{mi < ρ mref
+i },
+(14)
+where δ = 0.05 m/s, mgate = 0.1 m/s, µst = 0.6 m/s, and
+ρ = 0.10. These four scalars are selected once on validation
+cells and then kept fixed across tasks. The gate opens only
+when the reference root motion is nonzero and the actual
+root motion falls below a fraction ρ of the reference. The
+anti-stall term has a single generic form and is shared across
+tasks. It detects root-motion stalls, including the final squat
+in SitSofa. Its largest observed effect is on SitSofa.
+The policy update rolls out H = 10 steps. The fixed
+critic is evaluated at step H; its value summarizes the
+remaining K −H = 10 steps.
+
+
+The update minimizes the execution cost together with
+three groups of differentiable constraints on the joint targets
+it induces,
+L = −¯Jac + λlimLlim + λtrustLtrust + λpeakLpeak,
+¯Jac = J + β γH 1alive(H) VH,
+(15)
+where Llim penalizes joint-limit violations, Ltrust is a same-
+noise trust-region penalty on the deviation of the joint
+targets from the pristine FT policy and the projection-only
+policy, and Lpeak caps the per-joint peak deviation. The
+scalar β weights the critic value, and γ is the discount
+factor. Here VH = V (yH) is the critic estimate of the
+return over the remaining K −H steps, and 1alive(H) is
+the survival indicator at step H. In our setting K = 20 and
+H = 10, so VH estimates the remaining 10-step tail return;
+the target is the detached K −H-step Monte-Carlo return
+from yH. The vector yH stacks the imagined state, the
+reference state, their difference, the simulation context, the
+proprioceptive history, and the planned token segment at
+step H. The planned-token features in yH are detached, so
+the critic gradient does not bypass the imagined state. The
+critic is held fixed after initialization; its output remains
+differentiable with respect to yH, and the norm of its
+gradient is capped relative to that of J. Thus the first
+10 steps receive direct execution gradients, while the last
+10 steps enter only through the critic value.
+b) Backward pass: The policy gradient is obtained by
+one reverse sweep through the unrolled graph. We use the
+positive per-step cost ci directly, so the execution return is
+J = −
+H−1
+X
+i=0
+γici.
+The recursion below differentiates the first-H execution
+return J. The critic tail is differentiated separately at yH
+and accumulated into the same backward sweep; therefore,
+for J, the boundary adjoints are δH = µH = 0.
+Define the state and history adjoints
+δi = ∂J
+∂ˆsi
+,
+µi = ∂J
+∂ˆOi
+,
+and the local Jacobians
+Ai = ∂ˆsi+1
+∂ˆsi
+,
+Bi = ∂ˆsi+1
+∂ui
+,
+Ci = ∂ui
+∂ˆOi
+,
+Di = ∂ˆOi+1
+∂ˆsi
+,
+Ei = ∂ˆOi+1
+∂ˆOi
+,
+Fi = ∂ˆOi+1
+∂ui
+.
+Here Ai propagates state sensitivity, Bi maps action
+changes to next-state changes, Ci maps history changes to
+action changes, Di maps state changes to history changes,
+Ei propagates history sensitivity, and Fi captures the direct
+action-to-history path. The last term is needed because
+the history update also consumes the action, not only the
+state and the previous history.
+With δH = µH = 0 for J, the adjoints satisfy, for i =
+H −1, . . . , 0,
+δi = −γi ∂ci
+∂ˆsi
++ A⊤
+i δi+1 + D⊤
+i µi+1,
+µi = C⊤
+i
+
+−γi ∂ci
+∂ui
++ B⊤
+i δi+1 + F ⊤
+i µi+1
+
++ E⊤
+i µi+1.
+(16)
+The first equation combines the discounted direct cost
+sensitivity to the state with the future state and history
+sensitivities. The second does the same for the history,
+converts action sensitivity into history sensitivity through
+Ci, and includes the direct action-to-history path through
+Fi. The position-difference motion estimate makes ci
+depend on ˆsi−1 as well; the implementation differentiates
+this dependence through the full graph, while the recursion
+above omits it for readability.
+The token gradient follows by projecting the action
+adjoint through the BFM,
+∂J
+∂˜zi
+=
+∂ui
+∂˜zi
+⊤
+−γi ∂ci
+∂ui
++ B⊤
+i δi+1 + F ⊤
+i µi+1
+
+.
+(17)
+The matrix Bi is the action Jacobian of the integrated
+transition at step i:
+Bi = ∂I(ˆsi, di)
+∂di
+∂Fϕ(ˆsi, ui, ξt+i)
+∂ui
+.
+It therefore includes the integration step, not only the raw
+output of Fϕ. For the residual action head in (4), it also
+includes both the MLP action derivative and Gϕ(ˆsi), not
+Gϕ alone.
+Since the straight-through quantizer has unit derivative,
+the gradient reaching the action-head parameters is
+∇θJ =
+H−1
+X
+i=0
+∂zi
+∂θ
+⊤∂J
+∂˜zi
+.
+(18)
+The sampler Jacobian is expanded as
+∂zi
+∂θ =
+3
+X
+k=0
+Pk ∆τk
+∂vk
+∂θ ,
+Pk =
+3
+Y
+m=k+1
+
+I + ∆τm
+∂vm
+∂zm
+
+,
+(19)
+where Pk is the chunk-level sampler Jacobian and prop-
+agates the sensitivity of the later sampler steps back
+to step k; ∂zi/∂θ denotes its i-th token block. Only θ,
+the action-head parameters (low-rank adapters and the
+output projection), receive the policy update; ψ and ϕ
+are untouched. The critic is fixed. Its tail value adds a
+boundary gradient at yH, which is included in the same
+backward sweep; no critic parameters are updated.
+The world model is trained once, on excitation replay
+together with the closed-loop episodes collected with
+the initial policy, and its coefficients are fixed while the
+policy is updated. Evaluation always runs in the simulator.
+Algorithm 1 summarises one update, whose cost is four
+
+
+Algorithm 1 One execution-aware differentiable training
+update.
+Require: window (st, Ot, ξt), context ct
+1: sample ε; unroll the sampler (4 steps)
+2: ˜z ←Q(z) forward, identity backward
+3: for i = 0 to H −1 do
+4:
+ui ←πψ(˜zi, ˆOi)
+5:
+di ←Fϕ(ˆsi, ui, ξt+i)
+6:
+ˆsi+1 ←I(ˆsi, di)
+7:
+ˆOi+1 ←U(ˆsi+1, ˆOi, ui)
+8: end for
+9: VH ←V (yH)
+▷fixed critic; yH keeps its graph
+10: J ←−P
+i<H γici
+11: ¯Jac ←J + βγH1alive(H)VH
+12: form L
+13: backpropagate; update θ
+▷critic frozen
+DiT passes for the sampler, one BFM and one world-model
+pass per rollout step, one fixed critic evaluation, and a
+single backward sweep whose activation footprint grows
+with H rather than with K.
+IV. Experiments
+A. Experimental Setup
+Platforms and tasks. We evaluate on HumanoidArena
+in Isaac Lab simulation with a Unitree G1, using 29
+body degrees of freedom and 14 finger joints at a 50 Hz
+body control rate, 40-step VLA chunks and a 20-step
+replanning horizon. The simulation task set contains four
+HumanoidArena tasks: OpenDoor, SitSofa, Boxing, and
+VisionNavi. The main comparison uses these four tasks
+with a complete baseline grid; all quantitative closed-loop
+numbers in this paper come from the simulator.
+Data and splits. Training data are 400 recorded
+HumanoidArena episodes carrying SONIC motion tokens
+(100 per task). Scene instances and instructions are sepa-
+rated before temporal windowing, so held-out scenes and
+paraphrases never appear in training. The VLA is fine-
+tuned on these episodes. The world model uses the four-
+source mix of Section III-B (clean A′, token-perturbed A′,
+closed-loop pairs, and branch groups), is trained once, and
+is held fixed during execution-aware differentiable training;
+future states are used only to construct its regression
+targets and are unavailable at deployment.
+Metrics and protocol. All success comparisons use
+the same protocol: four tasks, seeds 0–2, and repeats 0–
+19, giving 60 episodes per task and 240 per arm, with
+matched episode seeds across arms. Task success is the
+primary metric. A cell is successful only if its executed
+episode succeeded. Failed or timed-out episodes remain in
+every denominator. Fall is an episode terminated by a fall.
+Paired cells are tested with McNemar’s test. Two arms are
+compared: the task fine-tuned VLA with a frozen SONIC
+decoder (Base), and the same model with LoRA adapters
+trained by execution-aware differentiable training (Full);
+they share checkpoints, seeds, and episodes. The Full arm
+TABLE III: Shared training recipe. The anti-stall term
+has a single generic form and is shared across tasks; it is
+defined on the 3D root displacement and uses a reference-
+relative stall gate. All other components are shared.
+VLA
+GR00T N1.7, 8k-step task fine-tune
+Adaptation
+LoRA rank 16, α = 32, 16.9M trainable
+Data
+400 episodes
+World model
+action-conditioned, trained once, fixed
+Critic
+fixed after initialization
+Chunk / rollout
+40 / 20 steps
+Horizon / sampler
+H = 10 / 4 Euler steps
+Updates / batch / lr
+300 / 32 / 10−4 cosine
+λlim / β
+0.01855 / 0.975
+Hardware
+2× RTX 4090
+TABLE IV: Closed-loop results in simulation. Seeds
+0–2 × repeats 0–19, giving 60 episodes per task and 240
+per arm. Fall is the percentage of episodes terminated by
+a fall. Entries show Base→Ours; a single Fall value means
+both arms are 0.0%.
+Task
+Base Ours
+∆
+Fall
+(%)
+(%)
+(pp)
+(%)
+OpenDoor
+65.0
+78.3
++13.3
+0.0
+Boxing
+71.7
+81.7
++10.0
+0.0
+SitSofa
+48.3
+65.0
++16.7
+0.0
+VisionNavi 51.7
+61.7
++10.0 15.0→8.3
+Average
+59.2
+71.7
++12.5
+3.8→2.1
+uses the same architecture for all tasks; the base has no
+adapter.
+Training recipe. The architecture and training recipe
+are shared by all tasks (Table III). The VLA is the
+GR00T N1.7 checkpoint fine-tuned on HumanoidArena
+tokens for 8k steps. LoRA is applied to the attention and
+feed-forward blocks and the output projection (rank 16,
+α = 32, 16.9M trainable parameters, 1.0% of the 1.64B-
+parameter model). The world model is trained once and
+held fixed. Each update uses a 40-step chunk, a 20-step
+rollout, a 10-step differentiable window, and four Euler
+sampler steps. Training runs for 300 updates with batch
+size 32 and a cosine learning rate from 10−4, on two RTX
+4090 GPUs.
+B. Closed-Loop Benchmark Comparison
+We first compare complete closed-loop control. Differen-
+tiable training raises average success by 12.5 points (Ta-
+ble IV), and every task improves; the gain varies from 10.0
+to 16.7 points, with the largest absolute gain on the contact-
+rich SitSofa task. We use a mild coverage reweighting so
+that walking frames are not under-represented in the start
+distribution; the ablation below isolates its effect.
+Table IV reports the main comparison. Average success
+rises from 59.2% to 71.7% (+12.5 points), and every task
+improves: on SitSofa success rises from 48.3% to 65.0%
+(+16.7 points), on OpenDoor from 65.0% to 78.3% (+13.3
+points), and on Boxing and VisionNavi from 71.7% to
+
+
+Fig. 3: Simulation evaluation tasks. Each cell is one task; the frames show the first frame, two key moments, and
+the final frame (“end”), labeled by time or “end”. OpenDoor: approach, handle contact, and opening. Boxing: approach
+and two punch/contact moments. SitSofa: approach, contact, and seated posture. VisionNavi: crossing the obstacle field
+to the goal. Frames are illustrative, not success annotations.
+SitSofa
+Boxing
+OpenDoor
+VisionNavi
+0
+1000
+2000
+3000
+4000
+5000
+steps per successful episode
+-30%
+-25%
+-17%
+-11%
+Base
+Ours
+Fig. 4: Cost of a successful episode. Simulator steps per
+successful episode, i.e. the total steps of the 60 episodes
+divided by the number of successes. Percentages give the
+change from base to ours; the Full policy is cheaper on
+every task.
+81.7% and from 51.7% to 61.7% (+10.0 points each). The
+anti-stall contribution is isolated in Table VII: removing
+it leaves OpenDoor, Boxing, and VisionNavi at their Full
+success rates, while SitSofa drops from 65.0% to 50.0%.
+Falls are observed only on VisionNavi and are reduced from
+15.0% to 8.3% while success there rises by ten points, so
+the gain cannot be attributed to riskier behaviour. Failed
+and timed-out episodes are retained in every denominator.
+The aggregate gain is significant on the 240 paired cells
+(McNemar p < 0.01).
+Figure 4 compares the two arms on the number of simula-
+tor steps spent per successful episode, obtained by summing
+the steps of all 60 episodes and dividing by the number
+of successes. The Full policy needs fewer steps on every
+task: the cost falls from 2935 to 2431 steps on OpenDoor
+(−17%), from 3765 to 3351 on VisionNavi (−11%), from
+4508 to 3156 on SitSofa (−30%) and from 1826 to 1366
+on Boxing (−25%), with the average decreasing from 3102
+to 2490 (−20%). The largest savings are obtained where
+the baseline times out most often, on SitSofa and Boxing.
+The extra successes are therefore not bought with extra
+interaction time: the same budget yields more successes,
+and each success costs less.
+C. Surrogate and Gradient Analysis
+Connectivity is necessary. The execution objective alone
+produces finite, non-zero gradients on the flow head, all
+four sampler steps receive gradient, and the world model’s
+input Jacobian remains active while its parameters are
+frozen.
+We use the surrogate as a direction, not as a calibrated
+return. Two checks support this. First, its ranking of
+counterfactual action sequences over 405 groups is well
+above chance (70.4% four-way, τ = 0.67 at H = 10, chance
+25%). Second, in a ±δ probe on 87 held-out windows
+(H = 10, δ = 0.03), moving along the world-model
+gradient improves the true return by +0.014 on average,
+and the predicted and true return changes correlate at 0.689.
+Checkpoints are selected on held-out validation windows
+using the differentiable execution return. Among sampling-
+gradient estimators, the pathwise one keeps token error at
+0.115, the discrete adjoint matches it in return but not in
+fidelity, and truncation is biased and raises token error to
+0.174.
+D. Choice of the Differentiated Horizon
+The horizon H in (12) determines how much of the
+20-step execution block receives credit and how far the
+update trusts the surrogate. A short window is easier to
+
+
+TABLE V: Gradient-estimator fidelity. Token error
+after the same estimator probe; the return column indicates
+whether the estimator matches the pathwise return.
+Estimator
+Token error
+Return
+Pathwise
+0.115
+reference
+Discrete adjoint
+0.121
+matched
+Truncated
+0.174
+biased
+TABLE VI: Choice of the differentiated horizon. Four-
+way selection accuracy and Kendall τ between surrogate
+and simulator returns for each candidate window. The last
+column marks the two criteria (≥70% and τ ≥0.65).
+H
+4-way acc. (%)
+Kendall τ
+Pass
+1
+62.7
+0.563
+2
+72.3
+0.700
+✓
+5
+76.8
+0.732
+✓
+10
+70.4
+0.669
+✓
+20
+64.2
+0.596
+assign credit to but leaves most of the block unassigned;
+a long window covers more of the block but accumulates
+surrogate bias. We therefore select H with the surrogate,
+using two criteria that do not involve closed-loop success: on
+counterfactual groups the surrogate must select the action
+sequence that the simulator also prefers in at least 70% of
+four-way comparisons (chance 25%), and its ordering of
+the four candidates must reach a Kendall τ of at least 0.65.
+Among the windows that satisfy both we take the largest,
+so that the gradient covers as much of the execution block
+as the surrogate can support. This is a ranking criterion,
+not an absolute-accuracy criterion: the surrogate is used
+as a direction signal, not as a calibrated simulator.
+The ranking test uses 405 counterfactual groups collected
+from body-controller rollouts driven by perturbed motion
+tokens. Each group starts from a shared state and contains
+four candidate action sequences; the surrogate and the
+simulator assign a return to each sequence over the same
+H steps, and the resulting orderings are compared. As
+Table VI reports, H = 1 falls below both criteria (62.7%,
+τ = 0.56). Accuracy peaks at H = 5 (76.8%, τ = 0.73) and
+remains above both criteria at H = 10 (70.4%, τ = 0.67),
+but falls below them at H = 20 (64.2%, τ = 0.60).
+H = 10 is the largest window that passes both criteria.
+H = 5 ranks best on the same test but assigns credit to
+only a quarter of the execution block, whereas H = 20
+covers the whole block while falling below both criteria.
+We therefore fix H = 10 for every differentiable-training
+arm; the closed-loop result is a confirmation at the selected
+horizon rather than a horizon sweep.
+All closed-loop numbers use the same architecture
+and training pipeline. The anti-stall term has a single
+generic form and is active for every task; its reference-
+relative gate concentrates the effective gradient on SitSofa.
+The architecture, data, checkpoint, horizon, rollout, and
+Fig. 5: Surrogate ranking versus horizon. Four-way
+selection accuracy (circles) and Kendall τ (squares) between
+surrogate and simulator returns over 405 counterfactual
+groups; dashed lines are the thresholds used to choose the
+window (70% and 0.65). The chosen window is H = 10.
+The H values are shown at equal spacing for readability.
+optimizer are shared. At H = 10 the final recipe reaches
+78.3%, 81.7%, 65.0%, and 61.7% on the four tasks, an
+average of 71.7% against 59.2% for the base (Table IV).
+E. Ablation Studies
+This section reports two complementary sets of ablations.
+First, we remove one policy-objective component at a time
+from the canonical Full recipe and compare task-level
+success; Base is a reference. This isolates a gated anti-
+stall term from two shared terms, coverage and transition
+weighting. Second, we vary the world-model data mix and
+compare the resulting models on ranking, closed-loop root
+error, position action effect, and joint action gain. The two
+parts answer different design questions: which objective
+terms matter at deployment, and which data sources make
+the surrogate useful for the gradient.
+1) Policy-Objective Components: We remove one compo-
+nent at a time from the canonical Full recipe and compare
+task-level success; Base is shown as a reference. The table
+separates the gated anti-stall term from the two shared
+objective terms, so it exposes both task locality and cross-
+task effects.
+a) Coverage: Coverage has a broad locomotion signa-
+ture. Removing it lowers OpenDoor from 78.3% to 73.3%,
+Boxing from 81.7% to 75.0%, SitSofa from 65.0% to 56.7%,
+and VisionNavi from 61.7% to 55.0%.
+b) Transition: Transition weighting is the broadest.
+Removing it lowers OpenDoor from 78.3% to 71.7%,
+Boxing from 81.7% to 76.7%, SitSofa from 65.0% to
+58.3%, and VisionNavi from 61.7% to 56.7%. The effect is
+strongest at the handle contact, the sitting onset, and the
+approach-to-contact transition, which is why OpenDoor
+and SitSofa move by about 6–7 points while Boxing
+
+
+TABLE VII: Leave-one-out success on the four tasks.
+Full is the canonical recipe; Base is a reference. Anti-
+stall is active for every task, but its effect is concentrated
+on SitSofa; coverage and transition are shared. VisNavi
+abbreviates VisionNavi.
+Configuration
+OpenDoor Boxing SitSofa VisNavi
+Avg
+(%)
+(%)
+(%)
+(%)
+(%)
+Base (reference)
+65.0
+71.7
+48.3
+51.7
+59.2
+Full −coverage
+73.3
+75.0
+56.7
+55.0
+65.0
+Full −transition
+71.7
+76.7
+58.3
+56.7
+65.8
+Full −anti-stall
+78.3
+81.7
+50.0
+61.7
+67.9
+Full
+78.3
+81.7
+65.0
+61.7
+71.7
+and VisionNavi move by 5 points. The sustained-sitting
+diagnostic is consistent: with transition weighting, 11/56
+episodes sit continuously, versus 4/56 without (20% versus
+7%; McNemar p = 0.092), which we treat as directional
+rather than significant evidence.
+c) Anti-stall: The anti-stall term is active for every
+task. Its gate uses the 3D root displacement: it opens when
+the reference root motion is nonzero and the actual root
+motion falls below a fraction ρ of the reference. Removing
+the term leaves OpenDoor, Boxing, and VisionNavi at their
+Full success rates, while SitSofa drops from 65.0% to 50.0%,
+and the row remains slightly above Base at 48.3% because
+the gradient path and the other objective terms are still
+present. The largest observed effect is on SitSofa; per-task
+gate activation statistics are not reported.
+d) Overall pattern: Every intermediate row lies be-
+tween Base and Full on every task, and no component
+explains the entire four-task gap. The rows differ in where
+they act: coverage is locomotion-heavy, transition weighting
+is the most uniform, and anti-stall has a SitSofa-dominant
+effect. The gaps are task-specific rather than uniform,
+consistent with the different roles of the three terms.
+2) World-Model Data Sources: The world-model data
+mix is a separate ablation axis from the policy-objective
+components above. We select it on multiple proxies rather
+than on ranking alone (Table VIII). Closed-loop pairs are
+the only source that calibrates the deployment distribution:
+H=10 root error falls from 2.1 cm to 0.45 cm. Token
+perturbation raises the position action-effect R2 from 0.00
+to 0.16. Branch groups improve the joint action sensitivity,
+raising the joint gain from 0.604 to 0.634, and add a small
+ranking gain (0.710 to 0.717). The full mix is not the
+ranking maximum—A′+token ranks 2.8 points higher—
+but it is Pareto-optimal on the four proxies and is within
+0.02 cm and 0.02 R2 of the best CL root and position action
+R2. We therefore treat it as a balanced design choice rather
+than a claim of universal superiority; the production WM
+adds the SitSofa windows on top of this mix.
+F. Real-Robot Closed-Loop Inference
+We additionally perform real-robot data collection and
+deployment on a physical Unitree G1 at 50 Hz with 20-step
+TABLE VIII: World-model data sources. All arms share
+the init, stages, and 420-group ranking. CL root is H=10
+on 4,000 held-out closed-loop windows; position action R2
+is H=10 on 400 branch groups; joint gain is the H=1 slope
+between predicted and simulator joint action effects. The
+production WM adds the SitSofa windows and is not this
+controlled full arm.
+Arm
+4-way CL root Pos. R2
+Joint gain
+(%)
+(cm)
+Clean A′ only
+73.8
+2.14
+0.00
+0.619
+A′+token
+74.5
+2.16
+0.16
+0.626
+A′+token+CL
+70.2
+0.45
+0.19
+0.599
+no-branch
+71.0
+0.46
+0.20
+0.604
+full
+71.7
+0.47
+0.18
+0.634
+replanning. We first collect demonstrations on the target
+scenes, re-fine-tune the VLA on these real episodes, and
+then run the same execution-aware differentiable training
+recipe with the real episodes included in the training mix.
+The adapted policy is deployed for closed-loop inference;
+this is therefore an adapted real-robot run, not a zero-shot
+transfer. These runs are a qualitative validation and are
+not included in the success-rate table; the quantitative
+comparison remains simulation-only. Figure 6 shows four
+representative sequences: (a) pick up a trash bag; (b) press
+a pedal bin and deposit trash; (c) place a test tube on a
+table from a kneeling posture; (d) kick a ball to a target.
+V. Limitations
+Our quantitative evidence is confined to four simulated
+tasks. The real-robot runs are qualitative closed-loop
+inference after real-robot data collection and adaptation,
+not a real-robot success-rate benchmark.
+The learned world model is a coarse action-conditioned
+simulator. It rolls out the execution block and supplies
+differentiable execution gradients, but it is not accurate
+enough to replace the simulator for evaluation or to provide
+a calibrated return. On a held-out policy-transition probe,
+its H=10 error is about 3–4 cm in root position and 7–8◦in
+rotation on the four-task probe. This supports coarse credit
+assignment over the execution window, not accurate long-
+horizon prediction. The CL-root column of the data-source
+table is a different measurement on held-out closed-loop
+windows, not the same probe.
+The differentiable update is also not a fully on-policy
+loop: the world model is trained from a fixed data mix, so
+the policy cannot track its own evolving state distribution.
+This bounds the achievable gain; longer differentiable
+training alone is unlikely to close the remaining gap.
+The execution objective covers the 29 body joints. The
+14 hand channels are initialized from the 8000-step task
+fine-tune and are not directly optimized by the execution
+objective; we do not evaluate dexterous hand manipulation.
+Object-centric contact is outside the current state-only
+world model, which does not explicitly model object states
+
+
+Fig. 6: Real-robot closed-loop inference on a Unitree G1. (a) Bend down and pick up a trash bag. (b) Walk
+to a pedal-operated bin, press the pedal, and deposit the trash. (c) Kneel, pick up a test tube, and place it on the
+table. (d) Kick a ball to a target position. Each panel shows the full recorded sequence; frames are illustrative, and no
+quantitative success rate is claimed.
+or contact dynamics. Generalization to held-out scenes, new
+object placements, instruction paraphrases, action delay,
+observation noise, friction, and external pushes remains
+future work.
+A natural next step is to improve the world model itself
+rather than only the policy optimizer. On the architecture
+side, velocity-aware prediction heads, kinematic consistency
+constraints, and contact-aware state representations could
+make the velocity channels accurate enough to enter the
+execution cost instead of being downweighted. On the
+data side, improving the coverage and balance of the
+existing transition sources could better represent recovery
+and contact states. Better calibration and periodic refresh
+against the current policy distribution would further reduce
+surrogate error. A more accurate model would make longer
+differentiable horizons and larger trust regions safer, so
+the execution gradient would rely less on surrogate error.
+Extending the same treatment to the 14 hand joints is a
+separate direction.
+VI. Conclusion
+We presented an execution-aware differentiable training
+framework that couples a flow-matching humanoid VLA
+with a frozen whole-body controller through a learned
+action-conditioned world model. The key idea is to back-
+propagate execution costs through the controller and the
+four-step sampler into the action head, so that the policy is
+optimized for the body it actually controls rather than for
+tokens alone. On four HumanoidArena tasks, the H = 10
+recipe raises average success from 59.2% to 71.7% and
+lowers the cost per successful episode from 3102 to 2490
+steps, with the largest gain on SitSofa; the architecture is
+shared, and a gated root-motion anti-stall term is enough
+to change contact behavior without changing the model.
+We also close the inference loop on a physical Unitree G1
+after real-robot data adaptation, qualitatively. The main
+limits remain the coarse surrogate, the fixed data mix, and
+the body-only gradient; an object-aware world model, on-
+policy refresh, and held-out or robustness evaluation are
+left for future work.
+References
+[1] K. Black, N. Brown, D. Driess, A. Esmail et al., “π0: A
+vision-language-action flow model for general robot control,”
+arXiv preprint arXiv:2410.24164, 2024. [Online]. Available:
+https://arxiv.org/abs/2410.24164
+[2] Y. Chen, Y. Ge, H. Zhou, M. Ding, Y. Ge, and X. Liu,
+“DIAL: Decoupling intent and action via latent world modeling
+for end-to-end VLA,” arXiv preprint arXiv:2603.29844, 2026.
+[Online]. Available: https://arxiv.org/abs/2603.29844
+[3] Z. Luo, Y. Yuan, T. Wang, C. Li et al., “SONIC: Supersizing
+motion tracking for natural humanoid whole-body control,”
+Science Robotics, vol. 11, no. 117, p. eaed4592, 2026. [Online].
+Available: https://arxiv.org/abs/2511.07820
+[4] H. Jiang, J. Chen, Q. Bu, L. Chen, M. Shi, Y. Zhang, D. Li,
+C. Suo, C. Wang, Z. Peng, and H. Li, “WholeBodyVLA: Towards
+unified latent VLA for whole-body loco-manipulation control,”
+arXiv preprint arXiv:2512.11047, 2025, also presented at ICLR
+2026. [Online]. Available: https://arxiv.org/abs/2512.11047
+
+
+[5] Y. Hu, H. Zhu, B. Zheng, Y. Hu, T. Zhang, Z. Chen,
+J. Zhao, R. Nai, and Y. Gao, “OpenHLM: An empirical
+recipe for whole-body humanoid loco-manipulation,” arXiv
+preprint arXiv:2606.22174, 2026. [Online]. Available: https:
+//arxiv.org/abs/2606.22174
+[6] J. Ren, C. Yu, S. Chen, X. Ma, L. Pan, and Z. Liu,
+“DiffMimic: Efficient motion mimicking with differentiable
+physics,” arXiv preprint arXiv:2304.03274, 2023. [Online].
+Available: https://arxiv.org/abs/2304.03274
+[7] Q. Liao, Y. Shao, J. Long, K. Zakka, R. Horowitz, P. Abbeel,
+and K. Sreenath, “SuperMimic: Scaling humanoid whole-
+body
+control
+with
+one
+differentiable
+world
+model,”
+in
+Conference on Robot Learning, 2026. [Online]. Available:
+https://arxiv.org/abs/2610.28480
+[8] NVIDIA, “Isaac GR00T: Foundation model and code,” https:
+//github.com/NVIDIA/Isaac-GR00T, 2026, public software and
+model documentation, accessed October 2026.
+[9] T. Wang, Z. Xie, B. Yang et al., “HumanoidArena: Benchmarking
+egocentric hierarchical whole-body learning,” arXiv preprint
+arXiv:2606.17833, 2026. [Online]. Available: https://arxiv.org/
+abs/2606.17833
+[10] D. Gao, B. Zhao, A. Lee, I. Chuang, H. Zhou, H. Wang,
+Z. Zhao, J. Zhang, and I. Soltani, “VITA: Vision-to-action
+flow matching policy,” arXiv preprint arXiv:2507.13231, 2025.
+[Online]. Available: https://arxiv.org/abs/2507.13231
+[11] Physical
+Intelligence,
+“π∗
+0.6:
+A
+VLA
+That
+Learns
+From
+Experience,” 2025. [Online]. Available: https://arxiv.org/abs/
+2511.14759
+[12] Z. Wang, R. Zhang, Y. Liu, X. Mao, M. Wang, and Y. Mu,
+“Q-VGM: Q-guided value-gradient matching for offline-to-
+online reinforcement learning of flow-matching VLA policies,”
+arXiv preprint arXiv:2606.08015, 2026. [Online]. Available:
+https://arxiv.org/abs/2606.08015
+[13] L. Gu, C. Hou, M. Li, X. Wang, X. Lv, S. Bai et al., “HAF-VLA:
+Hierarchical action flow framework for humanoid vision-language-
+action control,” arXiv preprint arXiv:2610.26584, 2026. [Online].
+Available: https://arxiv.org/abs/2610.26584
+[14] Y. Wang, H. Jiang, S. Yao, Z. Ding, and Z. Lu, “End-to-end
+language-action model for humanoid whole body control,”
+in Proceedings of the IEEE/CVF Conference on Computer
+Vision and Pattern Recognition, 2026, pp. 38 399–38 409,
+arXiv:2511.19236, titled SENTINEL in the preprint. [Online].
+Available: https://arxiv.org/abs/2511.19236
+[15] H. Yao, Z. Song, B. Chen, and L. Liu, “ControlVAE: Model-based
+learning of generative controllers for physics-based characters,”
+ACM Transactions on Graphics, vol. 41, no. 6, pp. 1–16, 2022.
+[16] H. Yao, Z. Song, Y. Zhou, T. Ao, B. Chen, and L. Liu,
+“MoConVQ: Unified physics-based motion control via scalable dis-
+crete representations,” ACM Transactions on Graphics, vol. 43,
+no. 4, pp. 1–21, 2024.
+[17] Y. Yang, J. Rong, M. Zhu, Z. Zhao, Q. Hu, Z. Lan, W. Mao,
+Y. Li, Z. Fu, and H. Chen, “Humanoid world action model with
+joint state–action generation,” arXiv preprint arXiv:2610.12026,
+2026. [Online]. Available: https://arxiv.org/abs/2610.12026

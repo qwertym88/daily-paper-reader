@@ -1,0 +1,1628 @@
+OVOGO: OFFLINE VALUE-GUIDED ON-POLICY GEN-
+ERATIVE OPTIMIZATION FOR FLOW-BASED VISION-
+LANGUAGE-ACTION MODELS
+Rongzheng Yang1,2, Jiaming Guo1,2, Yuxuan Guo1,3, Zihao Zhang4, Yunkai Gao4, Siming Lan4,
+Shaohui Peng5, Rui Zhang1,2, Tianyun Ma4, Xing Hu1,2, Yunji Chen1,2,4
+1State Key Lab of Processors, Institute of Computing Technology,
+Chinese Academy of Sciences, Beijing, China
+2University of Chinese Academy of Sciences
+3University of Science and Technology of China
+4Institute of AI for Industries, Chinese Academy of Sciences
+5Intelligent Software Research Center, Institute of Software,
+Chinese Academy of Sciences, Beijing, China
+ABSTRACT
+Flow-based vision-language-action models can benefit from robot experience col-
+lected during deployment, but repeatedly acquiring new physical interactions for
+policy improvement is costly. Offline reinforcement learning provides a natu-
+ral way to reuse collected experience, while flow-based policies offer an addi-
+tional opportunity because fresh generation trajectories can be cheaply resampled
+from the current policy at replay observations. This motivates separating offline
+value learning from on-policy optimization of the generative process. We propose
+OVOGO, an offline reinforcement learning framework that realizes this separa-
+tion for flow-based VLAs. A central challenge in this formulation is to learn
+a critic that remains grounded in logged robot experience while providing useful
+value signals for newly generated actions. OVOGO introduces a Return-Anchored
+Ranking Critic that combines in-sample distributional value learning with guarded
+local ranking, improving discrimination among generated actions without assign-
+ing them artificial return targets. The frozen critic then provides group-relative
+value signals for selected-transition optimization of fresh action candidates sam-
+pled from the current flow policy. Experiments on RoboTwin 2.0, DexJoCo, and
+LIBERO, as well as a real-robot dexterous manipulation task, show that OVOGO
+improves the initial VLA across all four settings and achieves higher success rates
+than the evaluated offline adaptation and value-guided baselines. These results
+suggest that offline robot experience can be repeatedly reused for value learning
+while inexpensive generative sampling supports policy optimization, providing an
+effective approach to experience-based post-training of flow-based VLAs.
+1
+INTRODUCTION
+Vision-language-action models (VLAs) have demonstrated strong manipulation capabilities and
+generalization by combining large-scale, cross-task robot data with pretrained vision-language rep-
+resentations Kim et al. (2024); Black et al. (2024); Intelligence et al. (2025b). However, further
+improving these models still relies heavily on collecting high-quality demonstrations, whose ac-
+quisition is expensive and difficult to scale. In contrast, deployment and autonomous execution
+naturally produce large amounts of experience spanning successful, failed, and suboptimal behav-
+iors, together with task-outcome signals that behavior cloning cannot fully exploit. Reinforcement
+learning (RL) provides a natural mechanism for learning from such experience, and offline RL is par-
+ticularly attractive for robotics because it can repeatedly reuse previously collected interactions and
+their reward feedback without requiring new physical interaction for every policy update Kostrikov
+et al. (2021); Intelligence et al. (2025a); Wang et al. (2026b). As VLA training moves beyond
+1
+arXiv:2611.30477v1  [cs.RO]  23 Nov 2026
+
+
+imitation pretraining toward experience-based post-training, offline RL is emerging as a promising
+approach for improving large generative VLAs from accumulated robot experience.
+Applying offline RL to flow-based VLAs, however, is not straightforward. Because actions are
+produced through a multi-step flow process, a central question is how value information should
+be translated into updates of the generative policy. Existing approaches adopt different value-to-
+policy interfaces. RECAP converts estimated advantages into conditioning variables and extracts an
+improved policy through supervised training on collected experience Intelligence et al. (2025a). This
+design is simple and scalable, but its improvement supervision is attached to replayed actions rather
+than actions freshly sampled from the current policy. Other approaches, such as LWD and Q-VGM,
+use the critic’s action gradient to construct improvement targets for the flow dynamics Wang et al.
+(2026b;c). These methods enable more direct value-based policy improvement, but make the update
+depend on reliable action-gradient information from the critic around policy-generated actions. Flow
+policies offer a complementary opportunity because physical interactions are expensive and should
+be reused extensively, whereas generation trajectories are inexpensive computational samples that
+can be repeatedly resampled from the current policy at the same replay observation. This asymmetry
+suggests that physical experience and generation trajectories need not be consumed at the same rate
+during policy improvement.
+Motivated by this observation, we decouple flow-based VLA reinforcement learning by separating
+offline value learning from on-policy generative policy optimization. The former learns long-horizon
+values from a fixed robot dataset, while the latter repeatedly samples fresh actions from the current
+flow policy at replay observations. The critic serves as the key interface between these two pro-
+cesses. Directly incorporating policy-generated actions into Bellman updates would make temporal
+targets depend on value estimates for actions without observed environment outcomes. Errors in
+these estimates, especially overestimation, can then propagate through bootstrapping and be further
+exploited during policy improvement. Keeping Bellman value propagation in-sample provides a
+more stable foundation for learning long-horizon returns because temporal targets remain grounded
+in replayed experience. However, restricting all critic supervision to replayed actions would leave
+the critic unable to reliably distinguish fresh candidates sampled from the evolving policy. The key
+challenge is therefore to preserve in-sample temporal value propagation while extending the critic’s
+discriminative ability beyond replayed actions, without compromising the return-grounded value
+estimates on which offline learning relies.
+In this paper, we propose OVOGO (Offline Value-Guided On-Policy Generative Optimization), an
+offline RL framework for flow-based VLAs that combines stable offline value learning with fresh
+on-policy optimization of the generative process. For offline value learning, OVOGO introduces a
+Return-Anchored Ranking Critic (RARC) that separates long-horizon return propagation from local
+action discrimination. RARC uses in-sample distributional value learning to propagate long-horizon
+values through real replay transitions without bootstrapping through policy-generated actions, and
+augments this return-grounded objective with local ranking supervision around replayed actions.
+Synthetic actions receive only relative preference supervision rather than artificial Bellman targets,
+while a guarded ranking objective combines temperature-dependent gradient decay with a gap cutoff
+to control ranking pressure, helping preserve the return scale established by real experience. With
+RARC frozen, OVOGO repeatedly samples groups of fresh action candidates from the current flow
+policy at replay observations and constructs group-relative improvement signals directly from their
+scalar critic values, without differentiating through the critic. We further adopt a selected-transition
+flow update inspired by Flash-GRPO He et al. (2026), making on-policy generative optimization
+tractable for large flow-based VLAs.
+In our experiments, we evaluate OVOGO on RoboTwin 2.0 Chen et al. (2025b), DexJoCo Wang et al.
+(2026a), and LIBERO Liu et al. (2023), as well as a real-robot dexterous manipulation task. The
+results demonstrate that OVOGO more effectively improves flow-based VLAs from collected robot
+experience than existing offline adaptation and value-guided methods, while additional comparisons
+and ablations analyze the contributions of its critic design and generative policy optimization.
+2
+
+
+2
+RELATED WORK
+2.1
+REINFORCEMENT LEARNING FOR VLA POST-TRAINING
+Recent studies have explored reinforcement learning (RL) as a post-training paradigm for improv-
+ing pretrained vision-language-action models (VLAs). One line of work directly applies on-policy
+RL to VLAs by repeatedly collecting trajectories from the current policy and optimizing them with
+PPO Schulman et al. (2017), GRPO Shao et al. (2024), or related objectives Tan et al. (2025); Li
+et al. (2026); Chen et al. (2025a). While effective, such approaches require repeated environment
+rollouts, which are expensive for robotic systems; consequently, many studies rely primarily on sim-
+ulated environments for RL training. Another line of work seeks to better reuse previously collected
+robot experience. RECAP Intelligence et al. (2025a) converts learned value information into advan-
+tage conditioning and improves the policy through supervised learning, preserving the scalability of
+imitation-style training but deriving its policy-improvement signal primarily from actions already
+contained in the collected experience. More recent approaches such as LWD Wang et al. (2026b)
+and Q-VGM Wang et al. (2026c) learn explicit critics and use action gradients of the critic to guide
+flow-policy updates, enabling more direct value-based improvement but placing stronger require-
+ments on the local first-order accuracy of the critic around policy-generated actions. In contrast, our
+method resamples candidate actions from the current flow-based VLA and uses only scalar critic
+values to construct relative policy-improvement signals, directly optimizing the current generative
+policy without differentiating through the critic.
+2.2
+POLICY OPTIMIZATION FOR DIFFUSION AND FLOW POLICIES
+RL for diffusion and flow policies has been studied primarily in generic continuous-control settings.
+One class of methods treats the denoising or flow-generation process itself as a sequential policy
+and directly optimizes the generative trajectory with reinforcement learning Ren et al. (2025); Hu
+et al. (2025); another class avoids direct optimization of the full iterative generation process and in-
+stead transfers value information through one-step surrogate actors, value-weighted behavior learn-
+ing, or regularized policy extraction Park et al. (2025); Tiofack et al. (2025); Liang et al. (2026).
+Most of these approaches are developed for conventional diffusion/flow control policies rather than
+large-scale VLAs with pretrained vision-language backbones. OGPO Patil et al. (2026) combines
+an off-policy critic for reusing expensive environment transitions with freshly sampled trajectories
+from the current generative policy, and our separation between offline value learning and on-policy
+generative optimization is inspired by this principle. OGPO, however, focuses on online fine-tuning
+of relatively lightweight generative control policies, where the replay buffer is continually refreshed
+through environment interaction, whereas we study offline post-training of large pretrained VLAs
+and explicitly address how an offline-trained critic can reliably evaluate actions generated by the
+evolving policy. Finally, recent work has shown that single-step policy optimization can substan-
+tially reduce the cost of reinforcement learning for large diffusion models He et al. (2026); we adopt
+this idea to make on-policy generative optimization practical for large flow-based VLAs.
+3
+PRELIMINARIES
+3.1
+FLOW MATCHING FOR VLA POLICIES
+We consider a flow-based VLA policy that generates action chunks conditioned on the current VLA
+context Black et al. (2024). Let st denote the context at robot timestep t, including visual observa-
+tions, the language instruction, and proprioception. We denote by At = [at, at+1, . . . , at+H−1] the
+action chunk associated with one control transition, where H is the execution horizon. Following
+flow matching Lipman et al. (2022), the policy learns a continuous transport from Gaussian noise to
+the conditional action distribution. Given a data pair (st, At), Gaussian noise ϵ ∼N(0, I), and flow
+time τ ∼U(0, 1), we define xt,τ = (1 −τ)ϵ + τAt, whose target velocity is At −ϵ. The action
+expert vθ(xt,τ, τ, st) is trained with
+LFM(θ) = E(st,At), ϵ, τ
+h
+∥vθ(xt,τ, τ, st) −(At −ϵ)∥2
+2
+i
+.
+(1)
+3
+
+
+Fresh on-policy generation
+� candidate action chunks
+�
+Stage 1: Offline Value Learning
+distributional
+value head
+action
+encoder
+Q heads
+shared
+encoder
+action chunk
+noise �
+Return-Anchored Ranking Critic (RARC)
+Stage 2: On-Policy Generative Optimization
+RARC-Guided Generative Policy Optimization
+��.�
+backbone 
+visual observation
+proprio.
+language instruction
+“Make tea”
+action expert
+× �
+…
+�1
+�2
+��
+Frozen
+RARC
+(Q(s,a))
+Group relative advantage
+…
+�1 �2
+��
+Selected transition 
+flow optimization
+update
+Offline Dataset
+sample
+visual observation
+proprio.
+language instruction
+“Make tea”
+Offline
+Dataset
+sample
+Return-grounded value learning
+Guarded local action ranking
+ℒ�
+ℒ�
+Quantile
+� = � + �ᴴ(�−�)�(�′)
+�(�′)
+successful action chunk
+perturbed action chunks
+Preference Pairs
+(�+, �−)
+guarded 
+ranking loss
+ℒ����
+Figure 1: Overview of OVOGO. RARC is first trained from logged robot experience using return-
+grounded value learning and guarded local ranking. The frozen RARC then scores fresh policy-
+generated candidates to guide selected-transition flow optimization.
+At inference time, sampling starts from x[0]
+t
+∼N(0, I) and integrates the learned velocity field over
+a discretized schedule 0 = τ0 < τ1 < · · · < τK = 1. We denote the resulting generation trajectory
+by x[0]
+t , x[1]
+t , . . . , x[K]
+t
+, where k indexes the flow-generation step and x[K]
+t
+represents the generated
+action chunk At.
+3.2
+OFFLINE POLICY IMPROVEMENT FOR VLAS
+We formulate policy improvement at the action-chunk level. Executing At from context st produces
+rewards rt, . . . , rt+H−1 and leads to the next context st+H. The corresponding discounted chunk
+return is Rt = PH−1
+ℓ=0 γℓrt+ℓ, where γ ∈[0, 1) is the per-step discount factor. The policy objective
+is to maximize the expected discounted return J(π) = Eπ
+hP
+t≥0 γtrt
+i
+. In the offline setting, pol-
+icy improvement is performed from a fixed replay dataset D = {(st, At, Rt, st+H, dt)} , where dt
+indicates termination. The dataset may contain trajectories collected by one or more behavior poli-
+cies. Offline reinforcement learning aims to improve the policy using only the logged experience in
+D, without additional environment interaction during optimization. A practical extension is iterative
+offline policy improvement, where the policy is periodically deployed to collect new experience and
+the resulting transitions are added to the replay dataset for the next offline optimization round In-
+telligence et al. (2025a). Each optimization round remains offline with respect to its current replay
+dataset, while the accumulated dataset may expand between rounds.
+4
+METHOD
+OVOGO consists of two stages. First, we train a Return-Anchored Ranking Critic (RARC) from
+logged robot experience using return grounded value learning and local ranking supervision, where
+synthetic actions provide only relative ordering constraints and never receive Bellman targets.
+RARC is then frozen and used to evaluate fresh action candidates sampled from the current flow
+policy at replay observations. Their relative critic values are converted into optimization signals for
+selected transition updates of the action expert, without requiring gradients through the critic.
+4.1
+RETURN-ANCHORED RANKING CRITIC
+At a replay observation, the actor may generate action chunks that were never executed by the robot.
+Their environment outcomes are therefore unavailable, yet their critic scores determine the direction
+of the actor update. RARC separates two sources of supervision. Executed replay transitions es-
+tablish the long-horizon return scale, while ranking perturbations provide local ordering constraints
+without receiving artificial return targets.
+4
+
+
+Return
+grounded
+value
+learning.
+Inspired
+by
+Distributional
+Implicit
+Value
+Learning
+(DIVL) (Wang et al., 2026b), we model the distribution of values associated with actions in re-
+play rather than using a single scalar state value. This representation captures the heterogeneous
+value structure in offline robot experience and supports quantile based value extraction for temporal
+bootstrapping. RARC contains M ensemble members. Each member m has two scalar action value
+heads Qm,1 and Qm,2 and a categorical state value head Zm. All members share a multimodal state
+encoder, while the Q heads additionally condition on the action chunk. We use Qh, h = 1, . . . , 2M,
+to denote individual Q heads when the member identity is irrelevant. A superscript −denotes quan-
+tities evaluated using the exponential-moving-average target critic when explicitly indicated.
+The categorical value head models the state conditioned distribution of Q values for actions in the
+replay dataset. Let pm(c | s) = softmax(Zm(s))c, c = 1, . . . , C, denote the distribution of member
+m over a fixed categorical support Z = {z1, . . . , zC}. Within each member, we average the two
+target Q estimates as ¯Q−
+m(s, A) = 1
+2
+ Q−
+m,1(s, A) + Q−
+m,2(s, A)
+
+. We use twin Q averaging instead
+of selecting the smaller estimate as in clipped double Q learning. This avoids systematically shifting
+the member level estimate downward before distributional value fitting. Conservatism in temporal
+bootstrapping is handled separately through the value quantile described below. All scalar Q-head
+estimates are retained separately and later used for conservative evaluation of policy-generated can-
+didates in Section 4.2.
+For each (st, At) sampled from the replay dataset, we project ¯Q−
+m(st, At) onto Z and use the result-
+ing categorical distribution to supervise pm(· | st)
+LV = ED
+"
+1
+M
+M
+X
+m=1
+CE
+ ΠZ
+ ¯Q−
+m(st, At)
+
+, pm(· | st)
+
+#
+.
+(2)
+Following the entropy adaptive value extraction in DIVL, we adjust the bootstrap quantile according
+to the entropy of the learned value distribution. We compute the normalized entropy Hm(s) =
+−
+1
+log C
+PC
+c=1 pm(c | s) log pm(c | s) and set τm(s) = clip (τbase −αHm(s), τmin, τmax). The
+corresponding state value is Vm(s) = Quantileτm(s)[pm(· | s)]. A higher entropy leads to a lower
+quantile and therefore a more conservative bootstrap value, while a more concentrated distribution
+retains a higher quantile.
+Using the chunk level transition defined in Section 3, the member specific TD target is
+ym,t = Rt + γH(1 −dt)Vm(st+H).
+(3)
+Both Q heads in member m regress to the same target
+LQ = ED
+
+1
+2M
+M
+X
+m=1
+2
+X
+j=1
+(Qm,j(st, At) −ym,t)2
+
+.
+(4)
+This construction keeps temporal value propagation grounded in replay transitions with observed
+rewards and successor states without explicitly maximizing Q over unexecuted actions. It provides
+the return grounded value foundation on which we introduce local action ranking supervision next.
+Guarded local action ranking.
+Return grounded value learning alone may provide insufficient
+discrimination among alternative actions at the same replay observation, while excessive ranking
+pressure can enlarge synthetic Q gaps beyond the scale established by replay returns, as illustrated
+in Figure 2.
+Inspired by RankQ (Choi & Xu, 2026), we construct outcome-dependent ranking priors around
+replay actions. For an action chunk At, we sample a Gaussian direction in normalized action space
+and construct a mild perturbation Aδ
+t and a stronger perturbation A2δ
+t along the same direction. We
+also construct a uniformly sampled legal action Arand
+t
+and a same task mismatched action Aperm
+t
+.
+For successful episodes, we use
+At ≻Aδ
+t,
+At ≻A2δ
+t ,
+At ≻Arand
+t
+,
+At ≻Aperm
+t
+,
+Aδ
+t ≻A2δ
+t ,
+A2δ
+t
+≻Arand
+t
+.
+5
+
+
+−2
+−1
+0
+1
+2
+Action PC1
+−0.4
+−0.2
+0.0
+0.2
+0.4
+Action PC2
+0.6
+0.7
+0.8
+0.9
+1.0
+1.1
+Q (raw10 median)
+−2
+−1
+0
+1
+2
+Action PC1
+−0.4
+−0.2
+0.0
+0.2
+0.4
+Action PC2
+−0.8
+−0.6
+−0.4
+−0.2
+0.0
+0.2
+0.4
+0.6
+Q (raw10 median)
+−2
+−1
+0
+1
+2
+Action PC1
+−0.4
+−0.2
+0.0
+0.2
+0.4
+Action PC2
+−12
+−10
+−8
+−6
+−4
+−2
+0
+Q (raw10 median)
+(A)
+(B)
+(C)
+Figure 2: Effect of local ranking on the learned action value landscape. We visualize the median
+prediction across ten Q heads over locally sampled actions obtained through the same forward flow-
+generation process used for policy optimization, projected onto their first two principal components.
+The star marks the replay action. (A) Without ranking, the critic shows little local discrimination.
+(B) Guarded ranking (τR = 0.1, gmax = 1) introduces clear action discrimination while keeping Q
+value differences controlled. (C) Unguarded ranking produces much larger Q value variation. Raw
+Q values are shown with intentionally different vertical scales.
+Successful trajectories provide stronger evidence that their replay actions are compatible with the
+task. We therefore use a local smoothness prior under which smaller perturbations are more likely
+to preserve useful behavior. The perturbation-based ranking prior is empirically examined in Sec-
+tion 5.4. The random and mismatched actions provide coarser negative references. For failed
+episodes, we only impose
+At ≻Arand
+t
+.
+Failed trajectories do not provide sufficient evidence for a local quality ordering among perturba-
+tions. This remaining relation encodes only a weak behavior distribution prior. The replay action
+comes from the behavior policy that generated the dataset, while the random action is sampled from
+the legal action space. It does not imply that the failed replay action has a high return.
+These preferences provide relative action supervision without assigning return targets to synthetic
+actions. A standard pairwise softplus objective retains nonzero ranking pressure for any finite pos-
+itive Q gap. Since synthetic actions have no observed environment outcomes, continued ranking
+pressure can push their pairwise differences away from the value scale anchored by replay returns.
+For Q head h and a preferred pair A+ ≻A−, we define gh = Qh(s, A+) −Qh(s, A−) and use
+ℓrank(gh) =
+
+τR softplus
+
+−gh
+τR
+
+−τR softplus
+
+−gmax
+τR
+
++
+.
+(5)
+Here [x]+ = max(x, 0). The temperature τR controls how quickly the ranking pressure decreases
+as a positive gap develops. We use a small temperature to rapidly reduce ranking pressure once a
+positive gap is established. The gap cutoff further removes the remaining ranking pressure once
+gh ≥gmax. Together, temperature and the cutoff constitute our guarded ranking design, controlling
+the strength and effective range of ranking supervision. Our tasks use zero intermediate rewards and
+a terminal reward of one upon success, which places discounted returns in [0, 1]. We set the cutoff
+threshold gmax = 1 to match the observed return scale. The cutoff acts only on the pairwise ranking
+pressure and does not clip individual Q values.
+We denote the resulting ranking objective by Lrank. Synthetic actions participate only in this objec-
+tive and never receive TD targets. The complete RARC objective is
+LRARC = LQ + λV LV + λRLrank.
+(6)
+Return grounded value learning establishes long-horizon values from replay transitions, while
+guarded local action ranking provides the relative action discrimination needed for effective gen-
+erative policy optimization. The complementary roles of these two objectives are examined through
+ablations in Section 5.4. Once trained, RARC remains frozen during the policy optimization stage.
+4.2
+RARC-GUIDED GENERATIVE POLICY OPTIMIZATION
+During actor optimization, observations are sampled from the fixed replay dataset. At the beginning
+of each actor iteration, we snapshot the current policy as the rollout policy πold. For each replay
+6
+
+
+observation sb in the actor batch, the rollout policy generates a group of candidate action chunks
+from independent Gaussian noise,
+bAb,i ∼πold(· | sb),
+i = 1, . . . , G.
+(7)
+The frozen RARC evaluates these candidates and converts their relative values into policy optimiza-
+tion signals.
+Group relative advantage.
+Policy optimization depends on the relative quality of candidates gen-
+erated at the same observation. For each Q head, we first center its predictions within the candidate
+group,
+eqh,b,i = Qh(sb, bAb,i) −1
+G
+G
+X
+j=1
+Qh(sb, bAb,j).
+(8)
+This removes the common value offset at the current observation while preserving the relative value
+differences among candidates. The categorical state value head is used only for critic learning and
+does not serve as the actor baseline. We then conservatively aggregate the centered scores across
+Q heads. A candidate receives a nonzero advantage only when all heads agree on the sign of its
+centered score. When all scores are positive, we use the smallest positive score. When all scores
+are negative, we use the negative score closest to zero. A candidate receives zero advantage when
+the heads disagree on the improvement direction (Patil et al., 2026). The resulting Ab,i is detached
+and used as a scalar signal for policy optimization. This conservative aggregation updates the policy
+only along relative improvement directions consistently supported by the critic ensemble, using
+the most conservative magnitude among the agreeing estimates. RARC therefore interfaces with
+the generative policy only through scalar value feedback, and policy optimization does not require
+gradients through the critic.
+Selected transition flow optimization.
+RARC evaluates a candidate after its complete action
+chunk has been generated. Updating the policy through an entire multistep flow trajectory, how-
+ever, introduces substantial computational overhead. We therefore follow the selected transition
+optimization of Flash-GRPO (He et al., 2026).
+For each observation sb, we first sample a common generation transition for the entire candidate
+group, kb ∼Uniform{1, . . . , K}, where transition kb maps x[kb−1] to x[kb]. The selected transition
+uses a stochastic SDE update, while the remaining generation transitions follow deterministic ODE
+dynamics. Each candidate is generated to completion and receives its advantage Ab,i from RARC.
+Policy gradients are computed only through the transition at kb. All candidates within the same
+group share this selected transition, so their relative comparison is not confounded by differences
+across flow timesteps.
+Let ρb,i denote the dimension-normalized likelihood-ratio surrogate between the current policy and
+the rollout policy at the selected transition. Different selected timesteps induce different gradient
+scales through the SDE discretization. Following Flash-GRPO, we apply temporal gradient rectifi-
+cation with w(kb) = 1/λ(kb). The clipped update is
+Lpolicy = −Eb,i [w(kb) min (ρb,iAb,i, clip (ρb,i, 1 −ε, 1 + ε) Ab,i)] .
+(9)
+Here λ(kb) is the timestep dependent scaling factor induced by the selected stochastic transition.
+The exact SDE likelihood, likelihood ratio correction, and form of λ(kb) follow Flash-GRPO and
+are provided in the Appendix. RARC evaluation of the completed action chunk provides the op-
+timization signal, while the policy gradient is computed through a single selected transition with
+temporal gradient rectification, retaining the efficiency of single-transition training.
+Successful behavior retention.
+In addition to RARC-guided policy optimization, we retain the
+native flow-matching objective on successful replay trajectories, denoted by Lsucc. This auxiliary
+objective preserves behaviors in the replay dataset that already achieve task success.
+Rather than combining the two objectives with a fixed loss coefficient, we compute their gradients
+separately, gpolicy = ∇θLpolicy, gsucc = ∇θLsucc, and form the actor update as
+gactor = gpolicy + λeffgsucc.
+(10)
+7
+
+
+Here λeff is determined adaptively from the global norms and cosine similarity of the two gradients,
+with a cap on the relative contribution of the successful-behavior gradient. RARC and the remaining
+VLA backbone stay frozen during policy optimization, and only the action expert is updated. The
+exact successful flow-matching objective, adaptive gradient-capping rule, and rollout-policy refresh
+procedure are provided in the Appendix.
+5
+EXPERIMENTS
+In this section, we evaluate the effectiveness of OVOGO on flow-based VLA post-training. In
+particular, we aim to answer the following research questions: (1) Compared with existing offline
+adaptation and value-guided methods, how effectively can OVOGO improve a pretrained VLA from
+the same robot experience? (2) Can RARC provide useful value signals for freshly generated actions,
+and does generative policy optimization provide additional gains over inference-time selection or
+guidance? (3) What are the contributions of return grounded value learning, local ranking, and the
+guarded ranking design to policy improvement?
+5.1
+EXPERIMENTAL SETUP
+Benchmarks and data.
+We evaluate on RoboTwin 2.0 (Chen et al., 2025b), DexJoCo (Wang et al.,
+2026a), and LIBERO (Liu et al., 2023), as well as a real-robot dexterous manipulation task. For
+each simulation task, the offline dataset contains 100 policy rollout episodes and 50 demonstration
+episodes. Within each simulation benchmark, the actor and critic are trained jointly across all tasks
+using one shared model for each. For RoboTwin, DexJoCo, and LIBERO, we use the publicly
+released clean50 SFT, official multi-task π0.5, and RLinf LIBERO SFT checkpoints, respectively,
+both for policy initialization and initial rollout collection. All methods within each benchmark
+use the same task split, observation format, language instructions, action normalization, execution
+horizon, and evaluation protocol.
+Baselines.
+We compare OVOGO with five baselines. Success BC adapts the action expert by be-
+havior cloning successful trajectories from the replay dataset. RECAP is the value based policy
+adaptation method introduced with π∗
+0.6 (Intelligence et al., 2025a). We use the Evo-RL imple-
+mentation (Contributors, 2026) and fully fine-tune both the VLM backbone and the action expert.
+Best-of-N samples N action chunks from the policy and executes the candidate with the highest
+RARC score. We set N = 8, matching the candidate budget used by OVOGO, and use the same
+critic aggregation without updating the policy. QGF uses critic gradients to guide the flow genera-
+tion process at inference time (Zhou et al., 2026). It starts from the same VLA and uses the offline
+trained critic without optimizing the actor from group relative candidate scores. LWD (Wang et al.,
+2026b) learns a distributional implicit value function and uses critic action gradients to optimize the
+flow policy. We reproduce LWD following its reported algorithm and hyperparameter settings.
+Training protocol.
+Our primary experiments follow the standard offline setting. All methods start
+from the same initial VLA within each benchmark and use the same fixed offline dataset without ad-
+ditional environment interaction during optimization. For OVOGO, the pretrained VLM backbone is
+frozen and only the action expert is optimized. We report the mean and standard deviation of success
+rates over three seeds for the repeated simulation experiments. We additionally evaluate RECAP and
+OVOGO in an iterative offline setting on RoboTwin. At round k, policy optimization is performed
+on a fixed accumulated dataset D(k). The updated policy then collects 100 rollout episodes per task,
+which are added to the dataset for the following round. The demonstration episodes remain avail-
+able throughout all three rounds. Further implementation and training details are provided in the
+Appendix.
+5.2
+MAIN RESULTS
+Standard offline setting.
+Table 1 reports the performance of all methods under the standard of-
+fline setting described above. OVOGO achieves the highest mean success rate across all three bench-
+marks and improves over the initial policy by 7.47, 9.40, and 6.96 percentage points on RoboTwin,
+DexJoCo, and LIBERO, respectively. RECAP improves over the initial policy on all three bench-
+8
+
+
+Table 1: Task macro success rates (%) in the standard offline setting. Results other than the initial
+policy are reported as mean and standard deviation over three seeds.
+Method
+RoboTwin
+DexJoCo
+LIBERO
+π0.5 base
+60.70
+27.50
+71.40
+Success BC
+54.10 ± 0.36
+27.57 ± 1.90
+75.11 ± 0.45
+RECAP
+64.23 ± 1.06
+29.03 ± 3.44
+76.11 ± 0.50
+Best-of-N
+64.23 ± 1.98
+29.73 ± 0.23
+73.97 ± 1.92
+QGF
+63.30 ± 1.48
+29.47 ± 0.45
+72.30 ± 1.11
+LWD
+67.13 ± 0.85
+32.40 ± 0.60
+75.21 ± 1.42
+OVOGO
+68.17 ± 1.19
+36.90 ± 0.98
+78.36 ± 2.00
+Base
+Round 1
+Round 2
+Round 3
+60
+63
+66
+69
+72
+Success rate (%)
+60.7
+64.23
+66.03
+66.23
+RECAP
+Base
+Round 1
+Round 2
+Round 3
+60
+63
+66
+69
+72
+Success rate (%)
+60.7
+68.17
+69.43
+70.73
+OVOGO
+Figure 3: RoboTwin task-macro success rates for RECAP and OVOGO across three rounds of offline
+training and rollout collection.
+marks, while OVOGO achieves further improvements. Compared with LWD, which directly opti-
+mizes the flow policy using critic action gradients, OVOGO achieves improvements of 1.04, 4.50,
+and 3.15 percentage points, respectively. The inference-time baselines further examine whether the
+learned critic provides useful signals for policy-generated actions. Both Best-of-N and QGF im-
+prove over the initial policy across all three benchmarks without changing the underlying policy.
+OVOGO further improves over both baselines by using critic feedback to update the generative
+policy, without requiring critic evaluation at inference time.
+Iterative offline setting.
+We further evaluate RECAP and OVOGO under the iterative offline set-
+ting on RoboTwin. Figure 3 reports the success rates as newly collected experience is incorporated
+into the offline dataset across three rounds. Both methods improve as new experience is incorpo-
+rated, while OVOGO achieves a higher mean success rate in each round.
+5.3
+REAL-ROBOT EVALUATION
+We further evaluate OVOGO on a real-robot block-stacking task using a UR5e robotic arm equipped
+with an INSPIRE dexterous hand. The initial π0.5 policy is fine-tuned on 50 demonstrations and is
+subsequently used to collect 100 rollout episodes for offline post-training. Each method is evaluated
+over 20 real-robot trials.
+As shown in Table 2, OVOGO improves the success rate from 45% to 80%, outperforming the eval-
+uated baselines on this task. Compared with RECAP and LWD, which both achieve 65% success,
+OVOGO achieves an additional improvement of 15 percentage points. These results demonstrate the
+potential of OVOGO for improving flow-based VLAs from real robot experience without requiring
+additional physical interactions during policy optimization.
+9
+
+
+Table 2: Success rates on the real-robot block-stacking task.
+Method
+Successful trials
+Success rate (%)
+π0.5 base
+9/20
+45.0
+SFT
+11/20
+55.0
+RECAP
+13/20
+65.0
+Best-of-N
+11/20
+55.0
+QGF
+10/20
+50.0
+LWD
+13/20
+65.0
+OVOGO
+16/20
+80.0
+Table 3: Ablation of return grounded value learning and guarded local ranking under the standard
+offline setting. Results other than the initial policy are reported as mean and standard deviation over
+three seeds.
+Critic objective
+RoboTwin (%)
+LIBERO (%)
+π0.5 base
+60.70
+71.40
+Return-grounded only
+60.97 ± 1.38
+72.44 ± 2.91
+Guarded ranking only
+55.90 ± 1.54
+53.26 ± 4.98
+Return-grounded + ranking (τR = 1, no cutoff)
+63.17 ± 0.76
+71.05 ± 3.10
+Return-grounded + ranking (τR = 0.1, no cutoff)
+66.50 ± 0.56
+76.99 ± 1.04
+RARC (τR = 0.1, gmax = 1)
+68.17 ± 1.19
+78.36 ± 2.00
+5.4
+ANALYSIS OF RARC
+Contribution of return grounded value learning.
+We examine the complementary roles of return
+grounded value learning and local ranking in RARC. All variants use the same fixed offline dataset
+and actor optimization procedure. As shown in Table 3, the return-grounded critic achieves 60.97 ±
+1.38% success on RoboTwin, while using ranking supervision alone without return grounded value
+learning reduces the success rate to 55.90±1.54%. Combining the two objectives in RARC improves
+the success rate to 68.17±1.19%. These results suggest that ranking supervision alone is insufficient
+for effective policy improvement, while return grounded value learning provides a foundation on
+which local ranking can enhance action discrimination. A similar pattern is observed on LIBERO,
+where guarded ranking alone achieves 53.26 ± 4.98% and the full RARC reaches 78.36 ± 2.00%.
+Effect of temperature and gap cutoff.
+Ranking with τR = 1 and no cutoff achieves 63.17 ±
+0.76% success on RoboTwin. Lowering the temperature to τR = 0.1 without the cutoff increases the
+success rate to 66.50 ± 0.56%. Introducing the gap cutoff at the same temperature further improves
+the success rate to 68.17 ± 1.19%. These results show that both components of guarded ranking
+contribute to policy improvement, with the larger gain coming from the reduced temperature. The
+full guarded ranking design improves over ranking with τR = 1 and no cutoff by 5.00 and 7.31
+percentage points on RoboTwin and LIBERO, respectively. On LIBERO, adding the cutoff at τR =
+0.1 increases the mean success rate from 76.99 ± 1.04% to 78.36 ± 2.00%.
+Validation of the local ranking prior.
+We examine the local ranking prior by applying perturba-
+tions at different scales to the action chunks generated by the initial policy on RoboTwin. Using the
+same evaluation initial states and seeds, mild perturbations with δ = 0.04 and stronger perturbations
+with 2δ = 0.08 reduce the success rate from 60.7% to 56.13 ± 0.80% and 49.40 ± 6.24%, respec-
+tively. The decrease in success as the perturbation magnitude increases supports the local ranking
+prior used in RARC.
+Critic reliability after policy optimization.
+Since RARC remains frozen during policy optimiza-
+tion, its ability to evaluate actions generated by the evolving policy is important. On RoboTwin,
+Best-of-N using RARC improves the initial policy from 60.7% to 64.23 ± 1.98%. Applying the
+same frozen critic to candidates generated by the final OVOGO actors further improves their suc-
+cess rate from 68.17±1.19% to 70.43±0.65%. These results provide evidence that RARC remains
+useful for action selection after policy optimization.
+10
+
+
+6
+CONCLUSION
+In this work, we present OVOGO, an offline reinforcement learning framework for improving flow-
+based vision-language-action models from collected robot experience. OVOGO learns a return-
+grounded ranking critic and uses its value signals to optimize fresh actions generated by the current
+flow policy. Experiments on RoboTwin 2.0, DexJoCo, and LIBERO, as well as a real-robot dex-
+terous manipulation task, show that OVOGO consistently improves the initial VLA and achieves
+stronger performance than existing offline adaptation and value-guided methods. More broadly,
+OVOGO shows how expensive physical experience can be repeatedly reused together with inexpen-
+sive generative sampling, providing a scalable path toward experience-driven post-training of large
+robot policies.
+AI USE STATEMENT
+In this work, we used generative AI tools to assist with manuscript drafting and code inspection.
+We did not use these tools to collect experimental observations, generate evaluation outcomes, or
+produce the numerical results reported in the paper. All figures included in the submitted manuscript
+were drawn and finalized by the authors; no AI-generated figure was included. Additionally, we used
+generative AI tools for language polishing, translation, and LaTeX formatting. We reviewed all AI-
+assisted work, checked technical descriptions and equations against our implementation and cited
+sources, and checked reported results against experimental records. We take responsibility for the
+final content of this work, including text and claims produced with the aid of generative AI.
+REPRODUCIBILITY STATEMENT
+To facilitate reproducibility, we provide the implementation code together with the detailed hyper-
+parameter configurations used for training and evaluation. The simulation benchmarks and initial
+VLA checkpoints used in simulation are publicly available from their original sources. The main
+algorithmic details, data collection procedures, training procedures, and evaluation settings are de-
+scribed in the paper and supplementary materials. These resources facilitate reproduction of the
+experimental results presented in this work.
+REFERENCES
+Kevin Black, Noah Brown, Danny Driess, Adnan Esmail, Michael Equi, Chelsea Finn, Niccolo Fusai, Lachy
+Groom, Karol Hausman, Brian Ichter, et al. π0: A vision-language-action flow model for general robot
+control. arXiv preprint arXiv:2410.24164, 2024.
+Kang Chen, Zhihao Liu, Tonghe Zhang, Zhen Guo, Si Xu, Hao Lin, Hongzhi Zang, Quanlu Zhang, Zhaofei Yu,
+Guoliang Fan, et al. πrl: Online rl fine-tuning for flow-based vision-language-action models. arXiv preprint
+arXiv:2510.25889, 8, 2025a.
+Tianxing Chen, Zanxin Chen, Baijun Chen, Zijian Cai, Yibin Liu, Zixuan Li, Qiwei Liang, Xianliang Lin,
+Yiheng Ge, Zhenyu Gu, et al. Robotwin 2.0: A scalable data generator and benchmark with strong domain
+randomization for robust bimanual robotic manipulation. arXiv preprint arXiv:2506.18088, 2025b.
+Andrew Choi and Wei Xu. Rankq: Offline-to-online reinforcement learning via self-supervised action ranking.
+arXiv preprint arXiv:2605.11151, 2026.
+Evo-RL Contributors. Evo-rl: Towards iterative policy improvement in real-world offline rl. https://
+github.com/MINT-SJTU/Evo-RL, 2026.
+Xiaoxuan He, Siming Fu, Zeyue Xue, Weijie Wang, Ruizhe He, Yuming Li, Dacheng Yin, Shuai Dong,
+Haoyang Huang, Hongfa Wang, et al. Flash-grpo: Efficient alignment for video diffusion via one-step
+policy optimization. arXiv preprint arXiv:2605.15980, 2026.
+Jifeng Hu, Sili Huang, Siyuan Guo, Zhaogeng Liu, Li Shen, Lichao Sun, Hechang Chen, Yi Chang, and
+Dacheng Tao. Decision flow policy optimization. arXiv preprint arXiv:2505.20350, 2025.
+Physical Intelligence, Ali Amin, Raichelle Aniceto, Ashwin Balakrishna, Kevin Black, Ken Conley, Grace
+Connors, James Darpinian, Karan Dhabalia, Jared DiCarlo, Danny Driess, Michael Equi, Adnan Esmail,
+Yunhao Fang, Chelsea Finn, Catherine Glossop, Thomas Godden, Ivan Goryachev, Lachy Groom, Hunter
+11
+
+
+Hancock, Karol Hausman, Gashon Hussein, Brian Ichter, Szymon Jakubczak, Rowan Jen, Tim Jones, Ben
+Katz, Liyiming Ke, Chandra Kuchi, Marinda Lamb, Devin LeBlanc, Sergey Levine, Adrian Li-Bell, Yao Lu,
+Vishnu Mano, Mohith Mothukuri, Suraj Nair, Karl Pertsch, Allen Z. Ren, Charvi Sharma, Lucy Xiaoyang
+Shi, Laura Smith, Jost Tobias Springenberg, Kyle Stachowicz, Will Stoeckle, Alex Swerdlow, James Tanner,
+Marcel Torne, Quan Vuong, Anna Walling, Haohuan Wang, Blake Williams, Sukwon Yoo, Lili Yu, Ury
+Zhilinsky, and Zhiyuan Zhou. π∗
+0.6: a vla that learns from experience, 2025a. URL https://arxiv.
+org/abs/2511.14759.
+Physical Intelligence, Kevin Black, Noah Brown, James Darpinian, Karan Dhabalia, Danny Driess, Adnan
+Esmail, Michael Equi, Chelsea Finn, Niccolo Fusai, et al. π0.5: A vision-language-action model with open-
+world generalization. arXiv preprint arXiv:2504.16054, 2025b.
+Moo Jin Kim, Karl Pertsch, Siddharth Karamcheti, Ted Xiao, Ashwin Balakrishna, Suraj Nair, Rafael Rafailov,
+Ethan Foster, Grace Lam, Pannag Sanketi, et al. Openvla: An open-source vision-language-action model.
+arXiv preprint arXiv:2406.09246, 2024.
+Ilya Kostrikov, Ashvin Nair, and Sergey Levine. Offline reinforcement learning with implicit q-learning. arXiv
+preprint arXiv:2110.06169, 2021.
+Haozhan Li, Yuxin Zuo, Jiale Yu, Yuhao Zhang, Yang Zhaohui, Kaiyan Zhang, Xuekai Zhu, Yuchen Zhang,
+Tianxing Chen, Ganqu Cui, et al. Simplevla-rl: Scaling vla training via reinforcement learning. In Interna-
+tional Conference on Learning Representations, volume 2026, pp. 125846–125869, 2026.
+Ruiming Liang, Yinan Zheng, Kexin Zheng, Tianyi Tan, Jianxiong Li, Liyuan Mao, Zhihao Wang, Guang Chen,
+Hangjun Ye, Jingjing Liu, et al. Dichotomous diffusion policy optimization. In International Conference on
+Learning Representations, volume 2026, pp. 61669–61690, 2026.
+Yaron Lipman, Ricky TQ Chen, Heli Ben-Hamu, Maximilian Nickel, and Matt Le. Flow matching for genera-
+tive modeling. arXiv preprint arXiv:2210.02747, 2022.
+Bo Liu, Yifeng Zhu, Chongkai Gao, Yihao Feng, Qiang Liu, Yuke Zhu, and Peter Stone. Libero: Benchmarking
+knowledge transfer for lifelong robot learning. Advances in Neural Information Processing Systems, 36:
+44776–44791, 2023.
+Seohong Park, Qiyang Li, and Sergey Levine. Flow q-learning. arXiv preprint arXiv:2502.02538, 2025.
+Sarvesh Patil, Mitsuhiko Nakamoto, Manan Agarwal, Shashwat Saxena, Jesse Zhang, Giri Anantharaman,
+Cleah Winston, Chaoyi Pan, Douglas Chen, Nai-Chieh Huang, et al. Ogpo: Sample efficient full-finetuning
+of generative control policies. arXiv preprint arXiv:2605.03065, 2026.
+Allen Ren, Justin Lidard, Lars Ankile, Anthony Simeonov, Pulkit Agrawal, Anirudha Majumdar, Benjamin
+Burchfiel, Hongkai Dai, and Max Simchowitz. Diffusion policy policy optimization. In International Con-
+ference on Learning Representations, volume 2025, pp. 77288–77329, 2025.
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization
+algorithms. arXiv preprint arXiv:1707.06347, 2017.
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang,
+YK Li, Yang Wu, et al. Deepseekmath: Pushing the limits of mathematical reasoning in open language
+models. arXiv preprint arXiv:2402.03300, 2024.
+Shuhan Tan, Kairan Dou, Yue Zhao, and Philipp Kr¨ahenb¨uhl. Interactive post-training for vision-language-
+action models. arXiv preprint arXiv:2505.17016, 2025.
+Franki Nguimatsia Tiofack, Th´eotime Le Hellard, Fabian Schramm, Nicolas Perrin-Gilbert, and Justin Carpen-
+tier. Guided flow policy: Learning from high-value actions in offline reinforcement learning. arXiv preprint
+arXiv:2512.03973, 2025.
+Hanwen Wang, Weizhi Zhao, Xiangyu Wang, Siyuan Huang, He Lin, Boyuan Zheng, Rongtao Xu, Gang Wang,
+Yao Mu, He Wang, et al. Dexjoco: A benchmark and toolkit for task-oriented dexterous manipulation on
+mujoco. arXiv preprint arXiv:2605.16257, 2026a.
+Yi Wang, Xinchen Li, Pengwei Xie, Pu Yang, Buqing Nie, Yunuo Cai, Qinglin Zhang, Chendi Qu, Jeffrey
+Wu, Jianheng Song, et al. Learning while deploying: Fleet-scale reinforcement learning for generalist robot
+policies. arXiv preprint arXiv:2605.00416, 2026b.
+Ziqian Wang, Jiayu Sun, Xingjian Mao, Minqian Wang, and Yao Mu. Q-vgm: Q-guided value-gradient match-
+ing for flow-matching vla policies. arXiv e-prints, pp. arXiv–2606, 2026c.
+12
+
+
+Zhiyuan Zhou, Andy Peng, Charles Xu, Qiyang Li, Tobias Springenberg, Kevin Frans, and Sergey Levine.
+Test-time gradient guidance of flow policies in reinforcement learning. arXiv preprint arXiv:2606.11087,
+2026.
+A
+IMPLEMENTATION DETAILS
+This section provides additional implementation details of OVOGO. We first summarize the com-
+plete training procedure in Algorithm 1, and then describe the selected-transition generative policy
+optimization, successful-behavior retention, and the architecture and training configuration of the
+Return-Anchored Ranking Critic (RARC). The standard offline setting corresponds to a single of-
+fline round, whereas the iterative offline setting repeats the same critic–actor optimization procedure
+after augmenting the replay dataset between rounds.
+Algorithm 1 OVOGO training procedure
+Require: Initial replay dataset D(1); pretrained VLA πθ; number of offline rounds R
+Ensure: Adapted policy πθ
+1: for r = 1, . . . , R do
+Stage 1: Train the return-anchored ranking critic
+2:
+for each critic update on the fixed dataset D(r) do
+3:
+Sample logged transitions from D(r)
+4:
+Construct distributional value and Bellman Q targets from logged transitions using the target critic
+5:
+Construct local ranking pairs around logged actions
+6:
+Update RARC using LRARC = LQ + λV LV + λRLrank
+7:
+Update the target critic by exponential moving averaging
+8:
+end for
+9:
+Freeze RARC
+Stage 2: Optimize the action expert
+10:
+Set πold ←πθ
+11:
+for each actor update on the fixed dataset D(r) do
+12:
+Sample a batch of replay observations
+13:
+for each replay observation sb in the batch do
+14:
+Sample a common kb ∼Uniform{1, . . . , K} for the candidate group
+15:
+Generate G complete chunks under πold, with only transition kb stochastic
+16:
+Score the completed chunks with the frozen RARC scalar Q heads
+17:
+Construct detached group-relative advantages using conservative ensemble aggregation
+18:
+end for
+19:
+Compute the selected-transition Flash-GRPO gradient gpolicy
+20:
+Compute the success-only flow-matching gradient gsucc
+21:
+Compute λeff and combine gactor = gpolicy + λeffgsucc
+22:
+Clip gactor and update only the action expert
+23:
+Refresh πold ←πθ
+24:
+end for
+25:
+if r < R then
+26:
+Collect rollout episodes E(r+1) with the adapted policy
+27:
+Set D(r+1) ←D(r) ∪E(r+1)
+28:
+end if
+29: end for
+30: return πθ
+A.1
+SELECTED-TRANSITION GENERATIVE POLICY OPTIMIZATION
+We adopt the selected-transition optimization strategy of Flash-GRPO (He et al., 2026) to efficiently
+optimize the multi-step flow-generation process. The central idea is to evaluate a completed gen-
+erated action chunk while propagating policy gradients through only one stochastic transition of its
+generation trajectory.
+For each replay observation sb, the rollout policy πold generates a group of G candidate action
+chunks from independent Gaussian noise,
+x[0]
+b,i ∼N(0, I),
+bAb,i = x[K]
+b,i ,
+i = 1, . . . , G,
+(11)
+13
+
+
+where K denotes the number of flow transitions.
+Following the iso-temporal grouping principle of Flash-GRPO, all candidates associated with the
+same replay observation share a common selected generation step,
+kb ∼Uniform{1, . . . , K}.
+(12)
+The selected transition maps x[kb−1]
+b,i
+to x[kb]
+b,i . Sharing the same selected timestep within a candidate
+group avoids confounding relative candidate comparisons with differences in generation time.
+Stochastic selected transition.
+To follow the notation of Flash-GRPO, we use t for the reverse-
+time parameterization in this subsection. This variable is distinct from the forward flow-time variable
+τ used in the flow-matching preliminaries. Following the SDE formulation used in Flash-GRPO, a
+deterministic flow ODE can be transformed into a stochastic transition while preserving the same
+marginal generation process. At flow time t, the selected transition is written as
+xt−∆t = xt +
+"
+vθ(xt, t) + σ2
+t
+2t
+
+xt + (1 −t)vθ(xt, t)
+#
+∆t + σt
+√
+∆t ϵ,
+(13)
+where ϵ ∼N(0, I), vθ is the velocity field predicted by the action expert, and σt controls the
+stochasticity of the transition.
+The conditional mean of the selected transition is therefore
+µθ(xt, t) = xt +
+"
+vθ(xt, t) + σ2
+t
+2t
+
+xt + (1 −t)vθ(xt, t)
+#
+∆t.
+(14)
+Accordingly, the selected-transition likelihood is
+pθ (xt−∆t | xt, sb) = N
+ µθ(xt, t), σ2
+t ∆t I
+
+.
+(15)
+All remaining generation steps follow the corresponding deterministic flow dynamics. Importantly,
+each candidate is still generated to completion before being evaluated by the frozen RARC. The
+critic thus assigns value to the complete generated action chunk, while the policy gradient is com-
+puted only through the selected transition.
+Selected-transition likelihood ratio.
+Let ℓθ,b,i and ℓold,b,i denote the log likelihoods assigned to
+the selected transition under the current and rollout policies, respectively. Let Df denote the event
+dimension of the selected flow transition. We first form the dimension-normalized log-likelihood
+ratio
+∆b,i = ℓθ,b,i −ℓold,b,i
+Df
+.
+(16)
+For numerical stability, the normalized log ratio is clipped before exponentiation,
+ρb,i = exp [clip (∆b,i, −cρ, cρ)] ,
+(17)
+where cρ is the log-ratio clipping threshold listed in Table 5. We use dimension normalization and
+log-ratio clipping as numerical stabilization for the high-dimensional selected transition.
+Temporal gradient rectification.
+A stochastic SDE transition introduces a timestep-dependent
+scaling factor into the policy gradient. Following Flash-GRPO, this factor is
+λ(t) =
+√
+∆t
+σt
++ σt
+√
+∆t(1 −t)
+2t
+.
+(18)
+Without correction, different selected flow timesteps can therefore produce substantially different
+gradient magnitudes even when their advantages have comparable scales. We apply temporal gradi-
+ent rectification using
+w(t) =
+1
+λ(t).
+(19)
+14
+
+
+Let Ab,i denote the detached group-relative advantage provided by RARC. The selected-transition
+policy objective is
+Lpolicy = −Eb,i
+"
+w(tkb) min
+
+ρb,iAb,i,
+clip(ρb,i, 1 −ε, 1 + ε)Ab,i
+#
+.
+(20)
+Only the selected transition contributes policy-likelihood gradients. The remaining generation tra-
+jectory is used to construct the complete candidate action but is not differentiated through. Similarly,
+RARC is frozen during actor optimization, and the critic-derived advantage is detached before the
+policy update.
+The rollout policy πold is refreshed from the current action expert after each policy update. This
+maintains a locally consistent reference distribution for the PPO-style likelihood ratio.
+A.2
+SUCCESSFUL-BEHAVIOR RETENTION AND GRADIENT CONTROL
+RARC-guided policy optimization encourages the action expert to shift probability toward candi-
+dates preferred by the critic. At the same time, we retain behaviors in the offline replay dataset that
+already achieve task success by applying the native flow-matching objective to successful trajecto-
+ries.
+Let Dsucc denote successful replay samples. For a successful logged action chunk At, we sample
+ϵ ∼N(0, I) and flow time τ ∼U(0, 1) and construct
+xτ = (1 −τ)ϵ + τAt.
+(21)
+The corresponding successful-behavior flow-matching objective is
+Lsucc
+FM = E(st,At)∼Dsucc, ϵ,τ
+h
+∥vθ(xτ, τ, st) −(At −ϵ)∥2
+2
+i
+.
+(22)
+Rather than combining the two objectives through a fixed scalar loss weight, we compute their
+gradients separately. Let
+gpolicy = ∇θLpolicy,
+gsucc = ∇θLsucc
+FM .
+(23)
+A fixed auxiliary coefficient can allow the flow-matching gradient to dominate the critic-guided
+policy update when the two objectives have substantially different gradient scales. We therefore use
+a nominal coefficient λ0 together with an adaptive gradient cap.
+Define the global gradient norms
+a = ∥gpolicy∥2,
+b = ∥gsucc∥2,
+(24)
+and, when both gradients have nonzero norm, their cosine similarity
+c = ⟨gpolicy, gsucc⟩
+ab
+.
+(25)
+For numerical stability, c is clipped to the interval [−1, 1].
+Let ρBC ∈(0, 1) denote the target maximum contribution of the weighted successful-behavior
+gradient relative to the norm of the combined actor gradient. We compute
+ξ = ρ2
+BCc + ρBC
+p
+max (0, 1 −ρ2
+BC + ρ2
+BCc2)
+1 −ρ2
+BC
+,
+(26)
+followed by
+λcap =
+ξa
+b + ϵg
+,
+(27)
+15
+
+
+and
+λeff = min (λ0, max(0, λcap)) .
+(28)
+The final actor gradient is then
+gactor = gpolicy + λeffgsucc.
+(29)
+For non-degenerate gradients, this construction enforces the target cap
+∥λeffgsucc∥2
+∥gpolicy + λeffgsucc∥2
+≤ρBC.
+(30)
+Thus, ρBC is an upper-bound target rather than a fixed mixture coefficient. When the successful-
+behavior gradient is small, the nominal coefficient λ0 is retained. When it becomes large, its effective
+weight is reduced so that the auxiliary update does not dominate the RARC-guided policy gradient.
+When b ≤ϵg, we retain the nominal coefficient λ0. If a = 0 while b > ϵg, the adaptive rule
+yields λeff = 0. These cases avoid unstable scaling when one of the two gradient components is
+numerically negligible.
+Only successful replay trajectories contribute to this auxiliary flow-matching objective. Failed tra-
+jectories do not receive behavior cloning supervision, and we do not introduce an additional action-
+space mean-squared-error cloning objective. The two gradient components are explicitly combined
+before gradient clipping and a single optimizer step.
+A.3
+RARC CRITIC ARCHITECTURE AND TRAINING
+RARC uses frozen pretrained visual and language encoders together with a lightweight trainable
+critic. The language backbone is Gemma 3 270M, and the vision backbone is SigLIP2-So400M
+with 224 × 224 visual inputs. The pretrained Gemma 3 and SigLIP2 parameters remain frozen
+during critic optimization; only the critic-specific projection layers and prediction heads are trained.
+The trainable critic core and encoder projection contain approximately 7.78M parameters.
+For RoboTwin, the critic receives three visual observations corresponding to the base camera and the
+two wrist cameras, together with the language instruction and robot proprioceptive state. The same
+critic design is used for DexJoCo, LIBERO, and the real-robot experiments with their respective
+observation and action interfaces.
+RARC contains M = 5 ensemble members. Each member contains two scalar action-value heads
+and one categorical state-value head, yielding ten raw scalar Q estimates in total. The categorical
+value head uses C = 201 atoms on the fixed support [−0.1, 1.1]. We retain the ten Q estimates
+separately when evaluating policy-generated candidates.
+EMA target critic.
+For training stability, we maintain an exponential-moving-average copy of the
+complete critic, including the trainable encoder projection, scalar Q heads, and categorical value
+heads. The target Q predictions are used to construct the distributional value supervision, while the
+categorical value distribution used for TD bootstrapping is evaluated with the EMA target critic. The
+target critic is updated after every critic optimization step with coefficient ηtgt = 0.005.
+The return-grounded distributional value objective, entropy-adaptive quantile extraction, scalar Q
+objective, and guarded local ranking objective are defined in Section 4.1; we do not repeat those
+formulations here. Their implementation-specific numerical settings are summarized in Table 5.
+B
+EXPERIMENTAL DETAILS
+B.1
+ENVIRONMENTS AND POLICY INITIALIZATION
+RoboTwin 2.0.
+We evaluate on ten tasks from RoboTwin 2.0 (Chen et al., 2025b). Each task uses
+visual observations, a language instruction, and robot proprioception. The policy predicts action
+chunks of length H = 50.
+16
+
+
+We initialize the policy from the publicly released π0.5 clean50 checkpoint.1
+The RoboTwin environment action representation has dimension 50×14, while the π0.5 action expert
+internally operates on a 50 × 32 flow representation before conversion to environment actions.
+DexJoCo.
+We evaluate on eleven tasks from DexJoCo (Wang et al., 2026a), including five biman-
+ual tasks and six single-arm tasks. The multi-task policy predicts action chunks of length H = 30.
+Single-arm and bimanual tasks share a unified multi-task policy interface using the benchmark-
+specific state and action representations.
+We initialize from the official multi-task π0.5 checkpoint.2 The released checkpoint is provided in
+JAX/Orbax format. We convert the checkpoint to PyTorch before training, including the vision-
+language and action-expert parameters and the corresponding normalization statistics. The con-
+verted model is used consistently for all DexJoCo comparisons.
+LIBERO.
+We evaluate on 40 tasks from LIBERO (Liu et al., 2023), covering four task suites:
+LIBERO-Spatial, LIBERO-Object, LIBERO-Goal, and LIBERO-Long (LIBERO-10), with ten tasks
+in each suite. The policy predicts a 10-step action chunk and executes the first five actions before
+the next policy call.
+We initialize the policy from the publicly released RLinf π0.5 LIBERO SFT checkpoint.3 The same
+checkpoint is used for all LIBERO comparisons and for collecting the initial policy rollout episodes.
+Except for benchmark-specific observation and action interfaces, we use the same OVOGO training
+configuration across the three simulation benchmarks.
+B.2
+TASK SUITES
+Table 4 lists the tasks used in RoboTwin and DexJoCo together with a short description of the
+required manipulation. The descriptions summarize the task semantics indicated by the official
+benchmark task definitions and language instructions.
+1https://huggingface.co/madokalif/pi05-robotwin2-clean50-sft
+2https://huggingface.co/DexJoCo/DexJoCo-Pi05/tree/main/pi05_dexjoco_
+multi_task
+3https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
+17
+
+
+Table 4: Task suites used for RoboTwin 2.0 and DexJoCo.
+Benchmark
+Task
+Type
+Task description
+RoboTwin 2.0
+adjust bottle
+Bimanual
+Grasp the bottle with the side-appropriate arm and
+move it to the corresponding elevated target side.
+click alarmclock
+Bimanual
+Press the top button of the alarm clock with the arm
+corresponding to its location.
+click bell
+Bimanual
+Press the top of the bell with the arm corresponding
+to its location.
+dump bin bigbin
+Bimanual
+Lift the small tabletop bin and pour its contents into
+the large bin.
+handover mic
+Bimanual
+Grasp the microphone with one arm and hand it over
+to the opposite arm.
+open laptop
+Bimanual
+Grasp the laptop lid and open it beyond the required
+hinge angle.
+pick dual bottles
+Bimanual
+Grasp the two bottles and move them to their corre-
+sponding left and right elevated targets.
+place a2b right
+Bimanual
+Grasp object A, place it to the right of object B, and
+release it.
+place object stand
+Bimanual
+Grasp the target object, place it on the display stand,
+and release it.
+press stapler
+Bimanual
+Press down on the stapler with the arm corresponding
+to its location.
+DexJoCo
+bimanual assembly
+Bimanual
+Grasp the tray with the left hand and the peg with the
+right hand, then insert the peg into the hole.
+bimanual hanoi
+Bimanual
+Execute
+the
+final
+two
+Tower-of-Hanoi
+moves:
+medium disk middle-to-right, then small disk left-to-
+right.
+bimanual microwave cook
+Bimanual
+Open the microwave, place the food inside, close the
+door, and press the start button.
+bimanual photograph
+Bimanual
+Hold the camera with the left hand, align it with the
+logo, and press the shutter with the right hand.
+bimanual unlock ipad
+Bimanual
+Grasp the iPad and enter the password 123 to unlock
+it.
+click mouse
+Single-arm
+Move the mouse to the purple mouse pad and click
+the left mouse button.
+fold glasses
+Single-arm
+Fold the glasses and place them into the case.
+hammer nail
+Single-arm
+Use the hammer to drive the nail into the wooden
+board.
+pick bucket
+Single-arm
+Place the boxed food into the bucket and then lift the
+bucket.
+pinch tongs
+Single-arm
+Grasp the tongs and perform three consecutive open-
+close motions.
+water plant
+Single-arm
+Grasp the watering can and apply water to the plant.
+LIBERO task suites.
+We use all ten tasks from each of the four LIBERO task suites. LIBERO-
+Spatial focuses on manipulation under varying spatial relationships. LIBERO-Object varies the
+objects to be manipulated. LIBERO-Goal examines different task objectives under fixed object
+and spatial configurations. LIBERO-Long contains more complex long-horizon manipulation tasks
+involving multiple steps.
+B.3
+TRAINING HYPERPARAMETERS
+Table 5 summarizes the principal OVOGO hyperparameters. Unless otherwise stated, the same
+optimization configuration is used across the simulation benchmarks.
+18
+
+
+Table 5: Main hyperparameters used in OVOGO.
+Component
+Hyperparameter
+Value
+RARC
+Ensemble members M
+5
+Q heads per member
+2
+Total scalar Q heads
+10
+Value support atoms C
+201
+Value support range
+[−0.1, 1.1]
+Discount factor γ
+0.995
+τbase
+0.7
+Entropy coefficient αent
+0.2
+Minimum quantile τmin
+0.5
+Maximum quantile τmax
+0.7
+Target EMA ηtgt
+0.005
+Value-loss weight λV
+1.0
+Ranking-loss weight λR
+1.0
+Optimizer
+AdamW
+Learning rate
+1 × 10−4
+Weight decay
+1 × 10−4
+Global batch size
+32
+Gradient-norm clipping
+5
+Ranking
+Perturbation scale δ
+0.04
+Ranking temperature τR
+0.1
+Gap cutoff threshold gmax
+1.0
+Actor
+Optimizer
+Adafactor
+Learning rate
+1 × 10−4
+State batch size
+8
+Candidates per state G
+8
+Candidate microbatch size
+16
+Flow transitions K
+10
+PPO clipping ε
+0.01
+Log-ratio clipping cρ
+20
+Gradient-norm clipping
+1
+Retention
+Nominal FM coefficient λ0
+0.005
+Gradient fraction ρBC
+0.2
+Numerical constant ϵg
+10−12
+B.4
+BASELINE CONFIGURATIONS
+All policy-training baselines start from the same pretrained policy and use the same initial offline
+dataset as OVOGO. For the policy-training methods in simulation, policy optimization runs for
+10,000 steps, and we evaluate the best saved checkpoint.
+Success BC.
+Success BC performs supervised adaptation using successful trajectories from the
+same offline replay dataset. We optimize the native flow-matching objective of π0.5 while keeping
+the pretrained vision-language backbone frozen and updating the action expert. Failed replay tra-
+jectories do not contribute to the Success BC objective. We use a learning rate of 1 × 10−5 and a
+global batch size of 256.
+RECAP.
+We implement RECAP (Intelligence et al., 2025a) using the Evo-RL implementa-
+tion (Contributors, 2026). RECAP starts from the same pretrained policy and the same initial replay
+dataset as OVOGO. We follow the Evo-RL training configuration for advantage-conditioned policy
+adaptation and fully fine-tune both the vision-language backbone and the action expert. We use a
+learning rate of 2 × 10−5 and a batch size of 64. For comparable value representations, we use the
+same Gemma 3 270M language encoder and SigLIP2-So400M vision encoder with 224×224 visual
+inputs as in RARC.
+19
+
+
+Best-of-N.
+Best-of-N is an inference-time selection baseline and does not update the policy pa-
+rameters. At each observation, the policy generates N = 8 candidate action chunks. The candidates
+are evaluated using the same frozen RARC used by OVOGO, and the candidate with the highest
+aggregated critic score is executed. Using the same candidate budget as OVOGO isolates the benefit
+of policy optimization from the benefit of critic-based candidate selection.
+QGF.
+QGF is an inference-time value-guidance baseline. We use the same pretrained policy and
+the same RARC critic as OVOGO. During flow generation, action gradients of the critic are used to
+steer the generation trajectory toward higher-value actions, while the actor parameters themselves
+remain unchanged. This comparison separates inference-time value guidance from parameter-space
+policy optimization.
+LWD.
+LWD combines distributional implicit value learning with critic-guided optimization of
+the flow policy. Unlike OVOGO, which uses scalar critic values to construct group-relative policy
+optimization signals, LWD uses critic action gradients to construct policy improvement targets. As
+the official training code was unavailable, we reproduce LWD following the algorithmic details and
+hyperparameter settings reported in the original paper. LWD uses the same initial policy and offline
+replay dataset as OVOGO within each benchmark.
+B.5
+OFFLINE DATA AND TRAINING PROTOCOL
+We distinguish the standard offline setting used for the main comparison from the iterative offline
+experiment conducted on RoboTwin.
+Standard offline setting.
+For the main comparison, all methods are trained from the same fixed
+offline dataset and receive no additional environment interactions during optimization.
+RoboTwin contains ten tasks. For each task, the initial replay dataset contains 100 policy rollout
+episodes and 50 demonstration episodes. The complete initial RoboTwin dataset therefore contains
+1000 policy rollout episodes and 500 demonstration episodes.
+DexJoCo contains eleven tasks. Each task likewise contains 100 policy rollout episodes and 50
+demonstration episodes, resulting in 1100 policy rollout episodes and 550 demonstration episodes
+in total.
+LIBERO contains 40 tasks across four task suites. Each task contains 100 policy rollout episodes
+and 50 demonstration episodes, resulting in 4000 policy rollout episodes and 2000 demonstration
+episodes in total.
+The initial rollout episodes are collected using the corresponding pretrained policies described in
+Section B.1. Their initial task-macro success rates are 60.7%, 27.5%, and 71.40% on RoboTwin,
+DexJoCo, and LIBERO, respectively.
+Within the standard offline setting, the replay dataset remains fixed throughout critic learning and
+actor optimization. Fresh candidate actions generated by the flow policy are used only to construct
+policy-improvement signals. They are not treated as new environment transitions, are not assigned
+synthetic rewards, and are not inserted into the replay dataset.
+Iterative offline setting on RoboTwin.
+We additionally evaluate OVOGO and RECAP under an
+iterative offline protocol on RoboTwin. Let D(k) denote the replay dataset available in round k.
+Critic and actor optimization within that round use only the fixed dataset D(k).
+After completing the offline optimization stage, the updated policy is deployed to collect 100 new
+rollout episodes for each of the ten RoboTwin tasks, giving 1000 new rollout episodes per round. We
+denote this newly collected experience by E(k+1) and construct the replay dataset for the following
+round as
+D(k+1) = D(k) ∪E(k+1).
+(31)
+The original demonstration trajectories remain available throughout all rounds.
+20
+
+
+This protocol preserves the offline nature of each optimization round: new environment experience
+is collected only between rounds, whereas policy-generated candidates sampled during optimization
+never enter the replay dataset.
+B.6
+EVALUATION PROTOCOL
+For every simulation benchmark, we evaluate each task independently using 100 evaluation
+episodes. For task j, the episode success rate is
+SRj = N succ
+j
+N eval
+j
+,
+(32)
+where N succ
+j
+and N eval
+j
+denote the number of successful and total evaluation episodes for task j,
+respectively.
+The benchmark-level metric reported in the main paper is the task-macro success rate. For a bench-
+mark containing J tasks,
+MacroSR = 1
+J
+J
+X
+j=1
+SRj .
+(33)
+Thus, every task contributes equally to the final score regardless of differences in its individual
+success rate.
+We compute the task-macro success rate for each seed and report its mean and standard deviation
+over three seeds for the repeated simulation experiments. The initial policy is evaluated directly
+from the corresponding pretrained checkpoint without policy adaptation.
+All compared methods within the same benchmark use the same task split, language instructions, ob-
+servation processing, action normalization, policy initialization, and evaluation protocol. RoboTwin
+and DexJoCo policies generate and execute 50-step and 30-step action chunks, respectively, while
+LIBERO policies generate 10-step action chunks and execute the first five actions.
+For Best-of-N, the only additional inference-time computation is the generation and critic evaluation
+of N = 8 candidates. For QGF, the critic is used only for inference-time gradient guidance. For
+OVOGO, evaluation uses the optimized policy directly without critic-based candidate selection.
+B.7
+REAL-ROBOT EXPERIMENTAL DETAILS
+Hardware and observations.
+Our real-robot platform consists of a Universal Robots UR5e arm
+with six revolute joints and a five-finger INSPIRE Robots RH56DFX-series dexterous hand with six
+actuator channels. A fixed external Orbbec Femto Bolt camera observes the workspace, and a wrist-
+mounted Intel RealSense L515 provides a close-up view. The policy receives RGB images from
+both cameras, resized to 224 × 224 pixels, together with the language instruction and the current
+robot state.
+State and action representation.
+The proprioceptive state and the executed action each have 12
+dimensions. The state contains the measured joint and actuator positions, while the action specifies
+absolute position targets in the same channel order. The first six dimensions correspond to the
+UR5e arm joint positions in radians. The remaining six dimensions correspond to the little finger,
+ring finger, middle finger, index finger, thumb flexion, and thumb rotation of the dexterous hand,
+represented in raw actuator counts.
+At each policy call, π0.5 predicts an action chunk of length H = 32. The internal flow representation
+has dimension 32 × 32, and the first 12 channels at each step form the 32 × 12 action chunk passed
+to the robot controller. The policy executes 32 actions before the next policy call under the default
+execution setting.
+Initial policy and rollout collection.
+We collect 50 demonstrations of the block-stacking task
+and use them to fine-tune π0.5 for 30,000 optimizer steps with a global batch size of 256. We use
+AdamW with β1 = 0.9, β2 = 0.95, ϵ = 10−8, and weight decay of 10−10. The gradient norm is
+21
+
+
+clipped to 1.0. The learning rate warms up linearly for 1,000 steps to 5 × 10−5 and follows a cosine
+decay schedule with a final learning rate of 5 × 10−6.
+The checkpoint at step 30,000 serves as the initial policy for all real-robot comparisons. This policy
+is also used to collect 100 additional rollout episodes for offline post-training.
+Evaluation.
+Each method is evaluated on 20 real-robot trials. We report the number of successful
+trials and the corresponding empirical success rate in Table 2. The demonstration-trained initial
+policy and the subsequent SFT baseline are reported separately.
+B.8
+COMPUTE PLATFORM
+All experiments are implemented in PyTorch. We use four NVIDIA A100 GPUs for distributed
+OVOGO critic and actor training.
+During critic optimization, the Gemma 3 270M language backbone and the SigLIP2-So400M vision
+backbone with 224 × 224 inputs remain frozen. Only the critic-specific projection and prediction
+modules are updated. During actor optimization, RARC and the pretrained vision-language back-
+bone remain frozen, and only the π0.5 action expert is optimized.
+The benchmark-specific policy checkpoints and the DexJoCo JAX/Orbax-to-PyTorch conversion are
+described in Section B.1; we do not repeat the checkpoint URLs here.
+22

@@ -1,0 +1,1194 @@
+Decoding Transformer Dynamics via Koopman Subspaces
+Subhradeep Kayal
+Ali Dashti
+Amazon*
+deep.kayal@pm.me
+Abstract
+We apply Koopman operator theory and Dy-
+namic Mode Decomposition (DMD) to char-
+acterise how large language models (LLMs)
+process different input topics.
+Treating the
+layer-to-layer evolution of hidden states as a
+dynamical system, we fit a linear Koopman
+operator and take the subspace spanned by its
+dominant modes as a per-topic spectral finger-
+print. Four findings emerge. First, the depth
+map is near-linear: a single linear operator pre-
+dicts each next-layer state to within ≈18% rel-
+ative error (interior variance explained ≈0.99).
+Second, over the 57 MMLU subjects the fin-
+gerprint is topic-discriminative, matching the
+MMLU taxonomy at 0.72 nearest-neighbour
+purity and each subject’s semantic neighbour-
+hood at 0.75 any-hit@3.
+Third, it is a re-
+producible signature (split-half self-retrieval
+≈0.97). Finally, these findings are consistent
+across seven base models (Qwen2.5 0.5-7B,
+Llama-3 1-8B), with a suggestive trend of align-
+ment rising with MMLU accuracy. The spec-
+tral fingerprint thus provides a probe of how
+transformers process different topics across
+depth. Code is available at https://github.
+com/DeepK/koopman-llm-eacl27.
+1
+Introduction
+Large language models process all inputs through
+the same fixed sequence of transformer layers, re-
+gardless of input complexity or domain. While
+prior work has studied how much and how fast each
+layer changes a representation (via cosine similar-
+ity between consecutive hidden states (Men et al.,
+2025), angular distance (Gromov et al., 2025), or
+velocity and acceleration profiles (Fernando and
+Guitchounts, 2025)), these measures do not capture
+how the representation is transformed: which direc-
+tions it moves along, and whether features are am-
+plified, suppressed, or mixed together. They there-
+*This work was done outside of Amazon.
+fore cannot tell whether two inputs are transformed
+in the same way or only by the same amount.
+We propose a different lens: the hidden states a
+prompt produces across layers form the trajectory
+of a dynamical system, and Koopman operator
+theory gives its spectral structure. The Koopman
+operator linearises nonlinear dynamics by acting on
+observable functions, and its eigenvalues describe
+the fundamental modes of the system. Applied
+to an LLM, the corresponding modes are feature
+directions in hidden-state space along which repre-
+sentations are transformed across depth.
+Our central object is the spectral fingerprint:
+the subspace spanned by a topic’s dominant Koop-
+man modes, an embedding-like signature of how
+the model processes that topic. We obtain it from
+linear DMD, which we show captures the one-step
+layer-to-layer dynamics well, suggesting that the
+bulk of the LLM’s layers are nearly linear. Compar-
+ing these mode subspaces across topics defines a
+dynamics space in which two topics are “close” if
+the model transforms them along similar directions,
+regardless of whether they are semantically related.
+This lets us ask questions that magnitude measures
+cannot: which topics a model processes alike, in-
+cluding some that are not semantically close (Sec-
+tion 5.3); whether a topic has a stable processing
+signature at all (Section 5.5); and where in depth a
+linear description holds and where it breaks down
+(Section 5.1).
+Contributions.
+• We introduce the mode-subspace spectral
+fingerprint, a per-topic representation built
+from a Koopman operator fitted along depth,
+together with a Grassmann distance for com-
+paring fingerprints across topics.
+• The transformer’s depth map is near-linear: a
+single linear operator captures each layer tran-
+sition (interior R2 ≈0.99) and outperforms
+arXiv:2611.29113v1  [cs.CL]  22 Nov 2026
+
+
+a nonlinear kernel lift, with nonlinearity con-
+centrated at the input and output boundaries,
+so its Koopman spectrum is a well-grounded
+description of the one-step dynamics.
+• On Qwen2.5-3B over 57 MMLU subjects
+the fingerprint carries topic identity:
+its
+neighbourhoods are category-aligned with the
+MMLU taxonomy (0.72 1-NN purity) and
+overlap semantic neighbourhoods at nearly
+5× chance, and where it departs from seman-
+tics it groups subjects by computation (quan-
+titative subjects clustering around machine
+learning).
+• We show the fingerprint is a reproducible
+signature (split-half self-retrieval 0.97) that is
+consistent across seven base models spanning
+Qwen and Llama and 0.5-8B in scale, with a
+suggestive upward trend in alignment with the
+models’ MMLU accuracy.
+2
+Related Work
+2.1
+Transformers as Depth-Wise Dynamical
+Systems
+Viewing deep networks as discretised ordinary dif-
+ferential equations (ODEs) has a rich foundation (E,
+2017; Chen et al., 2018); for Transformers, this lens
+treats the residual stream’s layer-wise updates as
+a trajectory in representation space. Recently, Fer-
+nando and Guitchounts (2025) formalise the resid-
+ual stream as a spatial dynamical system, report-
+ing systematic velocity and acceleration profiles
+across depth. These measures describe how much
+and how fast representations change; we instead
+fit an explicit linear operator to each topic’s tran-
+sitions and use its dominant modes to identify the
+directions of change. A complementary line finds
+consecutive layers near-linearly related and partly
+redundant: adjacent representations align almost
+perfectly under a linear map (Razzhigaev et al.,
+2024), and many layers can be removed with little
+loss (Gromov et al., 2025; Men et al., 2025), which
+has motivated architectures that allocate depth con-
+ditionally per token (Elhoushi et al., 2024; Raposo
+et al., 2024). These results motivate treating each
+layer-to-layer step as approximately linear, which
+our fingerprint exploits.
+2.2
+Dynamic Mode Decomposition and
+Koopman Theory in language models
+DMD and Koopman theory are increasingly used
+to study foundation models, though along dimen-
+sions orthogonal to ours. One line models physical
+or fluid dynamics with attention-based architec-
+tures (Nagdi et al., 2026). Closer to text, Akrout
+(2023) applies DMD to extract semantic modes
+from embeddings across sequence length, detect-
+ing structural drift and hallucination, and Kayal
+and Tsatsaronis (2019) apply higher-order DMD
+across word sequences to build spectral sentence
+embeddings. Most related, Kim et al. (2026) profile
+the Koopman spectrum of a transformer’s residual
+dynamics at initialisation to predict training insta-
+bility, treating depth-wise evolution as a dynamical
+system whose spectrum is diagnostic.
+The first two works apply spectral analysis
+along the sequence dimension (token-to-token or
+sentence-to-sentence). Like Kim et al. (2026), we
+apply DMD along the depth dimension (layer-to-
+layer) within a single forward pass; they fit a sepa-
+rate operator per layer as a training-stability diag-
+nostic, whereas we fit one operator across all layers
+of a trained model, per input topic, so that topics
+can be compared in a common dynamics space.
+2.3
+Depth-Wise Spectral Analysis and Model
+Compression
+Depth-wise DMD has emerged in computer vision
+for architectural efficiency: recent work applies
+it to Vision Transformers (ViTs) to test whether
+sequential non-linear blocks can be approximated
+by a low-rank linear operator for block pruning and
+compression (Aswani and Jabari, 2026). We use
+the same depth-wise decomposition for a different
+purpose. That work fits the operator to replace
+blocks of layers and so compress the model; we fit
+it per topic and compare the resulting fingerprints.
+2.4
+Mechanistic and Structural
+Interpretability
+Our fingerprints relate to work mapping how in-
+ternal representations evolve across layers. Struc-
+tural probes such as the Logit Lens (nostalgebraist,
+2020) and Tuned Lens (Belrose et al., 2025) decode
+hidden states by projecting them into vocabulary
+logit space, and representation engineering (Zou
+et al., 2025) isolates directional vectors for high-
+level concepts. Whereas these identify what a layer
+contains, typically per concept, our approach mod-
+
+
+els how representations are transformed between
+layers and summarises this for a whole topic.
+3
+Methodology
+3.1
+Koopman Operator Theory
+Consider a nonlinear dynamical system xt+1 =
+F(xt) where xt ∈RD. The Koopman opera-
+tor K (Koopman, 1931) is an infinite-dimensional
+linear operator that acts on observable functions
+g : RD →C:
+(Kg)(x) = g(F(x))
+(1)
+K is linear even when F is nonlinear; linearity is
+achieved by lifting into the (infinite-dimensional)
+space of observables. Its spectral decomposition
+underpins modern operator-theoretic analysis of
+dynamical systems (Mezi´c, 2005; Brunton et al.,
+2022). The Koopman eigenvalues λj and eigen-
+functions φj satisfy:
+Kφj = λjφj
+(2)
+We interpret the transformer’s layer-to-layer map
+as F, with hidden states hl ∈RD as the state at
+“time” (depth) l. Each eigenfunction is paired with a
+Koopman mode ϕj, an eigenvector in hidden-state
+space that identifies a coherent feature direction the
+dynamics act on.
+Relation to the layer Jacobian.
+A more familiar
+linearisation of a layer is its Jacobian Jl(h) =
+∂Fl/∂h, the first-order Taylor approximation of
+layer l around a single hidden state h. It is accurate
+near that state but changes from input to input, so it
+describes the layer at one point. The DMD operator
+(Section 3.2) is instead the least-squares best linear
+map over all of a topic’s layer transitions, across
+every prompt and depth. Its modes are therefore the
+directions along which the model transforms that
+topic on average, which makes them a topic-level
+descriptor where a pointwise Jacobian is not.
+3.2
+Dynamic Mode Decomposition (DMD)
+DMD
+(Schmid,
+2010)
+provides
+a
+finite-
+dimensional approximation to the Koopman
+operator from data (Rowley et al., 2009); our
+formulation follows exact DMD (Tu et al., 2014).
+Given snapshot pairs (X, Y) where Y ≈AX:
+Data construction.
+For a set of N input prompts
+with hidden states at T layers, we form:
+X = [h(1)
+0 , . . . , h(1)
+T−2, . . . , h(N)
+T−2] ∈RD×M
+(3)
+Y = [h(1)
+1 , . . . , h(1)
+T−1, . . . , h(N)
+T−1] ∈RD×M
+(4)
+where M = N(T −1) is the total number of tran-
+sition samples.
+Whitened DMD.
+To ensure scale invariance
+across hidden dimensions, we apply whitening be-
+fore decomposition. Let UxΣxV⊤
+x = SVD(X).
+The whitening transform is:
+W = Σ−1/2
+x
+U⊤
+x
+(5)
+We then compute ˜X = WX and ˜Y = WY. We
+apply whitening for numerical conditioning; for
+linear DMD it is a similarity transform of the fitted
+operator (modes are mapped back to the original
+space), so it leaves the fingerprint unchanged (Sec-
+tion 5.2).
+Rank-truncated SVD.
+Compute ˜Ur ˜Σr ˜V⊤
+r ≈
+˜X (rank-r truncation). The reduced Koopman op-
+erator is:
+˜A = ˜U⊤
+r ˜Y ˜Vr ˜Σ
+−1
+r
+∈Rr×r
+(6)
+Eigendecomposition.
+Solving ˜Awj = λjwj
+yields DMD eigenvalues {λj}r
+j=1 and modes Φ =
+˜Y ˜Vr ˜Σ
+−1
+r We, mapped back to original space via
+W−1.
+3.3
+Spectral Fingerprinting
+For a topic t with prompts {pi}N
+i=1, we extract the
+full-depth trajectory and apply linear DMD (Sec-
+tion 5.2) to obtain eigenvalues {λj} and modes
+{ϕj}. We project every snapshot onto the modes,
+B = Φ†X ∈Cr×M, so that row bj holds mode
+j’s coefficient on each of the M snapshots across
+all prompts and layers. The energy of mode j is
+ej = ∥ϕj∥· ∥bj∥, its total contribution to recon-
+structing the trajectories, rather than its amplitude
+in the initial state alone.
+Fingerprint (mode subspace).
+The fingerprint is
+the subspace spanned by the top-K modes ranked
+by energy:
+S(t) = span
+ ϕ(1), . . . , ϕ(K)
+
+⊂CD,
+(7)
+represented by an orthonormal basis Q(t) ∈CD×K
+(from a QR factorisation). This is an embedding-
+like object (akin to a word vector, but a K-
+dimensional subspace rather than a single direc-
+tion) and it is invariant to each mode’s arbitrary
+scale, complex phase, and ordering.
+
+
+Dynamics-space distance.
+Similarity between
+two fingerprints is the Grassmann (principal-angle)
+distance (Björck and Golub, 1973; Edelman et al.,
+1998) between their subspaces:
+ddyn(t1, t2) =
+ PK
+i=1 θ2
+i
+1/2
+,
+cos θi = σi
+ Q(t1)†Q(t2)
+(8)
+where {σi} are the singular values of the
+cross-basis matrix and {θi} the principal angles.
+Equivalently one may use the projection cosine
+1
+K
+P
+i cos2 θi ∈[0, 1].
+Surface-space distance.
+As a semantic refer-
+ence we embed each subject’s label text with
+a sentence-transformer (Reimers and Gurevych,
+2019) and take cosine distance, demb(t1, t2) =
+1 −cos(e(t1), e(t2)).
+4
+Experiments
+4.1
+Setup
+Models.
+We evaluate seven base models across
+two axes (results in Section 5.6):
+• Scale: Qwen2.5-0.5B / 1.5B / 3B / 7B
+• Family:
+Qwen2.5, Llama-3.2 (1B, 3B),
+Llama-3.1-8B
+Data.
+We use MMLU (Hendrycks et al., 2021)
+with its 57 subjects spanning STEM, humanities,
+social sciences, and other categories. We extract
+100 prompts per subject from the test split: we
+cap at 100 because the smallest subject’s test set
+contains only 100 examples, so 100 is the largest
+sample size available uniformly across all 57 sub-
+jects.
+Compute.
+All experiments run on a single CPU
+machine (32-core Intel Xeon, 64 GB RAM).
+4.2
+Research Questions
+We organise the study around the following re-
+search questions.
+• RQ1. Can a Koopman/DMD operator capture
+the layer-to-layer dynamics of a transformer?
+– RQ1a. Is a linear operator sufficient?
+• RQ2. Does the mode-subspace fingerprint
+encode meaningful semantic structure?
+– RQ2a. How many modes does a stable
+fingerprint need?
+– RQ2b. Is the resulting fingerprint a reli-
+able, reproducible signature?
+• RQ3. Is the fingerprint’s quality consistent
+across model families and scales? That is, is
+a reproducible, category- and semantically-
+aligned fingerprint present in every model
+tested, or only in a particular family or size?
+5
+Results and Analysis
+5.1
+How Well Does a Koopman Operator
+Capture the Dynamics? (RQ1)
+We quantify how well the fitted operator captures
+the layer-to-layer dynamics with a mean per-step
+prediction error: each layer transition is predicted
+from the true previous state and the relative L2
+error is averaged over depth, so errors do not com-
+pound. This isolates the one-step dynamics, the
+property relevant to a meaningful eigenvalue spec-
+trum. Because the operator is fitted jointly to every
+transition of every prompt, a low error means that
+one shared linear map fits the whole distribution
+of a topic’s layer transitions. This is a stronger
+statement than linearity near a single state (the Ja-
+cobian view of Section 3.1). On Qwen2.5-3B (36
+layers, D=2048, 100 prompts per subject), linear
+DMD (rank 100) applied to all 57 MMLU sub-
+jects attains a mean per-step error of 0.184 (range
+0.121-0.207, median 0.184), a per-step variance
+explained (R2 = 1 −err2) of 0.91 averaged over
+layers (range 0.87-0.94).
+Interpreting the error.
+A per-step error of 0.184
+means that, given the true hidden state at a layer,
+the operator predicts the next layer’s state to within
+≈18% relative L2 error on average. Because con-
+secutive residual-stream states are similar (hl+1 =
+hl + δ), part of this accuracy reflects representa-
+tional continuity; we quantify this with an iden-
+tity baseline that predicts ˆhl+1 = hl.
+On the
+five subjects used for the decomposer comparison
+(Section 5.2), where linear DMD’s error is 0.190
+(vs. 0.184 over all 57), the identity baseline yields
+0.245; linear DMD improves on it by ≈22% (con-
+sistent across topics, 20-25%), which is transfor-
+mation beyond continuity.
+Depth structure.
+Table 1 breaks the error down
+by layer, averaged over subjects.
+The first transition (h0 →h1) has variance ex-
+plained near zero (slightly negative): mapping raw
+token embeddings into the residual stream is a
+
+
+Depth transition
+Variance explained
+h0 →h1 (embedding ingest)
+−0.04
+h1 →h2
+0.35
+h2 →h3
+0.48
+interior (h3 →h33)
+≈0.99
+h35 →h36 (final layer)
+0.73
+interior mean (steps 1-34)
+0.94
+Table 1: Per-step variance explained by linear DMD on
+Qwen2.5-3B, averaged over all 57 subjects.
+0.50
+0.25
+0.00
+0.25
+0.50
+0.75
+1.00
+Variance explained R2
+Qwen2.5-0.5B
+Qwen2.5-1.5B
+Qwen2.5-3B
+Qwen2.5-7B
+Llama-3.2-1B
+Llama-3.2-3B
+Llama-3.1-8B
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Relative depth (layer transition, input 
+ output)
+0
+20
+40
+60
+80
+100
+Relative error (%)
+Figure 1: The layer-to-layer map is near-linear in the
+interior across all models. Per-step variance explained
+R2 (top) and relative prediction error (bottom) of the
+linear Koopman operator, averaged over the 57 MMLU
+subjects, against relative depth (input transition at 0,
+output at 1) for the seven base models (Qwen2.5 in blue,
+Llama in orange). The interior is flat at R2 ≈0.99
+(≈5–15% error) for every model, while both boundaries
+(embedding ingestion and final-layer projection) are
+strongly nonlinear.
+large, strongly nonlinear “ingestion” step that a
+single linear operator fit to the whole trajectory
+cannot capture. The final transition (h35 →h36) is
+also markedly less linear (R2 ≈0.73), consistent
+with output-oriented reshaping in the last layer. Be-
+tween these, layers 3-33 are captured at R2 ≈0.99:
+the transformer’s depth map is near-linear in
+its bulk and concentrates its nonlinearity at the
+input and output boundaries, a structural prop-
+erty the fingerprint summarises. This interior near-
+linearity is independently corroborated by Razzhi-
+gaev et al. (2024), who find near-perfect linear
+alignment (Procrustes similarity ≈0.99) between
+adjacent decoder-layer representations, strongest in
+the middle layers. Figure 1 shows the same profile
+for all seven models (Section 5.6).
+5.2
+Is a Linear Operator Sufficient? (RQ1a)
+Since each transformer layer is nonlinear, one
+might expect a single linear operator to be inad-
+equate and a nonlinear lift to help.
+We there-
+fore compare linear DMD against kernel DMD
+(Williams et al., 2015a,b), which lifts the data
+into a reproducing-kernel Hilbert space (RKHS)
+where the dynamics may become more linear. With
+a Gaussian RBF kernel k(x, x′) = exp(−∥x −
+x′∥2/2σ2) and Gram and cross-kernel matrices
+Gij = k(xi, xj) and ˆAij = k(xi, yj), the kernel-
+DMD eigenvalues solve (G+ϵI)−1 ˆA αj = λjαj,
+with ϵ regularising the (possibly ill-conditioned)
+Gram matrix. Using the same per-step prediction
+error, we sweep the kernel bandwidth σ (as a multi-
+ple of the median heuristic) and global state whiten-
+ing, with per-state normalisation disabled through-
+out, on five randomly chosen MMLU subjects (Ta-
+ble 2).
+Configuration
+no whiten
+whiten
+Linear DMD
+0.190
+Kernel, σ×0.1
+0.64
+0.98
+Kernel, σ×0.25
+0.81
+0.93
+Kernel, σ×0.5
+2.92
+1.13
+Kernel, σ×1.0
+5.66
+5.60
+Kernel, σ×2.0
+11.83
+4.66
+Table 2: Mean per-step prediction error on five random
+subjects, lower is better. Linear whitening is omitted
+as it is a basis change that leaves the original-space
+operator, and hence the error, unchanged (0.190 either
+way). The five-subject linear value (0.190) is close to
+the all-57 mean (0.184, Section 5.1).
+Linear DMD outperforms kernel DMD (0.190
+vs. a best kernel of 0.64): the RBF lift does not help.
+We therefore use linear DMD for fingerprinting; it
+is also the simplest choice.
+5.3
+Does the Fingerprint Encode Meaningful
+Semantic Structure? (RQ2)
+We test this on Qwen2.5-3B with K=50 modes
+(Section 5.4).
+MMLU groups its 57 subjects
+into four top-level categories (STEM, humani-
+ties, social sciences, other) through the official
+categories.py mapping; Table 3 lists them with
+their subject counts. We use this grouping as a
+coarse semantic ground truth: if the fingerprint is
+meaningful, subjects in the same category should
+have more similar fingerprints than subjects in dif-
+ferent ones.
+
+
+Category
+Subcategories
+#
+STEM
+physics, chemistry, biology, comp.
+sci., math, engineering
+18
+Humanities
+history, philosophy, law
+13
+Social sciences
+politics, culture, economics, geogra-
+phy, psychology
+12
+Other
+health, business, miscellaneous
+14
+Table 3: The 57 MMLU subjects grouped into four
+top-level categories (official categories.py mapping),
+with the number of subjects in each. Chance 1-NN
+category purity is ≈0.24.
+Category alignment.
+We quantify category co-
+herence with 1-NN purity. For each subject we
+compute the Grassmann distance between its top-
+50 mode subspace and that of every other subject,
+identify its single nearest neighbour, and check
+whether that neighbour belongs to the same cate-
+gory; the 1-NN purity is the fraction of subjects for
+which it does (chance ≈0.24, given the category
+sizes). The fingerprint reaches a 1-NN purity of
+0.72: a subject’s nearest neighbour in dynamics
+space usually belongs to the same MMLU category.
+A two-dimensional t-SNE of the fingerprint dis-
+tances (Figure 2) makes this visible: same-category
+subjects occupy distinct but overlapping regions.
+Dynamics space vs. semantic space.
+Category
+labels are coarse, so we also compare the fin-
+gerprint against a continuous semantic reference:
+does similarity in dynamics space (fingerprints)
+match similarity in semantic space? We embed
+each subject’s label text (underscores replaced
+by spaces, e.g. “high school european history”)
+with a sentence-transformer (all-MiniLM-L6-v2;
+Reimers and Gurevych, 2019) and take cosine dis-
+tance, a semantic representation independent of the
+LLMs under study. Taking each subject’s k nearest
+semantic neighbours as a reference set, we ask how
+many of its k nearest fingerprint neighbours fall in
+that set (Table 4): the top-1 agreement (whether
+the single nearest fingerprint neighbour is also the
+nearest semantic neighbour) and the any-hit@3 rate
+(the fraction of subjects for which at least one of the
+three nearest fingerprint neighbours is also among
+the three nearest semantic neighbours).
+The two spaces are aligned well above chance at
+both granularities: top-1 agreement is 0.33, about
+16× the 0.02 chance rate, and any-hit@3 is 0.75,
+nearly 5× the 0.16 chance rate. Table 5 shows
+where the two spaces agree and where they differ.
+Partial agreement is the expected outcome: there is
+Representation
+top-1
+any-hit@3
+Mode subspace (fingerprint)
+0.33
+0.75
+chance
+0.02
+0.16
+Table 4: Overlap between dynamics-space (the mode-
+subspace fingerprint) and semantic (label-embedding)
+neighbourhoods over 57 subjects. “top-1” is the fraction
+sharing the single nearest neighbour; “any-hit@3” is
+the fraction of subjects with ≥1 of their top-3 dynam-
+ics neighbours among their top-3 semantic neighbours.
+Chance rows give the expected overlap under random
+labelling.
+no single ground truth for semantic similarity, and
+a label embedding is only one proxy for it. This
+is why we test against two independent references,
+the MMLU taxonomy and label embeddings. The
+alignment also holds over the full distance matrices:
+across all 57 subjects, fingerprint and semantic dis-
+tances are positively correlated (Mantel test, Man-
+tel, 1967; Spearman correlation 0.20, p = 0.0002,
+5000 permutations), so it is not confined to selected
+subjects.
+Interpretation.
+The two spaces agree where a
+subject sits in a tight, hierarchical family (biology,
+chemistry, medicine, logic), which the model both
+represents and processes similarly. Among the di-
+vergences, one pattern stands out: semantically
+distinct quantitative/algorithmic subjects (college
+computer science, econometrics, computer secu-
+rity) all have machine learning among their nearest
+dynamics neighbours, and machine learning’s own
+nearest dynamics neighbours are exactly these sub-
+jects. One reading is that the model applies a shared
+quantitative-reasoning computation to them regard-
+less of domain. High school geography similarly
+groups with social and political subjects (security
+studies, public relations, sociology) rather than the
+history subjects it is closest to semantically. The
+fingerprint thus tracks surface semantics closely
+but, where it departs, groups subjects by how the
+model computes over them rather than by lexical
+similarity.
+5.4
+How Many Modes Does the Fingerprint
+Need? (RQ2a)
+The fingerprint is a K-dimensional subspace; how
+large must K be? Table 6 sweeps K from 1 (a
+single mode) to 100 (the full operator rank) for
+Qwen2.5-3B, reporting category 1-NN purity and
+the semantic any-hit@3 (fraction of subjects with
+
+
+abstract algebra
+anatomy
+astronomy
+business ethics
+clinical knowledge
+coll biology
+coll chemistry
+coll CS
+coll mathematics
+coll medicine
+coll physics
+computer security
+conceptual physics
+econometrics
+electrical engineering
+elementary mathematics
+formal logic
+global facts
+HS biology
+HS chemistry
+HS CS
+HS european history
+HS geography
+HS government and politics
+HS macroeconomics
+HS mathematics
+HS microeconomics
+HS physics
+HS psychology
+HS statistics
+HS us history
+HS world history
+human aging
+human sexuality
+international law
+jurisprudence
+logical fallacies
+machine learning
+management
+marketing
+medical genetics
+miscellaneous
+moral disputes
+moral scenarios
+nutrition
+philosophy
+prehistory
+prof accounting
+prof law
+prof medicine
+prof psychology
+public relations
+security studies
+sociology
+us foreign policy
+virology
+world religions
+STEM
+humanities
+social sciences
+other
+Figure 2: Mode-subspace fingerprints of the 57 MMLU subjects. Two-dimensional t-SNE of the K=50 fin-
+gerprint (Grassmann) distances among the 57 subjects for Qwen2.5-3B, with every subject labelled and coloured
+by top-level category. Same-category subjects largely group together (history at the bottom, physics and chem-
+istry upper-left, medicine and biology upper-centre, pure mathematics at the right), but the salient structure is
+cross-category: the quantitative/algorithmic subjects (machine learning, computer science, computer security,
+econometrics, statistics, and the economics subjects) form a single cluster, and electrical engineering joins the
+physics group.
+Subject
+Semantic top-3
+Dynamic top-3 (mode subspace)
+Agreement
+college biology
+HS biology, coll. medicine, coll. chemistry
+HS biology, coll. medicine, medical genetics
+college chemistry
+HS chemistry, coll. physics, coll. biology
+HS chemistry, coll. physics, HS physics
+clinical knowledge
+prof. medicine, coll. medicine, anatomy
+coll. medicine, anatomy, nutrition
+formal logic
+logical fallacies, jurisprudence, concept. physics
+jurisprudence, moral disputes, philosophy
+Divergence
+college CS
+HS CS, coll. math, coll. physics
+HS CS, computer security, machine learning
+econometrics
+HS macroecon., HS microecon., HS statistics
+machine learning, HS statistics, HS microecon.
+computer security
+security studies, coll. CS, HS CS
+coll. CS, machine learning, public relations
+HS geography
+HS world hist., HS math, HS US hist.
+security studies, public relations, sociology
+Table 5: Top-3 nearest neighbours of each subject in semantic vs. mode-subspace dynamics space (K=50, Qwen2.5-
+3B). Agreement cases are tight same-family clusters; among the divergences, quantitative/algorithmic subjects have
+machine learning among their nearest dynamics neighbours. “HS” = high school, “coll.” = college, “CS” = computer
+science.
+
+
+≥1 shared top-3 neighbour).
+K (modes)
+cat. 1-NN
+any-hit@3
+1
+0.44
+0.19
+2
+0.42
+0.21
+3
+0.49
+0.35
+5
+0.51
+0.32
+10
+0.65
+0.61
+20
+0.61
+0.65
+30
+0.72
+0.74
+50
+0.72
+0.75
+70
+0.68
+0.74
+100
+0.72
+0.74
+Table 6: Effect of subspace dimension K on Qwen2.5-
+3B. Category 1-NN purity (chance ≈0.24) and seman-
+tic any-hit@3 (fraction of subjects with ≥1 shared
+top-3 neighbour; chance ≈0.16). Both rise sharply up
+to K≈10; any-hit@3 peaks around K=50 and plateaus.
+A single mode is insufficient: at K = 1 the any-
+hit@3 rate (0.19) is near chance, and the leading
+conjugate pair (K = 2) is no better. Discriminative
+structure emerges at K ≥3: category 1-NN purity
+rises from 0.44 to ≈0.72 and any-hit@3 from 0.19
+to ≈0.75, with most of the gain by K ≈10 and
+a plateau from K = 50. The fingerprint therefore
+needs to be a subspace: topic information is spread
+over many mode directions, not concentrated in the
+dominant one. We adopt K = 50 throughout.
+5.5
+Is the Resulting Fingerprint a Reliable,
+Reproducible Signature? (RQ2b)
+A fingerprint is only useful if it reflects a sta-
+ble property of a topic rather than the particular
+prompts used to compute it. We test this with a
+split-half reproducibility check on Qwen2.5-3B.
+For each subject we randomly partition its 100
+prompts into two disjoint halves and fit an inde-
+pendent fingerprint from each. We then perform
+self-retrieval: for each half-A fingerprint we find its
+nearest neighbour among all 57 half-B fingerprints
+(by Grassmann distance) and ask whether it is the
+same subject. We report the split-half self-retrieval
+rate (the fraction of subjects recovered as their own
+nearest neighbour; chance ≈1/57 ≈0.02) and the
+mean self-retrieval rank (1 = perfect).
+On Qwen2.5-3B (top-50 subspace), split-half
+self-retrieval is 0.97 with a mean self-rank of 1.0,
+against a chance level of 0.02: for almost every
+subject, the nearest half-B fingerprint to its half-A
+fingerprint is its own, and in the few misses the
+correct subject ranks close to the top. A fingerprint
+estimated from 50 prompts is therefore already spe-
+cific to its topic, out of 57 candidates. Section 5.6
+shows the same for all seven models.
+5.6
+Is Fingerprint Quality Consistent Across
+Models? (RQ3)
+We extend the analysis to seven base models span-
+ning scale (Qwen2.5 0.5/1.5/3/7B) and family
+(Qwen2.5, Llama-3.1/3.2). Each model is finger-
+printed identically (linear DMD, rank 100, top-50
+subspace, 100 prompts/subject) and run through
+the same category, semantic-overlap, and split-half
+analyses (Sections 5.3 and 5.5). Table 7 reports the
+metrics with published 5-shot base MMLU.
+Model
+MMLU split-half cat 1-NN any-hit@3 med. VE
+Qwen2.5-0.5B
+47.5
+0.95
+0.67
+0.67
+0.990
+Qwen2.5-1.5B
+60.9
+0.97
+0.68
+0.75
+0.997
+Qwen2.5-3B
+65.6
+0.97
+0.72
+0.75
+0.992
+Qwen2.5-7B
+74.2
+1.00
+0.74
+0.78
+0.998
+Llama-3.2-1B
+32.2
+0.93
+0.63
+0.68
+0.993
+Llama-3.2-3B
+58.0
+1.00
+0.74
+0.73
+0.990
+Llama-3.1-8B
+66.7
+1.00
+0.74
+0.75
+0.987
+Table 7:
+Per-model fingerprint metrics at K=50,
+grouped by family and ordered by size within each
+family (MMLU shown as context). split-half: finger-
+print self-retrieval top-1 (chance 0.02); cat 1-NN: cate-
+gory nearest-neighbour purity (chance 0.24); any-hit@3:
+fraction of subjects with ≥1 of their top-3 dynam-
+ics neighbours among their top-3 semantic neighbours
+(chance 0.16); med. VE: median per-step variance ex-
+plained.
+Fingerprint quality is consistent across the
+seven models tested. Every model is highly re-
+producible (split-half 0.93-1.00 vs. 0.02 chance),
+category-coherent (1-NN purity 0.63-0.74 vs.
+0.24), and semantically aligned (any-hit@3 0.67-
+0.78 vs. 0.16), with a near-linear interior through-
+out (median per-step variance explained 0.987-
+0.998). These ranges span both families and more
+than an order of magnitude in scale (0.5-8B). We
+do not test whether two models assign similar mode
+subspaces to the same topic; the consistency is in
+the quality of each model’s fingerprints. The evi-
+dence also covers only dense, decoder-only Qwen
+and Llama models, and the two families differ in
+detail, for example in the shape of the variance-
+explained profile near the output (Figure 1).
+Fingerprint quality and capability.
+We also
+compare the fingerprint metrics with the models’
+measured capability.
+Within each family both
+metrics rise monotonically with size (cat 1-NN
+0.67→0.74 and any-hit@3 0.67→0.78 for Qwen
+
+
+0.5-7B; 0.63 →0.74 and 0.68 →0.75 for Llama
+1-8B), and across all seven models they track pub-
+lished 5-shot MMLU: the rank correlation with
+MMLU is Spearman ρ ≈0.79 for cat 1-NN and
+ρ ≈0.93 for any-hit@3. With only seven mod-
+els this is suggestive rather than conclusive, and
+the correlations rest heavily on the lowest-MMLU
+model (Llama-3.2-1B); we therefore treat the link
+between fingerprint quality and capability as a hy-
+pothesis for larger model sets.
+6
+Conclusion
+We fitted a linear Koopman operator to the layer-
+to-layer evolution of hidden states in seven trans-
+former language models and used its dominant
+mode subspace as a per-topic spectral fingerprint.
+The depth map was found to be near-linear in its
+interior, with its nonlinearity concentrated at the
+input and output layers. The resulting fingerprint is
+topic-discriminative: aligned with both the MMLU
+taxonomy and semantic neighbourhoods, while
+grouping quantitative subjects across categories.
+The spectral fingerprint can, therefore, be seen as a
+probe of the structure beneath a model’s behaviour,
+and a starting point for future interventions. A natu-
+ral extension is to fit separate operators to blocks of
+layers, which could separate the roles of different
+stages of the network, such as the nonlinear input
+and output stages and the near-linear interior we
+observe.
+Limitations
+Untested model classes.
+Our cross-model evi-
+dence covers seven dense, decoder-only base mod-
+els from two families, up to 8B parameters. We
+leave models with substantially different attention
+or normalisation designs, mixture-of-experts mod-
+els, instruction-tuned or RLHF-trained variants,
+and larger models as future work.
+Design choices and causality.
+The operator rank
+(100) and the fingerprint dimension (K=50) are
+empirical choices; K was selected from a sweep on
+one model and then applied to all, rather than tuned
+per model. Our evidence is correlational through-
+out: we show that fingerprint geometry aligns with
+taxonomic and semantic structure, but we do not
+intervene on the identified directions, so we cannot
+establish that the model causally relies on them.
+All experiments use English; whether the results
+transfer to other languages is an open question.
+Static baselines.
+We do not compare the finger-
+print against static topic representations that ignore
+the layer-to-layer pairing, such as the mean hidden
+state of a topic or the principal subspace of its hid-
+den states. Such representations may also recover
+the taxonomic and semantic alignment we report.
+The dynamic analysis is, however, required for the
+one-step near-linearity and interior-boundary find-
+ings (Section 5.1), which static representations can-
+not express.
+References
+Mohamed Akrout. 2023.
+Representations matter:
+Embedding modes of large language models us-
+ing dynamic mode decomposition.
+Preprint,
+arXiv:2309.01245.
+Nishant Suresh Aswani and Saif Eddin Jabari. 2026.
+Dynamic mode decomposition along depth in vision
+transformers. Preprint, arXiv:2605.07556.
+Nora Belrose, Igor Ostrovsky, Lev McKinney, Zach Fur-
+man, Logan Smith, Danny Halawi, Stella Biderman,
+and Jacob Steinhardt. 2025. Eliciting latent predic-
+tions from transformers with the tuned lens. Preprint,
+arXiv:2303.08112.
+Åke Björck and Gene H. Golub. 1973. Numerical meth-
+ods for computing angles between linear subspaces.
+Mathematics of Computation, 27(123):579–594.
+Steven L. Brunton, Marko Budiši´c, Eurika Kaiser, and
+J. Nathan Kutz. 2022. Modern Koopman theory for
+dynamical systems. SIAM Review, 64(2):229–340.
+Ricky T. Q. Chen, Yulia Rubanova, Jesse Bettencourt,
+and David Duvenaud. 2018. Neural ordinary differ-
+ential equations. In Advances in Neural Information
+Processing Systems, volume 31. Curran Associates,
+Inc.
+Weinan E. 2017. A proposal on machine learning via
+dynamical systems. Communications in Mathemat-
+ics and Statistics, 5:1 – 11.
+Alan Edelman, Tomás A. Arias, and Steven T. Smith.
+1998. The geometry of algorithms with orthogonality
+constraints. SIAM Journal on Matrix Analysis and
+Applications, 20(2):303–353.
+Mostafa Elhoushi, Akshat Shrivastava, Diana Liskovich,
+Basil Hosmer, Bram Wasti, Liangzhen Lai, Anas
+Mahmoud, Bilge Acun, Saurabh Agarwal, Ahmed
+Roman, Ahmed Aly, Beidi Chen, and Carole-Jean
+Wu. 2024. LayerSkip: Enabling early exit inference
+and self-speculative decoding. In Proceedings of the
+62nd Annual Meeting of the Association for Compu-
+tational Linguistics (Volume 1: Long Papers), pages
+12622–12642, Bangkok, Thailand. Association for
+Computational Linguistics.
+
+
+Jesseba Fernando and Grigori Guitchounts. 2025. Trans-
+former dynamics: A neuroscientific approach to in-
+terpretability of large language models. Preprint,
+arXiv:2502.12131.
+Andrey Gromov, Kushal Tirumala, Hassan Shapourian,
+Paolo Glorioso, and Dan Roberts. 2025. The un-
+reasonable ineffectiveness of the deeper layers. In
+The Thirteenth International Conference on Learning
+Representations.
+Dan Hendrycks, Collin Burns, Steven Basart, Andy Zou,
+Mantas Mazeika, Dawn Song, and Jacob Steinhardt.
+2021. Measuring massive multitask language under-
+standing. In International Conference on Learning
+Representations.
+Subhradeep Kayal and George Tsatsaronis. 2019.
+EigenSent:
+Spectral sentence embeddings using
+higher-order dynamic mode decomposition. In Pro-
+ceedings of the 57th Annual Meeting of the Asso-
+ciation for Computational Linguistics, pages 4536–
+4546, Florence, Italy. Association for Computational
+Linguistics.
+Bum Jun Kim, Shohei Taniguchi, Makoto Kawano,
+Yusuke Iwasawa, and Yutaka Matsuo. 2026. Resid-
+ual Koopman spectral profiling for predicting and
+preventing transformer training instability. In Pro-
+ceedings of the 42nd Conference on Uncertainty in
+Artificial Intelligence, volume 337 of Proceedings
+of Machine Learning Research, pages 3036–3060.
+PMLR.
+Bernard O. Koopman. 1931. Hamiltonian systems and
+transformation in Hilbert space. Proceedings of the
+National Academy of Sciences, 17(5):315–318.
+Nathan Mantel. 1967. The detection of disease cluster-
+ing and a generalized regression approach. Cancer
+Research, 27(2, Part 1):209–220.
+Xin Men, Mingyu Xu, Qingyu Zhang, Qianhao Yuan,
+Bingning Wang, Hongyu Lin, Yaojie Lu, Xianpei
+Han, and Weipeng Chen. 2025. ShortGPT: Layers in
+large language models are more redundant than you
+expect. In Findings of the Association for Computa-
+tional Linguistics: ACL 2025, pages 20192–20204,
+Vienna, Austria. Association for Computational Lin-
+guistics.
+Igor Mezi´c. 2005. Spectral properties of dynamical
+systems, model reduction and decompositions. Non-
+linear Dynamics, 41(1–3):309–325.
+Mohammed Nagdi,
+Evangelos-Marios Nikolados,
+Alexey Yermakov, Mars Gao, Nathan Kutz, and Fil-
+ippo Menolascina. 2026. Learning the koopman op-
+erator using attention free transformers. Preprint,
+arXiv:2606.23957.
+nostalgebraist.
+2020.
+Interpreting
+GPT:
+the
+logit
+lens.
+https://www.
+lesswrong.com/posts/AcKRB8wDpdaN6v6ru/
+interpreting-gpt-the-logit-lens.
+Less-
+Wrong blog post, 31 August 2020.
+David Raposo, Sam Ritter, Blake Richards, Timothy
+Lillicrap, Peter Conway Humphreys, and Adam San-
+toro. 2024. Mixture-of-depths: Dynamically allocat-
+ing compute in transformer-based language models.
+Preprint, arXiv:2404.02258.
+Anton Razzhigaev, Matvey Mikhalchuk, Elizaveta Gon-
+charova, Nikolai Gerasimenko, Ivan Oseledets, Denis
+Dimitrov, and Andrey Kuznetsov. 2024. Your trans-
+former is secretly linear. In Proceedings of the 62nd
+Annual Meeting of the Association for Computational
+Linguistics (Volume 1: Long Papers), pages 5376–
+5384, Bangkok, Thailand. Association for Computa-
+tional Linguistics.
+Nils Reimers and Iryna Gurevych. 2019.
+Sentence-
+BERT: Sentence embeddings using Siamese BERT-
+networks. In Proceedings of the 2019 Conference on
+Empirical Methods in Natural Language Processing
+and the 9th International Joint Conference on Natu-
+ral Language Processing (EMNLP-IJCNLP), pages
+3982–3992, Hong Kong, China. Association for Com-
+putational Linguistics.
+Clarence W. Rowley, Igor Mezi´c, Shervin Bagheri,
+Philipp Schlatter, and Dan S. Henningson. 2009.
+Spectral analysis of nonlinear flows. Journal of Fluid
+Mechanics, 641:115–127.
+Peter J. Schmid. 2010. Dynamic mode decomposition
+of numerical and experimental data. Journal of Fluid
+Mechanics, 656:5–28.
+Jonathan H. Tu, Clarence W. Rowley, Dirk M. Luchten-
+burg, Steven L. Brunton, and J. Nathan Kutz. 2014.
+On dynamic mode decomposition: Theory and ap-
+plications.
+Journal of Computational Dynamics,
+1(2):391–421.
+Matthew O. Williams, Ioannis G. Kevrekidis, and
+Clarence W. Rowley. 2015a. A data–driven approxi-
+mation of the koopman operator: Extending dynamic
+mode decomposition. Journal of Nonlinear Science,
+25(6):1307–1346.
+Matthew O. Williams, Clarence W. Rowley, and Ioan-
+nis G. Kevrekidis. 2015b. A kernel-based method for
+data-driven Koopman spectral analysis. Journal of
+Computational Dynamics, 2(2):247–265.
+Andy Zou, Long Phan, Sarah Chen, James Campbell,
+Phillip Guo, Richard Ren, Alexander Pan, Xuwang
+Yin, Mantas Mazeika, Ann-Kathrin Dombrowski,
+Shashwat Goel, Nathaniel Li, Michael J. Byun, Zifan
+Wang, Alex Mallen, Steven Basart, Sanmi Koyejo,
+Dawn Song, Matt Fredrikson, and 2 others. 2025.
+Representation engineering: A top-down approach
+to ai transparency. Preprint, arXiv:2310.01405.

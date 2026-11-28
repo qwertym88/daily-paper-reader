@@ -1,0 +1,4301 @@
+FAST WORLD PLANNER: ADVANTAGE-AWARE
+ACTION-CHUNK POLICY FOR ONLINE PLANNING
+Jiangtao Kong, Yuchen Wang & Huajie Shao
+William & Mary
+{jkong01,ywang142,hshao}@wm.edu
+Yandong Luo & Lu Gan
+Georgia Institute of Technology
+{yluo471,lgan}@gatech.edu
+Rongchao Xu & Guang Wang
+Florida State University
+{rx21a,guang.wang}@fsu.edu
+Yanbing Mao
+Wayne State University
+hm9062@wayne.edu
+Tianyi Zhou
+MBZUAI
+Tianyi.Zhou@mbzuai.ac.ae
+ABSTRACT
+Model Predictive Path Integral (MPPI) control is central to online planning for
+model-based reinforcement learning (MBRL), but its iterative refinement incurs
+planning latency. Reducing refinement iterations often degrades performance,
+motivating stronger policy guidance learned from the planner. However, existing
+methods typically learn from the planner through action-level alignment, which
+does not directly capture the complete H-step planner proposal. Moreover, plan-
+ner imitation leaves further target improvement to online refinement. To address
+these limitations, we propose FaSt World PlANner (SWAN), an advantage-aware
+MPPI-based MBRL framework that explicitly represents and improves the com-
+plete H-step planner proposal to improve policy guidance for efficient online
+planning. For proposal representation, SWAN combines k-MPPI, a multimodal
+MPPI extension, with a mixture of factor analyzers (MFA) action-chunk policy to
+capture multiple modes and correlations across time and action dimensions. For
+proposal optimization, we introduce Advantage-Guided Proposal Optimization
+(APO), which reuses MPPI evaluations to construct an improved target using ad-
+vantage estimates and trains the policy toward this target while preserving planner
+alignment. Experiments across 31 high-dimensional continuous-control tasks from
+DMControl, HumanoidBench, and MyoSuite show that SWAN substantially im-
+proves control performance and sample efficiency while using 50% fewer MPPI
+refinement iterations than state-of-the-art planning-based MBRL methods. Finally,
+SWAN demonstrates zero-shot sim-to-real transfer on a physical Unitree Go2,
+achieving stable velocity-tracking locomotion with high-frequency control. (see
+our demo at https://swanfastworldplanner.github.io/).
+1
+INTRODUCTION
+Recent model-based reinforcement learning (MBRL) methods such as TD-MPC2 (Hansen et al.,
+2024) and BMPC (Wang et al., 2025a) combine learned world models and policies with Model
+Predictive Path Integral (MPPI) control, a sampling-based model predictive control (MPC) algorithm,
+to optimize action sequences online (Williams et al., 2017; Hansen et al., 2022; 2024; Wang et al.,
+2025a; Zhan et al., 2026). In these MPPI-based methods, the policy guides candidate generation
+and MPPI improves action sequences through iterative refinement. However, repeated trajectory
+evaluation introduces planning latency, while reducing refinement iterations leaves less opportunity
+to correct poor candidates (Williams et al., 2017; Pinneri et al., 2021). Prior work (Anthony et al.,
+2017; Silver et al., 2017) on expert iteration shows that policies learned from a planner can improve
+subsequent search. Thus, we seek better policy guidance through learning from the planner to improve
+control performance with fewer MPPI refinement iterations (Sacks & Boots, 2023).
+1
+arXiv:2611.28616v1  [cs.RO]  21 Nov 2026
+
+
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Environment steps (×106)
+0
+200
+400
+600
+800
+Episode reward
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Environment steps (×106)
+0
+200
+400
+600
+800
+BMPC
+BMPC-Chunk
+MPPI iter. = 2
+MPPI iter. = 8
+MPPI iter. = 4
+Figure 1: Motivation on Dog-Run task. BMPC-Chunk
+uses our action-chunk proposal representation with
+planner imitation. Left: Comparison between BMPC
+and BMPC-Chunk under 8 MPPI refinement iterations.
+Right: Comparison of BMPC-Chunk across 2, 4, and 8
+MPPI refinement iterations. Candidate trajectory counts
+per iteration are fixed across settings. Curves show mean
+and 95% CIs over 3 seeds.
+A central obstacle to improving policy guidance
+is policy-planner mismatch between learned
+policies and planner-derived action distributions.
+Specifically, in prior critic-guided methods, the
+critic learns from planner-generated data but
+bootstraps with actions from the learned pol-
+icy, while the resulting value estimates guide
+policy updates and provide terminal values for
+MPPI. Thus, policy-planner mismatch can lead
+to inaccurate value estimates, affecting both pol-
+icy improvement and planning (Wang et al.,
+2025a; Serra-Gomez et al., 2026). To reduce the
+mismatch, recent MPPI-based methods either
+learn the policy through planner imitation (Wang
+et al., 2025a) or retain critic-guided updates
+with planner-derived regularization (Zhan et al.,
+2026; Serra-Gomez et al., 2026). However, two
+gaps remain in representing and improving the
+complete planner proposal. First, the proposal representation gap. Existing alignment objectives
+operate on individual actions or the planner’s first-action distribution, rather than the complete H-step
+action-chunk distribution. Consequently, the learned policy does not directly learn the temporal
+correlations and multiple modes represented by the weighted action chunks. To examine the gap,
+we extend BMPC with our action-chunk proposal representation while retaining planner imitation,
+yielding BMPC-Chunk. As shown in Fig. 1 (left), BMPC-Chunk outperforms BMPC under the
+same MPPI refinement budget on Dog-Run, motivating direct representation of the complete planner
+proposal. Second, the proposal optimization gap. Even with an action-chunk representation, direct
+critic-guided policy updates remain susceptible to policy-planner mismatch. To reduce the mismatch,
+planner-derived regularization encourages planner alignment in critic-guided updates, but the trade-
+off with value maximization can leave residual mismatch. In contrast, planner imitation directly
+uses the current planner proposal as the learning target, leaving further target improvement to MPPI
+refinement. As shown in Fig. 1 (right), BMPC-Chunk remains sensitive to the number of refinement
+iterations, motivating additional proposal improvement in policy learning while preserving planner
+alignment.
+Overcoming both gaps poses two technical challenges: i) efficiently represent the multimodal action-
+chunk planner proposal, and ii) optimize the proposal using advantage estimates while preserving
+planner alignment during policy learning. To address both challenges, we introduce FaSt World
+PlANner (SWAN), an advantage-aware MPPI-based MBRL framework that improves policy guidance
+through explicit representation and improvement of the complete H-step planner proposal. For
+proposal representation, SWAN proposes k-MPPI, a multimodal extension of MPPI, with a Mixture
+of Factor Analyzers (MFA) action-chunk policy. k-MPPI maintains multiple search modes through
+standard MPPI refinement within each mode, while the MFA policy models correlations across
+time and action dimensions and supports direct action-chunk sampling. For proposal optimization,
+SWAN introduces Advantage-Guided Proposal Optimization (APO). APO uses advantage estimates
+from MPPI trajectory evaluations to construct an improved target under a KL constraint relative to
+the current planner proposal. We then train the policy toward the improved target under a separate
+constraint that preserves planner alignment. Advantage information therefore enters policy learning
+through target construction rather than direct critic gradients through policy actions. Experiments on
+31 high-dimensional continuous-control tasks across DMControl (Tunyasuvunakool et al., 2020),
+HumanoidBench (Sferrazza et al., 2024), and MyoSuite (Caggiano et al., 2022) show that SWAN
+improves control performance and sample efficiency with 50% fewer MPPI refinement iterations than
+the MPPI-based baselines. We further confirm the gains in Unitree G1 and Go2 simulations (Zakka
+et al., 2026), then demonstrate zero-shot sim-to-real transfer to a physical Go2 with stable velocity
+tracking at an average 308.16 Hz.
+Our contributions are as follows. 1). We propose SWAN, an advantage-aware MPPI-based MBRL
+framework that improves online planning efficiency through better policy guidance. 2). We propose a
+novel approach that jointly introduces k-MPPI and an MFA policy to explicitly represent multiple
+proposal modes and correlations across time and action dimensions. 3). We introduce APO to improve
+the planner proposal using advantage estimates while preserving planner alignment. Theoretically,
+2
+
+
+we prove nonnegative expected H-step advantage of the exact APO target over the current planner
+proposal and derive a projection-aware sufficient condition for improvement over ideal planner
+imitation. 4). We validate SWAN’s control performance, sample efficiency, and online planning
+efficiency through extensive benchmark comparisons, controlled ablations, and robot locomotion
+simulations, and demonstrate zero-shot sim-to-real transfer to a physical Go2.
+2
+RELATED WORK
+Model-based Reinforcement Learning (MBRL). Recent MBRL learns world models to predict the
+consequences of actions for policy learning or planning (M. Moerland et al., 2023). Based on how the
+learned world model is used, existing methods can be grouped into two categories: 1) imagination-
+based methods optimize policies from model-generated trajectories (Hafner et al., 2019a; 2020; 2023;
+Janner et al., 2019), 2) planning-based methods optimize action sequences online (Hafner et al.,
+2019b; Sikchi et al., 2022; Hansen et al., 2022; 2024). LOOP (Sikchi et al., 2022) learns dynamics
+in the environment state space and uses an actor-derived prior to constrain trajectory optimization
+and reduce actor divergence. For planning in learned latent world models, TD-MPC and TD-MPC2
+use MPPI as an online planner with learned policies guiding candidate generation (Hansen et al.,
+2022; 2024). To improve policy learning, subsequent MPPI-based methods reduce the mismatch
+between learned policies and planner-derived action distributions. BMPC (Wang et al., 2025a)
+learns a policy through imitation of the planner’s first-action distribution. BOOM (Zhan et al., 2026)
+combines critic-guided policy updates with soft value-weighted alignment to planner actions stored
+in replay. PO-MPC (Serra-Gomez et al., 2026) learns an adaptive prior from the planner’s first-
+action distribution to regularize policy optimization. However, these methods incorporate planner
+information through one-step action policy learning. In contrast, SWAN directly represents the
+complete H-step planner proposal and uses advantage estimates from MPPI trajectory evaluations to
+construct an improved target while preserving planner alignment.
+Multimodal Action-Chunk Policies. Recent robot policies use diffusion and flow matching to
+implicitly model high-dimensional, multimodal action-chunk distributions (Chi et al., 2025; Chisari
+et al., 2024; Jiang et al., 2025). D-MPC (Zhou et al., 2025) also learns diffusion action proposals
+from offline trajectories for online MPC. Furthermore, for MPPI-based MBRL, nonlinear dynam-
+ics and non-convex control objectives can produce separated high-value regions in action-chunk
+space (Lambert et al., 2021; Honda et al., 2024). Return-weighted MPPI candidates can there-
+fore contain multimodal structure, motivating diffusion or flow matching for learning the planner
+proposal. However, online proposal learning requires fast sampling and adaptation to changing
+planner proposals. Iterative generation introduces control latency (Wang et al., 2025b), while direct
+policy-gradient backpropagation through diffusion sampling can be computationally expensive and
+unstable (Ma et al., 2025). We thus combine k-MPPI with an MFA action-chunk policy to explicitly
+model the planner proposal, supporting direct sampling and capturing correlations across time and
+action dimensions.
+Advantage-Guided Policy Learning. Prior model-free RL methods optimize policies using esti-
+mated advantages (Schulman et al., 2015; 2016; 2017; Abdolmaleki et al., 2018). Subsequent work
+incorporates estimated advantages into policy learning by weighting actions from historical, replay,
+or offline data (Wang et al., 2018; Peng et al., 2019; Kostrikov et al., 2022). Recent SPO (Macfarlane
+et al., 2024) uses advantage-weighted SMC search to construct first-action targets with exact environ-
+ment models for policy fitting. In this paper, we propose APO, which applies advantage estimates
+from MPPI trajectory evaluations to improve the current complete planner proposal, and then trains
+the policy toward the improved target under a separate planner-alignment constraint.
+3
+PRELIMINARIES
+Problem Formulation. Reinforcement learning (RL) problems can be considered as an infinite-
+horizon discounted Markov decision process (MDP) M = (S, A, P, R, γ), where S ⊆Rds and
+A ⊆Rda denote the state and continuous action spaces, P is the transition kernel, R is the reward
+function, and γ ∈[0, 1) is the discount factor. At each discrete time step t, the agent observes st,
+samples action at from policy π(· | st), receives rt = R(st, at), and transitions to st+1 according
+to P. The objective is to learn a policy π that maximizes J(π) = Eπ,P[P∞
+t=0 γtrt]. Table 2 in
+Appendix A summarizes the notations used in this paper.
+3
+
+
+Environment
+Action-Chunk 
+Policy
+k-MPPI
+𝜏𝜏
+Latent World Model
+Dynamics 
+Model
+Reward 
+Model
+Value 
+Model
+𝑠𝑠𝑡𝑡
+𝑧𝑧𝑡𝑡
+𝑎𝑎𝑡𝑡
+Advantage-Guided Proposal Optimization
+(APO)
+෠𝐺𝐺𝐻𝐻
+𝜋𝜋𝑃𝑃
+Policy Learning
+Forward
+k-MPPI Refinement
+a
+Action-Chunk Policy: MFA Policy
+MLP
+⋯
+𝒛𝒛𝒕𝒕
+⋯
+𝒆𝒆𝒌𝒌
+𝝁𝝁𝒌𝒌
+𝝈𝝈𝒌𝒌
+𝑼𝑼𝒌𝒌
+𝜶𝜶𝒌𝒌
+MFA Head
+b
+Figure 2: Overview of the Proposed SWAN. (a). The action-chunk policy initializes k-MPPI, which refines the
+proposal using predicted rewards and terminal value from the latent world model. APO constructs an improved
+target using advantage estimates and trains the policy toward the target while preserving planner alignment,
+providing initialization for subsequent planning. (b). The MFA policy models a multimodal distribution with
+correlations across time and action dimensions, enabling direct sampling of complete action chunks.
+MPPI-Based MBRL. MPPI-based MBRL combines learned world models and policies with MPPI
+to optimize action sequences online (Wang et al., 2025a). Following TD-MPC2 and BMPC (Hansen
+et al., 2024; Wang et al., 2025a), SWAN uses a latent world model comprising an encoder Eψ, a
+dynamics model Fψ, a reward model Rψ, and a value model Vϕ for terminal bootstrapping. The
+encoder gives zt = Eψ(st) ∈Rdz, from which MPPI evaluates candidate action chunks.
+At control step t, MPPI performs M refinement iterations over H-step action chunks τ = at:t+H−1 ∈
+RD, where D = Hda. In prior methods, iteration m = 1, . . . , M forms a batch T (m) of candidate
+chunks by combining samples from a diagonal Gaussian with chunks generated by rolling out the
+one-step action policy πθa(· | zt) in the latent world model. For each candidate, MPPI rolls out
+bzh+1 = Fψ(bzh, at+h) from bz0 = zt and combines predicted rewards with the terminal value to
+estimate the H-step return
+bGH(zt, τ) =
+H−1
+X
+h=0
+γhRψ(bzh, at+h) + γHVϕ(bzH).
+(1)
+Based on the estimated returns, MPPI assigns each candidate a normalized weight w(m)(τ) =
+softmaxT (m)
+  bGH(zt, τ)/ηMPPI
+
+, where ηMPPI > 0 is the temperature and normalization is over
+T (m). To continue refinement, MPPI projects the weighted empirical distribution onto a diagonal
+Gaussian by matching the weighted mean and elementwise variance
+µ(m+1) =
+X
+τ∈T (m)
+w(m)(τ)τ,
+(σ(m+1))2 =
+X
+τ∈T (m)
+w(m)(τ)
+
+τ −µ(m+1)2
+,
+(2)
+where µ(m), σ(m) ∈RD are the mean and element-wise standard deviation, and vector squares are
+element-wise. After M iterations, the final weighted candidates before Gaussian projection define
+the empirical planner proposal πP (τ | zt) = w(M)(τ) for τ ∈T (M), with first-action marginal
+πP,0(at | zt). Only the first planned action is executed before replanning.
+Policy-Planner Mismatch. In critic-guided MPPI-based methods, the critic learns from planner-
+generated transitions in B, with actions selected using πP,0, but bootstraps with actions from πθa.
+Since πθa need not match πP,0, the terminal value estimates used by MPPI may not reflect the
+return under subsequent replanning (Wang et al., 2025a; Serra-Gomez et al., 2026). To reduce
+the mismatch, BMPC (Wang et al., 2025a) learns πθa through planner imitation, minimizing the
+Kullback–Leibler (KL) divergence KL(πG
+P,0∥πθa), where πG
+P,0 is the Gaussian approximation to
+πP,0. Alternatively, BOOM (Zhan et al., 2026) combines critic-guided policy updates with soft
+value-weighted alignment to planner actions in replay, while PO-MPC (Serra-Gomez et al., 2026)
+regularizes policy optimization toward an adaptive prior distilled from the planner’s first-action
+distribution. We omit the common conditioning on zt in following KL expressions for simplicity.
+4
+PROPOSED SWAN
+Motivation. Although the methods such as BMPC and PO-MPC described in Sec. 3 reduce policy-
+planner mismatch, two gaps remain in learning the complete planner proposal πP as follows.
+4
+
+
+1) Proposal representation gap. Existing alignment objectives operate at the action level, whereas the
+complete planner proposal factorizes as
+πP (τ | zt) = πP,0(at | zt)πP (at+1:t+H−1 | at, zt).
+(3)
+Matching πP,0 therefore does not determine the conditional distribution of the remaining actions.
+2) Proposal optimization gap. Even with complete action chunks, critic-guided updates remain
+susceptible to mismatch since the temporal difference (TD) bootstrapping follows πθa, which need
+not match πP,0. To reduce the mismatch, planner-derived regularization balances planner alignment
+against value maximization. In contrast, planner imitation uses πG
+P,0 as the learning target. However,
+extending imitation to complete chunks still uses the current πP as the learning target, leaving further
+target improvement to MPPI refinement.
+Proposed Method. To address both gaps, we introduce FaSt World PlANner (SWAN), an advantage-
+aware MPPI-based MBRL framework shown in Fig. 2. The proposed method combines k-MPPI and
+an MFA action-chunk policy for complete proposal representation with APO to improve the learning
+target while preserving planner alignment, thereby improving policy guidance for efficient online
+planning. We detail the two novel components below.
+4.1
+MULTIMODAL ACTION-CHUNK PROPOSAL REPRESENTATION
+In this section, we introduce a novel approach to explicitly representing the complete H-step planner
+proposal. Motivated by the diagonal Gaussian projection in Eq. 2, which cannot capture multiple
+modes or correlations across time and action dimensions, we propose k-MPPI to preserve multiple
+search modes and the MFA action-chunk policy to model the planner proposal.
+k-MPPI. k-MPPI initializes K local Gaussian search distributions from the corresponding policy
+components and maintains a global Gaussian for exploration. For each refinement iteration, both
+local and global Gaussians are updated from their respective elites using Eq. 2 under a fixed total
+sampling budget. After M refinement iterations, the local and global search results form a proposal
+with K modes, each represented by a batch Ek of N elite action chunks. To obtain candidate weights
+and mode probabilities, we concatenate the batches into E and obtain
+wP (τ) = softmaxE
+
+bGH(zt, τ)/ηMPPI
+
+,
+αP
+k =
+X
+τ∈Ek
+wP (τ),
+(4)
+where wP (τ) is the normalized weight of candidate τ, αP
+k is the probability of mode k, and superscript
+P denotes planner quantities. The retained chunks and their weights define the empirical planner
+proposal πP , with branch labels providing the mode assignments for policy learning. Appendix B.1
+provides the complete k-MPPI algorithm.
+MFA action-chunk policy (Fig. 2 (b)). In order to learn the proposal constructed by k-MPPI, we
+associate each retained mode with a Gaussian component, following the Gaussian projection in
+Eq. 2. We therefore parameterize πθ as a mixture of factor analyzers (MFA) (Ghahramani et al.,
+1996), using a low-rank covariance term and diagonal residual variances to capture correlations
+across time and action dimensions without parameterizing full covariance matrices. The policy
+network with parameters θ uses zt and learnable mode embeddings ek to predict the MFA parameters
+{(αθ
+k, µθ
+k, U θ
+k, σθ
+k)}K
+k=1. Omitting their dependence on zt, the policy is
+πθ(τ | zt) =
+K
+X
+k=1
+αθ
+kN
+ τ | µθ
+k, Σθ
+k
+
+,
+Σθ
+k
+= U θ
+k(U θ
+k)⊤+ Diag
+ (σθ
+k)2
+,
+(5)
+where αθ
+k ≥0 is the component probability with P
+k αθ
+k = 1, µθ
+k ∈RD is the mean, U θ
+k ∈RD×r
+is the factor loading matrix with rank parameter r ≪D, and σθ
+k ∈RD contains residual standard
+deviations. We select k with probability αθ
+k and sample an action chunk without policy rollouts.
+To support alignment with the action-chunk policy, we project the empirical planner proposal πP
+onto the same MFA family, extending the Gaussian projection in Eq. 2. The projection preserves
+the mode probabilities αP
+k and produces the parameters {(αP
+k , µP
+k , U P
+k , σP
+k )}K
+k=1, which define the
+continuous MFA approximation eπP ,
+eπP (τ | zt) =
+K
+X
+k=1
+αP
+k N
+ τ | µP
+k , ΣP
+k
+
+,
+ΣP
+k
+= U P
+k (U P
+k )⊤+ Diag
+ (σP
+k )2
+.
+(6)
+5
+
+
+We also detail the projection and sampling procedures in Appendix B.2 and B.3.
+4.2
+ADVANTAGE-GUIDED PROPOSAL OPTIMIZATION
+After establishing the complete proposal representation in Sec. 4.1, we introduce APO to improve the
+planner proposal with advantage estimates while preserving planner alignment.
+Advantage-guided proposal improvement. To improve the current planner proposal πP , we seek an
+updated proposal π that maximizes Eτ∼π[ bGH(zt, τ)]. Since improvement is measured relative to πP ,
+we express the expected return gain as Eτ∼π[A(τ)], where A(τ) = bGH(zt, τ)−Eτ ′∼πP [ bGH(zt, τ ′)].
+However, advantage maximization alone cannot constrain how far π departs from πP . We therefore
+impose a KL trust region on the proposal update at a given latent state zt and solve
+max
+π
+Eτ∼π[ ¯A(τ)]
+s.t.
+KL(π∥πP ) ≤ϵMD,
+(7)
+where ϵMD is the KL radius and ¯A(τ) = A(τ)/(sA
+PH−1
+h=0 γh) is the advantage normalized to
+account for reward scale, with sA denoting the weighted standard deviation of the horizon-normalized
+advantage under the current πP . Then we derive the proposal update by introducing a Lagrange
+multiplier λ ≥0 for the KL constraint and forming
+L(π, λ) = Eτ∼π[ ¯A(τ)] −λ (KL(π∥πP ) −ϵMD) .
+(8)
+For fixed λ > 0, removing the constant λϵMD leaves a KL-regularized advantage objective, cor-
+responding to a mirror-descent update from πP (Beck & Teboulle, 2003). Thus, maximizing the
+Lagrangian over normalized distributions yields the optimal target π∗,
+π∗(τ | zt) = πP (τ | zt) exp
+  ¯A(τ)/λ
+
+Eτ ′∼πP
+
+exp
+  ¯A(τ ′)/λ
+.
+(9)
+The target reuses MPPI evaluations to favor advantageous action chunks without additional model
+rollouts. With λ > 0 fixed in implementation, π∗also solves Eq. 7 with the induced KL radius
+ϵMD = KL(π∗∥πP ), as shown in Appendix C.2.
+Planner alignment. After obtaining the optimal target π∗, we learn πθ to incorporate the proposal
+improvement into subsequent planning. For policy learning, we construct the MFA approximation eπ∗
+of π∗using the projection in Sec. 4.1. However, the trust region in Eq. 7 constrains π∗rather than πθ.
+We thus introduce a separate forward-KL trust region around eπP to preserve planner alignment and
+optimize the policy parameters over replay states st,
+min
+θ
+Est∼B [KL(eπ∗∥πθ)]
+s.t.
+Est∼B [KL(eπP ∥πθ)] ≤ϵ,
+(10)
+where ϵ denotes the budget for the average alignment KL in the constrained objective. The MFA KL
+terms retain branch labels, as defined in Appendix B.4. To optimize the constrained policy objective,
+we introduce a Lagrange multiplier β ≥0 for the alignment constraint and form
+LAPO(θ, β) = Est∼B [KL(eπ∗∥πθ)] + β (Est∼B [KL(eπP ∥πθ)] −ϵ) .
+(11)
+Rather than fixing β, we alternate policy minimization with projected dual ascent, adapting the
+penalty to constraint violation. Since the unnormalized dual update depends on the absolute KL
+scale, we use an exponential moving average (EMA) of the alignment KL as the current budget and
+normalize the update accordingly
+β ←
+
+β + ηβ
+Est∼B [KL(eπP ∥πθ)]
+ϵ
+−1
+
++
+,
+ϵ = [Est∼B [KL(eπP ∥πθ)]]EMA ,
+(12)
+where ηβ is the dual step size, [·]EMA denotes the exponential moving average, and [·]+ projects onto
+nonnegative values. The current budget ϵ is held fixed during each policy and dual update. Further,
+Appendix C.4 presents a unified view that derives the core policy learning objectives of APO and
+prior methods from a common formulation, clarifying their connections and differences.
+4.3
+THEORETICAL ANALYSIS
+We further theoretically analyze proposal improvement at zt with the latent world model held fixed
+and define bJH(π) = Eτ∼π[ bGH(zt, τ)].
+Theorem 1 (Exact target improvement). For λ > 0, the optimal target in Eq. 9 satisfies
+bJH(π∗) −bJH(πP ) = Eτ∼π∗[A(τ)] ≥0.
+(13)
+6
+
+
+Transferring the target gain to πθ requires MFA projection and policy learning. We thus bound the
+resulting improvement over ideal planner imitation, defined by πIL = eπP .
+Theorem 2 (Projection-aware policy improvement). Assume the expected returns and KL divergence
+below are finite and there exists a finite constant Amax > 0 such that | bGH(zt, τ)−bJH(eπP )| ≤Amax
+for every τ in the union of the supports of πθ, eπ∗, and eπP . Then, for any β ≥0,
+bJH(πθ) −bJH(πIL) ≥
+bJH(eπ∗) −bJH(eπP )
+1 + β
+−Amax
+s
+2 [KL(eπ∗∥πθ) + β KL(eπP ∥πθ)]
+1 + β
+.
+(14)
+Together, the above theorems establish nonnegative target improvement for APO and a sufficient
+condition for improvement over ideal planner imitation after MFA projection and policy learning. We
+also provide the proofs of both theorems in Appendix C.3.
+5
+EXPERIMENTS
+We first evaluate SWAN in terms of (i) control performance, sample efficiency, and online planning
+efficiency, (ii) the benefit of complete H-step planner proposal representation with k-MPPI and MFA
+under matched planning budgets, and (iii) whether APO improves control performance over planner
+imitation under reduced MPPI refinement budgets. We further evaluate SWAN on Unitree G1 and
+Go2 in simulation, then deploy it on a physical Go2 robot for real-world validation.
+Benchmarks. We evaluate 31 tasks comprising 7 from DMControl (Tunyasuvunakool et al., 2020),
+14 from HumanoidBench (Sferrazza et al., 2024), and 10 from MyoSuite (Caggiano et al., 2022),
+spanning locomotion and manipulation with maximum action dimensions of 38, 61, 39, respec-
+tively. Additional Unitree G1 and Go2 tasks (Zakka et al., 2026) have 29 and 12 action dimensions.
+Appendix D lists all tasks and descriptions.
+Baselines. We compare against planning-based BMPC (Wang et al., 2025a), BOOM (Zhan et al.,
+2026), and PO-MPC (Serra-Gomez et al., 2026), imagination-based DreamerV3 (Hafner et al., 2023),
+and model-free FPO (McAllister et al., 2026) and SAC (Haarnoja et al., 2018). For action-chunk
+comparison, BMPC-DP replaces BMPC’s one-step policy with a diffusion policy (Chi et al., 2025),
+retaining MPPI and learning the complete H-step planner proposal through planner imitation.
+Implementation Details. We match environment steps across methods. In the full-budget com-
+parison, MPPI-based baselines use M = 8 refinement iterations, while SWAN uses M = 4. In the
+half-budget comparison, all MPPI-based methods use M = 4. We provide detailed implementation
+settings and hyperparameters in Appendix E.
+5.1
+MAIN RESULTS
+Control performance and sample efficiency. As shown in Figs. 3, 4, and 5, we compare SWAN’s
+control performance and sample efficiency with baselines under full- and half-budget settings. Each
+figure plots means over environment steps for the suite average and four representative tasks, with
+shaded 95% confidence intervals (CIs) over 3 random seeds. We provide all task curves in Appendix F.
+In the full-budget comparison, SWAN with M = 4 refinement iterations outperforms MPPI-based
+baselines with M = 8 in suite-average performance. Following threshold-based evaluations (Wang
+et al., 2025a; Lange et al., 2023), we measure sample efficiency by T80, the environment steps until the
+mean evaluation curve first reaches 80% of SWAN’s final performance, a common threshold across
+methods for each task or suite average. On DMControl, SWAN achieves 898.8 average return versus
+PO-MPC’s 883.7, with T80 = 0.60M versus 1.00M, a 40% reduction. In particular, SWAN exceeds
+BOOM on Dog-Run and BMPC on Humanoid-Run by 67.2 and 25.8 in episode return, with 53.6%
+and 33.3% lower T80, respectively. On HumanoidBench, SWAN reaches 688.0 versus PO-MPC’s
+604.0, while reducing T80 from 1.25M to 0.90M by 28%. Against the same PO-MPC baseline,
+SWAN improves returns on Run and Sit Hard by 112.2 and 92.0, with 37.9% and 62.5% lower T80,
+respectively. The gains extend to MyoSuite, where SWAN attains 0.88 average success rate compared
+with BMPC’s 0.81, with T80 = 0.55M versus 1.05M, a 47.6% reduction. In particular, on Pen Twirl,
+SWAN reaches 1.0 success and T80 = 0.25M, whereas the MPPI-based baselines reach at most
+0.667 and do not reach the threshold during evaluation. Additionally, the half-budget setting (M = 4)
+lowers BMPC, BOOM, and PO-MPC’s performance, reflecting continued dependence on MPPI
+7
+
+
+0
+200
+400
+600
+800
+1000
+Episode return
+Avg. 7 tasks
+0
+200
+400
+600
+800
+1000
+Dog Run
+0
+200
+400
+600
+800
+1000
+Humanoid Run
+0
+200
+400
+600
+800
+1000
+Dog Trot
+0
+200
+400
+600
+800
+1000 Humanoid Walk
+0
+1
+2
+3
+4
+0
+200
+400
+600
+800
+1000
+Episode return
+0
+1
+2
+3
+4
+0
+200
+400
+600
+800
+1000
+0
+1
+2
+3
+4
+0
+200
+400
+600
+800
+1000
+0
+1
+2
+3
+4
+0
+200
+400
+600
+800
+1000
+0
+1
+2
+3
+4
+0
+200
+400
+600
+800
+1000
+Environment steps (×106)
+MPPI-based MBRL:
+Others:
+SWAN
+POMPC
+BOOM
+BMPC
+BMPC-DP
+M = 4
+M = 8
+DreamerV3
+FPO
+SAC
+95% CIs (3 seeds)
+Figure 3: DMControl locomotion suite. SWAN uses M = 4 MPPI refinement iterations, while MPPI-based
+baselines use M = 4 and M = 8 in the top (half-budget) and bottom (full-budget) rows, respectively. Curves
+and shading show means and 95% CIs over 3 random seeds.
+0
+200
+400
+600
+800
+1000
+Episode return
+Avg. 13 tasks
+0
+200
+400
+600
+800
+1000
+Pole
+0
+200
+400
+600
+800
+1000
+Sit Hard
+0
+200
+400
+600
+800
+1000
+Run
+0
+200
+400
+600
+800
+1000
+Crawl
+0
+0.5 1.0 1.5 2.0
+0
+200
+400
+600
+800
+1000
+Episode return
+0
+0.5 1.0 1.5 2.0
+0
+200
+400
+600
+800
+1000
+0
+0.5 1.0 1.5 2.0
+0
+200
+400
+600
+800
+1000
+0
+0.5 1.0 1.5 2.0
+0
+200
+400
+600
+800
+1000
+0
+0.5 1.0 1.5 2.0
+0
+200
+400
+600
+800
+1000
+Environment steps (×106)
+MPPI-based MBRL:
+Others:
+SWAN
+POMPC
+BOOM
+BMPC
+BMPC-DP
+M = 4
+M = 8
+DreamerV3
+FPO
+SAC
+95% CIs (3 seeds)
+Figure 4: HumanoidBench locomotion suite. SWAN uses M = 4 MPPI refinement iterations, while MPPI-
+based baselines use M = 4 and M = 8 in the top (half-budget) and bottom (full-budget) rows, respectively.
+Curves and shading show means and 95% CIs over 3 random seeds. The suite average excludes Reach.
+refinement. SWAN’s average return gains over PO-MPC widen to 25.3 and 110.5 on DMControl and
+HumanoidBench, with 50.0% and 37.9% lower T80, respectively. On MyoSuite, SWAN’s average
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Success rate
+Avg. 10 tasks
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Pen Twirl
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Obj Hold Hard
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Pen Twirl Hard
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Key Turn Hard
+0
+0.5 1.0 1.5 2.0
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Success rate
+0
+0.5 1.0 1.5 2.0
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+0
+0.5 1.0 1.5 2.0
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+0
+0.5 1.0 1.5 2.0
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+0
+0.5 1.0 1.5 2.0
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Environment steps (×106)
+MPPI-based MBRL:
+Others:
+SWAN
+POMPC
+BOOM
+BMPC
+BMPC-DP
+M = 4
+M = 8
+DreamerV3
+FPO
+SAC
+95% CIs (3 seeds)
+Figure 5: MyoSuite manipulation suite. SWAN uses M = 4 MPPI refinement iterations, while MPPI-based
+baselines use M = 4 and M = 8 in the top (half-budget) and bottom (full-budget) rows, respectively. Curves
+and shading show means and 95% CIs over 3 random seeds.
+8
+
+
+success rate exceeds BMPC’s by 0.137, with 63.3% lower T80. All final performance and T80 results
+are in Appendix G.
+Online planning efficiency.
+We next assess whether the control gains are accompanied by
+Table 1: Evaluation efficiency averaged over 7 DMCon-
+trol tasks over 10 episodes with planning horizon H = 3.
+Relative time is Tmethod/TSWAN.
+Method
+Trainable
+Params. (M) ↓
+Eval.
+Time (s) ↓
+Rel.
+Time ↓
+BMPC
+3.29
+27.90
+1.54×
+BOOM
+5.11
+54.26
+2.99×
+PO-MPC
+8.64
+33.17
+1.83×
+BMPC-DP
+10.56
+234.38
+12.93×
+SWAN (ours)
+3.67
+18.12
+1.00×
+lower end-to-end wall-clock evaluation cost, av-
+eraging evaluation times over seven DMCon-
+trol tasks with 10 episodes per task and plan-
+ning horizon H = 3 on a single NVIDIA RTX
+A6000. As shown in Tab. 1, SWAN takes 18.12
+seconds, 35.1% less than BMPC, while BOOM,
+PO-MPC, and BMPC-DP take 2.99×, 1.83×,
+and 12.93× as long, respectively. Moreover, ac-
+cording to Fig. 3 and Tab. 1, SWAN achieves
+stronger control performance than BMPC at
+lower evaluation cost, with 3.67M trainable pa-
+rameters compared with 3.29M.
+Findings from main results. We further compare SWAN, BMPC-DP and BMPC in Figs. 3, 4, 5.
+BMPC-DP learns complete action chunks with Diffusion Policy, yet remains close to BMPC in suite-
+average performance, despite much higher evaluation cost. As discussed in Sec. 2, online proposal
+learning requires fast sampling and adaptation to changing planner proposals. Iterative denoising
+adds cost, while the limited gains may reflect difficulty adapting an implicit representation online. In
+contrast, SWAN uses k-MPPI and MFA to explicitly model proposal modes and correlations across
+time and action dimensions. APO further improves the learning target using advantage estimates
+while preserving planner alignment in policy learning. Thus, results support combining explicit
+proposal representation with advantage-guided proposal optimization for efficient online planning.
+0
+0.5
+1.0
+1.5
+2.0
+Environment steps (×106)
+0
+200
+400
+600
+800
+Episode return
+BMPC
+BMPC-Diag-G
+BMPC-MFA
+(a) Proposal representation.
+0
+0.5
+1.0
+1.5
+2.0
+Environment steps (×106)
+0
+200
+400
+600
+800
+Episode return
+BMPC-MFA
+SWAN
+M = 2
+M = 4
+M = 8
+(b) Effect of APO.
+Figure 6: Ablations on Dog-Run. (a) Comparison of
+proposal representations in BMPC, BMPC-Diag-G, and
+BMPC-MFA, all using planner imitation under matched
+planning budgets. (b) Comparing SWAN (solid) with
+BMPC-MFA (dashed) under M = 2, 4, 8 MPPI refine-
+ment iterations. Curves and shading show means and
+95% CIs over 3 random seeds.
+Effect of action-chunk proposal representa-
+tion. We compare proposal representations on
+Dog-Run under matched training and planning
+budgets (M = 8), retaining BMPC’s planner im-
+itation. BMPC uses a one-step policy, whereas
+BMPC-Diag-G models complete H-step chunks
+with a single diagonal Gaussian. BMPC-MFA,
+denoted BMPC-Chunk in Fig. 1, instead com-
+bines k-MPPI and MFA. As shown in Fig. 6a,
+BMPC-MFA’s gain over BMPC supports our
+complete proposal representation, while the gain
+over BMPC-Diag-G highlights the benefits of
+explicitly modeling multiple modes and corre-
+lations across time and action dimensions.
+Effect of APO. With the k-MPPI and MFA pol-
+icy, we then isolate APO by comparing SWAN
+with BMPC-MFA, which retains planner imita-
+tion, under M = 2, 4, 8 MPPI refinement iterations. Fig. 6b shows larger gains from APO at M = 2
+and M = 4, while the gap narrows at M = 8. Moreover, SWAN with M = 4 approaches its
+performance with M = 8, whereas BMPC-MFA benefits more from the additional refinement. The
+comparison therefore shows that policy learning with APO reduces dependence on MPPI refinement
+while maintaining strong control performance.
+5.2
+SIM-TO-REAL TRANSFER
+We further train and evaluate SWAN on simulated Unitree G1 and Go2 velocity-tracking tasks (Zakka
+et al., 2026), where it outperforms BMPC in final return and sample efficiency with half as many MPPI
+refinement iterations per task. We then demonstrate zero-shot sim-to-real transfer to a physical
+Go2. The robot tracks forward, backward, and lateral velocity commands, turns in both directions,
+and follows figure-eight trajectories. Motion capture measurements over selected figure-eight and
+straight-line segments give planar velocity mean absolute errors (MAEs) of 0.126 and 0.149 m/s, with
+yaw angular velocity MAEs of 0.112 and 0.068 rad/s, respectively. We further assess locomotion
+stability with external pushes during motion, observing stable locomotion without falling. With only
+9
+
+
+M = 3 MPPI refinement iterations per control step, the controller operates at average 308.16 Hz on
+NVIDIA GeForce RTX 5090. We detail simulation and real-world results in Appendix H. Overall,
+our SWAN achieve reliable zero-shot sim-to-real transfer ability in stable high-frequency locomotion
+control. Demonstrations are available at https://swanfastworldplanner.github.io/
+6
+CONCLUSION AND LIMITATION
+We proposed SWAN, an advantage-aware MPPI-based MBRL framework that improves online plan-
+ning efficiency through better policy guidance. SWAN combines k-MPPI with an MFA action-chunk
+policy to capture multimodal proposal structure and introduces APO, which uses advantage estimates
+to construct an improved target from the planner proposal while preserving planner alignment during
+policy learning. Extensive experiments across multiple continuous-control benchmarks demonstrated
+strong control performance and sample efficiency while requiring fewer MPPI refinement iterations.
+We further demonstrated SWAN’s zero-shot sim-to-real transfer to a physical Unitree Go2 for locomo-
+tion. One limitation is SWAN’s current focus on state-based, task-specific continuous-control settings.
+Future work will extend SWAN to multimodal observations and multi-task learning, enabling shared
+proposal learning across diverse tasks and sensory modalities.
+REFERENCES
+Abbas Abdolmaleki, Jost Tobias Springenberg, Yuval Tassa, Remi Munos, Nicolas Heess, and Martin
+Riedmiller. Maximum a posteriori policy optimisation. In International Conference on Learning
+Representations, 2018.
+Joseph Amigo, Rooholla Khorrambakht, Elliot Chane-Sane, Nicolas Mansard, and Ludovic Righetti.
+First order model-based RL through decoupled backpropagation. In 9th Annual Conference on
+Robot Learning, 2025.
+Thomas Anthony, Zheng Tian, and David Barber. Thinking fast and slow with deep learning and tree
+search. Advances in neural information processing systems, 30, 2017.
+Amir Beck and Marc Teboulle. Mirror descent and nonlinear projected subgradient methods for
+convex optimization. Operations Research Letters, 31(3):167–175, 2003.
+Vittorio Caggiano, Huawei Wang, Guillaume Durandau, Massimo Sartori, and Vikash Kumar.
+Myosuite: A contact-rich simulation suite for musculoskeletal motor control. In Proceedings of
+the 4th Annual Learning for Dynamics and Control Conference, volume 168 of Proceedings of
+Machine Learning Research, pp. 492–507, 2022.
+Cheng Chi, Zhenjia Xu, Siyuan Feng, Eric Cousineau, Yilun Du, Benjamin Burchfiel, Russ Tedrake,
+and Shuran Song.
+Diffusion policy: Visuomotor policy learning via action diffusion.
+The
+International Journal of Robotics Research, 44(10-11):1684–1704, 2025.
+Eugenio Chisari, Nick Heppert, Max Argus, Tim Welschehold, Thomas Brox, and Abhinav Valada.
+Learning robotic manipulation policies from point clouds with conditional flow matching. In 8th
+Annual Conference on Robot Learning, 2024. URL https://openreview.net/forum?
+id=vtEn8NJWlz.
+Zoubin Ghahramani, Geoffrey E Hinton, et al. The em algorithm for mixtures of factor analyzers.
+Technical report, Technical Report CRG-TR-96-1, University of Toronto, 1996.
+Tuomas Haarnoja, Aurick Zhou, Kristian Hartikainen, George Tucker, Sehoon Ha, Jie Tan, Vikash
+Kumar, Henry Zhu, Abhishek Gupta, Pieter Abbeel, et al.
+Soft actor-critic algorithms and
+applications. arXiv preprint arXiv:1812.05905, 2018.
+Danijar Hafner, Timothy Lillicrap, Jimmy Ba, and Mohammad Norouzi. Dream to control: Learning
+behaviors by latent imagination. arXiv preprint arXiv:1912.01603, 2019a.
+Danijar Hafner, Timothy Lillicrap, Ian Fischer, Ruben Villegas, David Ha, Honglak Lee, and James
+Davidson. Learning latent dynamics for planning from pixels. In International conference on
+machine learning, pp. 2555–2565. PMLR, 2019b.
+10
+
+
+Danijar Hafner, Timothy Lillicrap, Mohammad Norouzi, and Jimmy Ba. Mastering atari with discrete
+world models. arXiv preprint arXiv:2010.02193, 2020.
+Danijar Hafner, Jurgis Pasukonis, Jimmy Ba, and Timothy Lillicrap. Mastering diverse domains
+through world models. arXiv preprint arXiv:2301.04104, 2023.
+Nick Hansen, Hao Su, and Xiaolong Wang. Td-mpc2: Scalable, robust world models for continuous
+control. In International Conference on Learning Representations, volume 2024, pp. 47376–47405,
+2024.
+Nicklas Hansen, Xiaolong Wang, and Hao Su. Temporal difference learning for model predictive
+control. In ICML, 2022.
+Kohei Honda, Naoki Akai, Kosuke Suzuki, Mizuho Aoki, Hirotaka Hosogaya, Hiroyuki Okuda, and
+Tatsuya Suzuki. Stein variational guided model predictive path integral control: Proposal and
+experiments with fast maneuvering vehicles. In 2024 IEEE International Conference on Robotics
+and Automation (ICRA), pp. 7020–7026. IEEE, 2024.
+Michael Janner, Justin Fu, Marvin Zhang, and Sergey Levine. When to trust your model: Model-based
+policy optimization. Advances in neural information processing systems, 32, 2019.
+Sunshine Jiang, Xiaolin Fang, Nicholas Roy, Tom´as Lozano-P´erez, Leslie Pack Kaelbling, and
+Siddharth Ancha. Streaming flow policy: Simplifying diffusion/flow-matching policies by treating
+action trajectories as flow trajectories. In 9th Annual Conference on Robot Learning, 2025. URL
+https://openreview.net/forum?id=jnpILGz9gQ.
+Ilya Kostrikov, Ashvin Nair, and Sergey Levine. Offline reinforcement learning with implicit
+q-learning. In International Conference on Learning Representations, 2022.
+Alexander Lambert, Fabio Ramos, Byron Boots, Dieter Fox, and Adam Fishman. Stein variational
+model predictive control. In Proceedings of the 2020 Conference on Robot Learning, volume 155
+of Proceedings of Machine Learning Research, pp. 1278–1297. PMLR, 2021.
+Moritz Lange, Noah Krystiniak, Raphael C Engelhardt, Wolfgang Konen, and Laurenz Wiskott.
+Improving reinforcement learning efficiency with auxiliary tasks in non-visual environments: A
+comparison. In International Conference on Machine Learning, Optimization, and Data Science,
+pp. 177–191. Springer, 2023.
+Thomas M. Moerland, Joost Broekens, Aske Plaat, and Catholijn M. Jonker. Model-based re-
+inforcement learning: A survey. Foundations and Trends in Machine Learning, 16(1):1–118,
+2023.
+Haitong Ma, Tianyi Chen, Kai Wang, Na Li, and Bo Dai. Efficient online reinforcement learning
+for diffusion policy. In Forty-second International Conference on Machine Learning, 2025. URL
+https://openreview.net/forum?id=6Anv3KB9lz.
+Matthew V Macfarlane, Edan Toledo, Donal Byrne, Paul Duckworth, and Alexandre Laterre. Spo:
+Sequential monte carlo policy optimisation. Advances in Neural Information Processing Systems,
+37:1019–1057, 2024.
+David McAllister, Songwei Ge, Brent Yi, Chung Min Kim, Ethan Weber, Hongsuk Choi, Haiwen
+Feng, and Angjoo Kanazawa. Flow matching policy gradients. In International Conference on
+Learning Representations, volume 2026, pp. 36352–36372, 2026.
+Xue Bin Peng, Aviral Kumar, Grace Zhang, and Sergey Levine. Advantage-weighted regression:
+Simple and scalable off-policy reinforcement learning. arXiv preprint arXiv:1910.00177, 2019.
+Cristina Pinneri, Shambhuraj Sawant, Sebastian Blaes, Jan Achterhold, Joerg Stueckler, Michal
+Rolinek, and Georg Martius. Sample-efficient cross-entropy method for real-time planning. In
+Conference on Robot Learning, pp. 1049–1065. PMLR, 2021.
+Jacob Sacks and Byron Boots. Learning sampling distributions for model predictive control. In
+Conference on Robot Learning, pp. 1733–1742. PMLR, 2023.
+11
+
+
+John Schulman, Sergey Levine, Pieter Abbeel, Michael Jordan, and Philipp Moritz. Trust region
+policy optimization. In International conference on machine learning, pp. 1889–1897. Pmlr, 2015.
+John Schulman, Philipp Moritz, Sergey Levine, Michael I. Jordan, and Pieter Abbeel.
+High-
+dimensional continuous control using generalized advantage estimation. In International Confer-
+ence on Learning Representations, 2016.
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy
+optimization algorithms. arXiv preprint arXiv:1707.06347, 2017.
+Alvaro Serra-Gomez, Daniel Jarne Ornia, Dhruva Tirumala, and Thomas M. Moerland. A KL-
+regularization framework for learning to plan with adaptive priors. In Forty-third International
+Conference on Machine Learning, 2026. URL https://openreview.net/forum?id=
+zO8vzSGgTn.
+Carmelo Sferrazza, Dun-Ming Huang, Xingyu Lin, Youngwoon Lee, and Pieter Abbeel. Humanoid-
+bench: Simulated humanoid benchmark for whole-body locomotion and manipulation. arXiv
+preprint arXiv:2403.10506, 2024.
+Harshit Sikchi, Wenxuan Zhou, and David Held. Learning off-policy with online planning. In
+Conference on Robot Learning, pp. 1622–1633. PMLR, 2022.
+David Silver, Julian Schrittwieser, Karen Simonyan, Ioannis Antonoglou, Aja Huang, Arthur Guez,
+Thomas Hubert, Lucas Baker, Matthew Lai, Adrian Bolton, et al. Mastering the game of go without
+human knowledge. nature, 550(7676):354–359, 2017.
+Saran Tunyasuvunakool, Alistair Muldal, Yotam Doron, Siqi Liu, Steven Bohez, Josh Merel, Tom
+Erez, Timothy Lillicrap, Nicolas Heess, and Yuval Tassa. dm control: Software and tasks for
+continuous control. Software Impacts, 6:100022, 2020. ISSN 2665-9638. doi: https://doi.
+org/10.1016/j.simpa.2020.100022. URL https://www.sciencedirect.com/science/
+article/pii/S2665963820300099.
+Qing Wang, Jiechao Xiong, Lei Han, Han Liu, Tong Zhang, et al. Exponentially weighted imitation
+learning for batched historical data. Advances in Neural Information Processing Systems, 31, 2018.
+Yuhang Wang, Hanwei Guo, Sizhe Wang, Long Qian, and Xuguang Lan. Bootstrapped model
+predictive control. In International conference on learning representations, volume 2025, pp.
+54241–54259, 2025a.
+Zhendong Wang, Max Li, Ajay Mandlekar, Zhenjia Xu, Jiaojiao Fan, Yashraj Narang, Linxi Fan,
+Yuke Zhu, Yogesh Balaji, Mingyuan Zhou, Ming-Yu Liu, and Yu Zeng. One-step diffusion policy:
+Fast visuomotor policies via diffusion distillation. In Forty-second International Conference on
+Machine Learning, 2025b. URL https://openreview.net/forum?id=E2VsqgKNlr.
+Grady Williams, Andrew Aldrich, and Evangelos A Theodorou. Model predictive path integral
+control: From theory to parallel computation. Journal of Guidance, Control, and Dynamics, 40(2):
+344–357, 2017.
+Kevin Zakka, Qiayuan Liao, Brent Yi, Louis Le Lay, Koushil Sreenath, and Pieter Abbeel. mjlab: A
+lightweight framework for gpu-accelerated robot learning. arXiv preprint arXiv:2601.22074, 2026.
+Guojian Zhan, Likun Wang, Xiangteng Zhang, Jiaxin Gao, Masayoshi Tomizuka, and Shengbo Eben
+Li. Bootstrap off-policy with world model. Advances in Neural Information Processing Systems,
+38:134093–134121, 2026.
+Guangyao Zhou, Sivaramakrishnan Swaminathan, Rajkumar Vasudeva Raju, J Swaroop Guntupalli,
+Wolfgang Lehrach, Joseph Ortiz, Antoine Dedieu, Miguel Lazaro-Gredilla, and Kevin Patrick
+Murphy. Diffusion model predictive control. Transactions on Machine Learning Research, 2025.
+ISSN 2835-8856.
+12
+
+
+A
+NOTATION
+Table 2 summarizes the symbols used in the main text.
+Table 2: Symbols used in the main text.
+Symbol
+Meaning
+Environment and value learning
+M
+Discounted Markov decision process, M = (S, A, P, R, γ).
+S
+Environment state space.
+A
+Continuous action space.
+P
+Environment transition kernel.
+R
+Environment reward function.
+γ
+Discount factor.
+t
+Environment time step.
+st
+Environment state at time t.
+at
+Action at time t.
+rt
+Reward at time t.
+ds, da, dz
+Dimensions of the environment state, action, and latent state, respectively.
+zt
+Encoded latent state, zt = Eψ(st).
+Eψ
+Encoder mapping an environment state to a latent state.
+Fψ
+Dynamics model predicting the next latent state.
+Rψ
+Reward model predicting the immediate reward.
+Vϕ
+Value model approximating the state-value function and providing terminal
+value estimates.
+B
+Replay buffer.
+πθa
+Learned one-step action policy used in prior methods.
+π
+Policy in the RL objective or proposal distribution optimized by APO, accord-
+ing to context.
+J(π)
+Expected infinite-horizon discounted environment return.
+Planning and planner proposals
+H, h
+Planning horizon and latent-rollout step index, respectively.
+D
+Action-chunk dimension, D = Hda.
+τ
+Complete H-step action chunk, τ = at:t+H−1.
+bzh
+Predicted latent state at rollout step h.
+M, m
+Number of MPPI refinement iterations and iteration index, respectively.
+T (m)
+Candidate action-chunk batch at refinement iteration m.
+µ(m)
+Mean of the Gaussian search distribution at iteration m.
+σ(m)
+Standard deviations of the Gaussian search distribution at iteration m.
+w(m)(τ)
+Normalized weight of candidate τ at iteration m.
+ηMPPI
+Temperature for MPPI candidate weighting.
+bGH(zt, τ)
+Estimated H-step return combining predicted rewards and the terminal value
+estimate.
+K, k
+Number of proposal modes and mode index, respectively.
+N
+Number of elite action chunks retained per mode in k-MPPI.
+Ek
+Batch of elite action chunks retained in mode k.
+E
+Concatenation of all retained batches Ek.
+wP (τ)
+Candidate weight normalized over all retained action chunks.
+αP
+k
+Planner probability of mode k, obtained by summing candidate weights within
+Ek.
+πP
+Empirical planner proposal over complete action chunks.
+πP,0
+First-action marginal of the planner proposal πP .
+πG
+P,0
+Gaussian approximation of the first-action marginal πP,0.
+MFA representation
+πθ
+MFA action-chunk policy.
+θ
+Parameters of the MFA action-chunk policy.
+ek
+Learnable embedding for mode k.
+Continued on the next page
+13
+
+
+Table 2 continued
+Symbol
+Meaning
+r
+Rank parameter of the factor covariance, with r ≪D.
+αθ
+k
+Probability of component k predicted by the policy.
+µθ
+k
+Mean of policy component k.
+U θ
+k
+Factor loading matrix of policy component k, with dimensions D × r.
+σθ
+k
+Residual standard deviations of policy component k.
+Σθ
+k
+Covariance of policy component k.
+µP
+k
+Mean of planner component k after MFA projection.
+U P
+k
+Factor loading matrix of planner component k after MFA projection.
+σP
+k
+Residual standard deviations of planner component k after MFA projection.
+ΣP
+k
+Covariance of planner component k after MFA projection.
+eπP
+Continuous MFA approximation of the planner proposal πP .
+APO and theoretical analysis
+A(τ)
+Advantage of chunk τ relative to the expected return under πP .
+¯A(τ)
+Advantage normalized by the discounted horizon and the weighted standard
+deviation, ¯A(τ) = A(τ)/(sA
+PH−1
+h=0 γh).
+sA
+Weighted standard deviation of the horizon-normalized advantage under πP
+and floored at 10−6.
+ϵMD
+KL radius for the proposal improvement step.
+λ
+Lagrange multiplier for the proposal improvement constraint.
+L(π, λ)
+Lagrangian for advantage-guided proposal improvement.
+π∗
+Optimal target of the KL-regularized proposal improvement objective.
+eπ∗
+MFA approximation of the optimal target π∗.
+ϵ
+Budget for the average planner alignment KL.
+β
+Lagrange multiplier for the planner alignment constraint.
+LAPO(θ, β)
+Lagrangian for policy learning under the planner alignment constraint.
+ηβ
+Step size of the normalized dual update for β.
+[·]EMA
+Exponential moving average used to set the alignment budget.
+[·]+
+Projection onto nonnegative values in the dual update.
+bJH(π)
+Expected H-step return under π with the fixed latent world model at zt.
+πIL
+Ideal planner imitation policy, defined by πIL = eπP .
+Amax
+Finite bound on the absolute estimated return centered at bJH(eπP ).
+KL
+Kullback–Leibler divergence, retaining branch labels for MFA distributions.
+Evaluation
+T80
+Environment steps until the mean evaluation curve first reaches 80% of
+SWAN’s final performance. All methods share a threshold for each task
+or suite average.
+Tmethod, TSWAN
+Wall-clock evaluation times of a compared method and SWAN, respectively.
+B
+DETAILS OF K-MPPI AND MFA
+We provide the k-MPPI procedure and the MFA operations used for proposal representation and
+policy learning.
+B.1
+K-MPPI
+We describe how k-MPPI constructs the empirical planner proposal. Unlike the single Gaussian
+update in Eq. 2, k-MPPI maintains local Gaussians initialized from the policy components and a
+global Gaussian for exploration. After M refinement iterations, the local and global search results
+form a proposal with K modes, each represented by N elite action chunks in Ek. The branch labels
+retain mode assignments for MFA projection and policy learning. Algorithm 1 gives the refinement
+and final replacement procedure.
+The sampling budget is shared across all branches, and batch concatenation preserves source labels
+and repeated entries. Actions obey the task bounds and masks, and search standard deviations are
+clipped to [σmin, σmax].
+14
+
+
+In Algorithm 1, k = 1, . . . , K indexes local search branches and g denotes the global branch. For
+b ∈{1, . . . , K, g}, µ(m)
+b
+and σ(m)
+b
+are the mean and standard deviations of the Gaussian search
+distribution at iteration m.
+Algorithm 1 k-MPPI
+Input zt, πθ, K, M, N, previous global mean, sampling allocation, and σmin, σmax
+1 Initialize µ(1)
+k
+and σ(1)
+k
+from the mean and marginal standard deviations of policy component k
+2 Draw policy samples Sk from each component using Eq. 16 and reuse them across refinement
+iterations
+3 Shift the previous global mean by one action and append zero to obtain µ(1)
+g , using zero at episode
+start, and set σ(1)
+g
+= σmax1
+4 for m = 1, . . . , M do
+5
+Form local batches T (m)
+k
+from Sk and fresh local Gaussian samples, and draw a global batch
+T (m)
+g
+6
+Concatenate the batches into T (m) and evaluate bGH using Eq. 1
+7
+Retain N elites from each local batch as E(m)
+k
+and N elites from T (m) as E(m)
+g
+8
+Update each Gaussian using Eq. 2 with weights normalized over the corresponding elite
+batch
+9 end for
+10 Compute final candidate weights w(M)(τ) ←softmaxT (M)( bGH(zt, τ)/ηMPPI)
+11 Sum the weights by source branch pb ←P
+τ∈T (M)
+b
+w(M)(τ) for b ∈{1, . . . , K, g}
+12 Select the nearest local branch k⋆←arg mink
+PD
+i=1
+(µ(M+1)
+g,i
+−µ(M+1)
+k,i
+)2
+(σ(M+1)
+k,i
+)2 + 10−6
+13 if pg > pk⋆then
+14
+Replace E(M)
+k⋆
+and the associated scores with the global elites and scores
+15 end if
+16 Set Ek = E(M)
+k
+and compute wP , αP using Eq. 4
+17 Select τ with probability wP (τ), or the highest-return chunk for greedy evaluation
+18 Save µ(M+1)
+g
+for the next warm start
+19 if evaluation then
+20
+return the first action of τ
+21 end if
+22 Construct eπP using Appendix B.2 and add execution noise to τ from the selected mode
+23 return the bounded first action, retained candidates and scores, wP , and eπP
+Execution adds independent Gaussian noise using the marginal standard deviations of ΣP
+k for the
+selected mode, clipped to [σmin, σmax]. Proposal statistics are computed before execution noise.
+B.2
+MFA PROJECTION
+We construct the MFA approximations eπP and eπ∗from weighted candidates for policy learning. Since
+k-MPPI supplies branch assignments, each component is fitted separately using weights normalized
+within its branch. For nonnegative candidate weights ω(τ) with positive total weight in each branch,
+the conditional weights are ¯ωk(τ) = ω(τ)/ P
+τ ′∈Ek ω(τ ′). An ideal component fit minimizes the
+weighted negative log-likelihood
+min
+µ,U,σ
+−
+X
+τ∈Ek
+¯ωk(τ) log N
+ τ | µ, UU ⊤+ Diag(σ2)
+
+,
+(15)
+where U ∈RD×r and residual standard deviations are bounded away from zero. In implementa-
+tion, we approximate the component distributions from their weighted moments. The component
+parameters are combined with mode probabilities obtained by summing the globally normalized input
+weights within each branch. Weights ω = wP therefore give eπP with αP
+k , whereas ω(τ) = π∗(τ | zt)
+gives eπ∗with α∗
+k, as detailed in Appendix C.2.
+15
+
+
+B.3
+DIRECT SAMPLING
+For direct action-chunk generation, we select component k with probability αθ
+k. Independent Gaussian
+noise ξ ∼N(0, Ir) and ζ ∼N(0, ID) then gives
+τ = µθ
+k + U θ
+kξ + σθ
+k ⊙ζ.
+(16)
+k-MPPI initialization applies the same expression separately to each component.
+B.4
+MFA KL DIVERGENCE
+We compute the MFA KL used in policy learning and Theorem 2 with branch labels retained. The
+labels identify corresponding Gaussian components, giving the joint distributions q(k, τ) = αq
+kqk(τ)
+and p(k, τ) = αp
+kpk(τ), where qk, pk are Gaussian components. The joint KL therefore decomposes
+as
+KL(q∥p) =
+K
+X
+k=1
+αq
+k log αq
+k
+αp
+k
++
+K
+X
+k=1
+αq
+kKL(qk∥pk).
+(17)
+For each pair of Gaussian components, omitting parameter subscripts,
+KL(qk∥pk) = 1
+2
+
+tr((Σp)−1Σq) + (µp −µq)⊤(Σp)−1(µp −µq) −D + log |Σp|
+|Σq|
+
+.
+(18)
+The inverse and determinant are evaluated using the factor covariance with the Woodbury and
+determinant identities. Writing q(τ) = P
+k q(k, τ) and p(τ) = P
+k p(k, τ), marginalization gives
+KL(q(τ)∥p(τ)) ≤KL(q∥p). The joint KL therefore bounds the marginal action-chunk divergence
+used in the policy improvement proof.
+C
+DETAILS OF APO
+C.1
+ALGORITHM
+SWAN follows the BMPC training loop and lazy reanalyze scheme (Wang et al., 2025a), retaining
+its model-training objectives for Eψ, Fψ, Rψ while replacing the planner and policy with k-MPPI
+and the MFA action-chunk policy. Replay buffer stores the parameters of eπP and eπ∗alongside
+environment transitions, so policy learning uses Eq. 11 without repeating planning at every update.
+For value learning, a chunk is sampled from πθ and the first action is used at each policy call in the
+TD rollout. Algorithm 2 summarizes the changes to the inherited training procedure.
+Target construction uses the planner evaluations from the same planning call. The stored distribution
+parameters and current budget are fixed during policy and dual updates. The EMA coefficient and
+reanalysis schedule are training settings, while the corresponding update rules remain those given in
+the main text.
+C.2
+TARGET DERIVATION
+We derive the optimal target π∗in Eq. 9, starting with the advantage normalization introduced in
+Sec. 4.2. To reduce sensitivity to reward scale and facilitate reuse of λ across tasks, we divide the
+horizon-normalized advantage by its weighted standard deviation under πP . Since πP assigns weight
+wP (τ) to each retained entry in E and EπP [A] = 0, we compute sA =
+rP
+τ∈E wP (τ)
+
+A(τ)
+PH−1
+h=0 γh
+2
+,
+We floor sA at 10−6 before normalization and obtain ¯A(τ) = A(τ)/(sA
+PH−1
+h=0 γh), as defined in
+Sec. 4.2.
+Using ¯A as the improvement signal, we obtain π∗by maximizing the Lagrangian in Eq. 8 over π,
+taking the current planner proposal and trajectory evaluations at zt as given. For fixed λ > 0, the term
+λϵMD is independent of π, so the maximization reduces to Eπ[ ¯A] −λ KL(π∥πP ), which defines a
+mirror-descent update from πP . Because finite KL excludes probability mass outside E, we optimize
+the retained-candidate probabilities subject to P
+τ∈E π(τ | zt) = 1. Introducing a multiplier ν for
+16
+
+
+Algorithm 2 SWAN training
+Input Latent world model Eψ, Fψ, Rψ, Vϕ, policy πθ, replay buffer B, planning and learning settings
+1 Initialize the networks, target value model, and β ≥0
+2 while the training budget remains do
+3
+for each environment interaction do
+4
+Encode the state as zt = Eψ(st)
+5
+Run Algorithm 1 to obtain the action, retained candidates, evaluations, and eπP
+6
+Construct π∗using Eq. 9 and project the target using Appendix B.2
+7
+Execute the action and observe rt, st+1
+8
+Store the transition and parameters of eπP , eπ∗in B
+9
+end for
+10
+for each learning update do
+11
+Sample replay sequences with their planner and target parameters
+12
+Update Eψ, Fψ, Rψ using model-training objectives in BMPC (Wang et al., 2025a)
+13
+Update the value model Vϕ with BMPC model-based TD learning, using the first action
+of a sampled MFA chunk at each policy call
+14
+Update θ using Eq. 11 and the MFA KL in Eq. 17
+15
+Update the current budget ϵ and multiplier β using Eq. 12
+16
+Update the target value model following BMPC
+17
+if a reanalysis update is scheduled then
+18
+Run k-MPPI on the selected replay states and construct new targets using Eq. 9
+19
+Project the planner and target distributions and replace their stored parameters
+20
+end if
+21
+end for
+22 end while
+this normalization constraint and differentiating with respect to each candidate probability gives
+¯A(τ) −λ
+
+log π(τ | zt)
+πP (τ | zt) + 1
+
+−ν = 0.
+(19)
+Solving Eq. 19 for π(τ | zt) gives π(τ | zt) = wP (τ) exp( ¯A(τ)/λ) exp(−1 −ν/λ), where
+exp(−1 −ν/λ) is independent of τ. Normalizing over E therefore eliminates ν and recovers Eq. 9 as
+π∗(τ | zt) =
+wP (τ) exp( ¯A(τ)/λ)
+P
+τ ′∈E wP (τ ′) exp( ¯A(τ ′)/λ),
+τ ∈E.
+(20)
+Since the objective is strictly concave for λ > 0, the normalized stationary solution is its unique max-
+imizer. Computing π∗only reweights the retained candidates using their existing MPPI evaluations,
+so no additional model rollouts are required.
+Induced KL radius. To relate the target derived above to the trust region in Eq. 7, define ϵMD =
+KL(π∗∥πP ). For any π with KL(π∥πP ) ≤ϵMD, optimality of π∗in the regularized objective implies
+Eπ[ ¯A] −Eπ∗[ ¯A] ≤λ [KL(π∥πP ) −ϵMD] ≤0.
+(21)
+Hence, π∗also solves Eq. 7 with the induced radius. The radius is nonnegative and becomes zero if
+the advantage is constant on the retained support. A fixed λ therefore specifies a regularized update
+rather than a common prescribed radius across states.
+Projection of the target. For policy learning, we approximate the empirical target π∗with an MFA
+distribution eπ∗. The mixture coefficients of eπ∗preserve the target probability mass in each branch
+α∗
+k =
+X
+τ∈Ek
+π∗(τ | zt).
+(22)
+Within branch k, the normalized target weights π∗(τ | zt)/α∗
+k provide the weights for the component
+fitting objective in Eq. 15. We obtain the component parameters using the approximation described
+in Appendix B.2 and combine them with α∗
+k to construct eπ∗. The MFA approximation is used for
+policy learning, while Theorem 1 concerns the exact target π∗.
+17
+
+
+C.3
+PROOFS
+We restate and prove the two theorems in Sec. 4.3. Throughout, the latent state zt, latent world
+model, and reference distributions are fixed. KL divergences between MFA distributions retain branch
+labels as in Appendix B.4, while expected returns and L1 norms use the corresponding action-chunk
+marginals. We omit the common conditioning on zt.
+Theorem 1 (Exact target improvement). For λ > 0, the optimal target in Eq. 9 satisfies
+bJH(π∗) −bJH(πP ) = Eτ∼π∗[A(τ)] ≥0.
+(13)
+Proof. By definition, EπP [A] = 0. Normalization by the positive scale sA
+PH−1
+h=0 γh therefore gives
+EπP [ ¯A] = 0. Since KL(πP ∥πP ) = 0, comparing π∗with πP in the KL-regularized objective yields
+Eπ∗[ ¯A] ≥λ KL(π∗∥πP ) ≥0.
+(23)
+Restoring the original return scale gives
+Eπ∗[A] = sA
+ H−1
+X
+h=0
+γh
+!
+Eπ∗[ ¯A] ≥0.
+The definition of A then establishes
+bJH(π∗) −bJH(πP ) = Eτ∼π∗[A(τ)] ≥0.
+Theorem 2 (Projection-aware policy improvement). Assume the expected returns and KL divergence
+below are finite and there exists a finite constant Amax > 0 such that | bGH(zt, τ)−bJH(eπP )| ≤Amax
+for every τ in the union of the supports of πθ, eπ∗, and eπP . Then, for any β ≥0,
+bJH(πθ) −bJH(πIL) ≥
+bJH(eπ∗) −bJH(eπP )
+1 + β
+−Amax
+s
+2 [KL(eπ∗∥πθ) + β KL(eπP ∥πθ)]
+1 + β
+.
+(14)
+Proof. We bound the return improvement over πIL = eπP using the policy-fitting terms in Eq. 11.
+For fixed β ≥0, both forward KL terms fit πθ to their respective target distributions. Combining
+their contributions to the expected negative log-likelihood gives the normalized reference
+q = eπ∗+ βeπP
+1 + β
+,
+(24)
+where q is a joint distribution over branch labels and action chunks. Expanding the KL divergences
+yields
+KL(eπ∗∥πθ) + β KL(eπP ∥πθ) = (1 + β) KL(q∥πθ) + KL(eπ∗∥q) + β KL(eπP ∥q).
+(25)
+Since the two divergences to q are nonnegative, the policy-fitting terms bound
+KL(q∥πθ) ≤KL(eπ∗∥πθ) + β KL(eπP ∥πθ)
+1 + β
+.
+(26)
+Marginalization and Pinsker’s inequality then imply
+∥πθ −q∥1 ≤
+p
+2 KL(q∥πθ) ≤
+s
+2[KL(eπ∗∥πθ) + β KL(eπP ∥πθ)]
+1 + β
+.
+(27)
+To relate this distributional bound to policy improvement, we decompose the return difference as
+bJH(πθ) −bJH(eπP ) = bJH(q) −bJH(eπP ) + bJH(πθ) −bJH(q).
+(28)
+The reference contribution to the centered return under q therefore vanishes, and linearity of expecta-
+tion yields
+bJH(q) −bJH(eπP ) =
+bJH(eπ∗) −bJH(eπP )
+1 + β
+.
+(29)
+It remains to bound the return difference between πθ and q. Since their marginal densities both inte-
+grate to one, subtracting bJH(eπP ) from the return does not change this difference. The boundedness
+18
+
+
+assumption therefore gives
+bJH(πθ) −bJH(q) =
+Z  πθ(τ) −q(τ)
+ bGH(zt, τ) dτ
+=
+Z  πθ(τ) −q(τ)
+  bGH(zt, τ) −bJH(eπP )
+
+dτ
+≥−Amax
+Z πθ(τ) −q(τ)
+ dτ
+= −Amax∥πθ −q∥1.
+(30)
+Adding bJH(q) −bJH(eπP ) to both sides yields
+bJH(πθ) −bJH(eπP ) ≥bJH(q) −bJH(eπP ) −Amax∥πθ −q∥1.
+(31)
+Substituting Eqs. 27 and 29, and using πIL = eπP , gives
+bJH(πθ) −bJH(πIL) ≥
+bJH(eπ∗) −bJH(eπP )
+1 + β
+−Amax
+s
+2 [KL(eπ∗∥πθ) + β KL(eπP ∥πθ)]
+1 + β
+.
+C.4
+UNIFIED VIEW
+In this section, we derive the policy learning objectives of prior methods and APO from a common
+distribution improvement problem. The derivation fixes the reference and evaluation signal for each
+update. Outer state expectations and auxiliary regularization are omitted unless needed to specify the
+learning distribution.
+Distribution improvement. Let x denote an action or action chunk, ρ a reference distribution, and
+f(x) a value or advantage estimate. Starting from maxπ Eπ[f], a KL constraint limits departure from
+ρ. The Lagrangian in Eq. 8 gives the regularized objective and optimal distribution
+q∗= arg max
+π
+{Eπ[f] −λ KL(π∥ρ)} ,
+q∗(x) = ρ(x)ef(x)/λ
+Z
+,
+(32)
+where λ > 0 and Z = Eρ[ef/λ] < ∞. The reference determines where improvement starts, and the
+signal changes the relative probability of the action chunks.
+Direct policy optimization. Substituting Eq. 32 into KL gives
+Eπ[f] −λ KL(π∥ρ) = λ log Z −λ KL(π∥q∗).
+(33)
+Since log Z is fixed, restricting π to a parameterized policy family recovers minimization of reverse
+KL toward q∗. Two choices recover the critic-guided objectives below.
+For TD-MPC2 (Hansen et al., 2024), let x = a, f(a) = Qϕ(zt, a), and let ρ be uniform on the
+bounded action space A. The identity KL(π∥ρ) = −H(π)+log |A| then gives the maximum-entropy
+policy objective
+max
+θa
+Ea∼πθa [Qϕ(zt, a)] + λ H(πθa),
+(34)
+where H is differential entropy. Value scaling is absorbed into the relative coefficient.
+For PO-MPC (Serra-Gomez et al., 2026), replace the uniform reference with the adaptive prior πp
+learned from the planner’s first-action distribution and set f = Qreg, the regularized action-value
+function. Equation 33 then recovers
+max
+θa
+Ea∼πθa [Qreg(zt, a)] −λ KL(πθa∥πp).
+(35)
+Both updates optimize an action policy, with planner information entering through the reference in
+Eq. 35.
+Policy learning from the improved target. A second route constructs q∗first and learns a policy
+by minimizing KL(q∗∥π). For compatible densities with finite terms, the target entropy is constant
+during the policy update, giving
+arg min
+π KL(q∗∥π) = arg min
+π
+
+−Ex∼ρ
+ef(x)/λ
+Z
+log π(x)
+
+.
+(36)
+The forward and reverse objectives use the same improved distribution but define different updates in
+a restricted policy family.
+19
+
+
+BMPC (Wang et al., 2025a) follows by setting ρ = πG
+P,0 and f = 0. Then q∗= ρ, and Eq. 36
+becomes
+min
+θa
+KL(πG
+P,0∥πθa).
+(37)
+The resulting objective is the planner imitation described in Sec. 3. The zero signal denotes no
+additional proposal improvement.
+For BOOM (Zhan et al., 2026), apply Eq. 32 to a uniform reference over a replay batch C of
+latent-state and action pairs (z, a), using f(z, a) = Qϕ(z, a). The resulting entry weights yield the
+alignment objective
+ω(z, a) = softmaxC(Qϕ(z, a)/λ) ,
+min
+θa
+−
+X
+(z,a)∈C
+ω(z, a) log πθa(a | z).
+(38)
+BOOM combines the weighted alignment term with a separate critic-guided objective. The weights
+are normalized across replay entries rather than a complete proposal at one state.
+APO. Setting x = τ, ρ = πP , and f = ¯A in Eq. 32 gives the optimal target q∗= π∗from Eq. 9.
+The reference is the current complete planner proposal, and the signal comes from the same MPPI
+trajectory evaluations. MFA projection gives the approximation eπ∗for policy learning, while the
+separate alignment constraint preserves alignment with eπP . For fixed β, Eq. 11 therefore reduces to
+min
+θ
+KL(eπ∗∥πθ) + β KL(eπP ∥πθ),
+(39)
+after omitting the constant budget term.
+With no additional advantage improvement, f = 0 gives π∗= πP and eπ∗= eπP . Equation 39
+becomes
+min
+θ
+(1 + β) KL(eπP ∥πθ),
+(40)
+which has the same minimizers as planner imitation of the complete proposal. APO thus incorporates
+additional proposal improvement into policy learning while preserving planner alignment. Theorems 1
+and 2 establish nonnegative gain for the exact target and a sufficient condition for improvement over
+ideal planner imitation after projection and policy learning. The common formulation separates the
+choices of reference, evaluation signal, and policy update, providing a basis for further developments
+in learning from planning.
+20
+
+
+D
+BENCHMARK TASK DETAILS AND VISUALIZATIONS
+We report details for the 31 benchmark tasks from DMControl, HumanoidBench, and MyoSuite,
+together with the two Unitree locomotion tasks used in our robot experiments. Table 3 summarizes
+the task dimensions and objectives, and Figs. 7–10 show representative environments.
+Table 3: Task details used in this paper. The state and action dimensions and task descriptions are
+listed below.
+Task
+State
+Action
+Task descriptions
+DMControl (Tunyasuvunakool et al., 2020)
+dog-stand
+223
+38
+Stand stably.
+dog-walk
+223
+38
+Walk forward.
+dog-trot
+223
+38
+Trot forward.
+dog-run
+223
+38
+Run forward.
+humanoid-stand
+67
+21
+Stand upright.
+humanoid-walk
+67
+21
+Walk forward.
+humanoid-run
+67
+21
+Run forward.
+HumanoidBench (Sferrazza et al., 2024)
+humanoid h1hand-stand-v0
+151
+61
+Stand stably.
+humanoid h1hand-walk-v0
+151
+61
+Track walking velocity.
+humanoid h1hand-run-v0
+151
+61
+Track running velocity.
+humanoid h1hand-crawl-v0
+151
+61
+Crawl through a tunnel.
+humanoid h1hand-hurdle-v0
+151
+61
+Cross hurdles.
+humanoid h1hand-stair-v0
+151
+61
+Traverse stairs.
+humanoid h1hand-slide-v0
+151
+61
+Traverse inclined slides.
+humanoid h1hand-pole-v0
+151
+61
+Avoid poles while moving forward.
+humanoid h1hand-sit simple-v0
+151
+61
+Sit on a fixed chair.
+humanoid h1hand-sit hard-v0
+164
+61
+Sit under randomized configurations.
+humanoid h1hand-balance simple-v0
+164
+61
+Balance on a fixed-pivot board.
+humanoid h1hand-balance hard-v0
+177
+61
+Balance on a moving-pivot board.
+humanoid h1hand-maze-v0
+151
+61
+Navigate through a maze.
+humanoid h1hand-reach-v0
+157
+61
+Reach a 3-D target.
+MyoSuite (Caggiano et al., 2022)
+myo-reach
+115
+39
+Reach fixed fingertip targets.
+myo-reach-hard
+115
+39
+Reach randomized fingertip targets.
+myo-pose
+108
+39
+Match a fixed hand pose.
+myo-pose-hard
+108
+39
+Match randomized hand poses.
+myo-obj-hold
+91
+39
+Hold an object.
+myo-obj-hold-hard
+91
+39
+Hold an object from randomized states.
+myo-key-turn
+93
+39
+Turn a key to a fixed target.
+myo-key-turn-hard
+93
+39
+Turn a key to randomized targets.
+myo-pen-twirl
+83
+39
+Reorient a pen to a fixed target.
+myo-pen-twirl-hard
+83
+39
+Reorient a pen to randomized targets.
+Unitree RL MjLab (Zakka et al., 2026)
+Unitree-G1-Flat
+98
+29
+Track commanded planar velocity.
+Unitree-Go2-Flat
+47
+12
+Track commanded planar velocity.
+21
+
+
+Figure 7: DMControl task visualization. The seven Dog and Humanoid locomotion tasks used in
+our experiments span standing, walking, trotting, and running.
+Figure 8: HumanoidBench task visualization. The 14 whole-body control tasks used in our
+experiments cover locomotion, obstacle traversal, navigation, balancing, sitting, and reaching.
+22
+
+
+Figure 9: MyoSuite task visualization. Ten musculoskeletal hand-control tasks spanning reaching,
+posing, object holding, key turning, and pen twirling, each with standard and harder randomized
+variants.
+Figure 10: Unitree locomotion visualization. Unitree G1 and Go2 velocity-tracking tasks.
+E
+DETAILED EXPERIMENTAL SETTINGS
+This section provides additional experimental details for the results reported in Sec. 5. We first
+describe the common training and evaluation protocol, followed by the implementation settings
+of the baselines. We then provide the hyperparameters specific to SWAN and finally describe the
+benchmark rewards.
+E.1
+TRAINING AND EVALUATION PROTOCOL
+Training details.
+All benchmark experiments are conducted in an online reinforcement learning
+setting, where agents continuously collect environment transitions during training. For fair com-
+parison, we match the total number of environment steps across methods on each task. We define
+environment steps as the number of agent decision steps multiplied by the environment action repeat.
+The action repeat is 2 for DMControl and 1 for HumanoidBench, MyoSuite, Unitree G1, and Unitree
+Go2. We train agents for 4M environment steps on DMControl, 2M steps on HumanoidBench and
+MyoSuite, 2M steps on Unitree G1, and 1M steps on Unitree Go2. All simulation experiments are
+conducted with three independent random seeds on single NVIDIA RTX A6000 GPU.
+23
+
+
+For MPPI-based methods, we consider two planning-budget settings. In the full-budget comparison,
+BMPC, BOOM, PO-MPC, and BMPC-DP use M = 8 MPPI refinement iterations, whereas SWAN
+uses M = 4. In the half-budget comparison, all MPPI-based methods use M = 4. The number of
+candidate trajectories per refinement iteration is kept unchanged when varying M, such that reducing
+the number of refinement iterations directly reduces the number of model-rollout evaluations during
+planning.
+Evaluation protocol.
+We evaluate the current controller every 50,000 agent steps, corresponding
+to 100,000 environment steps on DMControl, and using 10 evaluation episodes per task. MPPI-based
+methods retain online planning during evaluation using the refinement budget associated with the
+corresponding experimental setting. For DMControl, HumanoidBench, Unitree Go2, and Unitree G1,
+we report the mean episode return, whereas for MyoSuite we report the task success rate.
+E.2
+BASELINE IMPLEMENTATION DETAILS
+We compare SWAN with the planning-based MBRL methods BMPC (Wang et al., 2025a),
+BOOM (Zhan et al., 2026), and PO-MPC (Serra-Gomez et al., 2026), the imagination-based MBRL
+method DreamerV3 (Hafner et al., 2023), and the model-free methods FPO (McAllister et al., 2026)
+and SAC (Haarnoja et al., 2018). For BMPC, BOOM, and PO-MPC, we follow algorithm-specific
+hyperparameters reported in their original implementations, and use the same model architectures
+and optimization settings across these methods for fair comparison. We detail specific and common
+hyperparameters of these planning-based methods in E.3. The only modification in the half-budget
+setting is reducing the number of MPPI refinement iterations to M = 4, while all other settings
+are kept unchanged. For DreamerV3, FPO, and SAC, we use their default configurations for all
+tasks across all benchmark suites and match the environment-interaction budget to that of the other
+methods.
+We additionally construct BMPC-DP by replacing BMPC’s one-step policy with a diffusion policy
+that generates complete H-step action chunks, while retaining the original MPPI planner and planner-
+imitation objective. The diffusion policy is parameterized by a conditional 1D residual CNN operating
+over the action sequence, with four residual blocks, a hidden width of 512, and kernel size 3. During
+training, we use a DDPMScheduler with 1,000 diffusion timesteps. During inference, action
+chunks are generated using a DDIMScheduler with 20 denoising steps.
+E.3
+HYPERPARAMETER SETTINGS
+In this section, we detail specific and common hyperparameters of all planning-based methods. As
+shown in Tab 5, we summarize the shared architecture and optimization settings for BMPC, BOOM,
+PO-MPC, and SWAN. Since the methods differ in their planners, policies, and value models, we list
+their specific settings separately in Tab. 4.
+In the full- and half-budget comparisons, the MPPI-based baselines use M = 8 and M = 4,
+respectively, while SWAN uses M = 4 in both.
+E.4
+HYPERPARAMETER SELECTION FOR SWAN
+Further, we show the hyperparameter selection of proposal modes K, the MFA rank parameter r, and
+the APO target temperature λ through comparisons on Dog-Run. As shown in Fig. 11 (left), based
+on BMPC-MFA, increasing r from 0 to 1 provides consistent significant return gain for both K = 1
+and K = 2, supporting the importance of modeling correlations across time and action dimensions.
+However, increasing r from 1 to 2 provides no consistent return gain for either K = 1 or K = 2,
+supporting r = 1 with fewer covariance parameters. The middle panel further shows that K = 2
+improves returns over K = 1, while K = 4 provides no further gain. For APO, λ = 0.1 achieves the
+highest final return among the five tested values in the right panel. We therefore use K = 2, r = 1,
+and λ = 0.1 as the default SWAN settings.
+24
+
+
+Table 4: Planning and method-specific settings for the full- and half-budget benchmark comparisons.
+Hyperparameter
+Value
+Shared planning settings
+Planning horizon H
+3
+Total candidates per refinement iteration
+512
+MPPI temperature ηMPPI
+2
+Search standard deviation bounds σ(m)
+[0.05, 2]
+BMPC, BOOM, and PO-MPC
+Refinement iterations M in the full-budget comparison
+8
+Refinement iterations M in the half-budget comparison
+4
+Policy trajectories
+24
+Elite count
+64
+One-step policy πθa hidden layers / width
+2 × 512
+Entropy coefficient
+10−4
+BMPC
+Policy log standard deviation bounds
+[−3, 1]
+BOOM
+Number of Q networks
+5
+Policy log standard deviation bounds
+[−10, 2]
+Alignment coefficient / da for 24 ≤da ≤48
+0.001
+Alignment coefficient / da otherwise
+0.02
+PO-MPC
+Number of Q networks / Qλ networks
+5 / 5
+Policy and prior log standard deviation bounds
+[−2, 2]
+Learned prior hidden layers / width
+2 × 512
+KL-regularized value loss coefficient
+0.1
+Policy / value KL coefficient
+1
+Prior learning loss
+Reverse KL
+Value models for BMPC and SWAN
+Number of value models Vϕ
+2
+Reanalyze for BMPC, PO-MPC, and SWAN
+Interval / batch size / horizon
+10 / 20 / 3
+SWAN k-MPPI
+Refinement iterations M in both comparisons
+4
+Local modes K
+2
+Policy samples per mode
+24
+Exploration samples per mode
+104
+Global proposal samples
+256
+Elites per mode N
+64
+SWAN MFA action-chunk policy πθ
+Rank parameter r
+1
+Mode embedding dimension dim(ek)
+16
+Hidden layers / width
+2 × 512
+Marginal log standard deviation bounds
+[−3, 1]
+SWAN APO
+Target temperature λ
+0.1
+Initial alignment multiplier β0
+1.0
+Dual step size ηβ
+0.001
+Alignment-budget EMA coefficient
+0.001
+Entropy coefficient
+0
+25
+
+
+Table 5: Shared architecture and optimization settings for BMPC, BOOM, PO-MPC, and SWAN.
+Hyperparameter
+Value
+General
+Training steps
+2,000,000
+Replay buffer capacity
+1,000,000
+Random seeds
+1, 10, 100
+Network architecture
+Latent dimension dz
+512
+SimNorm group size
+8
+Number of bins
+101
+Symlog minimum / maximum
+−10 / 10
+Encoder Eψ width
+256
+Number of encoder layers
+2
+Dynamics model Fψ hidden layers / width
+2 × 512
+Reward model Rψ hidden layers / width
+2 × 512
+Critic hidden layers / width
+2 × 512
+Optimization
+Learning rate
+3 × 10−4
+Encoder learning rate
+9 × 10−5
+Batch size
+256
+Maximum gradient norm
+20
+Adam betas
+(0.9, 0.999)
+Adam epsilon for world model / policy
+10−8 / 10−5
+Target-network EMA coefficient
+0.01
+Model learning
+Discount γ for DMControl / HumanoidBench / MyoSuite
+0.99 / 0.995 / 0.95
+Model time discount ρ
+0.5
+Consistency coefficient
+20
+Reward loss coefficient
+0.1
+Value loss coefficient
+0.1
+0
+0.5
+1.0
+1.5
+2.0
+Environment steps (×106)
+0
+200
+400
+600
+800
+Episode return
+0
+0.5
+1.0
+1.5
+2.0
+Environment steps (×106)
+0
+200
+400
+600
+800
+Episode return
+0
+0.5
+1.0
+1.5
+2.0
+Environment steps (×106)
+0
+200
+400
+600
+800
+Episode return
+K = 1
+K = 2
+r = 0
+r = 1
+r = 2
+K = 1
+K = 2
+K = 4
+λ = 0.05
+λ = 0.1
+λ = 0.2
+λ = 0.5
+λ = 1.0
+Figure 11: Hyperparameter selection on Dog-Run. Left. Comparison of r ∈{0, 1, 2} for
+K ∈{1, 2}. Middle. Comparison of K ∈{1, 2, 4} with r = 1. Right. Comparison of APO target
+temperatures λ ∈{0.05, 0.1, 0.2, 0.5, 1.0}. All panels show episode return over 2M environment
+steps.
+26
+
+
+E.5
+BENCHMARK REWARDS
+For each task, all methods use the same reward definition to ensure a fair comparison. Unless
+otherwise specified below, we use the reward functions provided by the corresponding benchmark
+environments.
+DMControl, HumanoidBench, and MyoSuite.
+For DMControl (Tunyasuvunakool et al., 2020),
+HumanoidBench (Sferrazza et al., 2024), and MyoSuite (Caggiano et al., 2022), we use the reward
+functions provided by the original benchmark environments.
+Unitree Go2.
+The Go2 velocity-tracking task is based on the locomotion reward of DMO (Amigo
+et al., 2025), reimplemented in MJLab. For the simulation experiments, we retain the original DMO
+reward terms and coefficients without modification. For the refinement stage used prior to real-world
+deployment, we modify only two reward components to improve tracking precision and standing
+behavior.
+First, we refine the linear- and yaw-velocity tracking rewards using mixtures of wide and narrow
+exponential kernels:
+rlin
+t
+= 0.5 exp
+
+−∥cxy
+t
+−vxy
+t ∥2
+2
+0.52
+
++ 0.5 exp
+
+−∥cxy
+t
+−vxy
+t ∥2
+2
+0.152
+
+,
+(41)
+ryaw
+t
+= 0.75 exp
+
+−(cω
+t −ωz
+t )2
+0.52
+
++ 0.25 exp
+
+−(cω
+t −ωz
+t )2
+0.102
+
+,
+(42)
+where cxy
+t
+and cω
+t denote the commanded planar and yaw velocities, and vxy
+t
+and ωz
+t are the
+corresponding base velocities. The narrower kernels provide stronger incentives for precise velocity
+tracking.
+Second, for near-zero commands, ∥ct∥2 < 0.1, we disable the swing-contact and swing-clearance
+penalties and instead encourage the nominal standing pose using
+ℓstand
+t
+= ∥qt −q0∥2
+2,
+(43)
+where qt is the current joint configuration and q0 is the nominal standing pose. All other DMO
+reward terms and coefficients remain unchanged during this refinement stage.
+Unitree G1.
+The G1 task is based on the official Unitree-G1-Flat environment in MJLab (Za-
+kka et al., 2026). Unless specified below, we retain its original reward terms, coefficients, and
+control-timestep scaling.
+We replace the native foot-gait reward with our defined gait reward,
+rgait
+t
+= −0.8Ht −0.8Hsym
+t
++ 0.2Ct + 0.5Pt + 0.5Gt,
+(44)
+where Ht penalizes insufficient swing-foot clearance, Hsym
+t
+penalizes left–right asymmetry in swing
+clearance, Ct rewards transferring contact load from the swing foot to the stance foot, Pt rewards
+airborne foot progress along the commanded motion, and Gt rewards agreement between the planned
+gait phase and the observed contact pattern. The clearance target increases from 0.05 m to 0.10 m
+with commanded foot speed, and the symmetry coefficient is 0.25. The gait reward and phase
+observation are disabled when ∥ct∥2 < 0.1, consistent with the standing branch of the nominal-pose
+reward.
+We additionally replace the native torso-orientation penalty with
+−3 max
+
+otorso
+t
+, opelvis
+t
+
+,
+(45)
+where each term measures the squared horizontal component of gravity projected into the corre-
+sponding body frame. We also terminate an episode when the root height falls below 0.2 m or
+when a non-foot ground collision exceeds 10 N; both events receive the same −200 non-time-limit
+termination penalty. As in the original MJLab implementation, the complete weighted reward is
+multiplied by the 0.02 s control timestep.
+27
+
+
+F
+FULL BENCHMARK LEARNING CURVES
+We provide the complete learning curves for all 31 benchmark tasks evaluated in Sec. 5.1. Figs. 12–17
+report all 7 DMControl (Tunyasuvunakool et al., 2020), 14 HumanoidBench (Sferrazza et al., 2024),
+and 10 MyoSuite (Caggiano et al., 2022) tasks under the half- and full-budget comparisons. SWAN
+uses M = 4 MPPI refinement iterations throughout. The MPPI-based baselines use M = 4 in the
+half-budget setting and M = 8 in the full-budget comparison. Curves and shaded regions show
+means and 95% CIs over three seeds.
+Across the complete task set, SWAN consistently achieves strong control performance relative to the
+competing baselines. Despite using only M = 4 refinement iterations, SWAN remains competitive
+with or outperforms the baselines on many tasks across all three benchmark suites, with larger gains
+under the matched refinement budget. These results further demonstrate the effectiveness of SWAN
+across diverse locomotion and manipulation tasks.
+0
+200
+400
+600
+800
+1000
+Episode return
+Avg. 7 tasks
+0
+200
+400
+600
+800
+1000
+Dog Stand
+0
+200
+400
+600
+800
+1000
+Dog Walk
+0
+200
+400
+600
+800
+1000
+Dog Trot
+0
+1
+2
+3
+4
+0
+200
+400
+600
+800
+1000
+Episode return
+Dog Run
+0
+1
+2
+3
+4
+0
+200
+400
+600
+800
+1000
+Humanoid Stand
+0
+1
+2
+3
+4
+0
+200
+400
+600
+800
+1000
+Humanoid Walk
+0
+1
+2
+3
+4
+0
+200
+400
+600
+800
+1000
+Humanoid Run
+Environment steps (×106)
+MPPI-based MBRL:
+Others:
+SWAN
+POMPC
+BOOM
+BMPC
+M = 4
+DreamerV3
+FPO
+SAC
+95% CIs (3 seeds)
+Figure 12: Full learning curves on all 7 DMControl tasks under the half-budget setting. All
+MPPI-based methods use M = 4 refinement iterations.
+0
+200
+400
+600
+800
+1000
+Episode return
+Avg. 7 tasks
+0
+200
+400
+600
+800
+1000
+Dog Stand
+0
+200
+400
+600
+800
+1000
+Dog Walk
+0
+200
+400
+600
+800
+1000
+Dog Trot
+0
+1
+2
+3
+4
+0
+200
+400
+600
+800
+1000
+Episode return
+Dog Run
+0
+1
+2
+3
+4
+0
+200
+400
+600
+800
+1000
+Humanoid Stand
+0
+1
+2
+3
+4
+0
+200
+400
+600
+800
+1000
+Humanoid Walk
+0
+1
+2
+3
+4
+0
+200
+400
+600
+800
+1000
+Humanoid Run
+Environment steps (×106)
+MPPI-based MBRL:
+Others:
+SWAN
+POMPC
+BOOM
+BMPC
+BMPC-DP
+M = 4
+M = 8
+DreamerV3
+FPO
+SAC
+95% CIs (3 seeds)
+Figure 13: Full learning curves on all 7 DMControl tasks under the full-budget comparison.
+SWAN uses M = 4, while the MPPI-based baselines use M = 8.
+28
+
+
+0
+200
+400
+600
+800
+1000
+Episode return
+Avg. 13 tasks
+0
+200
+400
+600
+800
+1000
+Stand
+0
+200
+400
+600
+800
+1000
+Walk
+0
+200
+400
+600
+800
+1000
+Run
+0
+200
+400
+600
+800
+1000
+Crawl
+0
+200
+400
+600
+800
+1000
+Episode return
+Hurdle
+0
+200
+400
+600
+800
+1000
+Stair
+0
+200
+400
+600
+800
+1000
+Slide
+0
+200
+400
+600
+800
+1000
+Pole
+0
+200
+400
+600
+800
+1000
+Sit Simple
+0
+0.5 1.0 1.5 2.0
+0
+200
+400
+600
+800
+1000
+Episode return
+Sit Hard
+0
+0.5 1.0 1.5 2.0
+0
+200
+400
+600
+800
+1000
+Balance Simple
+0
+0.5 1.0 1.5 2.0
+0
+200
+400
+600
+800
+1000
+Balance Hard
+0
+0.5 1.0 1.5 2.0
+0
+200
+400
+600
+800
+1000
+Maze
+0
+0.5 1.0 1.5 2.0
+0
+2000
+4000
+6000
+8000
+10000
+Reach
+Environment steps (×106)
+MPPI-based MBRL:
+Others:
+SWAN
+POMPC
+BOOM
+BMPC
+M = 4
+DreamerV3
+FPO
+SAC
+95% CIs (3 seeds)
+Figure 14: Full learning curves on all 14 HumanoidBench tasks under the half-budget setting.
+All MPPI-based methods use M = 4 refinement iterations.
+0
+200
+400
+600
+800
+1000
+Episode return
+Avg. 13 tasks
+0
+200
+400
+600
+800
+1000
+Stand
+0
+200
+400
+600
+800
+1000
+Walk
+0
+200
+400
+600
+800
+1000
+Run
+0
+200
+400
+600
+800
+1000
+Crawl
+0
+200
+400
+600
+800
+1000
+Episode return
+Hurdle
+0
+200
+400
+600
+800
+1000
+Stair
+0
+200
+400
+600
+800
+1000
+Slide
+0
+200
+400
+600
+800
+1000
+Pole
+0
+200
+400
+600
+800
+1000
+Sit Simple
+0
+0.5 1.0 1.5 2.0
+0
+200
+400
+600
+800
+1000
+Episode return
+Sit Hard
+0
+0.5 1.0 1.5 2.0
+0
+200
+400
+600
+800
+1000
+Balance Simple
+0
+0.5 1.0 1.5 2.0
+0
+200
+400
+600
+800
+1000
+Balance Hard
+0
+0.5 1.0 1.5 2.0
+0
+200
+400
+600
+800
+1000
+Maze
+0
+0.5 1.0 1.5 2.0
+0
+2000
+4000
+6000
+8000
+10000
+Reach
+Environment steps (×106)
+MPPI-based MBRL:
+Others:
+SWAN
+POMPC
+BOOM
+BMPC
+BMPC-DP
+M = 4
+M = 8
+DreamerV3
+FPO
+SAC
+95% CIs (3 seeds)
+Figure 15: Full learning curves on all 14 HumanoidBench tasks under the full-budget compari-
+son. SWAN uses M = 4, while the MPPI-based baselines use M = 8.
+29
+
+
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Success rate
+Avg. 10 tasks
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Reach
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Reach Hard
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Pose
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Success rate
+Pose Hard
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Obj Hold
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Obj Hold Hard
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Key Turn
+0
+0.5
+1.0
+1.5
+2.0
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Success rate
+Key Turn Hard
+0
+0.5
+1.0
+1.5
+2.0
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Pen Twirl
+0
+0.5
+1.0
+1.5
+2.0
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Pen Twirl Hard
+Environment steps (×106)
+MPPI-based MBRL:
+Others:
+SWAN
+POMPC
+BOOM
+BMPC
+M = 4
+DreamerV3
+FPO
+SAC
+95% CIs (3 seeds)
+Figure 16: Full learning curves on all 10 MyoSuite tasks under the half-budget setting. All
+MPPI-based methods use M = 4 refinement iterations.
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Success rate
+Avg. 10 tasks
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Reach
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Reach Hard
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Pose
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Success rate
+Pose Hard
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Obj Hold
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Obj Hold Hard
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Key Turn
+0
+0.5
+1.0
+1.5
+2.0
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Success rate
+Key Turn Hard
+0
+0.5
+1.0
+1.5
+2.0
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Pen Twirl
+0
+0.5
+1.0
+1.5
+2.0
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Pen Twirl Hard
+Environment steps (×106)
+MPPI-based MBRL:
+Others:
+SWAN
+POMPC
+BOOM
+BMPC
+BMPC-DP
+M = 4
+M = 8
+DreamerV3
+FPO
+SAC
+95% CIs (3 seeds)
+Figure 17: Full learning curves on all 10 MyoSuite tasks under the full-budget comparison.
+SWAN uses M = 4, while the MPPI-based baselines use M = 8.
+30
+
+
+G
+FINAL PERFORMANCE AND SAMPLE EFFICIENCY
+We provide complete final-performance and sample-efficiency statistics for Sec. 5.1, reporting full-
+and half-budget comparisons separately. SWAN uses M = 4 MPPI refinement iterations in both
+settings, while the MPPI-based baselines use M = 8 and M = 4, respectively.
+For each method, task-level evaluation curves are averaged over three random seeds. Suite-average
+curves use evaluation steps shared by all included tasks and seeds, averaging first across tasks within
+each seed and then across seeds. The HumanoidBench suite average includes 13 tasks, excluding
+Reach. For each task or suite average, Final is the last observed value of the corresponding mean
+evaluation curve, without smoothing or averaging over a terminal window. Because individual task
+curves may extend beyond the last shared evaluation step, suite-level Final need not equal the average
+of task-level Final values.
+We measure sample efficiency by T80, the first observed environment step at which a method’s mean
+evaluation curve reaches 80% of SWAN’s Final for the corresponding task or suite average. All
+methods therefore share the same reference threshold. We report T80 in millions of environment steps,
+with lower values indicating better sample efficiency. The symbol “–” indicates that the threshold is
+not reached within the recorded evaluations.
+Analysis. Under the full-budget comparison in Tables 6, 8, and 10, SWAN achieves the highest suite-
+average performance across all three benchmarks despite using only M = 4 refinement iterations.
+On DMControl, SWAN obtains an average return of 898.8 with T80 = 0.60M, compared with 883.7
+and 1.00M for PO-MPC with M = 8. On Dog-Run, SWAN improves the final return over BOOM by
+67.2, while reducing T80 from 2.80M to 1.30M; on Humanoid-Run, it improves over BMPC by 25.8
+with T80 reduced from 2.10M to 1.40M. On HumanoidBench, SWAN reaches an average return of
+688.0 with T80 = 0.90M, compared with 604.0 and 1.25M for PO-MPC. The gains are particularly
+pronounced on Run and Sit Hard, where SWAN improves the final return over PO-MPC by 112.2
+and 92.0, while reducing T80 by 37.9% and 62.5%, respectively. On MyoSuite, SWAN achieves
+88.0% average success with T80 = 0.55M, compared with 81.0% and 1.05M for BMPC. On Pen
+Twirl, SWAN reaches 100% final success with T80 = 0.25M, whereas the MPPI-based baselines
+reach at most 66.7% and do not reach the shared threshold.
+Under the matched M = 4 half-budget setting in Tables 7, 9, and 11, the gaps generally increase.
+SWAN improves the suite-average return over PO-MPC by 25.3 on DMControl and 110.5 on Hu-
+manoidBench, while reducing T80 by 50.0% and 37.9%, respectively. On MyoSuite, SWAN improves
+the average success rate over BMPC by 13.7 percentage points and reduces T80 by 63.3%. The wider
+gaps therefore indicate that the competing MPPI-based methods benefit more from additional refine-
+ment, whereas SWAN maintains strong control performance and sample efficiency under the reduced
+planning budget. Moreover, BMPC and BOOM no longer reach the HumanoidBench suite-average
+threshold with four iterations, while PO-MPC and BOOM no longer reach the MyoSuite threshold.
+31
+
+
+Table 6: DMControl full-budget comparison. SWAN uses M = 4 and MPPI-based baselines use M = 8.
+Paired rows report final episode return ↑and T80 ↓.
+MPPI-based methods
+Other baselines
+Task
+Metric
+SWAN
+PO-MPC
+BMPC
+BOOM
+BMPC-DP
+DreamerV3
+FPO
+SAC
+M = 4
+M = 8
+M = 8
+M = 8
+M = 8
+Avg. 7 tasks
+Final
+898.8
+883.7
+881.5
+850.1
+876.0
+140.0
+57.6
+165.4
+T80
+0.60
+1.00
+0.70
+1.40
+0.80
+–
+–
+–
+Dog Stand
+Final
+970.5
+947.5
+965.7
+924.3
+958.1
+454.0
+232.5
+48.9
+T80
+0.20
+0.30
+0.20
+0.70
+0.30
+–
+–
+–
+Dog Walk
+Final
+957.5
+964.1
+943.8
+960.5
+957.0
+90.1
+64.6
+118.3
+T80
+0.30
+0.40
+0.40
+1.00
+0.40
+–
+–
+–
+Dog Trot
+Final
+946.6
+960.4
+954.5
+934.2
+936.6
+86.7
+51.6
+13.3
+T80
+0.40
+0.50
+0.50
+1.60
+0.50
+–
+–
+–
+Dog Run
+Final
+859.4
+777.0
+751.5
+792.2
+727.2
+101.8
+46.4
+11.8
+T80
+1.30
+2.50
+2.10
+2.80
+2.30
+–
+–
+–
+Humanoid Stand
+Final
+945.1
+962.5
+957.0
+883.9
+960.0
+7.5
+5.5
+429.8
+T80
+0.50
+0.70
+0.60
+1.00
+0.70
+–
+–
+–
+Humanoid Walk
+Final
+937.8
+952.2
+949.3
+913.6
+948.9
+211.1
+1.6
+406.2
+T80
+0.70
+1.00
+0.60
+1.10
+0.80
+–
+–
+–
+Humanoid Run
+Final
+674.7
+622.5
+648.9
+542.2
+644.2
+28.5
+1.1
+129.8
+T80
+1.40
+2.30
+2.10
+4.00
+1.60
+–
+–
+–
+Table 7: DMControl half-budget comparison. All methods use M = 4. Each method reports final episode
+return ↑and T80 ↓.
+Task
+SWAN
+PO-MPC
+BMPC
+BOOM
+Final ↑
+T80 ↓
+Final ↑
+T80 ↓
+Final ↑
+T80 ↓
+Final ↑
+T80 ↓
+Avg. 7 tasks
+898.8
+0.60
+873.5
+1.20
+862.4
+0.80
+837.7
+1.90
+Dog Stand
+970.5
+0.20
+983.0
+0.30
+948.4
+0.20
+972.0
+1.00
+Dog Walk
+957.5
+0.30
+968.5
+0.50
+960.3
+0.40
+933.9
+0.80
+Dog Trot
+946.6
+0.40
+964.6
+0.70
+952.8
+0.60
+927.7
+2.00
+Dog Run
+859.4
+1.30
+721.2
+2.30
+701.2
+3.80
+718.1
+3.70
+Humanoid Stand
+945.1
+0.50
+941.3
+1.20
+934.4
+0.70
+907.4
+1.40
+Humanoid Walk
+937.8
+0.70
+934.9
+1.30
+929.6
+0.90
+901.8
+1.20
+Humanoid Run
+674.7
+1.40
+600.7
+3.10
+610.4
+2.80
+502.9
+–
+Note. T80 is in millions of environment steps.
+32
+
+
+Table 8: HumanoidBench full-budget comparison. SWAN uses M = 4 and MPPI-based baselines use M = 8.
+Paired rows report final episode return ↑and T80 ↓.
+MPPI-based methods
+Other baselines
+Task
+Metric
+SWAN PO-MPC
+BMPC
+BOOM BMPC-DP DreamerV3
+FPO
+SAC
+M = 4
+M = 8
+M = 8
+M = 8
+M = 8
+Avg. 13 tasks
+Final
+688.0
+604.0
+551.1
+545.9
+548.3
+338.7
+86.5
+72.0
+T80
+0.90
+1.25
+1.95
+1.45
+1.80
+–
+–
+–
+Stand
+Final
+922.6
+896.3
+910.3
+943.4
+663.3
+725.5
+59.0
+33.1
+T80
+0.15
+0.30
+0.40
+0.20
+0.25
+–
+–
+–
+Walk
+Final
+920.8
+711.6
+844.0
+796.1
+749.3
+489.8
+37.6
+15.6
+T80
+0.55
+0.60
+0.80
+0.50
+0.55
+–
+–
+–
+Run
+Final
+870.4
+758.2
+200.1
+358.3
+625.9
+133.1
+10.1
+6.8
+T80
+0.90
+1.45
+–
+–
+1.45
+–
+–
+–
+Crawl
+Final
+961.9
+919.6
+868.9
+721.6
+809.4
+852.3
+499.3
+277.7
+T80
+0.35
+0.50
+0.75
+0.95
+0.65
+1.80
+–
+–
+Hurdle
+Final
+287.8
+208.7
+219.7
+193.0
+180.1
+13.7
+14.3
+8.1
+T80
+1.50
+–
+1.60
+–
+–
+–
+–
+–
+Stair
+Final
+278.4
+296.9
+238.1
+245.2
+213.1
+264.0
+41.0
+12.7
+T80
+1.35
+1.25
+1.85
+1.15
+1.90
+1.95
+–
+–
+Slide
+Final
+818.5
+630.1
+529.7
+596.2
+628.6
+115.5
+34.7
+10.0
+T80
+1.50
+–
+–
+–
+1.70
+–
+–
+–
+Pole
+Final
+860.8
+755.6
+776.3
+702.3
+715.9
+531.4
+79.4
+61.2
+T80
+0.35
+0.90
+0.65
+0.90
+0.70
+–
+–
+–
+Sit Simple
+Final
+915.1
+850.8
+913.4
+903.6
+875.3
+760.7
+103.1
+189.8
+T80
+0.15
+0.30
+0.30
+0.30
+0.45
+1.90
+–
+–
+Sit Hard
+Final
+831.3
+739.3
+657.4
+659.8
+642.2
+271.6
+18.9
+23.6
+T80
+0.30
+0.80
+0.95
+0.65
+0.55
+–
+–
+–
+Balance Simple Final
+849.8
+598.5
+561.2
+389.9
+618.4
+69.5
+59.1
+26.5
+T80
+1.75
+–
+–
+–
+–
+–
+–
+–
+Balance Hard
+Final
+123.6
+108.8
+89.6
+101.0
+97.4
+55.9
+47.9
+26.1
+T80
+1.80
+1.60
+–
+1.80
+–
+–
+–
+–
+Maze
+Final
+328.4
+354.4
+345.6
+343.7
+259.3
+119.6
+120.2
+245.4
+T80
+0.15
+0.25
+0.30
+0.20
+0.25
+–
+–
+1.20
+Reach
+Final
+5750.5
+5173.3
+5387.1
+3893.4
+3712.8
+5517.0
+977.6
+1317.2
+T80
+1.70
+1.70
+1.70
+–
+–
+1.95
+–
+–
+Table 9: HumanoidBench half-budget comparison. All methods use M = 4. Each method reports final
+episode return ↑and T80 ↓.
+Task
+SWAN
+PO-MPC
+BMPC
+BOOM
+Final ↑
+T80 ↓
+Final ↑
+T80 ↓
+Final ↑
+T80 ↓
+Final ↑
+T80 ↓
+Avg. 13 tasks
+688.0
+0.90
+577.5
+1.45
+452.0
+–
+540.3
+–
+Stand
+922.6
+0.15
+884.0
+0.25
+756.2
+1.55
+830.8
+0.30
+Walk
+920.8
+0.55
+798.0
+0.60
+666.6
+1.00
+884.2
+0.60
+Run
+870.4
+0.90
+682.9
+–
+117.7
+–
+462.7
+–
+Crawl
+961.9
+0.35
+862.5
+0.55
+819.9
+0.90
+828.3
+1.50
+Hurdle
+287.8
+1.50
+205.9
+–
+155.9
+–
+195.6
+–
+Stair
+278.4
+1.35
+193.1
+–
+215.5
+1.70
+231.4
+1.75
+Slide
+818.5
+1.50
+551.7
+–
+457.8
+–
+535.2
+–
+Pole
+860.8
+0.35
+756.9
+1.15
+532.6
+–
+814.2
+1.35
+Sit Simple
+915.1
+0.15
+796.6
+0.40
+624.0
+1.65
+893.5
+0.25
+Sit Hard
+831.3
+0.30
+654.9
+1.90
+541.1
+0.85
+463.0
+–
+Balance Simple
+849.8
+1.75
+703.8
+1.90
+580.1
+–
+488.5
+–
+Balance Hard
+123.6
+1.80
+94.0
+–
+85.4
+1.80
+97.3
+–
+Maze
+328.4
+0.15
+337.4
+0.30
+344.4
+0.35
+335.7
+0.40
+Reach
+5750.5
+1.70
+4755.5
+1.60
+4658.0
+1.95
+4370.1
+–
+Note. T80 is in millions of environment steps. The suite average excludes Reach, which is reported separately.
+33
+
+
+Table 10: MyoSuite full-budget comparison. SWAN uses M = 4 and MPPI-based baselines use M = 8.
+Paired rows report final success rate (%) ↑and T80 ↓.
+MPPI-based methods
+Other baselines
+Task
+Metric
+SWAN
+PO-MPC
+BMPC
+BOOM
+BMPC-DP
+DreamerV3
+FPO
+SAC
+M = 4
+M = 8
+M = 8
+M = 8
+M = 8
+Avg. 10 tasks
+Final
+88.0
+77.3
+81.0
+72.3
+79.7
+41.3
+0.0
+34.0
+T80
+0.55
+1.00
+1.05
+1.65
+1.40
+–
+–
+–
+Reach
+Final
+100.0
+100.0
+100.0
+100.0
+100.0
+97.0
+0.0
+66.7
+T80
+0.05
+0.05
+0.05
+0.05
+0.05
+0.30
+–
+0.35
+Reach Hard
+Final
+96.7
+90.0
+83.3
+86.7
+86.7
+4.3
+0.0
+53.3
+T80
+0.35
+0.60
+0.70
+0.45
+0.45
+–
+–
+–
+Pose
+Final
+100.0
+100.0
+100.0
+100.0
+100.0
+93.0
+0.0
+100.0
+T80
+0.10
+0.15
+0.20
+0.90
+1.75
+0.55
+–
+1.15
+Pose Hard
+Final
+0.0
+0.0
+6.7
+0.0
+0.0
+0.0
+0.0
+0.0
+T80
+–
+–
+–
+–
+–
+–
+–
+–
+Obj Hold
+Final
+96.7
+100.0
+100.0
+100.0
+96.7
+0.0
+0.0
+0.0
+T80
+0.10
+0.10
+0.15
+0.15
+0.25
+–
+–
+–
+Obj Hold Hard
+Final
+96.7
+93.3
+93.3
+93.3
+86.7
+14.3
+0.0
+0.0
+T80
+0.60
+1.10
+1.00
+1.40
+1.10
+–
+–
+–
+Key Turn
+Final
+100.0
+100.0
+100.0
+100.0
+100.0
+82.0
+0.0
+100.0
+T80
+0.05
+0.05
+0.10
+0.05
+0.05
+0.45
+–
+0.25
+Key Turn Hard
+Final
+96.7
+56.7
+86.7
+76.7
+90.0
+21.3
+0.0
+6.7
+T80
+0.90
+1.30
+1.10
+1.90
+1.50
+–
+–
+–
+Pen Twirl
+Final
+100.0
+66.7
+66.7
+0.0
+66.7
+84.3
+0.0
+0.0
+T80
+0.25
+–
+–
+–
+–
+0.50
+–
+–
+Pen Twirl Hard
+Final
+93.3
+66.7
+73.3
+66.7
+70.0
+16.7
+0.0
+13.3
+T80
+0.75
+–
+–
+–
+1.05
+1.85
+–
+–
+Table 11: MyoSuite half-budget comparison. All methods use M = 4. Each method reports final success rate
+(%) ↑and T80 ↓.
+Task
+SWAN
+PO-MPC
+BMPC
+BOOM
+Final ↑
+T80 ↓
+Final ↑
+T80 ↓
+Final ↑
+T80 ↓
+Final ↑
+T80 ↓
+Avg. 10 tasks
+88.0
+0.55
+70.0
+–
+74.3
+1.50
+68.7
+–
+Reach
+100.0
+0.05
+100.0
+0.05
+100.0
+0.10
+100.0
+0.10
+Reach Hard
+96.7
+0.35
+90.0
+0.55
+93.3
+0.70
+96.7
+0.30
+Pose
+100.0
+0.10
+100.0
+0.15
+100.0
+0.15
+96.7
+1.55
+Pose Hard
+0.0
+–
+0.0
+–
+0.0
+–
+0.0
+–
+Obj Hold
+96.7
+0.10
+100.0
+0.10
+100.0
+0.15
+100.0
+0.35
+Obj Hold Hard
+96.7
+0.60
+86.7
+0.95
+96.7
+1.25
+93.3
+1.20
+Key Turn
+100.0
+0.05
+100.0
+0.05
+100.0
+0.05
+100.0
+0.10
+Key Turn Hard
+96.7
+0.90
+63.3
+–
+56.7
+–
+30.0
+–
+Pen Twirl
+100.0
+0.25
+0.0
+–
+33.3
+–
+0.0
+–
+Pen Twirl Hard
+93.3
+0.75
+60.0
+–
+63.3
+–
+70.0
+1.75
+Note. T80 is in millions of environment steps. For Pose Hard, SWAN’s final success rate and the reference
+threshold are zero. Its unreported T80 entries should not be interpreted as failure to reach a positive threshold.
+H
+UNITREE SIM-TO-REAL TRANSFER
+Unitree G1 and Go2 Locomotion. In this section, we evaluate on velocity tracking tasks for
+Unitree G1 and Go2 in MJLab (Zakka et al., 2026) to assess whether SWAN’s performance and
+sample-efficiency gains extend to robot locomotion. As shown in Fig. 18, SWAN outperforms
+BMPC in final return and sample efficiency while using half as many MPPI refinement iterations
+on both tasks. Specifically, BMPC uses M = 8 and M = 6 on G1 and Go2, respectively, whereas
+SWAN uses M = 4 and M = 3. The sample-efficiency advantage is particularly pronounced on
+G1, demonstrating effective learning on the higher-dimensional task despite the smaller refinement
+budget.
+34
+
+
+Unitree Go2 Sim-to-Real Transfer.
+Beyond simulation, we evaluate SWAN’s ability to
+0
+0.5
+1.0
+1.5
+2.0
+Environment steps (×106)
+−10
+0
+10
+20
+30
+40
+Episode return
+Unitree G1
+0
+0.2
+0.4
+0.6
+0.8
+1.0
+Environment steps (×106)
+−250
+0
+250
+500
+750
+1000
+Episode return
+Unitree Go2
+SWAN
+BMPC
+95% CIs (3 seeds)
+Figure 18: Unitree G1 and Go2 locomotion in
+simulation. Comparison between SWAN (solid)
+and BMPC (dashed), where SWAN uses half as
+many MPPI refinement iterations.
+Curves and
+shading show means and 95% CIs over 3 seeds.
+zero-shot sim-to-real transfer by deploying the
+trained SWAN controller on a physical Unitree
+Go2. To facilitate sim-to-real transfer, we apply
+domain randomization alongside the terrain cur-
+riculum in policy learning. After training on the
+simulation, SWAN demonstrates zero-shot sim-
+to-real transfer on a physical Unitree Go2 with
+single NVIDIA GeForce RTX 5090. Under a
+limited online planning budget, the robot tracks
+commanded forward, backward, and lateral ve-
+locities, turns in both directions, and follows
+figure-eight trajectories that combine translation
+with changes in turning direction.
+To quantify tracking during figure-eight and
+straight-line walking, we compare velocity com-
+mands with body-frame velocities from motion capture (mocap), as shown in Fig. 19. Using aligned
+measurements before visualization smoothing, we compute the planar velocity error at each sample
+as the Euclidean norm of the forward and lateral velocity errors. For yaw angular velocity, we use the
+absolute difference between measured and commanded values. We then summarize tracking over
+each plotted interval using mean absolute error (MAE) and root mean square error (RMSE), computed
+as the mean error magnitude and the square root of the mean squared magnitude, respectively, with
+equal weight per sample.
+For figure-eight and straight-line walking, the planar velocity MAEs are 0.126 and 0.149 m/s,
+respectively, with RMSEs of 0.144 and 0.161 m/s. The corresponding yaw angular velocity MAEs
+are 0.112 and 0.068 rad/s, with RMSEs of 0.177 and 0.084 rad/s.
+We further assess locomotion stability by applying external pushes during motion. The robot
+maintains stable locomotion without falling. With only M = 3 MPPI refinement iterations per
+control step, the controller operates at an average frequency of 308.16 Hz, demonstrating high-
+frequency control under a limited online planning budget. Real-world demonstrations are available at
+https://swanfastworldplanner.github.io/.
+35
+
+
+(a) Figure-eight walking.
+(b) Straight-line walking.
+Figure 19: Zero-shot sim-to-real velocity tracking on a physical Unitree Go2. The two panels
+show figure-eight and straight-line walking after training in simulation. In each panel, the montage
+visualizes the executed motion, while the curves compare velocity commands (dashed) with body-
+frame mocap measurements (solid). Tracking errors are summarized in the text using MAE and
+RMSE over the plotted post-startup intervals.
+36

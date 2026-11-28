@@ -1,0 +1,927 @@
+JEPA-Shield: Safe Diffusion Planning with Latent World Models
+via Conformal Shielding
+Taekyung Kim1, Ege Yuceel2, Steven Hong3, Georgios Fainekos3, Dimitra Panagou1,4, Bardh Hoxha3
+Abstract— Latent world models enable planning from images,
+but their predictions do not directly establish whether a
+robot will satisfy physical constraints. We present JEPA-Shield,
+which connects a frozen action-conditioned Joint-Embedding
+Predictive Architecture (JEPA) world model to task-space safety
+enforcement. Two downstream models predict relative motion
+from imagined latent rollouts and decode unsafe geometry from
+the current image. Split conformal prediction turns end-to-end
+motion-prediction errors into multi-horizon uncertainty tubes.
+A backup-based shield checks these tubes against physical
+constraints and screens both candidate trajectories and final
+proposals in diffusion-inspired sampling-based model predictive
+control. Under the stated exchangeability and initial-backup
+assumptions, we establish probabilistic constraint satisfaction at
+action-block boundaries for a returned plan executed without
+replanning. We also introduce VParkBench, with geometric car
+and tractor-trailer parking tasks and a editable photorealis-
+tic Gaussian-splatting environment. In closed-loop evaluation,
+JEPA-Shield achieves success rates of 84.4%, 82.3%, and
+99.0%, respectively, with no observed constraint violations.
+Ablations show complementary benefits from shielding and
+uncertainty calibration. The results demonstrate the importance
+of grounding latent world-model predictions in task-space
+quantities and explicitly accounting for prediction uncertainty
+in safety-critical planning. [Project Page]1 [Video]
+I. INTRODUCTION
+Planning from images requires more than predicting what
+a robot will see next. A candidate maneuver must avoid
+obstacles, remain within the workspace, and, for articu-
+lated vehicles, avoid jackknifing. These requirements concern
+physical motion and geometry, not similarity to a goal image.
+Optimization-based planning can enforce explicitly modeled
+constraints, but errors in perception and scene reconstruction
+can make their evaluation unreliable [1].
+World Models (WMs) learn predictive representations
+from observation-action trajectories, enabling image-based
+control through imagined rollouts [2]–[4]. Joint-Embedding
+Predictive Architectures (JEPAs) predict representations
+rather than reconstructing pixels [5]. LeWorldModel (Le-
+WM), for example, learns action-conditioned latent dynamics
+through next-embedding prediction and regularization [6],
+[7], then plans toward encoded visual goals. Such representa-
+1Department of Robotics,
+4Department of Aerospace Engineering,
+University of Michigan, Ann Arbor, MI 48109, USA {taekyung,
+dpanagou}@umich.edu
+2Department
+of
+Electrical
+and
+Computer
+Engineering,
+University
+of
+Illinois
+Urbana-Champaign,
+Urbana,
+IL
+61801,
+USA
+eyceel2@illinois.edu
+3Toyota Motor North America, Research & Development, Ann Arbor,
+MI, 48105, USA <first name.last name>@toyota.com
+1Project page: https://www.taekyung.me/jepa-shield
+tions support predictive control but need not expose the task-
+space quantities on which physical constraints are defined.
+A downstream probe can predict safety values from latent
+rollouts, but its outputs reflect errors in both the predicted
+latent trajectory and the learned safety mapping. Near a con-
+straint boundary, an optimistic prediction can make an unsafe
+maneuver appear acceptable. Thus, a favorable predicted
+safety value alone does not establish physical constraint
+satisfaction. Recent work has begun to address this gap. Kim
+et al. calibrate a learned binary failure predictor for model-
+predictive shielding [8]; SLS2 calibrates latent-dynamics and
+constraint-prediction errors and propagates uncertainty sets
+through robust model predictive control (MPC) [9]; and
+concurrent work by Zhong et al. calibrates learned risk and
+progress predictions before applying a separate deterministic
+safety shield [10].
+We propose JEPA-Shield with a guiding principle: predict
+in latent space, evaluate constraints in physical space, and
+account for prediction error before accepting an action
+trajectory. A motion predictor converts the latent rollouts
+of a frozen JEPA world model into multi-horizon relative
+trajectories, while a spatial decoder estimates current unsafe
+geometry from encoder features. Split conformal prediction
+calibrates the end-to-end motion error to construct tubes
+for robust constraint evaluation. A backup-based shield in-
+tegrates these checks into diffusion-inspired sampling-based
+MPC, retaining nominal prefixes only when their backup-
+completed trajectories satisfy the robust constraints. Under
+the stated initial-backup, exchangeability, and conservative
+constraint-evaluation assumptions, the method provides prob-
+abilistic constraint satisfaction at action-block endpoints over
+a finite horizon. Fig. 1 summarizes the framework.
+To evaluate the framework, we introduce VParkBench,
+a visual parking benchmark and dataset spanning geometric
+and editable Gaussian-splatting environments.2 On tractor-
+trailer parking, JEPA-Shield increases success from 60.4%
+to 82.3% relative to the unshielded ablation, while reducing
+the observed unsafe rate from 34.4% to 0%. Across all
+288 benchmark trials, the full method achieves the strongest
+overall performance with no observed constraint violations.
+Our main contributions are:
+• We introduce downstream models that recover multi-
+horizon relative motion from latent rollouts and decode
+current unsafe geometry from spatial features of a frozen
+JEPA world model.
+2The VParkBench dataset and generation code will be released publicly
+pending completion of legal review.
+arXiv:2611.29609v1  [cs.RO]  22 Nov 2026
+
+
+Fig. 1: Overview of JEPA-Shield. (a) A latent world model predicts action-conditioned future representations from visual history. (b) Task-space probes
+recover relative motion and decode unsafe geometry from latent and spatial features. (c) Conformal motion tubes enable uncertainty-aware shielding
+against physical constraints. (d) Diffusion planner iteratively updates shielded action candidates and applies a final shield before execution. (e) VParkBench
+evaluates the framework in geometric and Gaussian-splatting parking environments.
+• We calibrate end-to-end multi-horizon motion error to
+construct conformal tubes for robust physical constraint
+evaluation.
+• We integrate conformal tubes with backup-based shielding
+in diffusion-inspired MPC, screening both sampled candi-
+dates and the final proposal before execution.
+• We introduce VParkBench, a visual parking benchmark
+with geometric car and tractor-trailer tasks, an editable
+Gaussian-splatting environment, and collision, workspace,
+and jackknifing constraints.
+II. PRELIMINARIES
+We first formulate constrained planning from visual his-
+tories and then summarize the Le-WM and sampling-based
+diffusion planner components used by JEPA-Shield.
+A. Problem Formulation
+Consider a discrete-time robotic system
+xt+1 = f(xt, ut),
+(1)
+where t ∈N is the low-level time index, xt ∈X ⊆Rn is
+the physical state, ut ∈U ⊂Rm is the control input, and
+f : X ×U →X is unknown to the online planner. The robot
+receives a visual observation
+ot = Obs(xt),
+Obs : X →R3×Nh×Nw,
+(2)
+where Nh and Nw are the image height and width, respec-
+tively. Physical-state labels are used for offline supervision
+and evaluation. During online planning, future motion is
+predicted from the visual context and candidate actions
+without querying f.
+The world model may operate at a lower temporal res-
+olution than the low-level controller. Let k ∈N denote
+the block-level time index. We therefore group r ∈N+
+consecutive control inputs into one block action, a practice
+also referred to as action chunking:
+ak :=
+
+u⊤
+rk
+· · ·
+u⊤
+rk+r−1
+⊤∈A ⊆Rrm,
+(3)
+where A ⊆Ur is the admissible block-action set. Hereafter,
+states and observations are indexed at block boundaries: xk
+and ok refer to the state and observation at low-level time rk.
+Thus, ak is applied between consecutive observations ok and
+ok+1. At planning cycle k, the available observation-action
+context is
+Ik := (ok−C+1:k, ak−C+1:k−1) ,
+(4)
+where C ∈N+ is the number of observations; the C −1
+action blocks connect consecutive observations. Within each
+planning cycle, the current observation defines local time
+zero. We write I = Ik and ah = ak+h|k for the prediction
+index h ∈N; state predictions and realized states use the
+same local indexing. Thus, I = (o−C+1:0, a−C+1:−1), with
+negative indices denoting observed history. We restore k only
+when relating planning cycles. A candidate action sequence
+over a planning horizon H ∈N+ is
+τ := (a0, . . . , aH−1) ∈AH.
+(5)
+Let ∆xh = Rel(xh; x0) express the state in the ego-
+centric frame of o0, with angular differences wrapped to
+their principal intervals. The relative-state space is ∆X :=
+{Rel(x; x0) : x ∈X} ⊆Rn, with dependence on the
+fixed reference x0 suppressed. The learned rollout operator
+predicts
+d
+∆x1:H := bF(I, τ) ∈(∆X)H.
+(6)
+Let
+b
+O denote an unsafe-set representation inferred from
+the current visual context. The geometry b
+O, goal G, and
+objective J are expressed in the same ego-centric frame.
+
+
+For Ng ∈N+ constraint functions gℓon ∆X, the planning
+problem is
+τ ⋆∈arg min
+τ∈AH
+J
+
+d
+∆x1:H, τ; G
+
+s.t.
+gℓ
+
+d
+∆xh, b
+O
+
+≥0, ℓ= 1, . . . , Ng, h = 1, . . . , H.
+(7)
+The corresponding pointwise safe set is
+C( b
+O) :=
+n
+¯x ∈∆X
+ gℓ(¯x, b
+O) ≥0, ℓ= 1, . . . , Ng
+o
+. (8)
+The domain AH enforces the input bounds, and bF deter-
+mines the trajectory by forward rollout, as in single shooting.
+Sec. III instantiates bF and b
+O using learned motion and
+unsafe-set models, and incorporates prediction uncertainty
+into (7) through conformal shielding.
+B. LeWorldModel
+LeWorldModel (Le-WM) is an action-conditioned JEPA
+world model that learns predictive representations from of-
+fline observation-action trajectories [7]. Let E denote its
+vision-transformer (ViT) observation encoder, F its causal
+action-conditioned latent dynamics, and dz the latent dimen-
+sion. The observation encoder produces
+z0 = E(o0)[CLS],
+(9)
+where z0 ∈Rdz denotes the class ([CLS]) token representa-
+tion from the final encoder layer [11]. For JEPA-Shield, we
+additionally retain the spatial patch tokens produced by the
+same encoder for the unsafe-set decoder in Sec. III-B.
+Given C latent-action pairs, F causally predicts the sub-
+sequent latent at each position from the available history:
+bz−C+2:1 = F (z−C+1:0, a−C+1:0) .
+(10)
+During planning, encoding the observations in I gives
+z−C+1:0. The first candidate block a0 completes the action
+input for predicting bz1. Longer imagined rollouts are gener-
+ated autoregressively: at each step, the predicted latent and
+corresponding candidate action are appended to the fixed-
+length context before F is applied again.
+Le-WM uses a mean-squared error (MSE) next-embedding
+loss Lpred and a stepwise SIGReg loss LSIG to prevent fea-
+ture collapse. SIGReg regularizes random one-dimensional
+embedding projections toward a standard Gaussian distribu-
+tion [6], [7]. The training objective is
+LLeWM := Lpred + λSIGLSIG,
+λSIG ≥0.
+(11)
+Since (11) contains no direct physical-state or safety su-
+pervision, Sec. III introduces a downstream motion predictor
+and unsafe-set decoder to instantiate bF and b
+O, respectively.
+C. Diffusion-Inspired Sampling-Based MPC
+Building on the rollout-based score estimation of Model-
+Based Diffusion [12], DIAL-MPC [13] refines action se-
+quences by sampling perturbations and averaging candidates
+according to cost and constraint satisfaction, with iteration-
+and horizon-dependent noise annealing. For τ ∈AH, let
+J (τ) := J( bF(I, τ), τ; G) denote its rollout cost. The con-
+strained target distribution is [14]
+p0(τ) ∝pJ(τ)pg(τ),
+pJ(τ) ∝e−J (τ)/λ,
+(12)
+where λ > 0 is the temperature and pg(τ) is the constraint-
+satisfaction indicator, equal to one when the predicted rollout
+satisfies all inequalities in (7) and zero otherwise.
+At iteration i, draw Ns candidates around the stacked
+proposal mean µi ∈RHrm and update it by
+τn = PAH
+
+µi + Σ1/2
+i
+ϵn
+
+,
+ϵn ∼N(0, I),
+wn =
+p0(τn)
+PNs
+j=1 p0(τj)
+,
+µi+1 =
+Ns
+X
+n=1
+wnτn.
+(13)
+Here, n = 1, . . . , Ns, Σi is the perturbation covariance,
+and PAH projects onto the admissible action-sequence set.
+Iteration indices are suppressed on samples and weights.
+Sparse feasible samples reduce sampling efficiency; if
+none are feasible, the weights are undefined. Replacing hard
+feasibility with finite constraint penalties does not guar-
+antee constraint satisfaction. Moreover, averaging feasible
+sequences can violate the trajectory constraints [14]. These
+limitations motivate shielding both sampled candidates and
+the final proposal in Sec. III-D.
+III. JEPA-SHIELD
+JEPA-Shield separates visual prediction from physical
+constraint evaluation. After training Le-WM with (11), we
+freeze its encoder and latent dynamics. Two downstream
+models recover relative motion from imagined rollouts and
+unsafe geometry from current spatial features. Calibrated
+motion tubes and backup-based shielding determine which
+proposed actions can be retained with a valid backup.
+A. Multi-Horizon Relative Motion Prediction
+To recover robot motion from latent predictions, we train a
+motion predictor Q using physical-state labels from the same
+offline dataset. Let Hm ∈N+ denote the motion-prediction
+horizon, with Hm ≤H. Given the latent context z−C+1:0
+and the first Hm action blocks of the candidate sequence τ,
+the frozen latent dynamics F generates the imagined latents
+bz1:Hm. The motion predictor Q then predicts the relative-state
+sequence d
+∆x1:Hm ∈(∆X)Hm as
+d
+∆x1:Hm = Q
+
+z−C+1:0, bz1:Hm, a0:Hm−1
+
+.
+(14)
+The motion predictor uses lightweight MLPs, trained with
+a Huber loss at every prediction horizon. Its output at horizon
+h depends only on candidate actions a0:h−1. Only real
+observations are encoded by E; future latents are gener-
+ated by the frozen predictor F. For H > Hm, successive
+motion-prediction segments are composed in the current real-
+observation frame. The autoregressive construction, truncated
+at the requested horizon, instantiates bF in (6).
+
+
+B. Spatial Unsafe-Set Decoding
+To evaluate predicted motion against the current scene,
+we train an unsafe-set decoder D from offline binary labels.
+Following ViT-based dense prediction [15], it maps the
+current observation’s spatial patch tokens to unsafe-set logits:
+c
+M = D(E(o0)patch) ∈RNh×Nw,
+(15)
+and the corresponding unsafe probability map is
+b
+P
+=
+sigmoid( c
+M).
+The decoder is trained against the binary unsafe-set mask
+M ∈{0, 1}Nh×Nw using a class- and boundary-weighted
+binary cross-entropy loss together with a Tversky loss [16].
+We use asymmetric Tversky weighting to penalize false
+negatives more strongly than false positives.
+For a threshold τocc ∈(0, 1), the decoded unsafe set is
+b
+O :=
+n
+ξ ∈{1, ..., Nh} × {1, ..., Nw} : [ b
+P ]ξ ≥τocc
+o
+, (16)
+where ξ indexes the observation-aligned spatial grid. The
+decoder is evaluated once per planning cycle, and b
+O is shared
+by all candidate rollouts. We assume the represented external
+unsafe geometry is stationary over the evaluated horizon.
+C. Conformal Motion Tube
+A nominal trajectory is not enough for safety evaluation:
+prediction errors can change whether a constraint is satisfied.
+We therefore use split conformal prediction [17] to calibrate
+the complete composed trajectory, rather than its individual
+prediction stages. Each held-out calibration trajectory con-
+tributes one score: its largest normalized prediction error
+across pose coordinates and horizons. A conformal quantile
+of these scores determines the motion-tube widths.
+Each calibration sample c = 1, . . . , Ncal contains a real
+context Ic, as in (4), one full-horizon action sequence
+τc ∈AH, and its realized relative-state trajectory ∆x(c)
+1:H.
+Applying bF(Ic, τc) gives the corresponding composed pre-
+diction d
+∆x
+(c)
+1:H. Following [18], [19], we normalize errors
+in the np geometric pose coordinates. For relative states
+¯x and ¯x′, let ρd(¯x, ¯x′) measure the absolute difference
+in pose coordinate d, using wrapped differences for scalar
+headings. Let σh,d > 0 be the corresponding scale, computed
+from training residuals and fixed before calibration. The
+normalized nonconformity score of calibration sample c is
+Rc :=
+max
+h=1,...,H
+d=1,...,np
+ρd
+
+∆x(c)
+h , d
+∆x
+(c)
+h
+
+σh,d
+.
+(17)
+The normalization prevents errors at horizons or coordinates
+with larger numerical scales from dominating the maximum.
+For the remainder of the construction, we fix the miscov-
+erage level α ∈(0, 1) and suppress dependence on it in the
+notation. Define the conformal quantile
+bq := Quantile1−α (R1, . . . , RNcal, +∞) ,
+(18)
+where Quantile1−α
+denotes the ⌈(Ncal + 1)(1 −α)⌉-th
+smallest element of its arguments.
+For a candidate sequence τ, let d
+∆xh(τ) denote the h-
+th relative-state output of the complete rollout bF(I, τ). Its
+conformal motion tube at horizon h is
+Th(τ) :=
+(
+¯x ∈∆X
+
+ρd
+
+¯x, d
+∆xh(τ)
+
+≤bq σh,d,
+d = 1, . . . , np
+)
+,
+(19)
+where ¯x denotes a possible relative state. The tube contains
+states consistent with the calibrated motion error. Only the
+uncertain pose coordinates are inflated; coordinates deter-
+mined exactly by I and τ retain their horizon-h values
+with zero uncertainty width. For an articulated vehicle,
+orientation uncertainty can substantially enlarge the possible
+trailer footprint even when the nominal trajectory is nearly
+straight.
+Proposition 1 (Full-horizon motion coverage). Suppose
+that the learned rollout operator
+bF and normalizing
+factors σh,d are fixed independently of the calibration
+samples, and that the Ncal calibration samples and the
+next query, including their realized trajectories, are ex-
+changeable under the same fixed query-generation proce-
+dure. Then
+P (∆xh ∈Th,
+∀h = 1, . . . , H) ≥1 −α.
+(20)
+Proof. Let Rnew denote the normalized nonconformity
+score of the next query. Split conformal prediction gives
+Rnew ≤bq with probability at least 1−α. By the maximum
+in (17), this event implies the coordinate-wise tube bounds
+at every horizon simultaneously.
+The guarantee is marginal over exchangeable calibration
+and query trajectories, not simultaneous over all candidates
+examined by the planner; applying it to the retained plan
+therefore additionally requires that the selected query satisfy
+the exchangeability assumption. For such a query, the cov-
+erage event holds jointly across the prediction horizon, so
+robust constraint evaluation over Th also covers the realized
+state at every horizon.
+For each constraint ℓand horizon h, define its robust value
+over the conformal motion tube as
+gℓ,h(τ) :=
+inf
+¯x∈Th(τ) gℓ
+
+¯x, b
+O
+
+.
+(21)
+For a single fixed query, we write gℓ,h. The candidate
+trajectory is robustly safe with respect to b
+O when gℓ,h ≥0
+for every ℓ= 1, . . . , Ng and h = 1, . . . , H.
+D. Diffusion Planning with Conformal Shielding
+We adapt the shielded rollout mechanism of Safe Model
+Predictive Diffusion (Safe MPD) [14] to the robust con-
+straints in (21). The shield modifies each candidate during
+DIAL-MPC annealing and is applied again to the final pro-
+posal, since weighted averaging does not preserve constraint
+satisfaction.
+Let Hb ∈N+ be the backup horizon, πb a backup policy
+generating admissible action blocks, and S0 ⊆C( b
+O) a
+
+
+terminal set that is forward invariant under πb. Nominal
+rollouts from the real context I are calibrated over H
+blocks. For the stopping backup used in this paper, tubes are
+extended analytically through H +Hb, without predicting or
+calibrating an additional backup tail.
+For a nominal prefix of length h
+∈
+{0, . . . , H},
+let ab
+h:H+Hb−1 denote the backup continuation generated
+by πb from the predicted history, and define τ (h)
+:=
+ a0:h−1, ab
+h:H+Hb−1
+
+. The first Hb backup blocks drive the
+predicted state toward S0, after which πb is continued to
+complete the extended horizon. For h = 0, τ (0) consists
+entirely of backup actions. The sequence is valid if
+gℓ,j
+
+τ (h)
+≥0,
+∀ℓ, j,
+Th+Hb
+
+τ (h)
+⊆S0,
+(22)
+where ℓ= 1, . . . , Ng and j = 1, . . . , max{H, h + Hb}.
+Starting from a valid τ (0), the shield tests h = 1, . . . , H
+sequentially and retains the latest valid completed sequence.
+Testing stops at the first rejection or after all prefixes pass.
+The first H blocks of the retained sequence form the shielded
+sequence. Rejection therefore falls back to the previously
+validated backup, not the backup generated from the rejected
+prefix. For fixed I, b
+O, S0, πb, bq, σh,d, and initial backup,
+denote this mapping by Shield
+è(τ).
+Algorithm 1 incorporates Shield
+è into Nd DIAL-MPC
+annealing iterations. Every shielded candidate satisfies the
+robust constraints, so pg in (12) is constant across these
+samples and the weights depend only on pJ, avoiding the
+sampling inefficiency caused by infeasible samples [14].
+The final weighted mean is shielded once more before
+execution, and the corresponding backup is retained for the
+next planning cycle.
+Algorithm 1: JEPA-Shield
+Input: Context I; goal G; backup policy πb; initial backup
+sequence τ (0); terminal set S0; quantile bq and scales σh,d;
+proposal µ0
+Output: Shielded sequence τ è or failure
+Encode I and compute b
+O using (16)
+if τ (0) fails (22) then
+return failure
+for i = 0, . . . , Nd −1 do
+foreach n = 1, . . . , Ns in parallel do
+ϵn ∼N(0, I)
+τn ←PAH
+
+µi + Σ1/2
+i
+ϵn
+
+τ è
+n ←Shieldè(τn)
+wn ←
+pJ(τ è
+n )
+PNs
+j=1 pJ(τ è
+j )
+,
+n = 1, . . . , Ns
+µi+1 ←
+Ns
+X
+n=1
+wnτ è
+n
+τ è ←Shieldè  µNd
+
+return τ è
+Proposition 2 (Discrete-time constraint satisfaction).
+Suppose the supplied initial backup satisfies (22), and
+each gℓ(·, b
+O) conservatively lower-bounds its correspond-
+ing physical constraint function. If the assumptions of
+Proposition 1 hold for the final retained completed se-
+quence at the extended calibration horizon, then executing
+the returned sequence without replanning satisfies the
+physical constraints at local block times 1, . . . , H with
+probability at least 1 −α.
+Proof. The final retained completed sequence satisfies
+the robust constraints at every returned block time by
+construction. Proposition 1 gives simultaneous motion
+coverage for this sequence. On this event, (21) implies
+physical constraint satisfaction at all local block times
+1, . . . , H.
+Proposition 2 establishes discrete-time safety for the certi-
+fied plan and backup under the stated assumptions. Confor-
+mal calibration covers motion-prediction error only; guaran-
+tees with decoded geometry additionally require conservative
+constraint evaluation, which can be incorporated indepen-
+dently and is outside the scope of this work. The sampling-
+based update requires neither differentiation through the
+learned models nor a learned denoising network. At planning
+cycle k, Algorithm 1 uses Ik and, upon success, executes
+only the first block of τ è over the next r low-level steps.
+After receiving ok+1, the context and unsafe-set estimate
+are updated. The next cycle is warm-started by shifting the
+returned sequence by one block and appending the next block
+from its retained backup continuation.
+IV. EXPERIMENTAL EVALUATION
+A. Experimental Setup
+1) VParkBench: We introduce VParkBench, a visual
+parking benchmark for evaluating goal-directed planning
+and control under safety constraints from bird’s-eye RGB
+observations (Fig. 4). The benchmark includes car (tractor-
+only) and tractor-trailer (TT) parking tasks. The robot must
+reach a target parking configuration without collision or
+workspace violations; TT must additionally avoid jackknif-
+ing [14]. Nonholonomic dynamics and articulated geometry
+require maneuvering through highly nonconvex safe sets.
+We represent the car and TT states as
+xcar = (xc, yc, sin θ, cos θ, v, δ),
+xTT = (xr, yr, sin θT, cos θT, sin θR, cos θR, v, δ).
+Here, (xc, yc) and (xr, yr) locate the car center and tractor
+rear axle; θ, θT, and θR are the car, tractor, and trailer head-
+ings; and v, δ denote velocity and steering angle. Calibration
+uses (xc, yc, θ) for car and (xr, yr, θT, θR) for TT, so np = 3
+and 4, respectively; v, δ are excluded from inflation. The
+commands u = (vcmd, δcmd) are applied instantaneously at
+0.10-s control intervals, with |vcmd| ≤1.5 m/s and steering
+limits of ±35◦for car and ±45◦for TT.
+The geometry-based simulator contains 16 parking spaces
+for car and 40 bays arranged as 20 trailer pairs for TT. For the
+photorealistic Gaussian-splatting (GS) setting, we reconstruct
+a real 12-space parking lot from video using G4Splat [20].
+Following FalconGym 2.0’s editable GS framework [21], we
+
+
+Fig. 2: Quantitative parking evaluation, with 96 episodes per bar. (a) Le-WM CEM image-goal planning at increasing physical goal ranges: L1 (1.0–1.2 m),
+L2 (2.4 m), and L3 (4.0 m). (b) VLA performance on exact training-episode replay (ID) versus unseen VParkBench scenarios (OOD). (c) Full parking
+benchmark comparison. Bars partition episodes into success, unsafe, and safe failure. Panel (a) uses latent-goal success; (b,c) use physical parking criteria.
+Fig. 3: Representative TT safety case. (a) Le-WM w/ Safety Probe enters
+a jackknife configuration after 5.7 s. (b) JEPA-Shield instead executes
+a reverse–forward maneuver and successfully parks in 25.4 s. Bottom:
+executed hitch-angle trajectories; the shaded region denotes the jackknife-
+unsafe range.
+embed vehicle assets in the scene and couple their poses to
+the vehicle dynamics. The resulting GS Car environment
+has a smaller physical operating domain than the geometric
+environments; its quantitative evaluation covers car parking
+only. Each setting contains 96 scenarios: 48 forward and
+48 reverse parking tasks, with left-, right-, and both-side
+neighboring occupancy. Every scenario requires substantial
+turning, and some require multiple turns in tight spaces.
+Initial straight-line distances from the vehicle body to the
+goal range from 6.8 to 11.8 m across the benchmark.
+2) Dataset, Training and Planning Details: Offline trajec-
+tories contain bird’s-eye RGB observations, controls, phys-
+ical states, and simulator-derived unsafe-set and minimum-
+clearance labels. Training uses approximately 12.4 k, 12.4 k,
+and 13.0 k episodes for geometric car, geometric TT, and
+GS Car, respectively. Validation and calibration data are
+held out from model training. In addition, the 96 evaluation
+scenarios in each VParkBench setting are excluded from
+training and contain unseen task-space goals and parking
+configurations. JEPA-Shield follows the training procedure
+in Sec. III. Learned baselines use the same task-specific
+data unless stated otherwise; Diffusion Policy uses only the
+successful expert subset.
+We use α = 0.05 and Ncal = 1000. Following [18],
+[19], σh,d is the maximum training discrepancy ρd at horizon
+h. One query per held-out trajectory uses three observation
+frames and the subsequent recorded expert/controller actions,
+with predictions recursively composed over H blocks. All
+environments use (r, C, Hm, Hb) = (2, 3, 8, 6), with 0.20-
+s action blocks. For planning cycles after initialization,
+(H, Ns, Nd) are (32, 192, 7), (24, 640, 6), and (24, 160, 6) for
+geometric car, geometric TT, and GS Car, respectively. We
+set τocc = 0.5. Following Safe MPD [14], we use a stopping
+backup policy described in Sec. III-D, with S0 = {x ∈
+C( b
+O) : v = 0}.
+3) Baselines and Ablations: We compare against both
+policy-based and world-model-based baselines. Diffusion
+Policy [22] directly predicts action sequences from RGB
+observations. VLA denotes an NVIDIA GR00T N1.7 3B
+policy [23] separately fine-tuned for the VParkBench car and
+TT tasks following NVIDIA’s official custom-embodiment
+(NEW EMBODIMENT) fine-tuning workflow. It receives RGB
+observations and a state/relative-goal representation and pre-
+dicts control blocks. DINO-WM [24] and Le-WM [7] use
+their original cross-entropy method (CEM) planning proce-
+dures to minimize latent distance to an encoded goal obser-
+vation. We provide the required goal images, although these
+are not generally available for arbitrary unseen destinations.
+We further consider Le-WM w/ Safety Probe, which aug-
+ments Le-WM with a downstream predictor of minimum
+obstacle clearance. The predicted clearance is evaluated
+along sampled future rollouts, and candidates with negative
+predicted clearance receive a large safety penalty in our
+
+
+Fig. 4: Qualitative JEPA-Shield results for (a) VParkBench Car, (b) VParkBench TT, and (c) GS Car. Left: conformal motion-tube visualization at one
+planning cycle. In (b), the red arrow highlights expansion of the yellow tube induced by hitch-angle uncertainty: although the nominal predicted motion is
+nearly straight, conformalization expands the possible articulated trailer placements, which are robustly checked by the shield. Right: closed-loop snapshots
+of complete successful parking maneuvers.
+diffusion planner’s objective. The task-space world-model
+planners, including JEPA-Shield, use an ego-relative goal
+representation; for TT, the current hitch angle is addition-
+ally provided, as this quantity is readily measurable with
+inexpensive onboard sensing. Their task costs use the same
+position, heading, and control terms, and all penalty-based
+safety terms use the same penalty weight.
+Finally, we evaluate two ablations. JEPA-Shield-Off re-
+moves Shield
+è while retaining the learned task-space pre-
+diction and planning objective. JEPA-Shield-Conformal-Off
+retains the shield but removes conformal uncertainty infla-
+tion, so constraint checks are performed only on the nominal
+predicted trajectory. Full JEPA-Shield uses both conformal
+motion tubes and backup-based shielding.
+4) Evaluation Protocol: An episode is classified as unsafe
+if it contains a collision, workspace violation, or, for TT,
+jackknifing. A violation-free episode is successful if its final
+position error is at most 0.8 m and its heading error is at
+most 15◦. For TT, both tractor and trailer headings must
+satisfy the corresponding accepted goal configuration. All
+other episodes are safe failures. The separate image-goal
+evaluation instead requires the observed latent MSE to fall
+below its checkpoint-specific threshold and to decrease by
+at least 90% from its initial value; any unsafe transition
+precludes success.
+B. Results and Analysis
+We organize the evaluation around four questions: Q1:
+How does image-goal planning scale with physical goal
+range? Q2: How well do policies learned from demon-
+strations, including a fine-tuned VLA, generalize to unseen
+parking goals and configurations? Q3: What are the contri-
+butions of task-space prediction, shielding, and conformal
+uncertainty calibration? Q4: How does performance change
+in the photorealistic GS setting?
+Image-goal planning (Q1). Fig. 2(a) evaluates Le-WM
+CEM as the physical goal range increases. At Level 1 (L1),
+success is 100.0%, 100.0%, and 96.9% for VParkBench Car,
+VParkBench TT, and GS Car, respectively, but falls to 30.2–
+33.3% at L2 and 0.0–20.8% at L3. Although the levels use
+different held-out trajectories and therefore do not isolate
+distance alone, the full parking benchmark in Fig. 2(c) shows
+the same limitation: DINO-WM and Le-WM achieve no
+success on the geometric car or TT tasks and only 6.3%
+and 1.0% on GS Car, respectively. These results suggest that
+latent image matching provides useful local guidance but
+becomes less reliable in the evaluated longer-range tasks.
+This is consistent with accumulating rollout error and the
+absence of explicit task-space safety constraints in the latent
+goal objective.
+Policy generalization (Q2). Fig. 2(b) shows a pronounced
+distribution shift for the VLA. Car success decreases from
+100.0% on exact training-episode replay to 15.6% on unseen
+VParkBench scenarios, while TT success decreases from
+58.3% to 3.1%. The corresponding OOD car runs are 77.1%
+unsafe, while 70.8% of the TT runs terminate as safe fail-
+ures. Likewise, Diffusion Policy achieves only 9.4%, 0.0%,
+and 30.2% success on car, TT, and GS Car, respectively
+
+
+(Fig. 2(c)). Thus, policies learned from demonstrations,
+including fine-tuning a large pretrained VLA, do not by
+themselves provide reliable generalization to unseen parking
+configurations or safety constraints.
+Task-space safety and ablations (Q3). Even without
+shielding, the task-space JEPA planner provides a substantial
+gain: JEPA-Shield-Off achieves 75.0%, 60.4%, and 84.4%
+success on car, TT, and GS Car, outperforming all non-
+JEPA-Shield baselines. In comparison, Le-WM w/ Safety
+Probe reaches 29.2%, 35.4%, and 57.3% success, while
+producing 36.5%, 41.7%, and 12.5% unsafe episodes. A
+learned scalar safety prediction evaluated along recursively
+imagined rollouts remains subject to rollout and probe errors,
+and a finite penalty does not constitute a constraint certificate.
+Fig. 3 shows a representative TT comparison: Le-WM w/
+Safety Probe reaches a jackknife configuration, whereas
+JEPA-Shield completes the maneuver while maintaining the
+articulation constraint.
+Full JEPA-Shield achieves 84.4%, 82.3%, and 99.0%
+success with no observed unsafe episodes across the 288
+benchmark trials. Removing the conformal expansion re-
+duces success to 78.1%, 72.9%, and 97.9% and reintroduces
+unsafe episodes in the geometric settings. The mechanism is
+illustrated in Fig. 4(b): because the conformal tube accounts
+for uncertainty in the predicted pose coordinates, uncertainty
+in the hitch angle enlarges the possible trailer occupancy even
+when the nominal trajectory is nearly straight. The shield
+therefore evaluates worst-case articulated placements within
+the calibrated tube rather than only the nominal footprint.
+Without shielding, TT has 34.4% unsafe episodes. Together,
+the ablations demonstrate the complementary contributions
+of shielding and conformal uncertainty calibration.
+Photorealistic visual setting (Q4). Overall, performance
+is generally higher on GS Car than on the geometric car
+benchmark for methods evaluated in both environments.
+Thus, despite the substantially more realistic visual appear-
+ance, visual complexity alone does not appear to dominate
+performance in these experiments. This comparison is not
+controlled for appearance alone: GS Car also has a physically
+smaller operating domain and different maneuvering geom-
+etry. Rather, the results suggest that planning performance
+depends strongly on the task-space geometry and safe motion
+required to reach the goal, in addition to visual representation
+quality. Fig. 4(c) shows a complete JEPA-Shield maneuver
+in the reconstructed GS scene.
+V. CONCLUSION
+JEPA-Shield connects latent world-model prediction with
+explicit evaluation of physical constraints. Its motion tubes
+account for prediction error, while its backup-based shield
+determines which proposed actions can be retained. Across
+geometric and photorealistic parking tasks, the framework
+combines strong task completion with no observed constraint
+violations in 288 trials. The central lesson is that useful visual
+predictions and reliable constraint evaluation are distinct
+requirements: a world model can supply the former, while
+task-space reasoning and uncertainty-aware shielding address
+the latter.
+REFERENCES
+[1] D. R. Agrawal, T. Kim, R. Govindjee, T. Adeshara, J. Yu, A. Raviku-
+mar, and D. Panagou, “Certifiably-Correct Mapping for Safe Naviga-
+tion Despite Odometry Drift,” in Robotics: Science and Systems (RSS),
+2025.
+[2] D. Ha and J. Schmidhuber, “World Models,” in Neural Information
+Processing Systems (NeurIPS), 2018.
+[3] D. Hafner, T. Lillicrap, J. Ba, and M. Norouzi, “Dream to Control:
+Learning Behaviors by Latent Imagination,” in International Confer-
+ence on Learning Representations (ICLR), 2020.
+[4] D. Hafner, T. Lillicrap, M. Norouzi, and J. Ba, “Mastering Atari with
+Discrete World Models,” in International Conference on Learning
+Representations (ICLR), 2021.
+[5] M. Assran, Q. Duval, I. Misra, P. Bojanowski, P. Vincent, M. Rabbat,
+Y. LeCun, and N. Ballas, “Self-Supervised Learning from Images with
+a Joint-Embedding Predictive Architecture,” in IEEE/CVF Conference
+on Computer Vision and Pattern Recognition (CVPR), 2023, pp.
+15 619–15 629.
+[6] R. Balestriero and Y. LeCun, “LeJEPA: Provable and Scalable
+Self-Supervised Learning Without the Heuristics,” in arXiv preprint
+arXiv:2511.08544, 2025.
+[7] L. Maes, Q. L. Lidec, D. Scieur, Y. LeCun, and R. Balestriero,
+“LeWorldModel: Stable End-to-End Joint-Embedding Predictive Ar-
+chitecture from Pixels,” in arXiv preprint arXiv:2603.19312, 2026.
+[8] M. Kim, K. Nakamura, and A. Bajcsy, “How Well Do Latent World
+Models Understand Partially Observable Safety Constraints?” in arXiv
+preprint arXiv:2510.06492, 2026.
+[9] D. Nath, A. Srinivasan, H. Yin, R. Jiang, J. Fang, and G. Chou, “Pixels
+to Proofs: Probabilistically-Safe Latent World Model Control via
+Parallel Conformal Robust MPC,” in arXiv preprint arXiv:2606.15594,
+2026.
+[10] K. Zhong, T. Liu, and Y. Wang, “Calibrated Predictive Safety for
+Heterogeneous Robots: An Action-Conditioned JEPA Framework with
+Model-Based Safety Shields,” in arXiv preprint arXiv:2608.17496,
+2026.
+[11] M. Caron, H. Touvron, I. Misra, H. Jegou, J. Mairal, P. Bojanowski,
+and A. Joulin, “Emerging Properties in Self-Supervised Vision Trans-
+formers,” in IEEE/CVF International Conference on Computer Vision
+(ICCV).
+IEEE Computer Society, 2021, pp. 9630–9640.
+[12] C. Pan, Z. Yi, G. Shi, and G. Qu, “Model-Based Diffusion for
+Trajectory Optimization,” in Neural Information Processing Systems
+(NeurIPS), 2024, pp. 57 914–57 943.
+[13] H. Xue, C. Pan, Z. Yi, G. Qu, and G. Shi, “Full-Order Sampling-
+Based MPC for Torque-Level Locomotion Control via Diffusion-
+Style Annealing,” in IEEE International Conference on Robotics and
+Automation (ICRA), 2025.
+[14] T. Kim, K. Majd, H. Okamoto, B. Hoxha, D. Panagou, and
+G. Fainekos, “Safe Model Predictive Diffusion with Shielding,” in
+International Conference on Robotics and Automation (ICRA), 2026.
+[15] R. Ranftl, A. Bochkovskiy, and V. Koltun, “Vision Transformers
+for Dense Prediction,” in IEEE/CVF International Conference on
+Computer Vision (ICCV), 2021, pp. 12 179–12 188.
+[16] S. S. M. Salehi, D. Erdogmus, and A. Gholipour, “Tversky Loss
+Function for Image Segmentation Using 3D Fully Convolutional Deep
+Networks,” in Machine Learning in Medical Imaging, Q. Wang,
+Y. Shi, H.-I. Suk, and K. Suzuki, Eds.
+Cham: Springer International
+Publishing, 2017, pp. 379–387.
+[17] A. N. Angelopoulos and S. Bates, “Conformal Prediction: A Gentle
+Introduction,” Foundations and Trends in Machine Learning, vol. 16,
+no. 4, pp. 494–591, 2023.
+[18] C. Stamouli, L. Lindemann, and G. Pappas, “Recursively feasible
+shrinking-horizon MPC in dynamic environments with conformal
+prediction guarantees,” in Proceedings of the 6th Annual Learning
+for Dynamics & Control Conference.
+PMLR, 2024, pp. 1330–1342.
+[19] X. Yu, Y. Zhao, X. Yin, and L. Lindemann, “Signal temporal logic
+control synthesis among uncontrollable dynamic agents with confor-
+mal prediction,” Automatica, vol. 183, p. 112616, 2026.
+[20] J. Ni, Y. Chen, Z. Yang, Y. Liu, R. Lu, S.-C. Zhu, and S. Huang,
+“G4Splat: Geometry-Guided Gaussian Splatting with Generative
+Prior,” in International Conference on Learning Representations
+(ICLR), 2026, pp. 138 924–138 951.
+
+
+[21] Y. Miao, E. Yuceel, G. Fainekos, B. Hoxha, H. Okamoto, and S. Mitra,
+“Performance-Guided Refinement for Visual Aerial Navigation using
+Editable Gaussian Splatting in FalconGym 2.0,” in IEEE International
+Conference on Robotics and Automation (ICRA), 2026.
+[22] C. Chi, Z. Xu, S. Feng, E. Cousineau, Y. Du, B. Burchfiel, R. Tedrake,
+and S. Song, “Diffusion Policy: Visuomotor Policy Learning via
+Action Diffusion,” The International Journal of Robotics Research,
+2024.
+[23] NVIDIA et al., “GR00T N1: An open foundation model for generalist
+humanoid robots,” arXiv preprint arXiv:2503.14734, 2025.
+[24] G. Zhou, H. Pan, Y. LeCun, and L. Pinto, “DINO-WM: World
+Models on Pre-trained Visual Features enable Zero-shot Planning,”
+in International Conference on Machine Learning (ICML), 2025, pp.
+79 115–79 135.
